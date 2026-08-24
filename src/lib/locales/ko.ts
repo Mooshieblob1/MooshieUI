@@ -2101,6 +2101,8 @@ const ko: Record<string, string> = {
 
   "settings.lan.enable": "LAN 액세스 활성화",
   "settings.lan.enable_desc": "네트워크의 다른 기기에서 UI에 액세스할 수 있게 합니다. 활성화 시 인증이 필요합니다.",
+  "settings.browser_shutdown.enable": "탭이 닫힐 때 종료",
+  "settings.browser_shutdown.enable_desc": "브라우저 탭이 2분 동안 응답하지 않으면 MooshieUI와 ComfyUI를 종료합니다. 컴퓨터가 절전 모드로 전환되거나 브라우저가 백그라운드 탭을 중지시키는 경우 꺼 두세요.",
   "settings.lan.warning": "경고: LAN 액세스를 활성화하면 로컬 네트워크에 UI가 노출됩니다. 인증을 요구하려면 최소 하나의 계정을 추가하세요.",
   "settings.lan.access_at": "다른 기기에서 액세스:",
   "settings.lan.accounts": "계정",

@@ -6620,37 +6620,146 @@ fn cleanup_expired_images(auth: &AuthState) {
     }
 }
 
+/// What a single watchdog tick concluded. Split out from the loop so the
+/// decision is pure and unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchdogTick {
+    /// App mode took over; the watchdog should stop.
+    Stop,
+    /// The opt-out is active; keep looping but never shut down.
+    OptedOut,
+    /// Restart the heartbeat clock (host resumed from suspend, or the opt-out
+    /// was just switched back on) and re-check on the next tick.
+    ResetClock,
+    /// Heartbeats are current; nothing to do.
+    Idle,
+    /// The tab has been silent past the timeout; shut down.
+    Shutdown,
+}
+
+/// Decide what a watchdog tick should do.
+///
+/// `tick_gap` is how long the tick actually took: a value far above
+/// `WATCHDOG_TICK` means the host was suspended rather than the tab going
+/// quiet, so the heartbeat clock is restarted instead of held against the tab.
+fn watchdog_decision(
+    app_mode_active: bool,
+    auto_shutdown: bool,
+    was_opted_out: bool,
+    tick_gap: Duration,
+    since_heartbeat: Duration,
+    timeout: Duration,
+) -> WatchdogTick {
+    if app_mode_active {
+        return WatchdogTick::Stop;
+    }
+    if !auto_shutdown {
+        return WatchdogTick::OptedOut;
+    }
+    // Coming back from the opt-out, the stored timestamp is arbitrarily old and
+    // would fire immediately.
+    if was_opted_out {
+        return WatchdogTick::ResetClock;
+    }
+    if tick_gap > WATCHDOG_TICK + WATCHDOG_RESUME_JUMP {
+        return WatchdogTick::ResetClock;
+    }
+    if since_heartbeat > timeout {
+        return WatchdogTick::Shutdown;
+    }
+    WatchdogTick::Idle
+}
+
+/// How long one watchdog tick is meant to take.
+const WATCHDOG_TICK: Duration = Duration::from_secs(2);
+
+/// A tick that overshoots `WATCHDOG_TICK` by more than this is read as a resume
+/// from host suspend rather than a quiet browser tab. 20s is far above any
+/// scheduler jitter and far below the shutdown timeout.
+const WATCHDOG_RESUME_JUMP: Duration = Duration::from_secs(20);
+
 /// Start the heartbeat watchdog that shuts down the app when the browser
 /// tab closes (no heartbeat for N seconds).
+///
+/// Two things keep this from firing on a host that was merely asleep:
+///
+/// * Suspend detection. If a single tick took far longer than it should have,
+///   the host was suspended (lid closed, display sleep, VM paused) and the tab
+///   had no chance to ping, so the heartbeat clock is reset rather than counted
+///   against the tab.
+/// * The `browser_auto_shutdown` opt-out, re-read every tick so the Settings
+///   toggle takes effect without a restart.
 pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
     tokio::spawn(async move {
         let timeout = Duration::from_secs(timeout_secs);
         // Wait a bit before starting to check (let the browser load)
         tokio::time::sleep(Duration::from_secs(10)).await;
 
+        let mut prev_mono = std::time::Instant::now();
+        let mut prev_wall = std::time::SystemTime::now();
+        let mut was_opted_out = false;
+
         loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(WATCHDOG_TICK).await;
+
+            // Both clocks are sampled because `Instant` is suspend-aware on
+            // some platforms and suspend-blind on others (on macOS it does not
+            // advance while the machine sleeps, on Linux it does). Whichever
+            // one jumped tells us the host was away.
+            let now_mono = std::time::Instant::now();
+            let now_wall = std::time::SystemTime::now();
+            let tick_gap = now_mono
+                .duration_since(prev_mono)
+                .max(now_wall.duration_since(prev_wall).unwrap_or_default());
+            prev_mono = now_mono;
+            prev_wall = now_wall;
+
+            let app_mode = state
+                .app_mode_active
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let auto_shutdown = { state.config.read().await.browser_auto_shutdown };
             let elapsed = {
                 let hb = state.last_heartbeat.lock().await;
                 hb.elapsed()
             };
-            if elapsed > timeout {
-                // If we've switched to app mode, the watchdog should stop.
-                if state
-                    .app_mode_active
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                {
+
+            match watchdog_decision(
+                app_mode,
+                auto_shutdown,
+                was_opted_out,
+                tick_gap,
+                elapsed,
+                timeout,
+            ) {
+                WatchdogTick::Stop => {
                     log::info!("Heartbeat watchdog stopping — app mode is active");
                     break;
                 }
-                log::info!(
-                    "No heartbeat for {:?}, shutting down (browser tab likely closed)",
-                    elapsed
-                );
-                // Cancel any in-progress generation before exiting so the
-                // ComfyUI queue doesn't keep running after the tab closes.
-                let _ = state.gpu_manager.interrupt(None).await;
-                std::process::exit(0);
+                WatchdogTick::OptedOut => {
+                    was_opted_out = true;
+                }
+                WatchdogTick::ResetClock => {
+                    if was_opted_out {
+                        was_opted_out = false;
+                    } else {
+                        log::info!(
+                            "Heartbeat watchdog: {}s gap between ticks, treating as resume from suspend",
+                            tick_gap.as_secs()
+                        );
+                    }
+                    *state.last_heartbeat.lock().await = std::time::Instant::now();
+                }
+                WatchdogTick::Idle => {}
+                WatchdogTick::Shutdown => {
+                    log::info!(
+                        "No heartbeat for {:?}, shutting down (browser tab likely closed)",
+                        elapsed
+                    );
+                    // Cancel any in-progress generation before exiting so the
+                    // ComfyUI queue doesn't keep running after the tab closes.
+                    let _ = state.gpu_manager.interrupt(None).await;
+                    std::process::exit(0);
+                }
             }
         }
     });
@@ -7091,4 +7200,118 @@ async fn notifications_clear_handler(
 
     state.app.notifications.clear_all(&username);
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::{watchdog_decision, WatchdogTick, WATCHDOG_RESUME_JUMP, WATCHDOG_TICK};
+    use std::time::Duration;
+
+    const TIMEOUT: Duration = Duration::from_secs(120);
+    /// A tick that ran on schedule.
+    const ON_TIME: Duration = WATCHDOG_TICK;
+
+    #[test]
+    fn shuts_down_when_the_tab_goes_silent() {
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                false,
+                ON_TIME,
+                Duration::from_secs(121),
+                TIMEOUT
+            ),
+            WatchdogTick::Shutdown
+        );
+    }
+
+    #[test]
+    fn stays_idle_while_heartbeats_arrive() {
+        assert_eq!(
+            watchdog_decision(false, true, false, ON_TIME, Duration::from_secs(3), TIMEOUT),
+            WatchdogTick::Idle
+        );
+    }
+
+    #[test]
+    fn resume_from_suspend_resets_instead_of_shutting_down() {
+        // Host slept for an hour: the tick overshot massively and the heartbeat
+        // is long stale, but the tab never had a chance to ping.
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                false,
+                Duration::from_secs(3600),
+                Duration::from_secs(3600),
+                TIMEOUT
+            ),
+            WatchdogTick::ResetClock
+        );
+    }
+
+    #[test]
+    fn ordinary_scheduler_jitter_is_not_mistaken_for_suspend() {
+        // Just under the resume threshold, with a stale heartbeat: still a shutdown.
+        let jitter = WATCHDOG_TICK + WATCHDOG_RESUME_JUMP - Duration::from_secs(1);
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                false,
+                jitter,
+                Duration::from_secs(121),
+                TIMEOUT
+            ),
+            WatchdogTick::Shutdown
+        );
+    }
+
+    #[test]
+    fn opt_out_never_shuts_down() {
+        assert_eq!(
+            watchdog_decision(
+                false,
+                false,
+                false,
+                ON_TIME,
+                Duration::from_secs(86_400),
+                TIMEOUT
+            ),
+            WatchdogTick::OptedOut
+        );
+    }
+
+    #[test]
+    fn re_enabling_the_opt_out_resets_the_clock_first() {
+        // The stored timestamp is stale from the opt-out window, so the first
+        // tick back must restart the clock rather than fire.
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                true,
+                ON_TIME,
+                Duration::from_secs(86_400),
+                TIMEOUT
+            ),
+            WatchdogTick::ResetClock
+        );
+    }
+
+    #[test]
+    fn app_mode_stops_the_watchdog_before_anything_else() {
+        assert_eq!(
+            watchdog_decision(
+                true,
+                true,
+                false,
+                ON_TIME,
+                Duration::from_secs(999),
+                TIMEOUT
+            ),
+            WatchdogTick::Stop
+        );
+    }
 }

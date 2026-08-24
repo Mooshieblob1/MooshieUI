@@ -2142,6 +2142,8 @@ const zh: Record<string, string> = {
 
   "settings.lan.enable": "启用局域网访问",
   "settings.lan.enable_desc": "允许网络上的其他设备访问界面。启用后需要身份验证。",
+  "settings.browser_shutdown.enable": "标签页关闭时退出",
+  "settings.browser_shutdown.enable_desc": "当浏览器标签页两分钟没有响应时，停止 MooshieUI 和 ComfyUI。如果电脑会休眠，或浏览器会冻结后台标签页，请关闭此选项。",
   "settings.lan.warning": "警告：启用局域网访问会在本地网络暴露界面。请至少添加一个账户以要求身份验证。",
   "settings.lan.access_at": "其他设备访问地址：",
   "settings.lan.accounts": "账户",

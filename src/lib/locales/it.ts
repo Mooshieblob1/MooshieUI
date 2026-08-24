@@ -2101,6 +2101,8 @@ const it: Record<string, string> = {
 
   "settings.lan.enable": "Abilita accesso LAN",
   "settings.lan.enable_desc": "Consente ad altri dispositivi della rete di accedere all'interfaccia. Richiede autenticazione se abilitato.",
+  "settings.browser_shutdown.enable": "Arresta alla chiusura della scheda",
+  "settings.browser_shutdown.enable_desc": "Arresta MooshieUI e ComfyUI quando la scheda del browser smette di rispondere per due minuti. Disattiva questa opzione se il computer va in sospensione o il browser congela le schede in background.",
   "settings.lan.warning": "Attenzione: abilitare l'accesso LAN espone l'interfaccia sulla rete locale. Aggiungi almeno un account per richiedere l'autenticazione.",
   "settings.lan.access_at": "Accedi da altri dispositivi su:",
   "settings.lan.accounts": "Account",

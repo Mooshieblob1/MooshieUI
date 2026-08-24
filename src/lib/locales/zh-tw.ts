@@ -2101,6 +2101,8 @@ const zhTw: Record<string, string> = {
 
   "settings.lan.enable": "啟用區域網路存取",
   "settings.lan.enable_desc": "允許網路上的其他裝置存取介面。啟用後需要驗證。",
+  "settings.browser_shutdown.enable": "分頁關閉時結束",
+  "settings.browser_shutdown.enable_desc": "當瀏覽器分頁兩分鐘沒有回應時，停止 MooshieUI 與 ComfyUI。如果電腦會進入睡眠，或瀏覽器會凍結背景分頁，請關閉此選項。",
   "settings.lan.warning": "警告：啟用區域網路存取會在本地網路暴露介面。請至少新增一個帳戶以要求驗證。",
   "settings.lan.access_at": "其他裝置存取位址：",
   "settings.lan.accounts": "帳戶",

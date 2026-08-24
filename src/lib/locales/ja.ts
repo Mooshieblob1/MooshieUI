@@ -2126,6 +2126,8 @@ const ja: Record<string, string> = {
 
   "settings.lan.enable": "LANアクセスを有効化",
   "settings.lan.enable_desc": "ネットワーク上の他のデバイスからUIにアクセスできるようにします。有効時は認証が必要です。",
+  "settings.browser_shutdown.enable": "タブを閉じたら終了",
+  "settings.browser_shutdown.enable_desc": "ブラウザのタブが2分間応答しなくなったら MooshieUI と ComfyUI を終了します。パソコンがスリープする場合や、ブラウザがバックグラウンドのタブを凍結する場合はオフにしてください。",
   "settings.lan.warning": "警告：LANアクセスを有効にするとローカルネットワークにUIが公開されます。認証を必須にするには少なくとも1つのアカウントを追加してください。",
   "settings.lan.access_at": "他のデバイスからのアクセス先：",
   "settings.lan.accounts": "アカウント",

@@ -1917,6 +1917,23 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
+                <div>
+                  <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.browser_shutdown.enable')}</label>
+                  <p class="text-xs text-neutral-500 mt-0.5">
+                    {locale.t('settings.browser_shutdown.enable_desc')}
+                  </p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={config.browser_auto_shutdown}
+                    onchange={() => autoSave()}
+                    class="sr-only peer"
+                  />
+                  <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
               {#if config.lan_enabled}
                 <div class="space-y-3 pt-2 border-t border-neutral-800">
                   <p class="text-xs text-amber-400">

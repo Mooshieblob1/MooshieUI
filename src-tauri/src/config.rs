@@ -119,6 +119,12 @@ pub struct AppConfig {
     pub ui_server_port: u16,
     /// Enable LAN access (bind to 0.0.0.0 instead of 127.0.0.1). Only effective in browser mode.
     pub lan_enabled: bool,
+    /// Shut the backend (and ComfyUI with it) down when the browser tab stops
+    /// sending heartbeats. Only armed in single-user browser mode. Turn this
+    /// off when the machine sleeps or the browser freezes background tabs and
+    /// the backend should survive it.
+    #[serde(default = "default_true")]
+    pub browser_auto_shutdown: bool,
     /// Attention backend: "default", "sage_v1", "sage_v2", "flash_v1", "flash_v2"
     pub attention_backend: String,
     /// Multi-GPU worker configs. When empty, single-worker mode (backward compat).
@@ -244,6 +250,7 @@ impl Default for AppConfig {
             browser_mode: false,
             ui_server_port: 3200,
             lan_enabled: false,
+            browser_auto_shutdown: true,
             attention_backend: "default".to_string(),
             gpu_workers: vec![],
             network_proxy: None,

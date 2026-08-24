@@ -155,9 +155,12 @@ pub async fn switch_to_browser_mode(
         port = actual_port;
     }
 
-    // Always start a new heartbeat watchdog — the previous one exits when
+    // Start a new heartbeat watchdog — the previous one exits when
     // app_mode_active is set, so we need a fresh one for the new browser session.
-    {
+    // Only in single-user browser mode: with LAN access enabled, multiple users
+    // may connect (often from phones that suspend background tab timers), and we
+    // must NOT shut down and cancel a running generation when one tab goes quiet.
+    if !lan_enabled {
         let shared_state: Arc<AppState> = state.inner().clone();
         // 120s: browsers throttle background setInterval to ~1 min;
         // we need a timeout well above that to avoid killing the

@@ -2127,6 +2127,8 @@ const fr: Record<string, string> = {
 
   "settings.lan.enable": "Activer l'accès LAN",
   "settings.lan.enable_desc": "Permet aux autres appareils de votre réseau d'accéder à l'interface. Authentification requise lorsque activé.",
+  "settings.browser_shutdown.enable": "Arrêter à la fermeture de l'onglet",
+  "settings.browser_shutdown.enable_desc": "Arrêter MooshieUI et ComfyUI lorsque l'onglet du navigateur ne répond plus pendant deux minutes. Désactivez cette option si votre machine se met en veille ou si votre navigateur gèle les onglets en arrière-plan.",
   "settings.lan.warning": "Attention : activer l'accès LAN expose l'interface sur votre réseau local. Ajoutez au moins un compte pour exiger une authentification.",
   "settings.lan.access_at": "Accès depuis d'autres appareils à :",
   "settings.lan.accounts": "Comptes",

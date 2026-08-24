@@ -506,6 +506,8 @@ export interface AppConfig {
   browser_mode: boolean;
   ui_server_port: number;
   lan_enabled: boolean;
+  /** Shut the backend down when the browser tab stops sending heartbeats (browser mode). */
+  browser_auto_shutdown: boolean;
   attention_backend: string;
   gpu_workers: Array<{
     gpu_index: number;

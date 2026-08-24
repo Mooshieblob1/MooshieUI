@@ -2165,6 +2165,8 @@ const es: Record<string, string> = {
 
   "settings.lan.enable": "Activar acceso LAN",
   "settings.lan.enable_desc": "Permite que otros dispositivos de tu red accedan a la interfaz. Requiere autenticación cuando está activado.",
+  "settings.browser_shutdown.enable": "Apagar al cerrar la pestaña",
+  "settings.browser_shutdown.enable_desc": "Detener MooshieUI y ComfyUI cuando la pestaña del navegador deje de responder durante dos minutos. Desactívalo si tu equipo se suspende o tu navegador congela las pestañas en segundo plano.",
   "settings.lan.warning": "Advertencia: activar el acceso LAN expone la interfaz en tu red local. Añade al menos una cuenta para exigir autenticación.",
   "settings.lan.access_at": "Accede desde otros dispositivos en:",
   "settings.lan.accounts": "Cuentas",

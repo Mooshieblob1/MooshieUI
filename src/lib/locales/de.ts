@@ -2123,6 +2123,8 @@ const de: Record<string, string> = {
 
   "settings.lan.enable": "LAN-Zugriff aktivieren",
   "settings.lan.enable_desc": "Ermöglicht anderen Geräten in Ihrem Netzwerk den Zugriff auf die Oberfläche. Bei Aktivierung ist eine Anmeldung erforderlich.",
+  "settings.browser_shutdown.enable": "Beim Schließen des Tabs beenden",
+  "settings.browser_shutdown.enable_desc": "MooshieUI und ComfyUI beenden, wenn der Browser-Tab zwei Minuten lang nicht mehr antwortet. Deaktiviere dies, wenn dein Rechner in den Ruhezustand geht oder dein Browser Hintergrund-Tabs einfriert.",
   "settings.lan.warning": "Warnung: Der LAN-Zugriff macht die Oberfläche in Ihrem lokalen Netzwerk erreichbar. Fügen Sie mindestens ein Konto hinzu, um eine Anmeldung zu verlangen.",
   "settings.lan.access_at": "Zugriff von anderen Geräten unter:",
   "settings.lan.accounts": "Konten",
