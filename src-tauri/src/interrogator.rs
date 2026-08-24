@@ -21,11 +21,104 @@ const ORT_LIB_NAME: &str = "libonnxruntime.dylib";
 #[cfg(target_os = "windows")]
 const ORT_LIB_NAME: &str = "onnxruntime.dll";
 
-const HF_BASE_URL: &str =
-    "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main";
 const MODEL_FILENAME: &str = "model.onnx";
 const TAGS_FILENAME: &str = "selected_tags.csv";
-const MODEL_INPUT_SIZE: u32 = 448;
+
+/// The tagger MooshieUI used before the model picker existed. Installs that
+/// predate the picker keep their files under this id (see `migrate_legacy_layout`).
+pub const DEFAULT_INTERROGATOR_MODEL: &str = "wd-eva02-large-tagger-v3";
+
+/// A tagger the user can pick in Settings.
+///
+/// Every entry must be a WD v3-family ONNX tagger: identical padded-square
+/// NHWC/BGR preprocessing, identical `selected_tags.csv` schema, and the same
+/// 10861-class sigmoid output. A model that breaks any of those assumptions
+/// needs more than a new row here.
+#[derive(Debug, Clone, Serialize)]
+pub struct InterrogatorModelInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub repo: &'static str,
+    /// Size of `model.onnx`, shown in Settings before the user commits to a download.
+    pub size_bytes: u64,
+    pub input_size: u32,
+}
+
+/// The first entry is the default and the fallback for unknown ids.
+pub const INTERROGATOR_MODELS: &[InterrogatorModelInfo] = &[
+    InterrogatorModelInfo {
+        id: "wd-eva02-large-tagger-v3",
+        label: "WD EVA02 Large v3",
+        repo: "SmilingWolf/wd-eva02-large-tagger-v3",
+        size_bytes: 1_260_435_999,
+        input_size: 448,
+    },
+    InterrogatorModelInfo {
+        id: "wd-vit-large-tagger-v3",
+        label: "WD ViT Large v3",
+        repo: "SmilingWolf/wd-vit-large-tagger-v3",
+        size_bytes: 1_260_645_673,
+        input_size: 448,
+    },
+    InterrogatorModelInfo {
+        id: "wd-swinv2-tagger-v3",
+        label: "WD SwinV2 v3",
+        repo: "SmilingWolf/wd-swinv2-tagger-v3",
+        size_bytes: 467_460_978,
+        input_size: 448,
+    },
+    InterrogatorModelInfo {
+        id: "wd-convnext-tagger-v3",
+        label: "WD ConvNeXt v3",
+        repo: "SmilingWolf/wd-convnext-tagger-v3",
+        size_bytes: 394_990_732,
+        input_size: 448,
+    },
+    InterrogatorModelInfo {
+        id: "wd-vit-tagger-v3",
+        label: "WD ViT v3",
+        repo: "SmilingWolf/wd-vit-tagger-v3",
+        size_bytes: 378_536_310,
+        input_size: 448,
+    },
+];
+
+/// A registry entry plus whether its files are already on disk. Settings uses
+/// the flag to label a model as downloaded and to offer the delete action.
+#[derive(Debug, Clone, Serialize)]
+pub struct InterrogatorModelStatus {
+    #[serde(flatten)]
+    pub info: &'static InterrogatorModelInfo,
+    pub downloaded: bool,
+}
+
+/// Status of every selectable model, given the root that holds the per-model
+/// subdirectories.
+pub fn model_statuses_at(root_dir: &std::path::Path) -> Vec<InterrogatorModelStatus> {
+    INTERROGATOR_MODELS
+        .iter()
+        .map(|info| InterrogatorModelStatus {
+            info,
+            downloaded: is_model_downloaded_at(&root_dir.join(info.id)),
+        })
+        .collect()
+}
+
+/// Look up a model by id, falling back to the default so a stale or hand-edited
+/// config id can never leave the interrogator without a model to load.
+pub fn find_model(id: &str) -> &'static InterrogatorModelInfo {
+    INTERROGATOR_MODELS
+        .iter()
+        .find(|m| m.id == id)
+        .unwrap_or(&INTERROGATOR_MODELS[0])
+}
+
+fn file_url(info: &InterrogatorModelInfo, filename: &str) -> String {
+    format!(
+        "https://huggingface.co/{}/resolve/main/{}",
+        info.repo, filename
+    )
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TagResult {
@@ -51,7 +144,9 @@ pub struct TagDef {
 pub struct InterrogatorState {
     session: Option<Session>,
     tag_list: Vec<TagDef>,
-    model_dir: PathBuf,
+    /// Holds the shared ONNX Runtime library plus one subdirectory per model.
+    root_dir: PathBuf,
+    model_id: String,
 }
 
 impl Default for InterrogatorState {
@@ -62,40 +157,72 @@ impl Default for InterrogatorState {
 
 impl InterrogatorState {
     pub fn new() -> Self {
-        let model_dir = config::app_data_dir()
+        let root_dir = config::app_data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("interrogator");
+        migrate_legacy_layout(&root_dir);
         Self {
             session: None,
             tag_list: Vec::new(),
-            model_dir,
+            root_dir,
+            model_id: DEFAULT_INTERROGATOR_MODEL.to_string(),
         }
     }
 
-    /// The directory holding the model/tags/ORT files. Callers clone this so
-    /// they can run downloads without holding the interrogator lock across I/O.
+    /// The directory holding the shared ONNX Runtime library and the per-model
+    /// subdirectories. Callers clone this so they can run downloads without
+    /// holding the interrogator lock across I/O.
+    pub fn root_dir(&self) -> PathBuf {
+        self.root_dir.clone()
+    }
+
+    /// The directory holding the selected model's ONNX and tag files.
     pub fn model_dir(&self) -> PathBuf {
-        self.model_dir.clone()
+        self.root_dir.join(&self.model_id)
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    /// Select the active tagger. Switching drops the cached session and tag list
+    /// so the next `load_session` picks up the new model. Unknown ids resolve to
+    /// the default rather than leaving the interrogator pointed at nothing.
+    pub fn set_model(&mut self, id: &str) {
+        let resolved = find_model(id).id;
+        if resolved != self.model_id {
+            self.session = None;
+            self.tag_list = Vec::new();
+            self.model_id = resolved.to_string();
+        }
+    }
+
+    /// Drop the cached session and tag list without changing the selection.
+    /// Used after the active model's files are deleted, so the next run
+    /// re-downloads instead of inferring against files that are gone.
+    pub fn unload_session(&mut self) {
+        self.session = None;
+        self.tag_list = Vec::new();
     }
 
     fn model_path(&self) -> PathBuf {
-        model_path_in(&self.model_dir)
+        model_path_in(&self.model_dir())
     }
 
     fn tags_path(&self) -> PathBuf {
-        tags_path_in(&self.model_dir)
+        tags_path_in(&self.model_dir())
     }
 
     pub fn is_model_downloaded(&self) -> bool {
-        is_model_downloaded_at(&self.model_dir)
+        is_model_downloaded_at(&self.model_dir())
     }
 
     pub fn ort_library_path(&self) -> PathBuf {
-        ort_library_path_in(&self.model_dir)
+        ort_library_path_in(&self.root_dir)
     }
 
     pub fn is_ort_library_present(&self) -> bool {
-        is_ort_library_present_at(&self.model_dir)
+        is_ort_library_present_at(&self.root_dir)
     }
 
     pub fn session_not_loaded(&self) -> bool {
@@ -181,6 +308,8 @@ impl InterrogatorState {
         general_threshold: f32,
         character_threshold: f32,
     ) -> Result<InterrogationResult, AppError> {
+        let input_size = find_model(&self.model_id).input_size;
+
         let session = self
             .session
             .as_mut()
@@ -188,8 +317,8 @@ impl InterrogatorState {
 
         let t = Instant::now();
         // Pre-downscale large images with fast Nearest filter before quality resize
-        let img = if img.width() > MODEL_INPUT_SIZE * 3 || img.height() > MODEL_INPUT_SIZE * 3 {
-            let pre_size = MODEL_INPUT_SIZE * 2;
+        let img = if img.width() > input_size * 3 || img.height() > input_size * 3 {
+            let pre_size = input_size * 2;
             img.resize(pre_size, pre_size, image::imageops::FilterType::Nearest)
         } else {
             img
@@ -206,20 +335,20 @@ impl InterrogatorState {
 
         let resized = image::imageops::resize(
             &padded,
-            MODEL_INPUT_SIZE,
-            MODEL_INPUT_SIZE,
+            input_size,
+            input_size,
             image::imageops::FilterType::CatmullRom,
         );
         eprintln!("[interrogator] Image resized in {:.1?}", t.elapsed());
 
         // Build input tensor: [1, H, W, 3] float32 (NHWC, BGR, 0-255 range)
         // WD tagger expects raw pixel values, NOT normalized to [0,1]
-        let pixels = (MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) as usize;
+        let pixels = (input_size * input_size) as usize;
         let mut input_data = vec![0.0f32; pixels * 3];
-        for y in 0..MODEL_INPUT_SIZE {
-            for x in 0..MODEL_INPUT_SIZE {
+        for y in 0..input_size {
+            for x in 0..input_size {
                 let pixel = resized.get_pixel(x, y);
-                let idx = (y * MODEL_INPUT_SIZE + x) as usize;
+                let idx = (y * input_size + x) as usize;
                 // NHWC: [y * W + x, channel] — BGR order
                 input_data[idx * 3] = pixel[2] as f32; // B
                 input_data[idx * 3 + 1] = pixel[1] as f32; // G
@@ -227,7 +356,7 @@ impl InterrogatorState {
             }
         }
 
-        let input_shape = vec![1_i64, MODEL_INPUT_SIZE as i64, MODEL_INPUT_SIZE as i64, 3];
+        let input_shape = vec![1_i64, input_size as i64, input_size as i64, 3];
         let input_tensor =
             ort::value::Tensor::from_array((input_shape, input_data)).map_err(|e| {
                 AppError::InterrogatorError(format!("Failed to create input tensor: {}", e))
@@ -389,8 +518,50 @@ pub fn is_model_downloaded_at(model_dir: &std::path::Path) -> bool {
     model_path_in(model_dir).exists() && tags_path_in(model_dir).exists()
 }
 
-pub fn is_ort_library_present_at(model_dir: &std::path::Path) -> bool {
-    ort_library_path_in(model_dir).exists()
+pub fn is_ort_library_present_at(root_dir: &std::path::Path) -> bool {
+    ort_library_path_in(root_dir).exists()
+}
+
+/// Move a pre-picker install (`interrogator/model.onnx`) into the default
+/// model's subdirectory so existing users are not made to re-download 1.2 GB.
+///
+/// Best-effort and idempotent: any failure leaves the legacy files where they
+/// are and the model simply downloads into the new layout.
+pub fn migrate_legacy_layout(root_dir: &std::path::Path) {
+    let legacy_model = root_dir.join(MODEL_FILENAME);
+    if !legacy_model.exists() {
+        return;
+    }
+    let dest_dir = root_dir.join(DEFAULT_INTERROGATOR_MODEL);
+    if dest_dir.join(MODEL_FILENAME).exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+        eprintln!("[interrogator] Legacy migration skipped (mkdir failed): {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&legacy_model, dest_dir.join(MODEL_FILENAME)) {
+        eprintln!("[interrogator] Legacy migration skipped (rename failed): {e}");
+        return;
+    }
+    let legacy_tags = root_dir.join(TAGS_FILENAME);
+    if legacy_tags.exists() {
+        std::fs::rename(&legacy_tags, dest_dir.join(TAGS_FILENAME)).ok();
+    }
+    eprintln!(
+        "[interrogator] Migrated legacy tagger files into {}",
+        dest_dir.display()
+    );
+}
+
+/// Delete a downloaded model's files, freeing the 0.4-1.2 GB it occupies.
+/// The shared ONNX Runtime library lives at the root and is left alone.
+pub fn delete_model_files_at(root_dir: &std::path::Path, model_id: &str) -> Result<(), AppError> {
+    let dir = root_dir.join(find_model(model_id).id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    Ok(())
 }
 
 /// Download model files from HuggingFace if not already present.
@@ -399,15 +570,16 @@ pub async fn ensure_model_downloaded_at(
     app: &AppHandle,
     client: &reqwest::Client,
     model_dir: &std::path::Path,
+    model_id: &str,
 ) -> Result<(), AppError> {
+    let info = find_model(model_id);
     std::fs::create_dir_all(model_dir)?;
     if !model_path_in(model_dir).exists() {
-        let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
-        download_with_progress(app, client, &url, &model_path_in(model_dir), MODEL_FILENAME)
-            .await?;
+        let url = file_url(info, MODEL_FILENAME);
+        download_with_progress(app, client, &url, &model_path_in(model_dir), info.label).await?;
     }
     if !tags_path_in(model_dir).exists() {
-        let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
+        let url = file_url(info, TAGS_FILENAME);
         download_with_progress(app, client, &url, &tags_path_in(model_dir), TAGS_FILENAME).await?;
     }
     Ok(())
@@ -418,16 +590,16 @@ pub async fn ensure_model_downloaded_at(
 pub async fn ensure_ort_library_at(
     app: &AppHandle,
     client: &reqwest::Client,
-    model_dir: &std::path::Path,
+    root_dir: &std::path::Path,
 ) -> Result<(), AppError> {
-    if is_ort_library_present_at(model_dir) {
+    if is_ort_library_present_at(root_dir) {
         return Ok(());
     }
-    std::fs::create_dir_all(model_dir)?;
+    std::fs::create_dir_all(root_dir)?;
     let (url, archive_name) = ort_download_info();
-    let archive_path = model_dir.join(archive_name);
+    let archive_path = root_dir.join(archive_name);
     download_with_progress(app, client, &url, &archive_path, "ONNX Runtime").await?;
-    extract_ort_library(&archive_path, &ort_library_path_in(model_dir))?;
+    extract_ort_library(&archive_path, &ort_library_path_in(root_dir))?;
     std::fs::remove_file(&archive_path).ok();
     Ok(())
 }
@@ -436,14 +608,16 @@ pub async fn ensure_ort_library_at(
 pub async fn ensure_model_downloaded_headless_at(
     client: &reqwest::Client,
     model_dir: &std::path::Path,
+    model_id: &str,
 ) -> Result<(), AppError> {
+    let info = find_model(model_id);
     std::fs::create_dir_all(model_dir)?;
     if !model_path_in(model_dir).exists() {
-        let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
+        let url = file_url(info, MODEL_FILENAME);
         download_simple(client, &url, &model_path_in(model_dir)).await?;
     }
     if !tags_path_in(model_dir).exists() {
-        let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
+        let url = file_url(info, TAGS_FILENAME);
         download_simple(client, &url, &tags_path_in(model_dir)).await?;
     }
     Ok(())
@@ -452,16 +626,16 @@ pub async fn ensure_model_downloaded_headless_at(
 /// Download ONNX Runtime without AppHandle (for browser mode).
 pub async fn ensure_ort_library_headless_at(
     client: &reqwest::Client,
-    model_dir: &std::path::Path,
+    root_dir: &std::path::Path,
 ) -> Result<(), AppError> {
-    if is_ort_library_present_at(model_dir) {
+    if is_ort_library_present_at(root_dir) {
         return Ok(());
     }
-    std::fs::create_dir_all(model_dir)?;
+    std::fs::create_dir_all(root_dir)?;
     let (url, archive_name) = ort_download_info();
-    let archive_path = model_dir.join(archive_name);
+    let archive_path = root_dir.join(archive_name);
     download_simple(client, &url, &archive_path).await?;
-    extract_ort_library(&archive_path, &ort_library_path_in(model_dir))?;
+    extract_ort_library(&archive_path, &ort_library_path_in(root_dir))?;
     std::fs::remove_file(&archive_path).ok();
     Ok(())
 }
@@ -726,5 +900,146 @@ fn extract_ort_library(
         Err(AppError::InterrogatorError(
             "ONNX Runtime DLL not found in archive".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-interrogator-test-{}-{}",
+            std::process::id(),
+            name
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn default_model_is_first_registry_entry() {
+        assert_eq!(INTERROGATOR_MODELS[0].id, DEFAULT_INTERROGATOR_MODEL);
+    }
+
+    #[test]
+    fn registry_ids_are_unique_and_well_formed() {
+        let mut ids: Vec<&str> = INTERROGATOR_MODELS.iter().map(|m| m.id).collect();
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "duplicate interrogator model id");
+
+        for m in INTERROGATOR_MODELS {
+            assert!(!m.label.is_empty(), "{} has no label", m.id);
+            assert!(m.repo.contains('/'), "{} repo is not owner/name", m.id);
+            assert!(m.size_bytes > 0, "{} has no size", m.id);
+            assert!(m.input_size > 0, "{} has no input size", m.id);
+        }
+    }
+
+    #[test]
+    fn find_model_resolves_known_ids() {
+        for m in INTERROGATOR_MODELS {
+            assert_eq!(find_model(m.id).id, m.id);
+        }
+    }
+
+    #[test]
+    fn find_model_falls_back_to_default_for_unknown_id() {
+        assert_eq!(find_model("").id, DEFAULT_INTERROGATOR_MODEL);
+        assert_eq!(
+            find_model("not-a-real-tagger").id,
+            DEFAULT_INTERROGATOR_MODEL
+        );
+    }
+
+    #[test]
+    fn file_url_points_at_the_repo_resolve_path() {
+        let info = find_model("wd-vit-tagger-v3");
+        assert_eq!(
+            file_url(info, MODEL_FILENAME),
+            "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx"
+        );
+    }
+
+    #[test]
+    fn migration_moves_legacy_files_into_the_default_model_dir() {
+        let root = scratch_dir("migrate");
+        std::fs::write(root.join(MODEL_FILENAME), b"onnx").unwrap();
+        std::fs::write(root.join(TAGS_FILENAME), b"tags").unwrap();
+
+        migrate_legacy_layout(&root);
+
+        let dest = root.join(DEFAULT_INTERROGATOR_MODEL);
+        assert!(is_model_downloaded_at(&dest));
+        assert!(!root.join(MODEL_FILENAME).exists());
+        assert!(!root.join(TAGS_FILENAME).exists());
+        assert_eq!(std::fs::read(dest.join(MODEL_FILENAME)).unwrap(), b"onnx");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn migration_is_a_noop_without_legacy_files() {
+        let root = scratch_dir("migrate-noop");
+        migrate_legacy_layout(&root);
+        assert!(!root.join(DEFAULT_INTERROGATOR_MODEL).exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn migration_does_not_clobber_an_already_migrated_model() {
+        let root = scratch_dir("migrate-existing");
+        let dest = root.join(DEFAULT_INTERROGATOR_MODEL);
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join(MODEL_FILENAME), b"new").unwrap();
+        std::fs::write(root.join(MODEL_FILENAME), b"legacy").unwrap();
+
+        migrate_legacy_layout(&root);
+
+        assert_eq!(std::fs::read(dest.join(MODEL_FILENAME)).unwrap(), b"new");
+        assert!(root.join(MODEL_FILENAME).exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn ort_library_lives_at_the_root_not_inside_a_model_dir() {
+        let root = scratch_dir("ort-root");
+        std::fs::write(ort_library_path_in(&root), b"lib").unwrap();
+        assert!(is_ort_library_present_at(&root));
+        assert!(!is_ort_library_present_at(
+            &root.join(DEFAULT_INTERROGATOR_MODEL)
+        ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn delete_removes_only_the_named_model() {
+        let root = scratch_dir("delete");
+        for id in ["wd-vit-tagger-v3", "wd-swinv2-tagger-v3"] {
+            let dir = root.join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(MODEL_FILENAME), b"onnx").unwrap();
+            std::fs::write(dir.join(TAGS_FILENAME), b"tags").unwrap();
+        }
+        std::fs::write(ort_library_path_in(&root), b"lib").unwrap();
+
+        delete_model_files_at(&root, "wd-vit-tagger-v3").unwrap();
+
+        assert!(!root.join("wd-vit-tagger-v3").exists());
+        assert!(is_model_downloaded_at(&root.join("wd-swinv2-tagger-v3")));
+        assert!(is_ort_library_present_at(&root));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn deleting_a_model_that_was_never_downloaded_succeeds() {
+        let root = scratch_dir("delete-missing");
+        assert!(delete_model_files_at(&root, "wd-convnext-tagger-v3").is_ok());
+        std::fs::remove_dir_all(&root).ok();
     }
 }

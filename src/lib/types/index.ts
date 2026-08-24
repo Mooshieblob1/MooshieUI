@@ -488,6 +488,8 @@ export interface AppConfig {
   extra_model_paths: string | null;
   interrogator_general_threshold: number;
   interrogator_character_threshold: number;
+  /** Id of the selected tagger from the backend's model registry. */
+  interrogator_model: string;
   prompt_assistant_model_id: string | null;
   prompt_assistant_idle_timeout_secs: number;
   prompt_assistant_setup_done: boolean;
@@ -593,6 +595,16 @@ export interface InterrogationResult {
   general_tags: TagResult[];
   copyright_tags: TagResult[];
   rating_tags: TagResult[];
+}
+
+/** One selectable tagger, plus whether its files are already on disk. */
+export interface InterrogatorModelStatus {
+  id: string;
+  label: string;
+  repo: string;
+  size_bytes: number;
+  input_size: number;
+  downloaded: boolean;
 }
 
 export interface GpuWorkerInfo {

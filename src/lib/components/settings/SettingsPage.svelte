@@ -1120,7 +1120,7 @@
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
-    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
+    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
@@ -1276,7 +1276,34 @@
     }
   }
 
+  // Interrogator model picker. The list is the backend's curated registry plus
+  // a per-model "already on disk" flag, so it has to be re-read after a delete.
+  let interrogatorModels = $state<InterrogatorModelStatus[]>([]);
+  let deletingInterrogatorModel = $state<string | null>(null);
+
+  async function loadInterrogatorModels() {
+    try {
+      interrogatorModels = await listInterrogatorModels();
+    } catch {
+      interrogatorModels = [];
+    }
+  }
+
+  async function removeInterrogatorModel(modelId: string) {
+    deletingInterrogatorModel = modelId;
+    try {
+      await deleteInterrogatorModel(modelId);
+      await loadInterrogatorModels();
+    } catch {
+      // Leave the list as-is; the badge still reflects what is actually on disk
+      // the next time the list reloads.
+    } finally {
+      deletingInterrogatorModel = null;
+    }
+  }
+
   onMount(() => {
+    void loadInterrogatorModels();
     void initSettings().then(() => {
       void refreshAttentionStatus();
     });
@@ -3638,6 +3665,47 @@
 
           {#if !collapsed.interrogator}
           <div class="px-5 pb-5 space-y-4">
+            <!-- Guarded on a loaded list: binding a <select> with no options
+                 would clear the selected id before the registry arrives. -->
+            {#if interrogatorModels.length > 0}
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1" for="interrogator-model-select">{locale.t('settings.interrogator.model')}</label>
+              <select
+                id="interrogator-model-select"
+                bind:value={config.interrogator_model}
+                onchange={() => { autoSave(); }}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+              >
+                {#each interrogatorModels as m (m.id)}
+                  <option value={m.id}>{m.label} ({locale.formatBytes(m.size_bytes)})</option>
+                {/each}
+              </select>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.interrogator.model_desc')}</p>
+            </div>
+            {/if}
+
+            {#if interrogatorModels.some((m) => m.downloaded)}
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.interrogator.downloaded_title')}</p>
+              {#each interrogatorModels.filter((m) => m.downloaded) as m (m.id)}
+                <div class="flex items-center justify-between gap-2 px-3 py-2 bg-neutral-800/50 border border-neutral-700/50 rounded-lg">
+                  <span class="text-xs text-neutral-300 truncate">
+                    {m.label}
+                    <span class="text-neutral-500">{locale.formatBytes(m.size_bytes)}</span>
+                  </span>
+                  <button
+                    class="shrink-0 text-[10px] px-2 py-1 rounded border border-red-900/60 text-red-400 hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    disabled={deletingInterrogatorModel === m.id}
+                    onclick={() => { void removeInterrogatorModel(m.id); }}
+                  >
+                    {deletingInterrogatorModel === m.id ? locale.t('settings.interrogator.deleting') : locale.t('settings.interrogator.delete')}
+                  </button>
+                </div>
+              {/each}
+              <p class="text-[10px] text-neutral-600">{locale.t('settings.interrogator.delete_hint')}</p>
+            </div>
+            {/if}
+
             <p class="text-[10px] text-neutral-500">
               {locale.t('settings.interrogator.thresholds_desc')}
             </p>

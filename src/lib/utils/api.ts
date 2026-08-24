@@ -9,6 +9,7 @@ import type {
   GenerationParams,
   GpuStats,
   InterrogationResult,
+  InterrogatorModelStatus,
   LlmCatalogEntry,
   LlmHardware,
   LlmProviderState,
@@ -1067,6 +1068,14 @@ export async function interrogateGalleryImage(filename: string): Promise<Interro
 
 export async function interrogateClipboard(): Promise<InterrogationResult> {
   return ipcInvoke("interrogate_clipboard");
+}
+
+export async function listInterrogatorModels(): Promise<InterrogatorModelStatus[]> {
+  return ipcInvoke("list_interrogator_models");
+}
+
+export async function deleteInterrogatorModel(modelId: string): Promise<void> {
+  return ipcInvoke("delete_interrogator_model", { modelId });
 }
 
 export async function detectLlmHardware(): Promise<LlmHardware> {

@@ -4824,6 +4824,25 @@ async fn dispatch_command(
         "interrogate_clipboard" => Err(
             "interrogate_clipboard not available in browser mode (no clipboard access)".to_string(),
         ),
+        "list_interrogator_models" => {
+            let root_dir = { state.interrogator.read().await.root_dir() };
+            serde_json::to_value(crate::interrogator::model_statuses_at(&root_dir))
+                .map_err(|e| e.to_string())
+        }
+        "delete_interrogator_model" => {
+            let model_id = args["modelId"]
+                .as_str()
+                .ok_or("Missing modelId")?
+                .to_string();
+            let root_dir = { state.interrogator.read().await.root_dir() };
+            crate::interrogator::delete_model_files_at(&root_dir, &model_id)
+                .map_err(|e| e.to_string())?;
+            let mut guard = state.interrogator.write().await;
+            if guard.model_id() == crate::interrogator::find_model(&model_id).id {
+                guard.unload_session();
+            }
+            Ok(serde_json::Value::Null)
+        }
 
         // --- Prompt assistant ---
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -5289,32 +5308,43 @@ async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
-    // Resolve the model directory under a brief read lock, then run the
-    // (multi-second, network) downloads WITHOUT holding the guard across await.
-    let model_dir = { state.interrogator.read().await.model_dir() };
-    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
-        crate::interrogator::ensure_model_downloaded_headless_at(&state.http_client, &model_dir)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    if !crate::interrogator::is_ort_library_present_at(&model_dir) {
-        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &model_dir)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-
-    let (general_threshold, character_threshold) = {
+    let (model_id, general_threshold, character_threshold) = {
         let config = state.config.read().await;
         (
+            crate::interrogator::find_model(&config.interrogator_model)
+                .id
+                .to_string(),
             config.interrogator_general_threshold,
             config.interrogator_character_threshold,
         )
     };
 
+    // Resolve the model root under a brief read lock, then run the
+    // (multi-second, network) downloads WITHOUT holding the guard across await.
+    let root_dir = { state.interrogator.read().await.root_dir() };
+    let model_dir = root_dir.join(&model_id);
+    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
+        crate::interrogator::ensure_model_downloaded_headless_at(
+            &state.http_client,
+            &model_dir,
+            &model_id,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    if !crate::interrogator::is_ort_library_present_at(&root_dir) {
+        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &root_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     let event_tx = state.event_tx.clone();
     let interrogator = state.interrogator.clone();
     tokio::task::spawn_blocking(move || {
         let mut guard = interrogator.blocking_write();
+        // Switching models drops any cached session, so this must precede the
+        // load check or a stale session would be reported as already loaded.
+        guard.set_model(&model_id);
         let is_first_load = guard.session_not_loaded();
         if is_first_load {
             let _ = event_tx.send(crate::state::BroadcastEvent {

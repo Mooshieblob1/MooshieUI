@@ -1867,7 +1867,13 @@ const en: Record<string, string> = {
   "settings.autocomplete.spellcheck_desc": "Underline tags that aren't known Danbooru tags and suggest corrections on right-click.",
   "generation.prompt.spellcheck_no_suggestions": "No suggestions",
 
-  "settings.interrogator.thresholds_desc": "Controls confidence thresholds for the image interrogator (pixai-tagger). Lower values return more tags, higher values are more selective.",
+  "settings.interrogator.model": "Tagger model",
+  "settings.interrogator.model_desc": "Models download on first use. Larger models are usually more accurate but slower.",
+  "settings.interrogator.downloaded_title": "Downloaded models",
+  "settings.interrogator.delete": "Delete",
+  "settings.interrogator.deleting": "Deleting...",
+  "settings.interrogator.delete_hint": "Deleting frees disk space. The model downloads again the next time you use it.",
+  "settings.interrogator.thresholds_desc": "Controls confidence thresholds for the image interrogator. Lower values return more tags, higher values are more selective.",
   "settings.interrogator.more_tags": "More tags",
   "settings.interrogator.fewer_tags": "Fewer tags",
 

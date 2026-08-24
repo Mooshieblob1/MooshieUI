@@ -557,6 +557,8 @@ pub fn run() {
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
             commands::interrogator::interrogate_clipboard,
+            commands::interrogator::list_interrogator_models,
+            commands::interrogator::delete_interrogator_model,
             commands::prompt_assistant::detect_llm_hardware,
             commands::prompt_assistant::list_llm_catalog,
             commands::prompt_assistant::llm_status,

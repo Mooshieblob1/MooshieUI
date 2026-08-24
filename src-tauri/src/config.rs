@@ -96,6 +96,9 @@ pub struct AppConfig {
     pub interrogator_general_threshold: f32,
     /// Interrogator: character tag confidence threshold (0.0–1.0)
     pub interrogator_character_threshold: f32,
+    /// Interrogator: id of the selected tagger from `interrogator::INTERROGATOR_MODELS`.
+    /// Unknown ids fall back to the default model at load time.
+    pub interrogator_model: String,
     /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
     pub prompt_assistant_model_id: Option<String>,
     /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
@@ -231,6 +234,7 @@ impl Default for AppConfig {
             extra_model_paths: None,
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
+            interrogator_model: crate::interrogator::DEFAULT_INTERROGATOR_MODEL.to_string(),
             prompt_assistant_model_id: None,
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,

@@ -1842,7 +1842,13 @@ const pl: Record<string, string> = {
   "settings.autocomplete.spellcheck_desc": "Podkreśl tagi, które nie są znanymi tagami Danbooru i zaproponuj poprawki po kliknięciu prawym przyciskiem myszy.",
   "generation.prompt.spellcheck_no_suggestions": "Brak sugestii",
 
-  "settings.interrogator.thresholds_desc": "Kontroluje progi ufności dla interrogatora obrazów (pixai-tagger). Niższe wartości zwracają więcej tagów, wyższe są bardziej selektywne.",
+  "settings.interrogator.model": "Model taggera",
+  "settings.interrogator.model_desc": "Modele są pobierane przy pierwszym użyciu. Większe modele są zwykle dokładniejsze, ale wolniejsze.",
+  "settings.interrogator.downloaded_title": "Pobrane modele",
+  "settings.interrogator.delete": "Usuń",
+  "settings.interrogator.deleting": "Usuwanie...",
+  "settings.interrogator.delete_hint": "Usunięcie zwalnia miejsce na dysku. Model zostanie pobrany ponownie przy następnym użyciu.",
+  "settings.interrogator.thresholds_desc": "Kontroluje progi ufności dla interrogatora obrazów. Niższe wartości zwracają więcej tagów, wyższe są bardziej selektywne.",
   "settings.interrogator.more_tags": "Więcej tagów",
   "settings.interrogator.fewer_tags": "Mniej tagów",
 
