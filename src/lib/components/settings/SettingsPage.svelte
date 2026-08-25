@@ -1388,6 +1388,10 @@
     config.llm_external_base_url = next.base_url;
     config.llm_external_model = next.model;
     config.llm_external_enabled = next.enabled;
+    // Not secret, so unlike the key these do reach the snapshot and would be
+    // reverted by a later autosave if they were left unmirrored.
+    config.llm_xai_client_id = next.xai_client_id;
+    config.llm_xai_scope = next.xai_scope;
   }
 
   /** Install a different attention backend and update config. */
@@ -3980,8 +3984,8 @@
                       <span class="text-[10px] text-neutral-400 block">{locale.t('settings.novelai.allowance_title')}</span>
                       <div class="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
                         <div
-                          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : 'bg-teal-500'}"
-                          style="width: {allowance.percent}%"
+                          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : allowance.isBonus ? 'bg-emerald-500' : 'bg-teal-500'}"
+                          style="width: {allowance.barPercent}%"
                         ></div>
                       </div>
                       <p class="text-[10px] {allowance.isLow ? 'text-amber-400' : 'text-neutral-400'}">

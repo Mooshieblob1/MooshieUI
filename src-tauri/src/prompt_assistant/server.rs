@@ -445,9 +445,10 @@ async fn send_external_chat(
 /// entered without the `/v1` segment are retried at `/v1/chat/completions` on
 /// 404. Bearer auth is added when `api_key` is non-empty.
 ///
-/// With an `image`, the user turn becomes a content-block array carrying a
-/// `data:` URI alongside the text. Endpoints that ignore images still see the
-/// text block, so the worst case is a text-only answer rather than an error.
+/// With `images`, the user turn becomes a content-block array carrying one
+/// `data:` URI per image alongside the text, in the order given. Endpoints that
+/// ignore images still see the text block, so the worst case is a text-only
+/// answer rather than an error.
 // One argument over the lint's threshold, and the caller already passes them
 // individually; a struct would only move the same fields somewhere else.
 #[allow(clippy::too_many_arguments)]
@@ -459,19 +460,26 @@ pub async fn chat_external(
     system: &str,
     user: &str,
     max_tokens: u32,
-    image: Option<&super::vision::VisionImage>,
+    images: &[super::vision::VisionImage],
 ) -> Result<String, AppError> {
-    let user_content = match image {
-        Some(img) => json!([
-            { "type": "text", "text": user },
-            {
+    // A bare string when there is nothing to look at: the array form is legal
+    // either way, but some OpenAI-compatible servers only accept the string.
+    let user_content = if images.is_empty() {
+        json!(user)
+    } else {
+        // Text first, then the images in the order the caller listed them --
+        // the user turn refers to them by position ("image 2"), so the order
+        // here is part of the contract rather than an implementation detail.
+        let mut parts = vec![json!({ "type": "text", "text": user })];
+        parts.extend(images.iter().map(|img| {
+            json!({
                 "type": "image_url",
                 "image_url": {
                     "url": format!("data:{};base64,{}", img.media_type, img.base64)
                 }
-            }
-        ]),
-        None => json!(user),
+            })
+        }));
+        json!(parts)
     };
     let body = json!({
         "model": model,
@@ -584,8 +592,9 @@ async fn error_detail(resp: reqwest::Response) -> String {
 /// mandatory, the system prompt is a top-level field instead of a message, and
 /// the answer arrives as a list of content blocks.
 ///
-/// An `image` leads the user turn, which is what Anthropic recommends: the
-/// model reads the picture before the instruction that refers to it.
+/// `images` lead the user turn, which is what Anthropic recommends: the model
+/// reads the pictures before the instruction that refers to them, and in the
+/// order the caller listed them so that "image 2" resolves.
 // One argument over the lint's threshold; see `chat_external`.
 #[allow(clippy::too_many_arguments)]
 pub async fn chat_anthropic(
@@ -596,26 +605,34 @@ pub async fn chat_anthropic(
     system: &str,
     user: &str,
     max_tokens: u32,
-    image: Option<&super::vision::VisionImage>,
+    images: &[super::vision::VisionImage],
 ) -> Result<String, AppError> {
     if api_key.trim().is_empty() {
         return Err(AppError::LlmError(
             "Anthropic requires an API key. Add one in Settings > Prompt Assistant.".into(),
         ));
     }
-    let user_content = match image {
-        Some(img) => json!([
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": img.media_type,
-                    "data": img.base64
-                }
-            },
-            { "type": "text", "text": user }
-        ]),
-        None => json!(user),
+    let user_content = if images.is_empty() {
+        json!(user)
+    } else {
+        // Images before the text, which is what Anthropic's own guidance asks
+        // for, and in the order the caller listed them: the user turn names
+        // them by position.
+        let mut parts: Vec<serde_json::Value> = images
+            .iter()
+            .map(|img| {
+                json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.media_type,
+                        "data": img.base64
+                    }
+                })
+            })
+            .collect();
+        parts.push(json!({ "type": "text", "text": user }));
+        json!(parts)
     };
     let body = json!({
         "model": model,
@@ -674,13 +691,13 @@ pub async fn chat_provider(
     system: &str,
     user: &str,
     max_tokens: u32,
-    image: Option<&super::vision::VisionImage>,
+    images: &[super::vision::VisionImage],
 ) -> Result<String, AppError> {
     let base = super::providers::effective_base_url(provider_id, base_url);
     match super::providers::wire_for(provider_id) {
         super::providers::Wire::Anthropic => {
             chat_anthropic(
-                client, &base, api_key, model, system, user, max_tokens, image,
+                client, &base, api_key, model, system, user, max_tokens, images,
             )
             .await
         }
@@ -692,7 +709,7 @@ pub async fn chat_provider(
                 ));
             }
             chat_external(
-                client, &base, api_key, model, system, user, max_tokens, image,
+                client, &base, api_key, model, system, user, max_tokens, images,
             )
             .await
         }

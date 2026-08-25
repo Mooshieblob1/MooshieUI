@@ -196,3 +196,198 @@ pub fn model_id_matches(id: &str, name: &str) -> bool {
         || name.strip_suffix(":latest").is_some_and(|stem| stem == id)
         || id.strip_suffix(":latest").is_some_and(|stem| stem == name)
 }
+
+/// How many reference images one turn may carry.
+///
+/// Four is what the NovelAI enhance modal offers. The ceiling exists because
+/// every image is inlined into the request body: a fifth costs another ~200 KB
+/// of base64 on a request that already carries four, and no provider reads a
+/// long image list as carefully as a short one.
+pub const MAX_VISION_IMAGES: usize = 4;
+
+/// Strip a `data:image/png;base64,` prefix if the client left one on.
+///
+/// The frontend helper that produces these (`fileToNovelAiBase64`) already cuts
+/// the prefix, but a caller that hands over a canvas `toDataURL()` unmodified
+/// is doing the obvious thing, and silently accepting both is cheaper than a
+/// round of "why is my reference ignored".
+fn strip_data_uri(s: &str) -> &str {
+    match s.split_once("base64,") {
+        Some((prefix, rest)) if prefix.starts_with("data:") => rest,
+        _ => s,
+    }
+}
+
+/// Decode client-supplied base64 images into vision payloads, in order.
+///
+/// Unlike `load_input_frame` these arrive as bytes rather than as a ComfyUI
+/// upload name, because the feature behind them (the NovelAI prompt enhance)
+/// runs on a backend that may have no ComfyUI process at all. The client has
+/// already downscaled each one, and they are re-encoded here anyway so that a
+/// caller which skipped that step cannot inline a 12 MP PNG.
+///
+/// Order is meaningful: the user turn names the images by position, so a
+/// failed decode is dropped from the end of the log rather than silently
+/// renumbering the survivors. An image that cannot be read degrades to a
+/// text-only reference the same way a missing frame does.
+pub async fn load_inline_images(data: Vec<String>) -> Vec<VisionImage> {
+    let data: Vec<String> = data
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .take(MAX_VISION_IMAGES)
+        .collect();
+    if data.is_empty() {
+        return Vec::new();
+    }
+    // One blocking hop for the whole batch: four decode-resize-encode passes
+    // back to back would otherwise stall the runtime that serves browser mode.
+    let decoded = tokio::task::spawn_blocking(move || {
+        data.iter()
+            .enumerate()
+            .filter_map(|(i, raw)| {
+                let bytes = match base64::engine::general_purpose::STANDARD
+                    .decode(strip_data_uri(raw.trim()))
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log::warn!(
+                            "[prompt-assistant] reference image {i} is not valid base64: {e}"
+                        );
+                        return None;
+                    }
+                };
+                match encode_downscaled(&bytes, VISION_MAX_PIXELS) {
+                    Ok(img) => Some(img),
+                    Err(e) => {
+                        log::warn!("[prompt-assistant] could not encode reference image {i}: {e}");
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await;
+    match decoded {
+        Ok(images) => images,
+        Err(e) => {
+            log::warn!("[prompt-assistant] reference image encode task failed: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Gather every image one turn should carry, in the order the model sees them.
+///
+/// The two sources exist because the two callers hold images differently: a
+/// ComfyUI input filename for the video paths, raw base64 for the NovelAI
+/// prompt enhance, whose users may have no ComfyUI process running at all. The
+/// filename goes first when both are present, since it is the frame the turn is
+/// *about* and the base64 ones are references to it.
+pub async fn collect_images(
+    state: &AppState,
+    filename: Option<String>,
+    data: Option<Vec<String>>,
+) -> Vec<VisionImage> {
+    let mut images: Vec<VisionImage> = load_input_frame(state, filename)
+        .await
+        .into_iter()
+        .collect();
+    let room = MAX_VISION_IMAGES.saturating_sub(images.len());
+    if room > 0 {
+        if let Some(data) = data {
+            images.extend(load_inline_images(data).await.into_iter().take(room));
+        }
+    }
+    images
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real PNG, small enough to inline: the decode path is what is under
+    /// test, so a handcrafted byte string would only test the error branch.
+    fn png_bytes(w: u32, h: u32) -> Vec<u8> {
+        let img = image::RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        buf.into_inner()
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn strips_a_data_uri_prefix() {
+        assert_eq!(strip_data_uri("data:image/png;base64,AAAA"), "AAAA");
+        assert_eq!(strip_data_uri("data:image/jpeg;base64,QQ=="), "QQ==");
+    }
+
+    #[test]
+    fn leaves_bare_base64_alone() {
+        assert_eq!(strip_data_uri("AAAA"), "AAAA");
+        // A payload that happens to contain the marker without the data: scheme
+        // is data, not a prefix, and must survive intact.
+        assert_eq!(strip_data_uri("xxbase64,yy"), "xxbase64,yy");
+    }
+
+    #[test]
+    fn encodes_as_jpeg_within_the_pixel_budget() {
+        let img = encode_downscaled(&png_bytes(64, 32), VISION_MAX_PIXELS).unwrap();
+        assert_eq!(img.media_type, "image/jpeg");
+        assert!(!img.base64.is_empty());
+    }
+
+    #[test]
+    fn downscales_past_the_pixel_budget() {
+        // 200x200 = 40k pixels, asked to fit in 10k: the result must be smaller
+        // in both directions, not merely re-encoded.
+        let img = encode_downscaled(&png_bytes(200, 200), 10_000).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&img.base64)
+            .unwrap();
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert!(decoded.width() < 200 && decoded.height() < 200);
+        assert!(u64::from(decoded.width()) * u64::from(decoded.height()) <= 10_000);
+    }
+
+    #[tokio::test]
+    async fn loads_inline_images_in_order() {
+        let images = load_inline_images(vec![b64(&png_bytes(8, 8)), b64(&png_bytes(16, 16))]).await;
+        assert_eq!(images.len(), 2);
+        assert!(images.iter().all(|i| i.media_type == "image/jpeg"));
+    }
+
+    #[tokio::test]
+    async fn skips_blank_and_undecodable_entries() {
+        let images = load_inline_images(vec![
+            "   ".to_string(),
+            "not base64 at all!!".to_string(),
+            b64(b"still not an image"),
+            b64(&png_bytes(8, 8)),
+        ])
+        .await;
+        // Only the real PNG survives; the rest degrade to nothing rather than
+        // failing the whole turn.
+        assert_eq!(images.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn caps_the_batch() {
+        let many: Vec<String> = (0..MAX_VISION_IMAGES + 3)
+            .map(|_| b64(&png_bytes(8, 8)))
+            .collect();
+        assert_eq!(load_inline_images(many).await.len(), MAX_VISION_IMAGES);
+    }
+
+    #[tokio::test]
+    async fn empty_input_makes_no_images() {
+        assert!(load_inline_images(Vec::new()).await.is_empty());
+        assert!(load_inline_images(vec![String::new()]).await.is_empty());
+    }
+}

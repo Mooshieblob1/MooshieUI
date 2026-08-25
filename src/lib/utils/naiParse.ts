@@ -12,7 +12,6 @@
  */
 
 import { NAI_QUALITY_FILLER } from "./naiPrompt.js";
-import type { NaiPromptContext } from "./naiPrompt.js";
 
 /** What one full rewrite turn (attempt plus optional retry) produced. */
 export interface NaiRewriteResult {
@@ -193,10 +192,7 @@ const NUMBERED_BOX = /^\s*(?:character|char)\s*\d/i;
  * Anything the normalizer already fixed is deliberately absent here: a validator
  * problem means the response is wrong in a way no local edit can repair.
  */
-export function validateNaiResponse(
-  parsed: NaiParsedResponse,
-  ctx: NaiPromptContext,
-): string[] {
+export function validateNaiResponse(parsed: NaiParsedResponse): string[] {
   const problems: string[] = [];
   const all = [parsed.base, parsed.uc, ...parsed.characters];
 
@@ -227,22 +223,31 @@ export function validateNaiResponse(
     }
   }
 
+  // Unconditional: the model is never the one who writes the quality stack.
+  // With NovelAI's toggle on this would double it, and with the toggle off the
+  // user has asked for no stack at all.
   const lowerBase = parsed.base.toLowerCase();
-  if (ctx.qualityToggle) {
-    const found = NAI_QUALITY_FILLER.filter((q) => lowerBase.includes(q));
-    if (found.length > 0) {
-      problems.push(
-        `BASE contained quality filler that NovelAI already prepends (${found.join(", ")}). Remove it.`,
-      );
-    }
+  const filler = NAI_QUALITY_FILLER.filter((q) => lowerBase.includes(q));
+  if (filler.length > 0) {
+    problems.push(
+      `BASE contained quality filler (${filler.join(", ")}). NovelAI's quality toggle owns that stack, so remove it.`,
+    );
   }
 
+  // A blank line inside a Text: block starts a second string rather than ending
+  // the block, so "is there anything after it" is not a question the shape can
+  // answer. What it can answer is whether a later segment is prompt rather than
+  // lettering: weight spans, emphasis markers and count tags never appear in
+  // words that are meant to be rendered into the image.
   const textIndex = parsed.base.search(/(?:^|\n)\s*Text\s*:/i);
   if (textIndex !== -1) {
-    const after = parsed.base.slice(textIndex).split(/\n\s*\n/);
-    if (after.length > 1 && after.slice(1).join("").trim() !== "") {
+    const trailing = parsed.base
+      .slice(textIndex)
+      .split(/\n\s*\n/)
+      .slice(1);
+    if (trailing.some((segment) => /::|[{}[\]]|\b\d+(?:girls?|boys?|others?)\b/i.test(segment))) {
       problems.push(
-        "Content followed the Text: block in BASE. The Text: block must be last, with nothing after it.",
+        "Prompt content followed the Text: block in BASE. Everything after Text: is rendered as lettering, so that block must come last.",
       );
     }
   }

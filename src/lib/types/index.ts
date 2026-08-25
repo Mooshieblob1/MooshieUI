@@ -235,8 +235,12 @@ export interface NovelAiParams {
  * it. Present only for an active Opus subscription; lower tiers get null.
  */
 export interface NovelAiOpusAllowance {
-  /** Allowance remaining, 0 through 100. */
+  /** Allowance remaining. Floored at 0, but a bonus grant can exceed 100. */
   percent: number;
+  /** `percent` capped at 100, for the bar's width only. */
+  barPercent: number;
+  /** Above a full allowance, i.e. bonus allowance the bar cannot draw in full. */
+  isBonus: boolean;
   approxImages: number;
   isEmpty: boolean;
   isLow: boolean;
@@ -538,7 +542,7 @@ export interface AppConfig {
   theme_profiles: ThemeProfile[];
   /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
   llm_external_enabled: boolean;
-  /** External LLM provider id: anthropic | openai | xai | openrouter | custom. */
+  /** External LLM provider id: anthropic | openai | xai | xai-oauth | openrouter | nous | custom. */
   llm_provider: string;
   /** External LLM API root, e.g. http://localhost:1234/v1 or https://api.openai.com/v1. */
   llm_external_base_url: string;
@@ -548,6 +552,10 @@ export interface AppConfig {
   llm_external_api_key_configured?: boolean;
   /** External LLM model name (e.g. gpt-4o-mini). */
   llm_external_model: string;
+  /** OAuth client id presented to xAI; empty until an operator supplies one. */
+  llm_xai_client_id: string;
+  /** Scope override for the xAI sign-in; empty means the backend default. */
+  llm_xai_scope: string;
   /** Disable the 7-day gallery image auto-expiry entirely (default: false). */
   gallery_never_expire: boolean;
 }
@@ -685,7 +693,10 @@ export type LlmProviderId =
   | "anthropic"
   | "openai"
   | "xai"
+  /** xAI reached with a signed-in session, so a SuperGrok subscription pays. */
+  | "xai-oauth"
   | "openrouter"
+  | "nous"
   | "custom";
 
 /**
@@ -701,4 +712,23 @@ export interface LlmProviderState {
   oauth: boolean;
   /** The external provider, not the bundled local model, is what runs. */
   enabled: boolean;
+  /**
+   * OAuth client id override for xAI, or empty for the shared one below. Unlike
+   * the API key this is not a secret (OAuth client ids are public by design), so
+   * it round-trips to the UI for whoever set it up to see.
+   */
+  xai_client_id: string;
+  /** Scope override for the xAI sign-in, or empty for the built-in default. */
+  xai_scope: string;
+  /** The client id sign-in uses while the override is empty, shown as its hint. */
+  xai_client_id_default: string;
+}
+
+/** The one-time code the xAI device sign-in wants typed on xAI's page. */
+export interface LlmDeviceCode {
+  provider: string;
+  user_code: string;
+  verification_uri: string;
+  /** Pre-filled URL when the server offers one, else the bare page. */
+  verification_uri_complete: string;
 }

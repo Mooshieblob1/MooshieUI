@@ -33,7 +33,9 @@
     "anthropic",
     "openai",
     "xai",
+    "xai-oauth",
     "openrouter",
+    "nous",
     "custom",
   ] as const;
 
@@ -43,9 +45,12 @@
   const provider = $derived(promptAssistant.provider);
   const providerId = $derived(provider?.provider ?? "custom");
   const isCustom = $derived(providerId === "custom");
+  /** xAI signed in rather than keyed: the only provider taking a client id. */
+  const isXaiOauth = $derived(providerId === "xai-oauth");
   /** Sign-in binds a loopback listener on the machine running Rust, which in
-   *  browser mode is the server rather than the user's machine. */
-  const canOauth = $derived(!!provider?.oauth && !isBrowserMode);
+   *  browser mode is the server rather than the user's machine. The xAI device
+   *  grant is the exception: it has no redirect, so it works from either. */
+  const canOauth = $derived(!!provider?.oauth && (!isBrowserMode || isXaiOauth));
 
   $effect(() => {
     if (loaded || promptAssistant.provider) return;
@@ -112,6 +117,41 @@
       </select>
     </div>
 
+    {#if isXaiOauth}
+      <div class="space-y-1.5">
+        <label for="llm-xai-client-id" class="text-xs text-neutral-400 block">{locale.t('settings.prompt_assistant.xai_client_id')}</label>
+        <input
+          id="llm-xai-client-id"
+          type="text"
+          value={provider?.xai_client_id ?? ""}
+          disabled={promptAssistant.providerBusy}
+          onchange={(e) => {
+            const id = e.currentTarget.value;
+            run(() => promptAssistant.saveXaiClient(id, provider?.xai_scope ?? ""));
+          }}
+          placeholder={provider?.xai_client_id_default ?? ""}
+          autocomplete="off"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+        />
+        <p class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.xai_client_id_hint')}</p>
+        <label for="llm-xai-scope" class="text-xs text-neutral-400 block pt-1">{locale.t('settings.prompt_assistant.xai_scope')}</label>
+        <input
+          id="llm-xai-scope"
+          type="text"
+          value={provider?.xai_scope ?? ""}
+          disabled={promptAssistant.providerBusy}
+          onchange={(e) => {
+            const scope = e.currentTarget.value;
+            run(() => promptAssistant.saveXaiClient(provider?.xai_client_id ?? "", scope));
+          }}
+          placeholder={locale.t('settings.prompt_assistant.xai_scope_placeholder')}
+          autocomplete="off"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+        />
+        <p class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.xai_scope_hint')}</p>
+      </div>
+    {/if}
+
     {#if isCustom}
       <div>
         <label for="llm-base-url" class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_url')}</label>
@@ -176,6 +216,22 @@
               ? locale.t('settings.prompt_assistant.oauth_waiting')
               : locale.t('settings.prompt_assistant.oauth_connect', { provider: providerLabel(providerId) })}
           </button>
+          <!-- The code has to be read off the screen and typed on xAI's page, so
+               it stays up for the whole poll rather than only while focused. -->
+          {#if promptAssistant.deviceCode}
+            <div class="rounded-lg border border-indigo-500/40 bg-indigo-500/5 px-2 py-2 space-y-1">
+              <p class="text-[10px] text-neutral-400">{locale.t('settings.prompt_assistant.device_code_title')}</p>
+              <p class="font-mono text-sm tracking-widest text-indigo-200 select-all">{promptAssistant.deviceCode.user_code}</p>
+              <a
+                href={promptAssistant.deviceCode.verification_uri_complete}
+                target="_blank"
+                rel="noreferrer"
+                class="text-[10px] text-indigo-300 underline break-all"
+              >
+                {promptAssistant.deviceCode.verification_uri}
+              </a>
+            </div>
+          {/if}
         {:else}
           <p class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.oauth_desktop_only')}</p>
         {/if}

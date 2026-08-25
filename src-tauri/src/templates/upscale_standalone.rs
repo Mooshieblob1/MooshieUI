@@ -25,21 +25,29 @@ use serde_json::Value;
 
 use crate::comfyui::types::GenerationParams;
 
-/// Does this request ask for a local pass that can actually run?
+/// Is a local pass possible at all, whether or not one was asked for?
 ///
 /// The local checkpoint is the hard requirement: `params.checkpoint` names a
 /// NovelAI model here, and ComfyUI has no such file. Without one there is
 /// nothing to sample with, so the NovelAI image is delivered untouched.
+pub fn can_run(params: &GenerationParams) -> bool {
+    params.novelai.as_ref().is_some_and(|nai| {
+        nai.local_checkpoint
+            .as_deref()
+            .is_some_and(|c| !c.trim().is_empty())
+    })
+}
+
+/// Does this request ask for the automatic pass after a NovelAI generation?
+///
+/// Separate from [`can_run`] because `local_post_process` means "do this every
+/// time". An explicit Refine click is a request in its own right and must not be
+/// gated on that toggle, which is why [`build_params`] checks only [`can_run`].
 pub fn is_requested(params: &GenerationParams) -> bool {
     let Some(nai) = params.novelai.as_ref() else {
         return false;
     };
-    nai.local_post_process
-        && nai
-            .local_checkpoint
-            .as_deref()
-            .is_some_and(|c| !c.trim().is_empty())
-        && (params.upscale_enabled || params.facefix_enabled)
+    nai.local_post_process && can_run(params) && (params.upscale_enabled || params.facefix_enabled)
 }
 
 /// Derive the refine-only parameters for the local pass.
@@ -47,10 +55,11 @@ pub fn is_requested(params: &GenerationParams) -> bool {
 /// `input_filename` is the name the NovelAI PNG was uploaded under in
 /// ComfyUI's input directory, i.e. what `LoadImage` will resolve.
 ///
-/// Returns `None` when [`is_requested`] would be false, so callers can treat
-/// "no post-process" and "post-process not possible" identically.
+/// Returns `None` when [`can_run`] would be false, i.e. when no local model is
+/// configured to sample with. Callers that only want the *automatic* pass check
+/// [`is_requested`] first, as `novelai::run_local_post_process` does.
 pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<GenerationParams> {
-    if !is_requested(params) {
+    if !can_run(params) {
         return None;
     }
     let nai = params.novelai.as_ref()?;
@@ -173,6 +182,47 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     out.novelai = None;
 
     Some(out)
+}
+
+/// Point a ComfyUI request at the local model when the picked checkpoint is a
+/// NovelAI one.
+///
+/// The Refine button, and anything else that submits the store's params
+/// straight to ComfyUI, carries whatever the model picker holds. In NovelAI
+/// mode that is a NovelAI model id, and `CheckpointLoaderSimple` rejects it with
+/// `value_not_in_list` because no such file exists on disk. The swap is exactly
+/// the one the automatic post-process already performs, so it is reused rather
+/// than written twice.
+///
+/// A no-op for every ordinary ComfyUI request, so both generate entry points
+/// (the Tauri command and the browser-mode route) call it unconditionally.
+pub fn rewrite_novelai_request(params: &mut GenerationParams) -> Result<(), String> {
+    if !crate::novelai::is_novelai_model(&params.checkpoint) {
+        return Ok(());
+    }
+
+    // Without an input image there is nothing local to work on: this would be a
+    // from-scratch generation on a model ComfyUI does not have. That is a
+    // routing mistake upstream, so name it rather than silently rewriting it
+    // into a refine of nothing.
+    let input = params
+        .input_image
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "'{}' is a NovelAI model, which ComfyUI cannot load. Only a local pass over an image that already exists can run here.",
+                params.checkpoint
+            )
+        })?
+        .to_string();
+
+    let derived = build_params(params, &input).ok_or_else(|| {
+        "Refining a NovelAI image runs on a local model, and none is set. Pick one under Local post-process in the NovelAI panel.".to_string()
+    })?;
+    *params = derived;
+    Ok(())
 }
 
 /// Build the ComfyUI workflow for the local pass, or `None` if it is not
@@ -502,5 +552,64 @@ mod tests {
     #[test]
     fn a_request_with_no_local_pass_builds_no_graph() {
         assert!(build(&base(), "nai-abc.png", 1).is_none());
+    }
+
+    #[test]
+    fn an_ordinary_comfyui_request_is_left_alone() {
+        let mut p = base();
+        p.checkpoint = "Juice.safetensors".into();
+        p.novelai = None;
+        let before = p.clone();
+        rewrite_novelai_request(&mut p).expect("no-op");
+        assert_eq!(p.checkpoint, before.checkpoint);
+        assert_eq!(p.mode, before.mode);
+        assert!(!p.refine_only);
+    }
+
+    #[test]
+    fn an_explicit_refine_swaps_the_model_without_the_auto_toggle() {
+        // `local_post_process` is the "after every generation" toggle. A Refine
+        // click is its own request and must work with it off, which is the bug
+        // this covers: the NovelAI model id used to reach CheckpointLoaderSimple.
+        let nai = NovelAiParams {
+            local_post_process: false,
+            ..local_nai()
+        };
+        let mut p = with_nai(nai);
+        p.checkpoint = "nai-diffusion-5-full".into();
+        p.mode = "img2img".into();
+        p.input_image = Some("refine-abc.png".into());
+
+        rewrite_novelai_request(&mut p).expect("rewritten");
+        assert_eq!(p.checkpoint, "animaPencilXL.safetensors");
+        assert_eq!(p.input_image.as_deref(), Some("refine-abc.png"));
+        assert!(p.refine_only);
+        assert!(p.novelai.is_none());
+    }
+
+    #[test]
+    fn a_refine_with_no_local_model_says_so() {
+        let nai = NovelAiParams {
+            local_checkpoint: None,
+            ..local_nai()
+        };
+        let mut p = with_nai(nai);
+        p.checkpoint = "nai-diffusion-5-full".into();
+        p.input_image = Some("refine-abc.png".into());
+
+        let err = rewrite_novelai_request(&mut p).expect_err("no local model");
+        assert!(err.contains("local model"), "unhelpful message: {err}");
+    }
+
+    #[test]
+    fn a_novelai_model_with_nothing_to_refine_is_rejected() {
+        // txt2img on a NovelAI model belongs on the NovelAI path; arriving here
+        // is a routing mistake, and silently refining nothing would hide it.
+        let mut p = with_nai(local_nai());
+        p.checkpoint = "nai-diffusion-5-full".into();
+        p.input_image = None;
+
+        let err = rewrite_novelai_request(&mut p).expect_err("nothing to refine");
+        assert!(err.contains("nai-diffusion-5-full"), "unhelpful: {err}");
     }
 }

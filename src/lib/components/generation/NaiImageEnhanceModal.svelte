@@ -1,22 +1,28 @@
 <script lang="ts">
   /**
-   * The NovelAI image Enhance form, in one app-wide modal.
+   * The three things NovelAI can do to an existing image, in one app-wide modal.
    *
    * App-wide for the same reason the Director Tools modal is: it acts on an
    * image the user is already looking at (a lightbox view, a gallery entry),
    * and none of those sit next to the generation settings.
    *
-   * Enhance is not its own endpoint. It is an img2img pass at a larger canvas,
-   * so this submits through `requestGeneration` exactly as the Generate button
-   * does, and the prompt, undesired content and characters it sends are the
-   * ones already typed into the generation panel. There is deliberately no
-   * prompt field here: that panel *is* the enhance prompt box, and a second
-   * copy would only ever disagree with it.
+   * Enhance and Variations are not endpoints. Both are img2img passes -- one at
+   * a larger canvas, one repeated at the same canvas -- so they submit through
+   * `requestGeneration` exactly as the Generate button does, and the prompt,
+   * undesired content and characters they send are the ones already typed into
+   * the generation panel. There is deliberately no prompt field here: that
+   * panel *is* the prompt box, and a second copy would only ever disagree with
+   * it. Upscale is a real endpoint, reached by the `upscale` action, and sends
+   * no prompt at all.
+   *
+   * All three share this one modal because they share the expensive step: the
+   * source decode that every quoted size and price hangs off. Switching tabs
+   * re-prices, it does not re-read.
    *
    * Nothing here waits for the result. The backend reports through the same
    * synthetic prompt id and `comfyui:*` events a NovelAI generation uses, so
-   * once the id is handed to `progress.enqueue` the image arrives in the
-   * session grid and the gallery on its own.
+   * once the id is handed to `progress.enqueue` the images arrive in the
+   * session grid and the gallery on their own.
    */
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -29,9 +35,26 @@
     imageBytesToBase64,
     loadOutputImageForGenerationInput,
   } from "../../utils/galleryActions.js";
-  import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
-  import { MAGNITUDE_MAX, MAGNITUDE_MIN } from "../../utils/novelaiEnhance.js";
-  import type { OutputImage } from "../../types/index.js";
+  import { estimateNovelAiCost, novelAiUpscaleCost } from "../../utils/novelaiCost.js";
+  import {
+    MAGNITUDE_MAX,
+    MAGNITUDE_MIN,
+    UPSCALE_ACTION,
+    UPSCALE_FACTOR,
+    VARIATION_COUNT_MAX,
+    VARIATION_COUNT_MIN,
+    VARIETY_MAX,
+    VARIETY_MIN,
+  } from "../../utils/novelaiEnhance.js";
+  import type { NaiImageAction } from "../../stores/naiImageEnhance.svelte.js";
+  import type { GenerationParams, OutputImage } from "../../types/index.js";
+
+  /** The tab strip, in the order the three actions escalate in price. */
+  const TABS: { action: NaiImageAction; label: string }[] = [
+    { action: "enhance", label: "novelai.enhance.tab_enhance" },
+    { action: "upscale", label: "novelai.enhance.tab_upscale" },
+    { action: "variations", label: "novelai.enhance.tab_variations" },
+  ];
 
   /**
    * The source the load below was started for.
@@ -103,19 +126,24 @@
   }
 
   /**
-   * Anlas for a canvas, at the denoise the request will actually carry.
+   * Anlas for a canvas, at the denoise and batch the request will carry.
    *
    * Strength is part of the price: NovelAI charges an img2img pass for the
-   * steps it samples, so moving magnitude moves this number too. Batch is
-   * fixed at one here because that is what the request sends.
+   * steps it samples, so moving magnitude or variety moves this number too.
+   * Batch matters as well, and not only as a multiplier -- the Opus allowance
+   * covers a batch of one and nothing larger.
    */
-  function costFor(size: { width: number; height: number }, strength: number): number {
+  function costFor(
+    size: { width: number; height: number },
+    strength: number,
+    samples = 1,
+  ): number {
     if (!(size.width > 0 && size.height > 0)) return 0;
     return estimateNovelAiCost({
       width: size.width,
       height: size.height,
       steps: generation.steps,
-      nSamples: 1,
+      nSamples: samples,
       strength,
       isOpus: novelai.isOpus,
       vibeEncodes: generation.novelaiSettings.vibes.filter((v) => !v.encoding).length,
@@ -128,10 +156,57 @@
       : locale.t("novelai.enhance.cost", { anlas: String(anlas) });
   }
 
+  const action = $derived(naiImageEnhance.action);
   const denoise = $derived(naiImageEnhance.denoise);
   const oneXCost = $derived(costFor(naiImageEnhance.oneXSize, denoise.strength));
+  const midCost = $derived(costFor(naiImageEnhance.midSize, denoise.strength));
   const maxCost = $derived(costFor(naiImageEnhance.maxSize, denoise.strength));
   const totalCost = $derived(costFor(naiImageEnhance.targetSize, denoise.strength));
+
+  // Priced by its own rule, not by the generation formula: the upscaler runs no
+  // sampler, so there are no steps and no canvas for that formula to work from.
+  // It steps up with the size of the source, and Opus does not cover any of it.
+  const upscaleCost = $derived(
+    novelAiUpscaleCost(naiImageEnhance.sourceWidth, naiImageEnhance.sourceHeight),
+  );
+  // Every variation is a full img2img sample, so this is the one quote in the
+  // modal that a single click can multiply.
+  const variationsCost = $derived(
+    costFor(naiImageEnhance.oneXSize, naiImageEnhance.variety, naiImageEnhance.variationCount),
+  );
+
+  const headerKey = $derived(
+    action === "upscale"
+      ? "novelai.enhance.upscale_title"
+      : action === "variations"
+        ? "novelai.enhance.variations_title"
+        : "novelai.enhance.title",
+  );
+  const subtitleKey = $derived(
+    action === "upscale"
+      ? "novelai.enhance.upscale_subtitle"
+      : action === "variations"
+        ? "novelai.enhance.variations_subtitle"
+        : "novelai.enhance.subtitle",
+  );
+  const runKey = $derived(
+    action === "upscale"
+      ? "novelai.enhance.tab_upscale"
+      : action === "variations"
+        ? "novelai.enhance.tab_variations"
+        : "novelai.enhance.run",
+  );
+  /** What the footer quotes: the size that comes back, and what it costs. */
+  const footerSize = $derived(
+    action === "upscale"
+      ? naiImageEnhance.upscaleSize
+      : action === "variations"
+        ? naiImageEnhance.oneXSize
+        : naiImageEnhance.targetSize,
+  );
+  const footerCost = $derived(
+    action === "upscale" ? upscaleCost : action === "variations" ? variationsCost : totalCost,
+  );
 
   /** Integer position for the slider; the box beside it keeps the decimals. */
   const magnitudeStep = $derived(Math.round(naiImageEnhance.magnitude));
@@ -150,48 +225,117 @@
     if (Number.isFinite(value)) naiImageEnhance.magnitude = value;
   }
 
+  function onCountInput(e: Event) {
+    naiImageEnhance.setVariationCount(Number((e.currentTarget as HTMLInputElement).value));
+  }
+
   function onMagnitudeBlur() {
     naiImageEnhance.setMagnitude(naiImageEnhance.magnitude);
+  }
+
+  /**
+   * The whole generation panel, plus what every one of the three overrides.
+   *
+   * `toParams`'s override map does not reach size, batch or the nested NovelAI
+   * block, so those are set on the built object. "image_edit" and not "img2img"
+   * for all three: each result is a pass over an existing image, and tagging it
+   * img2img would overwrite that tab's last output.
+   */
+  function baseParams(image: string): GenerationParams {
+    const params = generation.toParams();
+    params.mode = "image_edit";
+    params.input_image = image;
+    params.mask_image = null;
+    // No local second pass on top of a paid NovelAI request: an upscale here
+    // would resample the very detail that was just bought.
+    params.upscale_enabled = false;
+    if (params.novelai) params.novelai.local_post_process = false;
+    return params;
+  }
+
+  function enhanceParams(image: string): GenerationParams {
+    const params = baseParams(image);
+    const target = naiImageEnhance.targetSize;
+    const { strength, noise } = naiImageEnhance.denoise;
+    params.width = target.width;
+    params.height = target.height;
+    // One at a time. Anything else multiplies an already large canvas by the
+    // batch, and the Opus allowance only ever covers a single sample.
+    params.batch_size = 1;
+    if (params.novelai) {
+      params.novelai.action = "img2img";
+      params.novelai.strength = strength;
+      params.novelai.noise = noise;
+    }
+    return params;
+  }
+
+  function upscaleParams(image: string): GenerationParams {
+    const params = baseParams(image);
+    // The source's own size, unsnapped: the upscaler is told what it is being
+    // given, not what to produce, and the 64px generation grid does not apply.
+    params.width = naiImageEnhance.sourceWidth;
+    params.height = naiImageEnhance.sourceHeight;
+    params.batch_size = 1;
+    if (params.novelai) params.novelai.action = UPSCALE_ACTION;
+    return params;
+  }
+
+  function variationParams(image: string): GenerationParams {
+    const params = baseParams(image);
+    const size = naiImageEnhance.oneXSize;
+    params.width = size.width;
+    params.height = size.height;
+    params.batch_size = naiImageEnhance.variationCount;
+    // A fresh seed every run. With the panel's seed pinned, a second click
+    // would spend the same Anlas on the same set of images again.
+    params.seed = "-1";
+    if (params.novelai) {
+      params.novelai.action = "img2img";
+      params.novelai.strength = naiImageEnhance.variety;
+      params.novelai.noise = 0;
+    }
+    return params;
   }
 
   async function run() {
     const image = naiImageEnhance.imageBase64;
     if (!image || !naiImageEnhance.canRun) return;
+    const current = naiImageEnhance.action;
     naiImageEnhance.busy = true;
     naiImageEnhance.error = null;
     try {
-      const target = naiImageEnhance.targetSize;
-      const { strength, noise } = naiImageEnhance.denoise;
-      // The whole generation panel, prompt and characters included, then the
-      // handful of fields an enhance overrides. `toParams`'s override map does
-      // not reach size, batch or the nested NovelAI block, so those are set on
-      // the built object.
-      const params = generation.toParams();
-      // "image_edit" and not "img2img": the result is a pass over an existing
-      // image, and tagging it img2img would overwrite that tab's last output.
-      params.mode = "image_edit";
-      params.input_image = image;
-      params.mask_image = null;
-      params.width = target.width;
-      params.height = target.height;
-      // One at a time. Anything else multiplies an already large canvas by the
-      // batch, and the Opus allowance only ever covers a single sample.
-      params.batch_size = 1;
-      // No second pass on top of a paid enhance: a local upscale would resample
-      // the very detail that was just bought.
-      params.upscale_enabled = false;
-      if (params.novelai) {
-        params.novelai.action = "img2img";
-        params.novelai.strength = strength;
-        params.novelai.noise = noise;
-        params.novelai.local_post_process = false;
-      }
+      const params =
+        current === "upscale"
+          ? upscaleParams(image)
+          : current === "variations"
+            ? variationParams(image)
+            : enhanceParams(image);
       const result = await requestGeneration(params);
       progress.enqueue(result.prompt_id, false, "image_edit", params);
+      // A set of variations is one result in several pieces, so mark the run
+      // here -- this is the only place that still knows it was a variations
+      // request.  The lightbox reads the mark to show the whole set at once
+      // instead of whichever image happened to come back last.
+      if (current === "variations") gallery.markVariationBatch(result.prompt_id);
+      // If this was started from the lightbox, the result belongs there: what
+      // is on screen is the source, and the whole point of the click is to see
+      // what replaced it.  Only when it is already open, so an enhance started
+      // from a gallery card does not force a lightbox the user did not ask for.
+      if (gallery.lightboxOpen) gallery.markLightboxFollow(result.prompt_id);
       naiImageEnhance.dismiss();
-      gallery.showToast(locale.t("novelai.enhance.started"), "success");
+      gallery.showToast(
+        locale.t(
+          current === "upscale"
+            ? "novelai.enhance.upscale_started"
+            : current === "variations"
+              ? "novelai.enhance.variations_started"
+              : "novelai.enhance.started",
+        ),
+        "success",
+      );
     } catch (e) {
-      console.error("NovelAI enhance failed:", e);
+      console.error("NovelAI image action failed:", e);
       naiImageEnhance.error = String(e);
     } finally {
       naiImageEnhance.busy = false;
@@ -203,13 +347,17 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") close();
-  }
-
-  function onFieldKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      close();
+      return;
+    }
+    // Ctrl+Enter runs the open tab, the same as clicking its button.  At the
+    // window rather than on one field, so it works wherever focus sits inside
+    // the modal; run() is the one that decides whether there is anything to
+    // run.
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      run();
+      void run();
     }
   }
 </script>
@@ -218,6 +366,7 @@
 
 {#if naiImageEnhance.isOpen}
   <div
+    data-modal-open
     class="fixed inset-0 z-70 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {
       if (e.currentTarget === e.target) close();
@@ -229,15 +378,15 @@
       role="dialog"
       aria-modal="true"
       tabindex="-1"
-      aria-label={locale.t("novelai.enhance.title")}
+      aria-label={locale.t(headerKey)}
     >
       <div class="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 class="text-lg font-semibold text-neutral-100">
-            {locale.t("novelai.enhance.title")}
+            {locale.t(headerKey)}
           </h2>
           <p class="mt-1 text-sm text-neutral-400">
-            {locale.t("novelai.enhance.subtitle")}
+            {locale.t(subtitleKey)}
           </p>
         </div>
         <!-- Sized to a comfortable pointer target rather than to the glyph: this
@@ -251,6 +400,23 @@
         </button>
       </div>
 
+      <!-- The entry points open the tab that was clicked; this is what makes the
+           other two reachable without closing and re-opening on the same image.
+           Switching costs nothing: the source is already decoded. -->
+      <div class="mb-4 flex gap-1 rounded-lg border border-neutral-700 bg-neutral-950 p-1">
+        {#each TABS as tab (tab.action)}
+          <button
+            class="flex-1 rounded-md px-3 py-1.5 text-sm transition-colors {action === tab.action
+              ? 'bg-neutral-800 text-neutral-100'
+              : 'text-neutral-400 hover:text-neutral-200'}"
+            disabled={naiImageEnhance.busy}
+            onclick={() => naiImageEnhance.setAction(tab.action)}
+          >
+            {locale.t(tab.label)}
+          </button>
+        {/each}
+      </div>
+
       <div class="flex gap-4">
         {#if naiImageEnhance.previewUrl}
           <img
@@ -260,6 +426,62 @@
           />
         {/if}
         <div class="min-w-0 flex-1">
+          {#if action === "upscale"}
+            <span class="text-sm font-medium text-neutral-300">
+              {locale.t("novelai.enhance.upscale_result")}
+            </span>
+            {#if naiImageEnhance.loadingSource}
+              <p class="mt-1.5 text-sm text-neutral-500">
+                {locale.t("novelai.enhance.reading")}
+              </p>
+            {:else if !naiImageEnhance.hasSourceSize}
+              <p class="mt-1.5 text-sm text-neutral-500">
+                {locale.t("novelai.enhance.read_failed")}
+              </p>
+            {:else if naiImageEnhance.upscaleAvailable}
+              <p class="mt-1.5 text-sm tabular-nums text-neutral-200">
+                {sizeLabel(naiImageEnhance.sourceSize)} &rarr; {sizeLabel(
+                  naiImageEnhance.upscaleSize,
+                )}
+              </p>
+              <p class="mt-1.5 text-xs text-neutral-500">
+                {locale.t("novelai.enhance.upscale_note", { factor: String(UPSCALE_FACTOR) })}
+              </p>
+            {:else}
+              <!-- Said here rather than left to the request: the upscaler's
+                   input ceiling is below what Enhance can produce, so this is
+                   the expected answer on an already-enlarged image. -->
+              <p class="mt-1.5 text-sm text-amber-300/90">
+                {locale.t("novelai.enhance.upscale_too_large", {
+                  width: String(naiImageEnhance.sourceWidth),
+                  height: String(naiImageEnhance.sourceHeight),
+                })}
+              </p>
+            {/if}
+          {:else if action === "variations"}
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium text-neutral-300">
+                {locale.t("novelai.enhance.variation_count")}
+              </span>
+              <span class="text-sm tabular-nums text-neutral-400">
+                {naiImageEnhance.variationCount}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={VARIATION_COUNT_MIN}
+              max={VARIATION_COUNT_MAX}
+              step="1"
+              class="mt-1.5 w-full accent-indigo-500"
+              aria-label={locale.t("novelai.enhance.variation_count")}
+              disabled={naiImageEnhance.busy}
+              value={naiImageEnhance.variationCount}
+              oninput={onCountInput}
+            />
+            <span class="mt-1.5 block text-xs text-neutral-500">
+              {locale.t("novelai.enhance.variation_count_hint")}
+            </span>
+          {:else}
           <span class="text-sm font-medium text-neutral-300">
             {locale.t("novelai.enhance.upscale_amount")}
           </span>
@@ -287,6 +509,25 @@
                   {costLabel(oneXCost)}
                 </span>
               </button>
+              <!-- Hidden when 1.5x would not fit under the 3MP ceiling. -->
+              {#if naiImageEnhance.midScaleAvailable}
+                <button
+                  class="flex-1 rounded-lg border px-3 py-2 text-left text-sm transition-colors {naiImageEnhance.scaleChoice ===
+                  '1.5x'
+                    ? 'border-indigo-500/60 bg-neutral-800/60 text-neutral-100'
+                    : 'border-neutral-700 bg-neutral-950 text-neutral-300 hover:bg-neutral-800'}"
+                  disabled={naiImageEnhance.busy}
+                  onclick={() => (naiImageEnhance.scaleChoice = "1.5x")}
+                >
+                  <span class="block font-medium">{locale.t("novelai.enhance.scale_1_5x")}</span>
+                  <span class="mt-0.5 block text-xs tabular-nums text-neutral-500">
+                    {sizeLabel(naiImageEnhance.midSize)}
+                  </span>
+                  <span class="mt-0.5 block text-xs tabular-nums text-neutral-400">
+                    {costLabel(midCost)}
+                  </span>
+                </button>
+              {/if}
               <!-- Hidden when the source is already at or near the 3MP ceiling:
                    the button would quote the same resolution as 1x, and an
                    enhance that does not enlarge is not a choice worth offering. -->
@@ -310,10 +551,36 @@
               {/if}
             </div>
           {/if}
+          {/if}
         </div>
       </div>
 
-      {#if !naiImageEnhance.showAdvanced}
+      {#if action === "variations"}
+        <div class="mt-4">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium text-neutral-300">
+              {locale.t("novelai.enhance.variety")}
+            </span>
+            <span class="text-sm tabular-nums text-neutral-400">
+              {naiImageEnhance.variety.toFixed(2)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={VARIETY_MIN}
+            max={VARIETY_MAX}
+            step="0.01"
+            class="mt-1.5 w-full accent-indigo-500"
+            aria-label={locale.t("novelai.enhance.variety")}
+            disabled={naiImageEnhance.busy}
+            bind:value={naiImageEnhance.variety}
+          />
+          <span class="mt-1.5 block text-xs text-neutral-500">
+            {locale.t("novelai.enhance.variety_hint")}
+          </span>
+        </div>
+      {:else if action === "enhance"}
+        {#if !naiImageEnhance.showAdvanced}
         <div class="mt-4">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-neutral-300">
@@ -333,7 +600,6 @@
               value={naiImageEnhance.magnitude}
               oninput={onMagnitudeInput}
               onblur={onMagnitudeBlur}
-              onkeydown={onFieldKeydown}
             />
           </div>
           <!-- Not bound: assigning 1.25 to a step-1 range snaps it back to 1 and
@@ -404,23 +670,27 @@
         </div>
       {/if}
 
-      <button
-        class="mt-3 self-start text-xs font-medium text-indigo-400 hover:text-indigo-300"
-        disabled={naiImageEnhance.busy}
-        onclick={() => naiImageEnhance.toggleAdvanced()}
-      >
-        {naiImageEnhance.showAdvanced
-          ? locale.t("novelai.enhance.hide_advanced")
-          : locale.t("novelai.enhance.show_advanced")}
-      </button>
+        <button
+          class="mt-3 self-start text-xs font-medium text-indigo-400 hover:text-indigo-300"
+          disabled={naiImageEnhance.busy}
+          onclick={() => naiImageEnhance.toggleAdvanced()}
+        >
+          {naiImageEnhance.showAdvanced
+            ? locale.t("novelai.enhance.hide_advanced")
+            : locale.t("novelai.enhance.show_advanced")}
+        </button>
+      {/if}
 
       <!-- Stated rather than duplicated. The generation panel's prompt boxes are
-           the enhance's prompt boxes, and a user who wants to add to the
-           enhance types it there. -->
+           the prompt boxes for both img2img passes, and a user who wants to add
+           to one types it there. The upscaler sends no prompt at all, which is
+           why it says something different. -->
       <p
         class="mt-4 rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-400"
       >
-        {locale.t("novelai.enhance.prompt_note")}
+        {action === "upscale"
+          ? locale.t("novelai.enhance.upscale_prompt_note")
+          : locale.t("novelai.enhance.prompt_note")}
       </p>
 
       {#if naiImageEnhance.error}
@@ -432,7 +702,11 @@
       <div class="mt-5 flex items-center justify-between gap-2">
         <span class="text-sm tabular-nums text-neutral-400">
           {#if naiImageEnhance.hasSourceSize}
-            {sizeLabel(naiImageEnhance.targetSize)} &middot; {costLabel(totalCost)}
+            {sizeLabel(footerSize)}
+            {#if action === "variations"}
+              &times; {naiImageEnhance.variationCount}
+            {/if}
+            &middot; {costLabel(footerCost)}
           {/if}
         </span>
         <div class="flex items-center gap-2">
@@ -451,7 +725,7 @@
               <span class="inline-block animate-spin">⟳</span>
               {locale.t("novelai.enhance.running")}
             {:else}
-              {locale.t("novelai.enhance.run")}
+              {locale.t(runKey)}
             {/if}
           </button>
         </div>

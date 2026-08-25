@@ -23,6 +23,10 @@ built the way it is. It is the design rationale, not a task list.
 9. An Enhance button in the gallery lightbox, and a matching gallery
    context menu entry. It redraws an existing image at up to 3MP, using the
    prompt already in the generation panel.
+10. An Enhance for V5 button that rewrites a prompt into the V5 format through
+    the configured LLM, staged behind a review diff. Up to four reference
+    images can be attached to that rewrite, so a look the user cannot word can
+    be shown instead of described.
 
 NovelAI's recommended sampling defaults are applied when a NovelAI model is
 selected: 23 steps, guidance 7.0, Euler Ancestral, Karras, CFG rescale 0.
@@ -146,7 +150,12 @@ app labels the same field "% of Opus Generations remaining".
 `Usage::allowance()` reduces those three numbers to the `OpusAllowance` the bar
 draws, mirroring the website's arithmetic so the two readouts agree:
 
-- displayed percent is `isNegative ? 0 : percent` clamped to 0 through 100
+- displayed percent is `isNegative ? 0 : percent`, floored at 0 and **not**
+  capped: Anlatan grants bonus allowance from time to time (a 100% bonus most
+  recently), so an account can legitimately sit above a full bar
+- `barPercent` is that same value capped at 100, and it is the only thing the
+  bar's width may use; `isBonus` (`percent > 100`) tints the fill emerald so an
+  over-full bar does not just read as a plain full one
 - "low" is `isNegative || percent < 5`
 - refill rate is `86400 / timeUntilNextPercent`, rounded to one decimal
 - the image estimate is `17.3` images per percent, which is the site's own ratio
@@ -293,7 +302,9 @@ Three consequences follow from that, and they are the whole design:
 3MP is NovelAI's own ceiling for this path, the same figure the Director Tool
 pricing note works against. A source already at or near it gets no usable
 enlargement, so the Max button is hidden below 1.05x rather than offered as a
-button that quotes the same resolution as 1x.
+button that quotes the same resolution as 1x. A fixed 1.5x sits between the
+two, matching NovelAI's own panel, and is hidden by the same rule when Max is
+already below it.
 
 Cost is quoted with the existing `estimateNovelAiCost()`, at the target size,
 one sample, and the enhance's own strength (`strength < 1` scales the per-sample
@@ -307,6 +318,90 @@ therefore decodes the source once on open through
 `loadOutputImageForGenerationInput()`, caches the base64 so submitting is
 instant, and guards the write with an identity check on the store's `source` so
 a stale in-flight decode cannot land in a re-pointed modal.
+
+### 2.13 Upscale is a real endpoint, Variations is not
+
+Enhance's neighbours in the same modal go two different ways, and which way
+each goes is decided by NovelAI, not by us.
+
+**Upscale is the one thing here that is its own endpoint.** `POST
+{IMAGE_BASE}/ai/upscale` takes `{image, width, height, scale}` and returns the
+same ZIP of PNGs every other image call returns, so `response::unpack_images`
+handles it unchanged. It is a fixed 4x model with no diffusion in it: no
+prompt, no seed, no steps, no sampler. `NovelAiClient::upscale()` in
+`novelai/client.rs` is the whole client side.
+
+It still does **not** get a Tauri command of its own. `novelai_generate`
+already owns the queue, the synthetic `nai-` prompt id, `deliver_image`, the
+JXL gallery write and the browser-mode route, and an upscale needs every one of
+them. So the request rides that command and is routed inside it: `run_inner`
+checks `is_upscale_request()` before it builds a payload, and hands off to
+`run_upscale()`, which emits one 0/1 progress frame, honours cancellation, and
+finishes with the usual `comfyui:executing` `node: null`.
+
+The routing flag is `novelai.action == "upscale"`, and the safety property that
+makes that acceptable is in `normalise_action`: it collapses anything it does
+not recognise to `generate`, and `"upscale"` is deliberately not one of the
+values it recognises. A stray upscale action can therefore never fall through
+into a generation payload and be billed as a fresh image. It either reaches
+`run_upscale` or it becomes a plain generate, never a paid accident.
+
+**The input ceiling is an area, not a pair of side limits.** One megapixel,
+which is why the default 832x1216 portrait fits at 1,011,712 px despite being
+past 1024 on one side. `UPSCALE_MAX_PIXELS` in `novelai/mod.rs` and
+`upscaleFits()` in `novelaiEnhance.ts` are the same number twice on purpose:
+the backend enforces it, and the frontend copy exists so the modal can say
+"this image is 1467x2144, use Enhance instead" before the click rather than
+after a rejected request. An already-enhanced image is normally over it, which
+is the common case that message exists for.
+
+The returned size is **not** snapped to the 64px grid. That grid is a property
+of the diffusion path; the upscaler returns exactly four times the source,
+odd dimensions included, so `upscaleTargetSize()` does no rounding beyond
+`Math.round`.
+
+**Variations is frontend-only.** NovelAI has no variations endpoint either;
+its own panel sends a batch of img2img runs at the source size with a low
+strength. So does this one: `batch_size` from the count slider, `strength` from
+the variety slider, `noise` at 0, and a fresh `seed = "-1"` on every submit so
+clicking twice does not re-buy the same set. `mode` is `image_edit`, not
+`img2img`, for the same reason Enhance uses it: `img2img` would overwrite that
+tab's last output.
+
+**All three share one modal and one decode.** The store's `action` field picks
+the tab, and `setAction()` deliberately leaves the decoded source and its
+measured size alone: they describe the image, not the action. Switching tabs
+re-prices, it does not re-read. The entry points (lightbox buttons, gallery
+context menu) open the modal directly on the tab the user asked for, so landing
+on the wrong action costs a click, not a reopen.
+
+### Upscale and variations pricing
+
+NovelAI publishes **no cost or quote endpoint**. There is nothing to ask. Every
+Anlas figure in this app is computed locally by `novelaiCost.ts`, which is a
+reconstruction of the cost function NovelAI's own web bundle ships, and the
+only thing that confirms a real charge is the balance readout above the
+generate button.
+
+That reconstruction does not cover the upscaler at all, because the upscaler is
+not a diffusion request and has no pixels-times-steps to price. `UPSCALE_COST`
+is therefore a flat observed 1 Anlas, with a documented free case: Opus
+upscales images of 640x640 or under (read as an area, like every other limit
+here) at no charge. `novelAiUpscaleCost()` is those two rules and nothing else.
+
+Variations, by contrast, falls straight out of the existing formula, and this
+is where the commonly quoted "about 48 Anlas" comes from:
+
+```
+832x1216 @ 28 steps  ->  ceil(2.9863 + 16.2985) = 20,  x1.5 COST_FACTOR = 30
+4 samples at strength 0.4  ->  4 * ceil(30 * 0.4) = 4 * 12 = 48
+```
+
+Which is exactly why `VARIATION_COUNT_DEFAULT` is 4 and `VARIETY_DEFAULT` is
+0.4. The defaults were chosen to reproduce the figure, not the other way round.
+Change either slider and the quote moves with it, because it is the same
+`estimateNovelAiCost()` call the generate button uses, given `nSamples` and the
+variety strength.
 
 ## 3. The free local post-process
 
@@ -466,6 +561,485 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-26 - Reference images for the V5 prompt enhance
+
+**Requested by:** the user: "with the NAI prompt enhance feature, allow users
+to upload images to act as references to aid in the prompt creation", then, on
+what that is for: "imagine if it's like I sent Grok that skill for enhancing my
+prompt + an image so it can VLM what I am referencing like say I want a
+character's particular outfit but am not so well versed in wording it, I can
+send an image of it and tell NAI enhance 'please put this outfit on the
+character in the prompt that you are going to make (or editing)'". And on where
+it lives: "make sure this is all done inside the novelai prompt enhance modal".
+
+**What changed.** The Enhance for V5 modal's input stage now takes up to four
+reference images alongside the text. They are sent to the configured LLM with
+the rewrite request, so a user who can see the garment but cannot name it can
+show it instead. The wording is the model's job; the picture is the user's
+input.
+
+Three ways in, because the images come from three places in practice: a file
+picker, paste from the clipboard, and the existing gallery picker. Each
+attached image gets an index badge and an optional free-text label.
+
+**Why free-text labels and not a role dropdown.** The first design had a fixed
+role vocabulary (character / style / background / pose). It was dropped before
+it shipped: the user's own example is an outfit, which that vocabulary has no
+word for, so the control would have fought the first thing anyone tried. A
+blank label the user fills in costs nothing and covers every case; leaving it
+blank is fine, since position alone identifies an image.
+
+**How the model is told which image is which.** The images go on the wire as a
+plain ordered list with no captions, because neither provider format has a
+per-image caption field worth relying on. Instead the user turn opens with a
+manifest line: "2 reference images attached, in this order: image 1 (outfit),
+image 2." The order is the contract, and the label, when present, rides in the
+parentheses.
+
+**The system prompt had to change, not just gain a block.** The V5 rewrite
+prompt previously stated flatly that the model cannot see the image being
+worked on, and that every element of its output must trace back to something
+the user wrote. Both sentences are false the moment a reference is attached,
+and a self-contradicting system prompt is worse than a silent one.
+`sourceFidelity()` now takes a `hasReferences` flag and rewrites both clauses:
+the trace-back rule grows a second permitted source (something visible in a
+reference image), and the reference block itself says the images are references
+to describe, not pictures to reproduce, that the answer must never mention them,
+and that a model which cannot see them should say so in the `NOTE:` line rather
+than guess.
+
+**Transport.** The browser downscales each image to roughly 1024px and hands
+over base64; Rust downscales again to its own pixel budget in
+`prompt_assistant/vision.rs` before encoding JPEG. The double pass is
+deliberate: it keeps four full-size images off the IPC channel, and the Rust
+side still owns the final budget regardless of what a caller sends.
+
+The base64 route is new. The pre-existing vision path took a ComfyUI *input
+filename* and fetched the bytes back through a running ComfyUI server, which is
+exactly the thing a NovelAI-only user does not have. `collect_images()` now
+accepts both, filename first when both are present, capped at
+`MAX_VISION_IMAGES` (4) in total.
+
+**An image on its own is a request.** The Enhance button used to require typed
+text, a guard written before references existed. Attaching a picture and typing
+nothing now submits, and `naiPrompt.ts` supplies the missing verb: the
+instruction becomes "Do this." The surrounding turn already tells the model the
+images are its input, so that one word is the whole gap. The fallback lives in
+the prompt builder rather than as a pre-filled textarea, because a placeholder
+the user has to delete is worse than one they can ignore, and only that layer
+knows whether any images were attached. An entirely empty turn, no text and no
+images, is still refused.
+
+**One deliberate omission.** The skill-authoring call (`ensureNaiSkill`) runs
+without images on purpose. Its result is cached per backend and variant, so
+letting one user's reference images influence it would poison the cache for
+every later rewrite.
+
+**Where nothing changed.** The review gate is untouched. Results still stage in
+`naiEnhance` as a per-field diff with checkboxes, and nothing reaches the
+generation store until Apply. References are cleared on open, dismiss and
+apply, so they never leak into the next rewrite.
+
+#### Manual test checklist
+
+The LLM half cannot be asserted automatically and the vision encode has no
+NovelAI dependency, so the Rust side is covered by unit tests
+(`vision.rs`, 8 tests) and the rest is hand-tested.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Select a V5 checkpoint, press Enhance for V5 | The input stage shows a References strip reading 0/4 |
+| 2 | Press Upload, choose two images | Two thumbnails, badged 1 and 2, counter reads 2/4 |
+| 3 | Copy an image to the clipboard, press Paste | A third thumbnail appears. With no image on the clipboard, a toast says so and nothing is added |
+| 4 | Press Gallery, select images | The picker allows at most the remaining slots; picked images attach in order |
+| 5 | Attach a fourth image | All three add buttons disable at 4/4 |
+| 6 | Press the x on image 2 | It is removed and the remaining badges renumber 1, 2, 3 |
+| 7 | Type "outfit" in image 1's label, run the enhance | The rewrite describes the garment in that image. The output never mentions images, photos or references |
+| 8 | Run with no label | Same behaviour; the manifest identifies images by position only |
+| 9 | Run with a text-only model configured | Either a normal rewrite that ignores the images, or a `NOTE:` line saying it cannot see them. Never an invented description |
+| 10 | Attach one image, type nothing, press Enhance | It submits. The rewrite describes the image, as though "do this" had been typed |
+| 11 | Empty text box, no images | The Enhance button stays disabled |
+| 12 | Attach references, then press Apply or dismiss | Reopening the modal shows 0/4 |
+| 13 | Repeat steps 1 to 7 in browser mode | Identical behaviour; the images travel as base64 over REST, not through ComfyUI |
+| 14 | Run once with no ComfyUI process running at all | The rewrite still sees the references |
+
+### 2026-08-25 - Three things wrong with an upscale
+
+**Reported by:** the user, in one line: "anlas cost wasn't just 1, second, it
+still shows the old resolution in metadata after upscaling, thirdly, any image
+that is enhanced or upscaled should be the new image shown in the lightbox not
+the old image."
+
+Three separate bugs that happen to share a button. Taken in order.
+
+#### 1. The price was invented
+
+We quoted a flat 1 Anlas for any upscale, with a free pass for Opus under
+640x640. Both numbers were guesses dressed up as facts. NovelAI publishes no
+cost or quote endpoint, so the only honest source is the pricing module its own
+web client ships, and reading it says:
+
+- The price is a step function of the **input** area, not a constant:
+  1,048,576 px or under costs 1, up to 1,747,627 costs 2, up to 2,446,678 costs
+  3, up to 3,145,728 costs 4.
+- The **scale factor is not an input to the price**. Their function takes it as
+  an argument and never reads it.
+- There is **no Opus allowance** on the upscaler. The free-generation rule does
+  not extend to it, so our 640x640 exemption was quoting 0 for something that
+  charges.
+- Above 3,145,728 px the function returns an error code, not a price, because
+  above that there is no upscale to price either.
+
+That last point exposed a second stale number. Our input ceiling was 1 MP, in
+both `novelaiEnhance.ts` and `novelai/mod.rs`, described in the comments as
+"documented as images up to 1024x1024". The real ceiling is 3,145,728 px, three
+times that, so images NovelAI would happily have upscaled were being refused
+before the request. Both copies now carry the real number, and it is the same
+number the price table ends on, which is not a coincidence: an image they will
+not quote is an image they will not take.
+
+**A caveat worth recording.** Under NovelAI's own table, anything at or under 1
+megapixel still costs exactly 1, so this fix does not by itself explain a
+higher-than-1 charge on a small source. If that is what happened, the missing
+detail is the source resolution and the balance either side of the click.
+
+**On the locale strings.** Twelve subtitles said the upscale "usually costs 1
+Anlas". They now say the price depends on the image's current size and leave the
+number to the badge, which is computed and therefore cannot go stale the way a
+sentence can.
+
+#### 2. The metadata reported the size going in
+
+The metadata panel showed the pre-upscale resolution against the post-upscale
+image. Root cause is one line in `buildPngMetadata`: `size` is
+`${params.width}x${params.height}`, the *request* size. For every other request
+that is also the output size. For a standalone upscale it is not, because the
+API is told the source's dimensions -- that is what it scales from -- and returns
+something four times larger. Nothing downstream corrected it, because nothing
+downstream knew: `run_upscale` never learns the output size, and no event
+payload carried dimensions at all.
+
+So the fix is to carry them. `process_output_image` now reads the real size off
+the frame it is already parsing: the raw-pixel tags (3, 4, 5) have it in their
+header, and the passthrough PNG tags get it from the IHDR via a new
+`png_dimensions`, which is a fixed-offset read once the signature checks out and
+decodes nothing. `stamp_dimensions` puts it on the event payload, and it is
+`Option` all the way through, so a frame that does not say produces no field
+rather than a wrong one.
+
+The override is deliberately scoped to `params.novelai?.action === "upscale"`.
+`size` is also what "Use these settings" reads back into the generation panel,
+and for a ComfyUI run with `upscale_enabled` the request size is exactly what
+should be reloaded. Widening the override to every upscale would have fixed the
+panel and broken remix.
+
+`websocket.rs` had no test module before this; it has one now, covering the
+IHDR read and the four ways it should decline to answer.
+
+#### 3. The lightbox kept showing the source
+
+Enhance, Variations and Upscale all dismissed the modal and left the lightbox on
+the image they were started from. The result landed in the gallery behind it.
+
+Fixed the way `markVariationBatch` already works, because it is the same shape of
+problem: the click is the only moment that knows both that the lightbox was open
+and which run belongs to it, so it marks the prompt id and the delivery side
+reads the mark. `takeLightboxFollow` consumes rather than reads, so a redelivery
+(a recovery pass, a reconnect) cannot yank the lightbox a second time. Marked
+only when the lightbox is already open, so an enhance started from a gallery card
+does not force one open.
+
+**Testing needed:** yes, and several steps spend Anlas.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Open Upscale on a 512x512 image | Badge quotes ~1 Anlas |
+| 2 | Open Upscale on a 1216x1216 image (1.48 MP) | Badge quotes ~2, not 1 |
+| 3 | Open Upscale on a 1536x1536 image (2.36 MP) | Badge quotes ~3, and the button is enabled (it used to be blocked) |
+| 4 | Open Upscale on a 2048x2048 image (4.2 MP) | Blocked, with the "use Enhance instead" message |
+| 5 | Run step 1 and watch the Anlas balance | Drops by what the badge said |
+| 6 | Open the result's metadata panel | Size reads 2048x2048, not 512x512 |
+| 7 | On that result, "Use these settings" | Loads a sane generation size, not the upscaled one |
+| 8 | Generate with ComfyUI upscale_enabled, then "Use these settings" | Still loads the request size, unchanged by any of this |
+| 9 | Upscale from the lightbox | Lightbox switches to the new image when it lands |
+| 10 | Enhance from the lightbox | Same |
+| 11 | Variations from the lightbox | Switches to the 2x2 grid of the new set |
+| 12 | Enhance from a gallery card, lightbox closed | No lightbox opens |
+| 13 | Check metadata on a normal generation | Size unchanged, still the request size |
+| 14 | Check an Opus account's upscale quote | Quotes the tier price, not 0 |
+
+**Do not skip:** 2, 4, 6, 8, 9, 12. Those are the four-step price, the new
+ceiling, the reported metadata bug, the remix path the fix had to not break, the
+reported lightbox bug, and the case where the lightbox should stay shut.
+
+### 2026-08-25 - Upscale was talking to the wrong host
+
+**Reported by:** the user: "when doing upscales it says 'Generation failed: API
+error (400): Validation error: model doesn't exist'".
+
+**Root cause.** `/ai/upscale` was being posted to `image.novelai.net`. The
+standalone upscaler is one of the few endpoints that never moved off the old
+`api.novelai.net` host. The image host answers a *different* route at that same
+path, one that validates against the generation schema, so it rejected the
+documented upscale body for missing a `model` field. That is why the error names
+a field an upscale request has never carried: "model doesn't exist" meant the
+field was absent, not that a model name was wrong. Nothing in our request was
+malformed and nothing in the routing was broken.
+
+**Why it survived review.** The wrong host looks right from the outside.
+`image.novelai.net` returns **401** for `/ai/upscale` and **404** for a made-up
+path, so the endpoint appears to exist there and a failure reads as an auth or
+payload problem rather than as a host problem. The only way to tell them apart
+was to check what working clients do: SillyTavern, `novelai-python` and
+NekoAI-JS all send generation to the image host and upscale to the API host,
+with the same four fields we send and no `model` among them.
+
+**The fix.** A second constant, `API_BASE`, used by `upscale()` alone.
+Everything else stays on `IMAGE_BASE`, the subscription record included: that
+one genuinely does have to be on the image host, since `api.novelai.net`
+answers it with 400 "Please refresh NovelAI.net. If using a third-party tool,
+update to the image URL." The two hosts are now documented together at the top
+of `client.rs` so the next endpoint added lands on the right one.
+
+**No test was added.** The change is a URL constant with no seam to assert
+against: the crate has no HTTP mock harness, and a test that checks the string
+would only restate the line it is testing. `upscale_input()`, which is the part
+with logic, is already covered. This one is caught by step 1 below.
+
+**Testing needed:** yes, and step 1 spends about 1 Anlas.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Upscale a 1024x1024 image from the lightbox | Returns a 4x image, no 400 |
+| 2 | Upscale the default 832x1216 portrait | Works: the limit is total pixels, not per side |
+| 3 | Upscale something over 1 megapixel | Blocked before the request, with the "use Enhance instead" message |
+| 4 | Check the Anlas readout before and after step 1 | Drops by the upscale cost, not by a generation's |
+| 5 | Run a normal generation, Enhance, Variations and a Director tool | All still work, i.e. nothing else moved hosts |
+| 6 | Watch the progress bar during step 1 | One 0/1 tick, then the image, then the run ends |
+| 7 | Cancel an upscale mid-flight | Queue clears, no image delivered |
+
+**Do not skip:** 1, 2, 5. Those cover the bug itself, the size rule the fix does
+not change, and the four endpoints that had to stay on the image host.
+
+### 2026-08-25 - Ctrl+Enter belongs to whatever is on top
+
+**Reported by:** the user: "when pressing CTRL + Enter to confirm an enhance
+prompt, it also gens an image in the background, when the enhance modal is open,
+CTRL + Enter only confirms the enhance prompt".
+
+**The bug.** `GenerateButton` listens for Ctrl+Enter on the *window*, so it
+heard the press through any modal. Confirming a prompt rewrite therefore also
+queued a full generation behind the modal, which on a NovelAI model is real
+Anlas spent on a press that was never meant for the panel.
+
+**Why the obvious fixes do not work.** The modal's `preventDefault()` does not
+stop a second listener on the same target, and `stopPropagation()` cannot help
+either when both listeners are on the window: which one runs first is decided by
+mount order, and the modals mount after the generate button. So the guard has to
+live in `GenerateButton`, and it is two guards, because they cover different
+cases:
+
+- `e.defaultPrevented` catches a handler nearer the target that already claimed
+  the press (an input's own `onkeydown` runs at the target phase, before the
+  window bubble handler).
+- `document.querySelector("[data-modal-open]")` catches a modal whose handler is
+  on the window too.
+
+`data-modal-open` is an opt-in marker on the overlay of a modal that owns the
+keyboard while it is up, so a future modal joins by adding one attribute and
+nothing has to import a growing list of stores. It only exists in the DOM while
+the modal is rendered, so there is nothing to clean up on close.
+
+**Second bug, found on the way.** `NaiImageEnhanceModal` and
+`DirectorToolsModal` bound Ctrl+Enter to individual fields (a mood input, a
+prompt box, a magnitude slider), so it confirmed from those three places and
+generated in the background from everywhere else in the modal. Both now handle
+it in the window listener they already had for Escape, gated on `isOpen`, which
+makes it work wherever focus sits. `run()` was already responsible for deciding
+whether there is anything to run, so no new guard was needed. The prompt-rewrite
+modal moved the same way, with one extra condition: only at the `input` stage,
+since a Ctrl+Enter at the review stage would buy a second rewrite.
+
+**Testing needed:** yes, and step 2 is the one that used to cost Anlas.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Ctrl+Enter with no modal open | Generates, exactly as before |
+| 2 | Open the prompt Enhance modal, type, Ctrl+Enter | Rewrite runs, and nothing is queued behind it |
+| 3 | Watch the queue count and Anlas balance through step 2 | Neither moves until the rewrite is accepted |
+| 4 | In that modal, click a variant button, then Ctrl+Enter | Still confirms, i.e. it no longer needs focus in the textarea |
+| 5 | At the review stage, press Ctrl+Enter | Nothing happens, no second rewrite, no generation |
+| 6 | Open Image Enhance, Ctrl+Enter with focus anywhere in it | Runs the open tab once, no background generation |
+| 7 | Same in Director Tools | Runs the selected tool once, no background generation |
+| 8 | Escape from each of the three modals | Still closes |
+| 9 | Close a modal, then Ctrl+Enter | Generates again |
+
+**Do not skip:** 2, 3, 5, 9. Those cover the reported bug, the charge it caused,
+the review-stage case the fix introduced, and the shortcut still working once
+the modal is gone.
+
+### 2026-08-25 - Three buttons everywhere, and the icon question
+
+**Requested by:** the user: "adjust it so enhance, variations and upscale have
+their own buttons instead of all being under enhance for the lightbox and in
+gallery using the exact icons from the NAI site".
+
+**What changed.** The gallery card hover bar gained the three NovelAI actions it
+never had: Upscale, Variations, Enhance, each its own button opening the modal
+on its own tab, sitting with the other NovelAI-yellow buttons after Director
+Tools. The lightbox bar, the variations grid tiles and the gallery context menu
+already had all three from the previous two entries, so those only picked up the
+new icons. All three surfaces now draw the same set: upscale as a frame growing
+outward, variations as one image copied into a stack, enhance as a wand throwing
+sparkles. `naiImageEnhanceAvailable()` guards the gallery trio, so the bar is
+unchanged on a ComfyUI model.
+
+**One modal, three doors, on purpose.** Each button still opens the same
+`NaiImageEnhanceModal` on its own tab rather than three separate modals. The
+modal's expensive part is decoding the source to learn its true pixel size, and
+all three actions need exactly that one decode; splitting them would run it
+three times to show three near-identical forms. What the user was actually
+missing is the entry points, and those are now separate everywhere.
+
+**On "the exact icons from the NAI site":** these are not them. NovelAI's image
+app is behind a login and ships its icons inside a JS bundle, so there is
+nothing to fetch and drawing "exact" paths from memory would be a guess dressed
+up as a copy. Their artwork is also theirs. What is here is an equivalent set
+drawn to read the same way at 14px. Dropping real `.svg` files into the repo and
+pointing these three buttons at them is a small change if that is wanted.
+
+**Still routed to Enhance:** the Refine button on the generate page preview
+(`PreviewImage.svelte`), which always opens the Enhance tab. Out of scope here
+(the ask named the lightbox and the gallery) and left alone deliberately, since
+that button is the one-click path and a three-way split there costs a click on
+every refine.
+
+**Testing needed:** no Anlas, this is entry points only.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Open the Gallery on a ComfyUI model | No Upscale/Variations/Enhance buttons in the card hover bar |
+| 2 | Switch to a NovelAI model with a key set, hover a gallery card | Three yellow NovelAI buttons after DT, tooltips naming each |
+| 3 | Click each of the three from a gallery card | Modal opens on the matching tab with that card as the source |
+| 4 | Hover a video in the gallery | None of the three appear (video guard) |
+| 5 | Compare the icons in the gallery bar, the lightbox bar and a grid tile | Same three glyphs, same order, sized to their bar |
+| 6 | Right-click a gallery card | Context menu still lists all three |
+| 7 | Narrow the window until the card bar wraps | Buttons wrap, nothing clipped or overlapping |
+| 8 | Switch UI language | All three tooltips are translated |
+
+**Do not skip:** 1, 3, 4. Those cover the availability guard, the tab routing
+and the video case. **Low-risk, skip if short on time:** 7, 8.
+
+### 2026-08-25 - The variations grid
+
+**Requested by:** the user: "for variations, instead of showing the last
+generated image, show all 4 images in the lightbox as a 2x2 grid of images and
+each image on hover has it's own 'enhance' 'send to img2img' etc buttons each
+with it's own generation time, treat it as if it's 4 separate lightboxes".
+
+**What changed.** A variations run now opens the lightbox as a 2x2 grid of the
+whole run instead of whichever image happened to land last. Each tile selects on
+click (the metadata panel beside the grid follows the highlight), carries its
+own hover bar (expand, upscale, variations, enhance, img2img, inpaint, reuse
+seed, save, copy, delete) and its own timing badge. A toggle beside the close
+button switches between the grid and a single image, and the arrow keys move the
+highlight inside the run rather than paging out of it.
+
+**How a batch is recognised.** By the time the images land, a variations run
+looks like any other batch: same prompt id, same count. So
+`NaiImageEnhanceModal` marks its own run through
+`gallery.markVariationBatch(promptId)` at submit time, which is the last point
+that still knows what was asked for. The mark is session state, capped at the
+last 32 runs, and never persisted: a batch reopened after a restart is a plain
+set of gallery images again, which is all it looks like from the gallery
+anyway. Deliberately scoped to variations, so an ordinary four-image generate is
+untouched.
+
+**On "each with it's own generation time":** there is only one. NovelAI takes
+`n_samples` in a single request and returns the whole run in one ZIP, and
+`finalizeOutputImages()` stamps that one duration onto every image in the batch.
+The four badges therefore show the same number. It is the real measurement,
+shown per tile rather than four invented ones.
+
+**Deleting a tile** goes through `deleteBatchTile()`, not `gallery.deleteImage()`
+directly: the latter closes the lightbox when the deleted image is the selected
+one, which would take the other three tiles down with it. The selection moves to
+a survivor first.
+
+**Testing needed:** yes, step 1 spends Anlas.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Run Variations at the defaults from the lightbox | Lightbox reopens as a 2x2 grid of all 4 results |
+| 2 | Hover each tile | Its own action bar fades in over that tile only |
+| 3 | Read the four timing badges | All four show the same run duration (expected, see above) |
+| 4 | Click a tile | It gains the indigo ring and the metadata panel switches to it |
+| 5 | Press the left/right arrow keys | Highlight cycles within the four, never leaves the run |
+| 6 | Click the expand button on a tile | Grid gives way to that one image, full size, zoom and pan working |
+| 7 | Click the grid/single toggle beside the close button | Switches back to the grid, and back again |
+| 8 | Send one tile to img2img, then inpaint | That tile loads, lightbox closes, others unaffected |
+| 9 | Run Enhance, Upscale and Variations from a tile | Modal opens on the right tab with that tile as the source |
+| 10 | Delete one tile | Only that tile goes; grid stays open with the rest |
+| 11 | Delete tiles down to the last one | Lightbox closes when nothing is left |
+| 12 | Open a normal (non-variations) 4-image generate | Single image as before, no grid, no toggle |
+| 13 | Reopen a past variations image from the gallery after a restart | Single image, no grid (the mark is session-only) |
+| 14 | Save as, and copy to clipboard, from a tile | Acts on that tile, not on the selected one |
+| 15 | Switch UI language | Toggle and tile tooltips are translated |
+
+**Do not skip:** 1, 3, 5, 10, 12. Those cover the grid appearing at all, the
+honest shared duration, the arrows staying inside the run, the delete that used
+to close everything, and the scoping that keeps ordinary batches unchanged.
+**Low-risk, skip if short on time:** 14, 15.
+
+### 2026-08-25 - Upscale, Variations and a 1.5x enhance step
+
+**Requested by:** the user: "there needs to be a 1.5x option for enhance too,
+not just 1x", then "add a 'just upscale' button that typically only costs 1
+anlas as well as a variations button that costs ~48 anlas you should be able to
+grab costs from API".
+
+**What changed.** The Enhance modal became a three-tab modal. Enhance gained a
+fixed 1.5x button between 1x and Max. Upscale runs NovelAI's standalone 4x
+upscaler, which is a real endpoint (`/ai/upscale`) and the one piece of new
+Rust here: `NovelAiClient::upscale()`, plus `is_upscale_request()` /
+`run_upscale()` routing inside `novelai_generate` rather than a command of its
+own. Variations sends a batch of low-strength img2img runs at the source size
+with a fresh random seed. Lightbox buttons and gallery context menu entries
+open the modal directly on the right tab. Section 2.13 has the reasoning and
+the pricing provenance.
+
+**On "grab costs from API":** there is no such API. NovelAI exposes no cost or
+quote endpoint, so 1 Anlas for an upscale is an observed constant and the ~48
+for a set of variations is the local formula at 4 samples and strength 0.4.
+Step 4 below is what actually verifies either figure.
+
+**Testing needed:** yes. Steps 4 onward spend Anlas.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Open a gallery image in the lightbox on a ComfyUI model | No Upscale or Variations button |
+| 2 | Switch to a NovelAI model with a key set, reopen | Three buttons: Upscale, Variations, Enhance |
+| 3 | Click each, and each gallery context menu entry | Modal opens on the matching tab every time |
+| 4 | Note the Anlas balance, run one upscale, check it again | Balance drops by about 1, matching the quote |
+| 5 | Switch tabs inside the open modal | Price and footer change instantly, no "Reading image..." flash |
+| 6 | Upscale a default 832x1216 image | Runs; result is 3328x4864, not snapped to a multiple of 64 |
+| 7 | Open Upscale on an image already over 1MP | Amber note names the real WxH, run button disabled, Enhance suggested |
+| 8 | Upscale with a prompt typed in the generation panel | Prompt is ignored; the note in the modal says so |
+| 9 | Run Variations at the defaults off a default portrait | 4 images, quote reads about 48, all at the source size |
+| 10 | Change the count slider to 1, then 8 | Quote scales linearly with the count |
+| 11 | Change Variety low then high | Low stays close to the source, high strays; quote follows strength |
+| 12 | Run Variations twice without changing anything | Second set differs, i.e. the seed really is re-rolled |
+| 13 | Enhance tab, source well under 3MP | 1x, 1.5x and Max all offered, each with its own size and quote |
+| 14 | Enhance an image where Max lands under 1.5x | The 1.5x button is hidden, not shown quoting the same size |
+| 15 | Cancel a running upscale from the progress bar | Stops; no image lands |
+| 16 | Repeat 4, 9 and 13 in browser mode (LAN URL) | Identical behaviour through the `novelai_generate` route |
+| 17 | Switch UI language | Tabs, hints, the oversize warning and both cost lines are translated |
+
+**Do not skip:** 4, 6, 7, 9, 12. Those cover the only real charge check, the
+unsnapped output size, the area-based input ceiling, the ~48 figure, and the
+seed re-roll that stops a repeat click re-buying the same set.
+**Low-risk, skip if short on time:** 10, 11, 17.
 
 ### 2026-08-25 - Image Enhance from the lightbox
 
