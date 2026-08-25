@@ -9,10 +9,13 @@
 //! desktop commands and the browser-mode dispatch arms share one implementation
 //! of the rules that protect the user's key.
 
+use std::sync::Arc;
+
 use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
 use crate::error::AppError;
+use crate::state::AppState;
 
 /// Wire format a provider speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,14 +67,38 @@ const PROVIDERS: &[LlmProvider] = &[
     LlmProvider {
         id: "xai",
         base_url: "https://api.x.ai/v1",
-        default_model: "grok-4",
+        default_model: "grok-4.5",
         wire: Wire::OpenAiCompatible,
         oauth: false,
+    },
+    // The same host and wire as `xai`, reached with a signed-in session instead
+    // of a prepaid API key, which is what lets a SuperGrok subscription pay for
+    // the requests. Split into its own id rather than made a mode of `xai`
+    // because the two carry different credentials and switching between them
+    // has to discard the old one.
+    LlmProvider {
+        id: "xai-oauth",
+        base_url: "https://api.x.ai/v1",
+        default_model: "grok-4.5",
+        wire: Wire::OpenAiCompatible,
+        oauth: true,
     },
     LlmProvider {
         id: "openrouter",
         base_url: "https://openrouter.ai/api/v1",
         default_model: "openai/gpt-4o-mini",
+        wire: Wire::OpenAiCompatible,
+        oauth: true,
+    },
+    // Nous Research's Portal is an aggregator like OpenRouter: one credential
+    // reaches Hermes plus a few hundred third-party models, all on the
+    // OpenAI-compatible wire. Its sign-in is a standards-track OAuth flow with
+    // dynamic client registration, so unlike xAI, whose client ids are handed
+    // out by hand, this install registers itself as a client on first use.
+    LlmProvider {
+        id: "nous",
+        base_url: "https://inference-api.nousresearch.com/v1",
+        default_model: "nousresearch/hermes-4-405b",
         wire: Wire::OpenAiCompatible,
         oauth: true,
     },
@@ -125,6 +152,15 @@ pub struct LlmProviderState {
     pub oauth: bool,
     /// Whether the external path is the one the assistant will actually use.
     pub enabled: bool,
+    /// The xAI OAuth client id the operator supplied, or empty. Public by
+    /// design, so unlike the key it is safe to hand back to the settings UI,
+    /// which needs to show what is configured.
+    pub xai_client_id: String,
+    /// The xAI scope override, or empty for the built-in default.
+    pub xai_scope: String,
+    /// The client id sign-in falls back to while the override above is empty,
+    /// so the settings UI can show which one is actually in play.
+    pub xai_client_id_default: String,
 }
 
 /// Project the provider-relevant slice of config, minus the secret.
@@ -136,6 +172,9 @@ pub fn state_of(cfg: &AppConfig) -> LlmProviderState {
         api_key_configured: !cfg.llm_external_api_key.trim().is_empty(),
         oauth: provider(&cfg.llm_provider).is_some_and(|p| p.oauth),
         enabled: cfg.llm_external_enabled,
+        xai_client_id: cfg.llm_xai_client_id.clone(),
+        xai_scope: cfg.llm_xai_scope.clone(),
+        xai_client_id_default: super::oauth::XAI_DEFAULT_CLIENT_ID.to_string(),
     }
 }
 
@@ -173,11 +212,22 @@ pub async fn select(
         if cfg.llm_provider != provider_id {
             cfg.llm_provider = provider_id.to_string();
             cfg.llm_external_api_key = String::new();
+            clear_oauth_session(cfg);
             cfg.llm_external_base_url = known.base_url.to_string();
             cfg.llm_external_model = known.default_model.to_string();
         }
     })
     .await
+}
+
+/// Forget an OAuth session. Called wherever the stored key is replaced or
+/// cleared: a refresh token outlives the access token minted from it, so
+/// leaving one behind would let the next refresh resurrect a credential the
+/// user believes they got rid of.
+fn clear_oauth_session(cfg: &mut AppConfig) {
+    cfg.llm_oauth_refresh_token = String::new();
+    cfg.llm_oauth_client_id = String::new();
+    cfg.llm_oauth_expires_at = 0;
 }
 
 /// Store the API key for the current provider. An empty key clears it.
@@ -187,6 +237,9 @@ pub async fn store_key(
 ) -> Result<LlmProviderState, AppError> {
     mutate(config, |cfg| {
         cfg.llm_external_api_key = api_key.trim().to_string();
+        // A pasted key supersedes any signed-in session, and an empty one is
+        // the sign-out path, so either way the OAuth session goes with it.
+        clear_oauth_session(cfg);
         // A key is only worth storing if the external path is on, so pasting one
         // turns it on. Clearing the key turns it back off rather than leaving the
         // assistant pointed at a provider it can no longer authenticate to.
@@ -210,7 +263,170 @@ pub async fn store_oauth_key(
         cfg.llm_provider = provider_id.to_string();
         cfg.llm_external_base_url = known.base_url.to_string();
         cfg.llm_external_api_key = key;
+        // OpenRouter's flow hands back a durable key rather than a token pair,
+        // so there is nothing to refresh and any session from a previous
+        // provider must not linger.
+        clear_oauth_session(cfg);
         cfg.llm_external_enabled = true;
+    })
+    .await
+}
+
+/// Store the result of a sign-in whose access token expires, switching provider
+/// if needed.
+///
+/// The access token goes into `llm_external_api_key` so every existing call
+/// site keeps reading credentials from exactly one field; the refresh token,
+/// registered client id and expiry ride alongside it so `ensure_fresh_token`
+/// can mint a replacement when it runs out.
+pub async fn store_oauth_session(
+    config: &RwLock<AppConfig>,
+    provider_id: &str,
+    session: super::oauth::OauthSession,
+) -> Result<LlmProviderState, AppError> {
+    let known = provider(provider_id)
+        .ok_or_else(|| AppError::LlmError(format!("Unknown LLM provider: {provider_id}")))?;
+    mutate(config, move |cfg| {
+        if cfg.llm_provider != provider_id {
+            cfg.llm_external_model = known.default_model.to_string();
+        }
+        cfg.llm_provider = provider_id.to_string();
+        cfg.llm_external_base_url = known.base_url.to_string();
+        cfg.llm_external_api_key = session.access_token;
+        cfg.llm_oauth_refresh_token = session.refresh_token;
+        cfg.llm_oauth_client_id = session.client_id;
+        cfg.llm_oauth_expires_at = session.expires_at;
+        cfg.llm_external_enabled = true;
+    })
+    .await
+}
+
+/// Seconds before expiry at which a token is already treated as spent. Covers
+/// the round trip plus any clock skew between us and the provider, so we never
+/// send a token that dies in flight.
+const REFRESH_SKEW_SECS: i64 = 120;
+
+/// Whether a stored credential needs replacing before it is used.
+///
+/// `expires_at == 0` marks a credential that never expires (every API key, and
+/// OpenRouter's issued key), so those are always fresh. Split out from
+/// `ensure_fresh_token` because it is the part worth testing directly.
+fn needs_refresh(expires_at: i64, now: i64) -> bool {
+    expires_at != 0 && now >= expires_at - REFRESH_SKEW_SECS
+}
+
+/// Renew the stored access token if it is at or near expiry.
+///
+/// Call this before reading credentials out of config for a request. It is a
+/// no-op for every provider that issues non-expiring credentials, which is all
+/// of them except Nous Portal, so the common path costs one integer compare
+/// under a read lock.
+///
+/// A refresh failure is deliberately *not* fatal: the stored token may still
+/// have a few seconds on it, and letting the actual API call report the real
+/// error beats masking it with a refresh error. The token is simply left alone
+/// for the next attempt to retry.
+pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppConfig>) {
+    let (provider_id, refresh_token, client_id, expires_at) = {
+        let cfg = config.read().await;
+        (
+            cfg.llm_provider.clone(),
+            cfg.llm_oauth_refresh_token.clone(),
+            cfg.llm_oauth_client_id.clone(),
+            cfg.llm_oauth_expires_at,
+        )
+    };
+    if refresh_token.is_empty() || !needs_refresh(expires_at, chrono::Utc::now().timestamp()) {
+        return;
+    }
+
+    // Which issuer to go back to is a property of the provider, not of the
+    // stored session: both write the same three fields, and redeeming a Portal
+    // refresh token at xAI (or the reverse) would just burn it.
+    let attempt = match provider_id.as_str() {
+        "nous" => super::oauth::refresh_nous(client, &client_id, &refresh_token).await,
+        "xai-oauth" => super::oauth::refresh_xai(client, &client_id, &refresh_token).await,
+        // Every other provider holds a key that does not expire, so there is
+        // nothing to refresh even if a stale session is still on disk.
+        _ => return,
+    };
+    let refreshed = match attempt {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("{provider_id} token refresh failed, using the stored token: {e}");
+            return;
+        }
+    };
+
+    // Re-check under the write lock: a concurrent request may have refreshed
+    // while we were on the wire, and clobbering its newer token with ours would
+    // waste a rotation. Providers that rotate the refresh token invalidate the
+    // old one, so the loser of that race must not write.
+    let mut cfg = config.write().await;
+    if cfg.llm_oauth_refresh_token != refresh_token {
+        return;
+    }
+    cfg.llm_external_api_key = refreshed.access_token;
+    cfg.llm_oauth_refresh_token = refreshed.refresh_token;
+    cfg.llm_oauth_expires_at = refreshed.expires_at;
+    if let Err(e) = crate::config::save_config(&cfg) {
+        log::warn!("Could not persist the refreshed {provider_id} token: {e}");
+    }
+}
+
+/// Run the xAI device sign-in and store the session it produces.
+///
+/// Lives here rather than in the command layer because the device grant has no
+/// redirect, so unlike the OpenRouter and Portal flows it is reachable from
+/// browser mode too and both entry points need the same implementation.
+///
+/// The user code is emitted the moment it exists, while this call is still
+/// blocked polling: it is the whole point of the flow, and nothing else will
+/// show it. Both transports fire because a desktop instance can have LAN
+/// browser clients attached at the same time.
+pub async fn connect_xai_session(state: &Arc<AppState>) -> Result<LlmProviderState, AppError> {
+    let (client_id, scope) = {
+        let cfg = state.config.read().await;
+        (cfg.llm_xai_client_id.clone(), cfg.llm_xai_scope.clone())
+    };
+    // Resolved before the flow starts: the callback below is synchronous and
+    // cannot take the async lock the handle sits behind.
+    #[cfg(feature = "desktop")]
+    let app = state.app_handle.lock().await.clone();
+    let emitter = Arc::clone(state);
+
+    let session = super::oauth::connect_xai(&state.http_client, &client_id, &scope, move |auth| {
+        let payload = serde_json::json!({
+            "provider": "xai-oauth",
+            "user_code": auth.user_code,
+            "verification_uri": auth.verification_uri,
+            "verification_uri_complete": auth.best_uri(),
+        });
+        emitter.broadcast("llm:device_code", payload.clone());
+        #[cfg(feature = "desktop")]
+        if let Some(app) = app.as_ref() {
+            use tauri::Emitter;
+            let _ = app.emit("llm:device_code", payload);
+        }
+    })
+    .await?;
+
+    store_oauth_session(&state.config, "xai-oauth", session).await
+}
+
+/// Store the operator-supplied xAI OAuth client id and scope.
+///
+/// Kept apart from [`clear_oauth_session`]: this is configuration for how to
+/// sign in, so signing out must not erase it. An empty scope means the built-in
+/// default, which is why it is stored blank rather than expanded here.
+pub async fn set_xai_client(
+    config: &RwLock<AppConfig>,
+    client_id: &str,
+    scope: &str,
+) -> Result<LlmProviderState, AppError> {
+    mutate(config, |cfg| {
+        cfg.llm_xai_client_id = client_id.trim().to_string();
+        cfg.llm_xai_scope = scope.trim().to_string();
     })
     .await
 }
@@ -242,6 +458,7 @@ pub async fn list_available_models(
     client: &reqwest::Client,
     config: &RwLock<AppConfig>,
 ) -> Result<Vec<String>, AppError> {
+    ensure_fresh_token(client, config).await;
     let (provider_id, base_url, api_key) = {
         let cfg = config.read().await;
         (
@@ -309,5 +526,37 @@ mod tests {
                 p.id
             );
         }
+    }
+
+    #[test]
+    fn nous_is_registered_with_sign_in() {
+        let p = provider("nous").expect("the Nous provider must be in the registry");
+        assert!(
+            p.oauth,
+            "the settings UI only shows sign-in when this is set"
+        );
+        assert_eq!(p.wire, Wire::OpenAiCompatible);
+        // Sign-in happens on portal.nousresearch.com; inference does not.
+        assert_eq!(p.base_url, "https://inference-api.nousresearch.com/v1");
+    }
+
+    #[test]
+    fn a_credential_with_no_expiry_never_refreshes() {
+        // API keys and OpenRouter's issued key store `0`. Treating that as a
+        // deadline in 1970 would fire a refresh on every single request.
+        assert!(!needs_refresh(0, 1_000_000));
+    }
+
+    #[test]
+    fn refresh_fires_inside_the_skew_window_and_not_before() {
+        let expires_at = 1_000_000;
+        assert!(!needs_refresh(
+            expires_at,
+            expires_at - REFRESH_SKEW_SECS - 1
+        ));
+        // Exactly at the edge counts: a token about to die mid-flight is no
+        // more usable than one already dead.
+        assert!(needs_refresh(expires_at, expires_at - REFRESH_SKEW_SECS));
+        assert!(needs_refresh(expires_at, expires_at + 1));
     }
 }

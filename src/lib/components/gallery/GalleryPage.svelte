@@ -6,6 +6,7 @@
   import { canvas } from "../../stores/canvas.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
+  import { naiImageEnhance, naiImageEnhanceAvailable } from "../../stores/naiImageEnhance.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import { prepareOutputImageForEditMode } from "../../utils/editImagePreparation.js";
@@ -506,6 +507,17 @@
                       {/if}
                       {#if directorToolsAvailable()}
                         <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("novelai.director.action")} onclick={(e) => { e.stopPropagation(); directorTools.open(image, image.thumbnailUrl || image.url || null); }}>DT</button>
+                      {/if}
+                      <!-- The three NovelAI image actions, each its own button.
+                           They share one modal but cost wildly different
+                           amounts (about 1 Anlas, about 48, and a paid img2img
+                           pass), so the cheap one must not sit behind the
+                           expensive one. Same three buttons, same order, as the
+                           lightbox bar. -->
+                      {#if naiImageEnhanceAvailable()}
+                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.tab_upscale")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "upscale"); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/></svg></button>
+                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.tab_variations")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "variations"); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg></button>
+                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.action")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l9-9"/><path d="M14.5 6.5l3 3"/><path d="M13 3.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"/><path d="M19 13l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg></button>
                       {/if}
                       <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow" title={locale.t("gallery.copy")} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>⧉</button>
                       <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500 text-neutral-100' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" title={comparePinTitle(image)} onclick={(e) => { e.stopPropagation(); gallery.toggleComparePin(image); }}>⇄</button>

@@ -69,13 +69,17 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") close();
-  }
-
-  function onFieldKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      close();
+      return;
+    }
+    // Ctrl+Enter runs the selected tool, the same as clicking its button.  At
+    // the window rather than on one field, so it works wherever focus sits
+    // inside the modal; run() is the one that decides whether there is
+    // anything to run.
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      run();
+      void run();
     }
   }
 </script>
@@ -84,6 +88,7 @@
 
 {#if directorTools.isOpen}
   <div
+    data-modal-open
     class="fixed inset-0 z-70 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {
       if (e.currentTarget === e.target) close();
@@ -186,7 +191,6 @@
             placeholder={locale.t("novelai.director.mood_placeholder")}
             disabled={directorTools.busy}
             bind:value={directorTools.mood}
-            onkeydown={onFieldKeydown}
           />
           <span class="mt-1.5 block text-xs text-neutral-500">
             {locale.t("novelai.director.mood_hint")}
@@ -204,7 +208,6 @@
             placeholder={locale.t("novelai.director.prompt_placeholder")}
             disabled={directorTools.busy}
             bind:value={directorTools.prompt}
-            onkeydown={onFieldKeydown}
           ></textarea>
         </label>
 

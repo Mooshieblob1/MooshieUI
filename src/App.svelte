@@ -20,6 +20,7 @@
   import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
+  import { UPSCALE_ACTION } from "./lib/utils/novelaiEnhance.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
@@ -143,7 +144,7 @@
   let lastProgressEventAt = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>>();
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string; width?: number; height?: number }>>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging.
@@ -555,8 +556,68 @@
     );
   }
 
+  /**
+   * Source URL for one tile of a batch grid.
+   *
+   * Same choice the preview panel makes: the gallery copy is preferred because
+   * it outlives the session, except when it is JXL, which no browser decodes --
+   * there the in-memory blob is the only thing that renders.
+   */
+  function batchTileSrc(image: OutputImage): string | null {
+    const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
+    if (image.fullImageUrl && !isJxlGallery) return image.fullImageUrl;
+    return image.url ?? image.thumbnailUrl ?? null;
+  }
+
+  /**
+   * Point the lightbox at one tile without leaving the grid.
+   *
+   * Reopening rather than assigning `selectedImage` is deliberate: it is what
+   * refreshes `lightboxUrl` and the metadata side panel, so the panel always
+   * describes the highlighted tile.
+   */
+  function selectBatchTile(image: OutputImage) {
+    void gallery.openLightbox(image, true);
+  }
+
+  /** Leave the grid and view this one tile full size. */
+  function expandBatchTile(image: OutputImage) {
+    void gallery.openLightbox(image, false);
+  }
+
+  /**
+   * Delete one tile of a grid.
+   *
+   * deleteImage() closes the lightbox when the image being deleted is the
+   * selected one, which would take the other three tiles down with it. Moving
+   * the selection to a survivor first keeps the grid open, and when there is no
+   * survivor the close is the right outcome anyway.
+   */
+  async function deleteBatchTile(image: OutputImage) {
+    if (gallery.selectedImage === image) {
+      const survivor = gallery.lightboxBatch.find((i) => i !== image);
+      if (survivor) await gallery.openLightbox(survivor, true);
+    }
+    await gallery.deleteImage(image);
+  }
+
   function navigateLightbox(direction: "prev" | "next") {
     if (!gallery.selectedImage) return;
+    // In grid mode the arrows move the highlight inside the open run instead of
+    // paging through the gallery: the run is the thing being viewed, so
+    // stepping past its edge would silently replace all four tiles at once.
+    if (gallery.lightboxGrid) {
+      const batch = gallery.lightboxBatch;
+      const at = batch.indexOf(gallery.selectedImage);
+      if (at === -1 || batch.length < 2) return;
+      const step =
+        direction === "prev"
+          ? (at - 1 + batch.length) % batch.length
+          : (at + 1) % batch.length;
+      const target = batch[step];
+      if (target) void gallery.openLightbox(target, true);
+      return;
+    }
     // Try sorted gallery images first, fall back to session images for bottom panel
     let list = sortedGalleryImages;
     let idx = list.indexOf(gallery.selectedImage);
@@ -1166,6 +1227,20 @@
               label: locale.t("novelai.enhance.action"),
               action: () => naiImageEnhance.open(image, image.thumbnailUrl || image.url || null),
             },
+            // Same modal, opened on a different tab. Listed separately because
+            // the three cost wildly different amounts, and a user who wants the
+            // one-Anlas upscale should not have to find it behind the one that
+            // can spend fifty.
+            {
+              label: locale.t("novelai.enhance.tab_upscale"),
+              action: () =>
+                naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "upscale"),
+            },
+            {
+              label: locale.t("novelai.enhance.tab_variations"),
+              action: () =>
+                naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "variations"),
+            },
           ]
         : []),
       ...(!isVideoImage(image)
@@ -1615,7 +1690,10 @@
     return { width, height };
   }
 
-  function buildPngMetadata(params: GenerationParams): Record<string, string> {
+  function buildPngMetadata(
+    params: GenerationParams,
+    outputSize?: { width: number; height: number } | null,
+  ): Record<string, string> {
     // Re-append <segment:...> tags in canonical closed form so reimport/remix
     // restores them (the params prompt itself is segment-stripped).
     const positiveWithSegments = params.detail_segments?.length
@@ -1637,6 +1715,18 @@
       mode: params.mode,
       date: new Date().toISOString().split("T")[0] ?? "",
     };
+
+    // A NovelAI standalone upscale is the one request whose params describe the
+    // *input*: the API is told the source's size because that is what it scales
+    // from, so `params.width/height` is the size before the 4x and recording it
+    // makes the metadata panel report the old resolution for the new image.
+    //
+    // Scoped to that action deliberately. `size` is also what "Use these
+    // settings" reads back into the generation panel, and for a ComfyUI run with
+    // upscale_enabled the request size is exactly what should be reloaded.
+    if (outputSize && params.novelai?.action === UPSCALE_ACTION) {
+      metadata.size = `${outputSize.width}x${outputSize.height}`;
+    }
 
     // Only include denoise for img2img/inpainting (txt2img is always 1.0)
     if (params.mode !== "txt2img") {
@@ -1978,7 +2068,14 @@
     mode: GenerationMode,
     wasUpscaled: boolean,
     params: GenerationParams | null,
-    images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
+    images: Array<{
+      blob: Blob;
+      url: string;
+      tempFilename?: string;
+      displayTempFilename?: string;
+      width?: number;
+      height?: number;
+    }>,
     generationTimeMs?: number,
   ) {
     if (images.length === 0) return;
@@ -2010,7 +2107,12 @@
       void prepareLatestInpaintResult(newImages[0], sourceVersion);
     }
 
-    const metadata = params ? buildPngMetadata(params) : undefined;
+    // One size for the batch: every image in a run comes back the same size,
+    // and the metadata map is shared by all of them below.
+    const first = images[0];
+    const outputSize =
+      first?.width && first?.height ? { width: first.width, height: first.height } : null;
+    const metadata = params ? buildPngMetadata(params, outputSize) : undefined;
     for (const image of newImages) {
       image.metadata = metadata ?? null;
     }
@@ -2035,6 +2137,14 @@
     console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
     showGenerationDoneToast(newImages);
+
+    // An enhance, a set of variations or an upscale replaces what the lightbox
+    // is showing: the source is what was being looked at, and the result is the
+    // point of the click.  Placed here rather than further down because the
+    // artist-preview and style-thumbnail blocks below return early.
+    if (gallery.takeLightboxFollow(promptId) && gallery.lightboxOpen && newImages[0]) {
+      void gallery.openLightbox(newImages[0]);
+    }
 
     // Route a finished artist-preview generation back to its placeholder card.
     // Must run before the style-thumbnail block below, which returns early.
@@ -2826,8 +2936,13 @@
             return;
           }
 
+          // The size of what came back, when Rust could read it off the frame.
+          // Not the same as the requested size for a NovelAI upscale, which is
+          // sent the source's dimensions and returns a 4x image.
+          const outWidth = typeof data.width === "number" ? data.width : undefined;
+          const outHeight = typeof data.height === "number" ? data.height : undefined;
           const arr = pendingOutputImages.get(pid) ?? [];
-          arr.push({ blob, url, tempFilename, displayTempFilename });
+          arr.push({ blob, url, tempFilename, displayTempFilename, width: outWidth, height: outHeight });
           pendingOutputImages.set(pid, arr);
         })();
 
@@ -3840,6 +3955,25 @@
         &times;
       </button>
 
+      <!-- Grid/single toggle. Only a variations run has anything to toggle,
+           so this is the one place the two views meet: the grid is the default
+           for such a run, and this is the way back to a single image (and back
+           again). Sits left of the close button; the next arrow shares the same
+           column but is vertically centred, so they do not overlap. -->
+      {#if gallery.lightboxHasBatchGrid}
+        <button
+          class="absolute top-4 right-14 z-10 w-8 h-8 flex items-center justify-center rounded-lg bg-black/40 hover:bg-black/70 text-white transition-colors"
+          onclick={() => (gallery.lightboxGrid = !gallery.lightboxGrid)}
+          title={locale.t(gallery.lightboxGrid ? "gallery.lightbox.single_title" : "gallery.lightbox.grid_title")}
+        >
+          {#if gallery.lightboxGrid}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          {/if}
+        </button>
+      {/if}
+
       <!-- Arrow navigation -->
       {#if gallery.selectedImage && (sortedGalleryImages.length > 1 || gallery.sessionImages.length > 1)}
         <button
@@ -3860,8 +3994,10 @@
 
       <!-- Action buttons. For a video the player owns the bottom of the frame,
            so this bar sits above the player's control chrome (~90px tall)
-           instead of on top of it. -->
-      {#if gallery.selectedImage}
+           instead of on top of it.
+           Hidden in grid mode: there each tile carries its own bar, and one
+           shared bar floating over four images would not say which it acts on. -->
+      {#if gallery.selectedImage && !gallery.lightboxGrid}
       <div class="absolute {gallery.lightboxIsVideo ? 'bottom-28' : 'bottom-6'} left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
         {#if !gallery.lightboxIsVideo}
         <!-- Generation group -->
@@ -3900,15 +4036,31 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2L19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2L11 5"/></svg>
           </button>
         {/if}
-        <!-- Enhance. Sits beside Director Tools for the same reason: the image
-             being enlarged is usually the one already open at full size here. -->
+        <!-- Enhance, Upscale and Variations. All three sit beside Director
+             Tools for the same reason: the image being worked on is usually the
+             one already open at full size here. They open one modal on three
+             tabs, so landing on the wrong one costs a click, not a reopen. -->
         {#if naiImageEnhanceAvailable()}
+          <button
+            title={locale.t("novelai.enhance.tab_upscale")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={() => gallery.selectedImage && naiImageEnhance.open(gallery.selectedImage, gallery.lightboxUrl ?? null, "upscale")}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/></svg>
+          </button>
+          <button
+            title={locale.t("novelai.enhance.tab_variations")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={() => gallery.selectedImage && naiImageEnhance.open(gallery.selectedImage, gallery.lightboxUrl ?? null, "variations")}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg>
+          </button>
           <button
             title={locale.t("novelai.enhance.action")}
             class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
             onclick={() => gallery.selectedImage && naiImageEnhance.open(gallery.selectedImage, gallery.lightboxUrl ?? null)}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l9-9"/><path d="M14.5 6.5l3 3"/><path d="M13 3.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"/><path d="M19 13l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg>
           </button>
         {/if}
         <button
@@ -4036,7 +4188,137 @@
         </div>
       {/if}
 
-      {#if gallery.lightboxUrl && gallery.lightboxIsVideo}
+      {#if gallery.lightboxGrid}
+        <!-- A variations run is one result in four pieces, so the lightbox
+             shows all four rather than whichever came back last. Each tile is
+             its own small lightbox: it selects on click (driving the metadata
+             panel beside it), carries its own actions on hover, and can be
+             expanded, sent onward or deleted without disturbing the others. -->
+        <div class="w-full h-full overflow-y-auto p-6 pt-16 flex items-center justify-center">
+          <div class="grid grid-cols-2 gap-3 w-full max-w-5xl">
+            {#each gallery.lightboxBatch as tile (tile.filename)}
+              {@const tileSrc = batchTileSrc(tile)}
+              {@const isActive = tile === gallery.selectedImage}
+              <div
+                class="group relative rounded-lg overflow-hidden bg-neutral-900/60 {isActive
+                  ? 'ring-2 ring-indigo-400'
+                  : 'ring-1 ring-neutral-800'}"
+              >
+                <button
+                  class="block w-full cursor-zoom-in"
+                  onclick={() => selectBatchTile(tile)}
+                  title={locale.t("gallery.lightbox.open_tile")}
+                >
+                  {#if tileSrc}
+                    <img
+                      src={tileSrc}
+                      alt={tile.filename}
+                      class="w-full max-h-[38vh] object-contain select-none"
+                      draggable="false"
+                    />
+                  {:else}
+                    <div class="w-full h-40 flex items-center justify-center text-xs text-neutral-500">
+                      {locale.t("gallery.no_preview")}
+                    </div>
+                  {/if}
+                </button>
+
+                <!-- Per-tile timing. NovelAI returns the whole run from one
+                     request, so every tile carries the run's duration: it is
+                     honest about what was measured rather than inventing four
+                     numbers out of one. -->
+                {#if tile.generationTimeMs != null}
+                  <div
+                    class="absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 text-white text-[11px] font-medium px-2 py-0.5 rounded-lg backdrop-blur-sm pointer-events-none"
+                    title={locale.t("gallery.generation_time")}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+                    {formatGenerationTime(tile.generationTimeMs, locale.current)}
+                  </div>
+                {/if}
+
+                <div
+                  class="absolute inset-x-0 bottom-0 p-2 flex flex-wrap items-center justify-center gap-1 bg-gradient-to-t from-black/85 to-transparent opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                >
+                  <button
+                    title={locale.t("gallery.lightbox.single_title")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                    onclick={() => expandBatchTile(tile)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                  </button>
+                  {#if naiImageEnhanceAvailable()}
+                    <button
+                      title={locale.t("novelai.enhance.tab_upscale")}
+                      class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                      onclick={() => naiImageEnhance.open(tile, batchTileSrc(tile), "upscale")}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/></svg>
+                    </button>
+                    <button
+                      title={locale.t("novelai.enhance.tab_variations")}
+                      class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                      onclick={() => naiImageEnhance.open(tile, batchTileSrc(tile), "variations")}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg>
+                    </button>
+                    <button
+                      title={locale.t("novelai.enhance.action")}
+                      class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                      onclick={() => naiImageEnhance.open(tile, batchTileSrc(tile))}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l9-9"/><path d="M14.5 6.5l3 3"/><path d="M13 3.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"/><path d="M19 13l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg>
+                    </button>
+                  {/if}
+                  <button
+                    title={locale.t("gallery.img2img")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                    onclick={() => img2imgImage(tile)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  </button>
+                  <button
+                    title={locale.t("gallery.inpaint")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                    onclick={() => inpaintImage(tile)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                  </button>
+                  <button
+                    title={locale.t("gallery.reuse_seed")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                    onclick={() => applyMetadataToGeneration(tile, "seed")}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M5 7h7"/><path d="M5 12h7"/><path d="M5 17h7"/></svg>
+                  </button>
+                  <button
+                    title={locale.t("gallery.save_as")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                    disabled={gallery.saving}
+                    onclick={() => gallery.saveImageAs(tile)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                  <button
+                    title={locale.t("gallery.copy_clipboard")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+                    onclick={() => gallery.copyToClipboard(tile)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button
+                    title={locale.t("gallery.delete")}
+                    class="flex items-center justify-center w-7 h-7 rounded-lg bg-red-900/70 hover:bg-red-800 text-red-300 hover:text-red-100 transition-colors"
+                    onclick={() => deleteBatchTile(tile)}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {:else if gallery.lightboxUrl && gallery.lightboxIsVideo}
         <!-- The player owns its own chrome, keyboard handling (including the
              arrow-key stopPropagation that used to live inline here), and
              export affordances. Zoom and pan stay absent: they are for stills. -->

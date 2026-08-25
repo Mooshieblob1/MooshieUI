@@ -6,6 +6,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
+  import { naiImageEnhance, naiImageEnhanceAvailable } from "../../stores/naiImageEnhance.svelte.js";
   import { generate, uploadImageBytes, downloadModel } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput } from "../../utils/galleryActions.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
@@ -192,11 +193,37 @@
   async function upscaleImage() {
     // The Refine button takes the most-recent output and runs it back through
     // the upscale chain (MooshieUI's "refiner") at low denoise — analogous to
-    // SwarmUI's "Refine Image" button.
+    // SwarmUI's "Refine Image" button. In NovelAI mode it means NovelAI's own
+    // Enhance instead; see the branch at the top of the try.
     //
     // ComfyUI needs a real input/ filename here. Browser-mode preview URLs can
     // be blob: URLs, so resolve the client-held bytes first and upload them.
     try {
+      // In NovelAI mode, Refine means NovelAI's own Enhance: a paid img2img pass
+      // at a larger canvas, with the upscale amount, magnitude, strength and
+      // noise controls NovelAI offers. The local upscale chain is a different
+      // operation with none of those choices, so hand the image to the Enhance
+      // modal and let the user set them.
+      if (naiImageEnhanceAvailable()) {
+        // The modal loads the real bytes, which only a persisted output has; a
+        // preview still held as a blob has nothing to read.
+        const source = getActiveSavedImage();
+        if (!source) {
+          gallery.showToast(locale.t("preview.not_available"), "info");
+          return;
+        }
+        naiImageEnhance.open(source, previewSrc ?? progress.lastOutputImage);
+        return;
+      }
+
+      // NovelAI model with no key configured: Enhance is unreachable, and the
+      // local chain cannot load a NovelAI checkpoint. Say which model is
+      // missing rather than surfacing ComfyUI's raw `value_not_in_list`.
+      if (generation.isNovelAi && !generation.novelaiSettings.local_checkpoint?.trim()) {
+        gallery.showToast(locale.t("preview.refine_needs_local_model"), "error");
+        return;
+      }
+
       const uploadName = await resolvePreviewUploadName("refine");
       if (!uploadName) return;
 
@@ -246,6 +273,13 @@
   $effect(() => {
     progress.setActiveMode(generation.mode);
   });
+
+  /** What the Refine button does here: NovelAI's Enhance, or the local upscale
+   *  chain. Naming it after the operation keeps the paid pass from looking like
+   *  the free one. */
+  const refineLabel = $derived(
+    naiImageEnhanceAvailable() ? locale.t("novelai.enhance.action") : locale.t("preview.upscale")
+  );
 
   function getSavedImageForUrl(url: string | null) {
     if (!url || url.startsWith("data:image/")) return null;
@@ -344,7 +378,7 @@
       { label: locale.t("gallery.send_to_inpaint"), action: () => void sendToInpaint() },
     ];
     if (!progress.wasUpscaled) {
-      items.push({ label: locale.t("gallery.upscale"), action: () => void upscaleImage() });
+      items.push({ label: refineLabel, action: () => void upscaleImage() });
     }
     // NovelAI only, and only once the output has been persisted: the tool sends
     // the real bytes, and a preview that is still just a blob has none to load.
@@ -415,7 +449,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 01-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 112 0v1.586l2.293-2.293a1 1 0 011.414 1.414L6.414 15H8a1 1 0 110 2H4a1 1 0 01-1-1v-4zm13 3a1 1 0 01-1 1h-4a1 1 0 110-2h1.586l-2.293-2.293a1 1 0 011.414-1.414L15 13.586V12a1 1 0 112 0v4z" clip-rule="evenodd"/>
             </svg>
-            {locale.t('preview.upscale')}
+            {refineLabel}
           </button>
         {/if}
         <button

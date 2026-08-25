@@ -12,11 +12,22 @@ use crate::error::AppError;
 
 use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 
-// Every endpoint MooshieUI calls lives on the image host, the subscription
-// record included. api.novelai.net answers a subscription request with
-// 400 "Please refresh NovelAI.net. If using a third-party tool, update to
-// the image URL."
+// Two hosts, and the split is not cosmetic.
+//
+// Generation and everything around it moved to the image host, and the
+// subscription record went with it: api.novelai.net answers a subscription
+// request with 400 "Please refresh NovelAI.net. If using a third-party tool,
+// update to the image URL."
+//
+// The standalone upscaler did not move. It is still served by the old API
+// host, and the image host answers the same path with a *different* route
+// that validates against the generation schema -- so posting the documented
+// upscale body there fails with 400 "Validation error: model doesn't exist",
+// naming a field an upscale request has never carried. The path existing on
+// both hosts is what makes this hard to spot: the image host returns 401 for
+// it, not 404, so it looks like the right endpoint behind a bad key.
 const IMAGE_BASE: &str = "https://image.novelai.net";
+const API_BASE: &str = "https://api.novelai.net";
 
 pub struct NovelAiClient<'a> {
     http: &'a reqwest::Client,
@@ -40,6 +51,41 @@ impl<'a> NovelAiClient<'a> {
             .post(format!("{IMAGE_BASE}/ai/generate-image"))
             .bearer_auth(self.api_key)
             .json(body)
+            .send()
+            .await?;
+
+        let res = check_status(res).await?;
+        let bytes = res.bytes().await?;
+        response::unpack_images(&bytes).map_err(AppError::Other)
+    }
+
+    /// Enlarge an image with NovelAI's dedicated upscaler.
+    ///
+    /// Not a diffusion pass and not a second generation: a fixed model runs
+    /// over the image and hands it back larger, so there is no prompt, seed,
+    /// sampler or step count to send. `width` and `height` are the *source's*
+    /// size, which is what NovelAI scales from. The response is the same
+    /// zip-of-PNGs `generate` returns, so it unpacks identically.
+    ///
+    /// Note the host: this is the one call that goes to `API_BASE` rather than
+    /// the image host. See the comment on those constants.
+    pub async fn upscale(
+        &self,
+        image: &str,
+        width: u32,
+        height: u32,
+        scale: u32,
+    ) -> Result<Vec<Vec<u8>>, AppError> {
+        let res = self
+            .http
+            .post(format!("{API_BASE}/ai/upscale"))
+            .bearer_auth(self.api_key)
+            .json(&serde_json::json!({
+                "image": image,
+                "width": width,
+                "height": height,
+                "scale": scale,
+            }))
             .send()
             .await?;
 

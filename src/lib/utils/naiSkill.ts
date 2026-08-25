@@ -23,7 +23,7 @@ import type { NaiPromptContext } from "./naiPrompt.js";
  * Bump to invalidate every cached skill at once, after changing the authoring
  * prompt or the V5 specification it is written against.
  */
-const SKILL_VERSION = 1;
+const SKILL_VERSION = 4;
 
 const CACHE_PREFIX = "mooshieui.naiskill.";
 
@@ -102,8 +102,8 @@ Rules for your answer:
 export function naiSkillAuthoringUser(ctx: NaiPromptContext): string {
   const curated = ctx.variant === "curated";
   const shape = curated
-    ? "a tight prompt of roughly 374 tokens, where every word has to earn its place"
-    : "a rich prompt of roughly 750 tokens, where detail is rewarded but coherence across a long answer is the risk";
+    ? "a prompt of roughly 703 tokens, room enough to be specific but not to ramble"
+    : "a prompt of up to roughly 1471 tokens, where detail is rewarded but coherence across a long answer is the risk";
 
   return `The job: rewrite a user's image idea into a NovelAI Diffusion V5 ${
     curated ? "Curated" : "Full"
@@ -111,7 +111,7 @@ export function naiSkillAuthoringUser(ctx: NaiPromptContext): string {
 
 The output is ${shape}, returned as labelled fields: a base prompt holding the subject counts and a natural language scene description, an optional undesired content list, and one optional box per character. It uses NovelAI's own emphasis syntax, where markers must be opened and closed in pairs. Prose commentary, markdown and explanation are all failures.
 
-The prompt you are given may already be a rewritten prompt that the user is iterating on, in which case the job is a targeted revision rather than a fresh design.
+The input is either an idea to build a prompt from, or the user's existing prompt together with an instruction for revising it. There is no conversation history and no image behind either one. In the second case every field has to come back in full, including the ones the instruction never mentions.
 
 Write your notes now.`;
 }

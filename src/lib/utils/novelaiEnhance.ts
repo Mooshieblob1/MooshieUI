@@ -27,6 +27,92 @@ export const ENHANCE_MAX_PIXELS = 3 * 1024 * 1024;
  */
 const DIMENSION_STEP = 64;
 
+/**
+ * The fixed step NovelAI's own Enhance offers between 1x and Max.
+ *
+ * A named constant rather than a literal at the call site because two things
+ * have to agree on it: the button that quotes the size and the check that
+ * decides whether the button is worth showing at all.
+ */
+export const ENHANCE_MID_SCALE = 1.5;
+
+/**
+ * The `action` value that routes a request to NovelAI's standalone upscaler.
+ *
+ * Mirrors `UPSCALE_ACTION` in `novelai/mod.rs`. The backend treats anything
+ * else as a generation, so a typo here would be billed as a whole new image
+ * rather than rejected.
+ */
+export const UPSCALE_ACTION = "upscale";
+
+/**
+ * That upscaler is a fixed 4x model. Mirrors `UPSCALE_SCALE`.
+ *
+ * Nothing in the UI can change it: the endpoint takes the factor as a field and
+ * accepts no other value.
+ */
+export const UPSCALE_FACTOR = 4;
+
+/**
+ * The largest image the upscaler accepts. Mirrors `UPSCALE_MAX_PIXELS`.
+ *
+ * An area rather than a pair of side limits, which is what lets a tall portrait
+ * through despite being over 1536 on one side. The same number is where the
+ * price table in `novelaiCost.ts` runs out, which is not a coincidence: past it
+ * NovelAI's own client neither quotes nor sends. The backend enforces it too;
+ * this copy exists so the button can explain itself before the click instead of
+ * the request coming back rejected after it.
+ */
+export const UPSCALE_MAX_PIXELS = 3145728;
+
+/** Whether the upscaler will take this image at all. */
+export function upscaleFits(width: number, height: number): boolean {
+  if (!(width > 0 && height > 0)) return false;
+  return width * height <= UPSCALE_MAX_PIXELS;
+}
+
+/**
+ * What a 4x upscale comes back as.
+ *
+ * Deliberately not snapped to the 64px grid. The upscaler is not a generation
+ * and never sees that grid: it returns exactly four times the source, odd
+ * dimensions included.
+ */
+export function upscaleTargetSize(
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  return {
+    width: Math.round(width * UPSCALE_FACTOR),
+    height: Math.round(height * UPSCALE_FACTOR),
+  };
+}
+
+/** How many variations one run asks for. */
+export const VARIATION_COUNT_MIN = 1;
+export const VARIATION_COUNT_MAX = 8;
+/** NovelAI's own variation control asks for four. */
+export const VARIATION_COUNT_DEFAULT = 4;
+
+/**
+ * How far a variation may stray from its source, as an img2img strength.
+ *
+ * The default is low enough that the results stay recognisably the same image,
+ * and it is the value that reproduces the price NovelAI quotes for a set of
+ * four off the default portrait.
+ */
+export const VARIETY_MIN = 0.1;
+export const VARIETY_MAX = 0.9;
+export const VARIETY_DEFAULT = 0.4;
+
+export function clampVariationCount(value: number): number {
+  if (!Number.isFinite(value)) return VARIATION_COUNT_DEFAULT;
+  return Math.min(
+    VARIATION_COUNT_MAX,
+    Math.max(VARIATION_COUNT_MIN, Math.round(value)),
+  );
+}
+
 export const MAGNITUDE_MIN = 1;
 export const MAGNITUDE_MAX = 5;
 /** The middle of the range, and what NovelAI's own panel opens on. */
@@ -92,6 +178,24 @@ export function enhanceTargetSize(
     width: snapDimension(width * scale),
     height: snapDimension(height * scale),
   };
+}
+
+/**
+ * Whether a fixed scale's snapped result still fits under the pixel ceiling.
+ *
+ * Checked on the snapped size and not on the raw multiplication, because
+ * snapping rounds up as often as down: a 1.5x that computes to just under 3MP
+ * can land just over it once both dimensions are on the 64px grid, and the
+ * backend would then reject the request the modal had already priced.
+ */
+export function enhanceScaleFits(
+  width: number,
+  height: number,
+  scale: number,
+): boolean {
+  if (!(width > 0 && height > 0)) return false;
+  const target = enhanceTargetSize(width, height, scale);
+  return target.width * target.height <= ENHANCE_MAX_PIXELS;
 }
 
 /**

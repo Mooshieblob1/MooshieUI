@@ -2,10 +2,17 @@ import { generation } from "./generation.svelte.js";
 import { novelai } from "./novelai.svelte.js";
 import {
   clampMagnitude,
+  clampVariationCount,
+  enhanceScaleFits,
   enhanceTargetSize,
   magnitudeToDenoise,
   maxEnhanceScale,
+  upscaleFits,
+  upscaleTargetSize,
+  ENHANCE_MID_SCALE,
   MAGNITUDE_DEFAULT,
+  VARIATION_COUNT_DEFAULT,
+  VARIETY_DEFAULT,
   type EnhanceDenoise,
 } from "../utils/novelaiEnhance.js";
 import type { OutputImage } from "../types/index.js";
@@ -28,15 +35,26 @@ import type { OutputImage } from "../types/index.js";
  * image arrives in the session grid and the gallery on its own.
  */
 
-/** Which of the two upscale buttons is selected. */
-export type EnhanceScaleChoice = "1x" | "max";
+/** Which of the upscale buttons is selected. */
+export type EnhanceScaleChoice = "1x" | "1.5x" | "max";
 
 /**
- * A "Max" that works out to the source's own size is not an option.
+ * Which of the three things this modal can do to the image is showing.
  *
- * Below this much extra area the second button would quote the same resolution
- * as 1x, so the modal offers 1x alone instead of two buttons that do the same
- * thing. A source already at or past the 3MP ceiling lands here.
+ * One store and one modal rather than three, because all three start from the
+ * same expensive step -- decoding the source and reading its true size -- and
+ * splitting them would mean paying for that read again on every switch, plus
+ * three copies of the cost quote that has to agree with it.
+ */
+export type NaiImageAction = "enhance" | "upscale" | "variations";
+
+/**
+ * How much bigger a button has to be than the one before it to be offered.
+ *
+ * Below this much extra area a button quotes the same resolution as its
+ * neighbour, so the modal drops it rather than showing two buttons that do the
+ * same thing at the same price. A source already at or past the 3MP ceiling
+ * loses both 1.5x and Max this way and is offered 1x alone.
  */
 const MIN_MEANINGFUL_MAX_SCALE = 1.05;
 
@@ -58,8 +76,16 @@ class NaiImageEnhanceStore {
   /** True while the source is being decoded, before any size can be quoted. */
   loadingSource = $state(false);
 
+  /** Which action is showing. Set by whichever entry point opened the modal. */
+  action = $state<NaiImageAction>("enhance");
+
   scaleChoice = $state<EnhanceScaleChoice>("1x");
   magnitude = $state(MAGNITUDE_DEFAULT);
+
+  /** How many variations one run asks for, each billed separately. */
+  variationCount = $state(VARIATION_COUNT_DEFAULT);
+  /** img2img strength for a variation run. */
+  variety = $state(VARIETY_DEFAULT);
 
   /** Whether the raw strength/noise controls are showing instead of magnitude. */
   showAdvanced = $state(false);
@@ -78,20 +104,61 @@ class NaiImageEnhanceStore {
     return this.sourceWidth > 0 && this.sourceHeight > 0;
   }
 
+  /** The source at its real size, which is what the upscaler is handed. */
+  get sourceSize(): { width: number; height: number } {
+    return { width: this.sourceWidth, height: this.sourceHeight };
+  }
+
+  /** What a 4x upscale of the source comes back as. */
+  get upscaleSize(): { width: number; height: number } {
+    if (!this.hasSourceSize) return { width: 0, height: 0 };
+    return upscaleTargetSize(this.sourceWidth, this.sourceHeight);
+  }
+
+  /**
+   * Whether the upscaler will accept this source.
+   *
+   * Its input ceiling is a megapixel, well below what Enhance can produce, so
+   * an enhanced image is usually too big to then upscale. Checked here so the
+   * modal can say that before the click rather than after the request fails.
+   */
+  get upscaleAvailable(): boolean {
+    return upscaleFits(this.sourceWidth, this.sourceHeight);
+  }
+
   get maxScale(): number {
     if (!this.hasSourceSize) return 1;
     return maxEnhanceScale(this.sourceWidth, this.sourceHeight);
   }
 
-  /** Whether "Max" would reach a size 1x does not already cover. */
+  /** Whether 1.5x still fits under the 3MP ceiling once snapped. */
+  get midScaleAvailable(): boolean {
+    if (!this.hasSourceSize) return false;
+    return enhanceScaleFits(
+      this.sourceWidth,
+      this.sourceHeight,
+      ENHANCE_MID_SCALE,
+    );
+  }
+
+  /**
+   * Whether "Max" reaches a size the buttons before it do not already cover.
+   *
+   * The floor it has to clear is 1.5x when that button is showing, and 1x when
+   * it is not: on a source whose ceiling is 1.5x exactly, "Max" and "1.5x"
+   * would be the same image for the same Anlas.
+   */
   get maxScaleAvailable(): boolean {
-    return this.maxScale >= MIN_MEANINGFUL_MAX_SCALE;
+    const floor = this.midScaleAvailable ? ENHANCE_MID_SCALE : 1;
+    return this.maxScale >= floor * MIN_MEANINGFUL_MAX_SCALE;
   }
 
   get scale(): number {
-    return this.scaleChoice === "max" && this.maxScaleAvailable
-      ? this.maxScale
-      : 1;
+    if (this.scaleChoice === "max" && this.maxScaleAvailable)
+      return this.maxScale;
+    if (this.scaleChoice === "1.5x" && this.midScaleAvailable)
+      return ENHANCE_MID_SCALE;
+    return 1;
   }
 
   /** The canvas the enhance will be generated at, for both the quote and the request. */
@@ -104,6 +171,16 @@ class NaiImageEnhanceStore {
   get oneXSize(): { width: number; height: number } {
     if (!this.hasSourceSize) return { width: 0, height: 0 };
     return enhanceTargetSize(this.sourceWidth, this.sourceHeight, 1);
+  }
+
+  /** Size the 1.5x button quotes. */
+  get midSize(): { width: number; height: number } {
+    if (!this.hasSourceSize) return { width: 0, height: 0 };
+    return enhanceTargetSize(
+      this.sourceWidth,
+      this.sourceHeight,
+      ENHANCE_MID_SCALE,
+    );
   }
 
   get maxSize(): { width: number; height: number } {
@@ -129,12 +206,17 @@ class NaiImageEnhanceStore {
   }
 
   get canRun(): boolean {
-    return (
-      this.isOpen &&
-      !this.busy &&
-      !this.loadingSource &&
-      this.imageBase64 !== null
-    );
+    if (
+      !this.isOpen ||
+      this.busy ||
+      this.loadingSource ||
+      this.imageBase64 === null
+    )
+      return false;
+    // The only action with a limit of its own. The other two work on anything
+    // that decoded.
+    if (this.action === "upscale") return this.upscaleAvailable;
+    return true;
   }
 
   /**
@@ -144,15 +226,22 @@ class NaiImageEnhanceStore {
    * rarely the right one for this image, and a stale setting quietly spending
    * Anlas on the wrong result is worse than re-picking it.
    */
-  open(image: OutputImage, previewUrl: string | null): void {
+  open(
+    image: OutputImage,
+    previewUrl: string | null,
+    action: NaiImageAction = "enhance",
+  ): void {
     this.source = image;
     this.previewUrl = previewUrl;
+    this.action = action;
     this.sourceWidth = 0;
     this.sourceHeight = 0;
     this.imageBase64 = null;
     this.loadingSource = false;
     this.scaleChoice = "1x";
     this.magnitude = MAGNITUDE_DEFAULT;
+    this.variationCount = VARIATION_COUNT_DEFAULT;
+    this.variety = VARIETY_DEFAULT;
     this.showAdvanced = false;
     const denoise = magnitudeToDenoise(MAGNITUDE_DEFAULT);
     this.strength = denoise.strength;
@@ -163,6 +252,23 @@ class NaiImageEnhanceStore {
 
   setMagnitude(value: number): void {
     this.magnitude = clampMagnitude(value);
+  }
+
+  setVariationCount(value: number): void {
+    this.variationCount = clampVariationCount(value);
+  }
+
+  /**
+   * Switch actions without touching the source.
+   *
+   * The decoded bytes and the size stay put deliberately: they describe the
+   * image, not the action, and re-reading them would make every tab click cost
+   * a decode and blank out the price while it ran.
+   */
+  setAction(action: NaiImageAction): void {
+    if (this.busy) return;
+    this.action = action;
+    this.error = null;
   }
 
   /**

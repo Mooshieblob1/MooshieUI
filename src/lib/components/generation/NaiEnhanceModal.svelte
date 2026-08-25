@@ -15,7 +15,7 @@
    * The `enhanceForNai` call lives here and not in the store: `naiEnhance` is a
    * feature store and may not import the prompt assistant.
    */
-  import { naiEnhance } from "../../stores/naiEnhance.svelte.js";
+  import { naiEnhance, NAI_MAX_REFERENCES } from "../../stores/naiEnhance.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -26,6 +26,83 @@
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import { mapLlmError } from "../../utils/llmError.js";
+  import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
+  import { readClipboardImageSafe } from "../../utils/api.js";
+  import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import type { OutputImage } from "../../types/index.js";
+
+  let fileInput = $state<HTMLInputElement | null>(null);
+  let pickerOpen = $state(false);
+  /** Set while a picked image is being decoded, so the buttons cannot stack. */
+  let attaching = $state(false);
+
+  /**
+   * Downscale and attach whatever the three sources hand over.
+   *
+   * All of them funnel through `fileToNovelAiBase64`, the same in-browser
+   * canvas pass the NovelAI reference fields use: a 4 MB phone photo becomes a
+   * ~1024px PNG before it ever reaches IPC, and Rust downscales again to its own
+   * pixel budget. Doing it here as well is not redundant, it is what keeps the
+   * request body from carrying four full-size images across the wire.
+   */
+  async function attach(blobs: Blob[]) {
+    if (blobs.length === 0 || attaching) return;
+    attaching = true;
+    try {
+      const encoded: string[] = [];
+      for (const blob of blobs.slice(0, naiEnhance.referenceSlotsLeft)) {
+        const base64 = await fileToNovelAiBase64(blob);
+        if (base64) encoded.push(base64);
+      }
+      if (encoded.length === 0) {
+        gallery.showToast(locale.t("prompt_assistant.nai_reference_failed"), "error");
+        return;
+      }
+      naiEnhance.addReferences(encoded);
+    } catch (e) {
+      console.error("Reference image attach failed:", e);
+      gallery.showToast(locale.t("prompt_assistant.nai_reference_failed"), "error");
+    } finally {
+      attaching = false;
+    }
+  }
+
+  async function attachFromFiles(files: FileList | null) {
+    await attach(files ? Array.from(files) : []);
+  }
+
+  async function attachFromClipboard() {
+    try {
+      const bytes = await readClipboardImageSafe();
+      if (!bytes || bytes.length === 0) {
+        gallery.showToast(locale.t("common.no_clipboard_image"), "error");
+        return;
+      }
+      await attach([new Blob([new Uint8Array(bytes)], { type: "image/png" })]);
+    } catch (e) {
+      console.error("Reference image paste failed:", e);
+      gallery.showToast(locale.t("common.no_clipboard_image"), "error");
+    }
+  }
+
+  /**
+   * Gallery entries are JXL on disk, so they go through the same PNG decode the
+   * generation inputs use rather than being read off the drive directly.
+   */
+  async function attachFromGallery(images: OutputImage[]) {
+    try {
+      const blobs: Blob[] = [];
+      for (const image of images.slice(0, naiEnhance.referenceSlotsLeft)) {
+        const { bytes } = await loadOutputImageForGenerationInput(image);
+        blobs.push(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+      }
+      await attach(blobs);
+    } catch (e) {
+      console.error("Reference image load from gallery failed:", e);
+      gallery.showToast(locale.t("prompt_assistant.nai_reference_failed"), "error");
+    }
+  }
 
   const pending = $derived(naiEnhance.pending);
   const variant = $derived(naiV5Variant(generation.checkpoint));
@@ -53,18 +130,34 @@
   async function run() {
     const text = naiEnhance.input.trim();
     const v = variant;
-    if (!text || !v || naiEnhance.busy) return;
+    // Snapshotted before the await: the labels sent in the manifest line have to
+    // be the ones that match the images sent alongside them, and the modal is
+    // still editable while the request is in flight.
+    const refs = naiEnhance.references.map((r) => ({ ...r }));
+    // Images alone are a request. An attached picture with no typed instruction
+    // means "do this", and the prompt builder supplies that verb, so the only
+    // thing this guard still refuses is a turn with nothing in it at all.
+    if ((!text && refs.length === 0) || !v || naiEnhance.busy) return;
     const language = resolveNaiLanguage(generation.naiEnhanceLanguage, text);
-    const existing = generation.novelaiSettings.characters;
+    const boxes = generation.novelaiSettings.characters;
     naiEnhance.busy = true;
     try {
       const result = await promptAssistant.enhanceForNai(text, {
         variant: v,
-        qualityToggle: generation.novelaiSettings.quality_toggle,
         ucPreset: generation.novelaiSettings.uc_preset,
-        characterCount: existing.length,
+        characterCount: boxes.length,
+        // Ticked, what the user typed is applied as an edit to these fields
+        // rather than treated as the whole of the idea.
+        existing: generation.naiEnhanceIncludeExisting
+          ? {
+              base: generation.positivePrompt ?? "",
+              uc: generation.negativePrompt ?? "",
+              characters: boxes.map((c) => c.prompt ?? ""),
+            }
+          : null,
         language,
-      });
+        references: refs.map((r) => r.label),
+      }, refs.map((r) => r.base64));
       // Cancelling closes the modal but cannot recall the request, so a late
       // answer to a dismissed one is dropped rather than popped back up.
       if (naiEnhance.stage !== "input") return;
@@ -84,10 +177,10 @@
         base: { before: generation.positivePrompt, after: result.parsed.base, selected: true },
         uc: { before: generation.negativePrompt, after: result.parsed.uc, selected: true },
         characters: result.parsed.characters.map((after, i) => ({
-          before: existing[i]?.prompt ?? "",
+          before: boxes[i]?.prompt ?? "",
           after,
           selected: true,
-          targetIndex: i < existing.length ? i : null,
+          targetIndex: i < boxes.length ? i : null,
         })),
       });
     } catch (e) {
@@ -103,13 +196,18 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") close();
-  }
-
-  function onInputKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    if (e.key === "Escape") {
+      close();
+      return;
+    }
+    // Ctrl+Enter confirms, wherever focus sits inside the modal -- so it works
+    // after clicking a variant button, not only from the textarea.  Only at
+    // the input stage: at the review stage there is nothing to submit, and
+    // re-running the rewrite would spend another request on a press meant for
+    // the panel underneath.
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && naiEnhance.stage === "input") {
       e.preventDefault();
-      run();
+      void run();
     }
   }
 </script>
@@ -182,6 +280,7 @@
 
 {#if naiEnhance.isOpen}
   <div
+    data-modal-open
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {
       if (e.currentTarget === e.target) close();
@@ -234,10 +333,129 @@
           aria-label={locale.t("prompt_assistant.nai_input_title")}
           disabled={naiEnhance.busy}
           bind:value={naiEnhance.input}
-          onkeydown={onInputKeydown}
         ></textarea>
 
+        <!-- Below the box, not above it: what the user types is the request,
+             and the images are what the request points at. -->
+        <div class="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-[11px] font-medium text-neutral-300">
+              {locale.t("prompt_assistant.nai_references")}
+            </span>
+            <span class="text-[10px] tabular-nums text-neutral-500">
+              {naiEnhance.references.length}/{NAI_MAX_REFERENCES}
+            </span>
+            <div class="ml-auto flex items-center gap-1.5">
+              <button
+                class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+                disabled={naiEnhance.busy || attaching || !naiEnhance.canAddReference}
+                onclick={() => fileInput?.click()}
+              >
+                {locale.t("prompt_assistant.nai_reference_upload")}
+              </button>
+              <button
+                class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+                disabled={naiEnhance.busy || attaching || !naiEnhance.canAddReference}
+                onclick={attachFromClipboard}
+              >
+                {locale.t("prompt_assistant.nai_reference_paste")}
+              </button>
+              <button
+                class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+                disabled={naiEnhance.busy || attaching || !naiEnhance.canAddReference}
+                onclick={() => (pickerOpen = true)}
+              >
+                {locale.t("prompt_assistant.nai_reference_gallery")}
+              </button>
+            </div>
+          </div>
+
+          <input
+            bind:this={fileInput}
+            type="file"
+            accept="image/*"
+            multiple
+            class="hidden"
+            onchange={(e) => {
+              const el = e.currentTarget as HTMLInputElement;
+              void attachFromFiles(el.files);
+              // Cleared so picking the same file twice in a row still fires.
+              el.value = "";
+            }}
+          />
+
+          {#if naiEnhance.references.length > 0}
+            <div class="mt-2 flex flex-wrap gap-2">
+              {#each naiEnhance.references as ref, i (ref.id)}
+                <div class="w-28 shrink-0">
+                  <div
+                    class="relative overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900"
+                  >
+                    <img
+                      src={novelAiBase64ToSrc(ref.base64)}
+                      alt={locale.t("prompt_assistant.nai_reference_alt", { n: i + 1 })}
+                      class="h-24 w-full object-cover"
+                    />
+                    <span
+                      class="absolute left-1 top-1 rounded bg-black/70 px-1 text-[10px] tabular-nums text-neutral-200"
+                    >
+                      {i + 1}
+                    </span>
+                    <button
+                      class="absolute right-1 top-1 rounded bg-black/70 px-1 text-[10px] text-neutral-200 hover:bg-red-600/80"
+                      title={locale.t("prompt_assistant.nai_reference_remove")}
+                      aria-label={locale.t("prompt_assistant.nai_reference_remove")}
+                      disabled={naiEnhance.busy}
+                      onclick={() => naiEnhance.removeReference(ref.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    class="mt-1 w-full rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-200 placeholder:text-neutral-600 focus:border-indigo-500 focus:outline-none"
+                    placeholder={locale.t("prompt_assistant.nai_reference_label_placeholder")}
+                    aria-label={locale.t("prompt_assistant.nai_reference_label_placeholder")}
+                    disabled={naiEnhance.busy}
+                    value={ref.label}
+                    oninput={(e) =>
+                      naiEnhance.setReferenceLabel(
+                        ref.id,
+                        (e.currentTarget as HTMLInputElement).value,
+                      )}
+                  />
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <p class="mt-2 text-[10px] leading-relaxed text-neutral-500">
+            {locale.t("prompt_assistant.nai_references_hint", { max: NAI_MAX_REFERENCES })}
+          </p>
+        </div>
+
         <div class="mt-2 flex flex-wrap items-center gap-2">
+          <!-- Off by default, and sticky once ticked: iterating on one image
+               wants it for the whole session, while the first pass at a new
+               idea is better off with the model unable to see the old prompt. -->
+          <label
+            class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
+            title={locale.t("prompt_assistant.nai_include_existing_tooltip")}
+          >
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              disabled={naiEnhance.busy}
+              checked={generation.naiEnhanceIncludeExisting}
+              onchange={(e) => {
+                generation.naiEnhanceIncludeExisting = (
+                  e.currentTarget as HTMLInputElement
+                ).checked;
+                generation.saveSettings();
+              }}
+            />
+            {locale.t("prompt_assistant.nai_include_existing")}
+          </label>
           <button
             class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
             disabled={naiEnhance.busy || !generation.positivePrompt?.trim()}
@@ -276,7 +494,8 @@
           </button>
           <button
             class="rounded-lg bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
-            disabled={naiEnhance.busy || !naiEnhance.input.trim()}
+            disabled={naiEnhance.busy ||
+              (!naiEnhance.input.trim() && naiEnhance.references.length === 0)}
             onclick={run}
           >
             {#if naiEnhance.busy}
@@ -386,3 +605,14 @@
     </div>
   </div>
 {/if}
+
+<!-- Outside the modal markup above so its own overlay stacks on top rather than
+     being clipped by the dialog's scroll container. -->
+<GalleryPickerModal
+  open={pickerOpen}
+  multiple
+  max={naiEnhance.referenceSlotsLeft}
+  title={locale.t("prompt_assistant.nai_reference_pick_title")}
+  onselect={(images) => void attachFromGallery(images)}
+  onclose={() => (pickerOpen = false)}
+/>

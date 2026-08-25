@@ -102,6 +102,40 @@ export function novelAiCostPerSample(input: NovelAiCostInput): number {
 }
 
 /**
+ * What NovelAI charges for a standalone upscale, in steps by input area.
+ *
+ * Not a flat 1. The upscaler is priced by how big the image going *in* is,
+ * across four steps, and nothing else: the scale factor is not part of it (the
+ * function NovelAI's client ships takes the factor as an argument and never
+ * reads it), and neither is Opus, which has no free allowance here the way
+ * generation does. Above the last step an image is not priceable because it is
+ * not upscalable either -- the same number caps both, see `UPSCALE_MAX_PIXELS`.
+ *
+ * NovelAI publishes no cost or quote endpoint, so like every other number in
+ * this file these are a reconstruction of the pricing module its web client
+ * ships rather than something fetched. The steps are not round because they are
+ * the sizes their own client compares against.
+ */
+export const UPSCALE_COST_TIERS: ReadonlyArray<readonly [pixels: number, anlas: number]> = [
+  [1048576, 1],
+  [1747627, 2],
+  [2446678, 3],
+  [3145728, 4],
+];
+
+/** Anlas a 4x upscale of an image this size is expected to cost. */
+export function novelAiUpscaleCost(width: number, height: number): number {
+  if (!(width > 0 && height > 0)) return 0;
+  const pixels = width * height;
+  for (const [limit, anlas] of UPSCALE_COST_TIERS) {
+    if (pixels <= limit) return anlas;
+  }
+  // Past the last step there is no price, because there is no upscale: the
+  // button is already disabled by then, so nothing displays this.
+  return 0;
+}
+
+/**
  * Total Anlas this request is expected to cost, Opus discount included.
  *
  * The discount is all-or-nothing on a batch of one. NovelAI's rule is that a

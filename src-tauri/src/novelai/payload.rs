@@ -322,7 +322,10 @@ fn apply_image_action(
 }
 
 /// The frontend may send either a bare base64 blob or a full data URL.
-fn strip_data_url(s: &str) -> &str {
+///
+/// `pub(super)` because the standalone upscaler takes the same field from the
+/// same frontend and has to strip it the same way, without building a payload.
+pub(super) fn strip_data_url(s: &str) -> &str {
     s.split_once("base64,").map_or(s, |(_, rest)| rest)
 }
 

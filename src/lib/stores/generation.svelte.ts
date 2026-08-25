@@ -603,6 +603,16 @@ class GenerationStore {
    * it stays out of `novelaiSettings`.
    */
   naiEnhanceLanguage = $state<NaiLanguageChoice>("auto");
+  /**
+   * Send the current prompt, undesired content and character boxes to the V5
+   * enhance, turning it into an edit of what is there.
+   *
+   * Off by default. Blind is the right default because the enhance is asked for
+   * a scene more often than for a revision, and a model that can see the prompt
+   * tends to echo it back with the instruction sanded off. Sticky once ticked,
+   * because someone iterating on one image wants it for the whole session.
+   */
+  naiEnhanceIncludeExisting = $state(false);
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
@@ -2484,6 +2494,8 @@ class GenerationStore {
           this.showNovelaiUsage = saved.showNovelaiUsage;
         if (saved.naiEnhanceLanguage !== undefined)
           this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
+        if (saved.naiEnhanceIncludeExisting !== undefined)
+          this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -2710,6 +2722,7 @@ class GenerationStore {
         novelaiSettings: this.novelaiSettings,
         showNovelaiUsage: this.showNovelaiUsage,
         naiEnhanceLanguage: this.naiEnhanceLanguage,
+        naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
       });
       triggerSync();
     } catch (e) {
@@ -2841,6 +2854,7 @@ class GenerationStore {
       novelaiSettings: this.novelaiSettings,
       showNovelaiUsage: this.showNovelaiUsage,
       naiEnhanceLanguage: this.naiEnhanceLanguage,
+      naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
     };
   }
 
