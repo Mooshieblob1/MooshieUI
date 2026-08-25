@@ -31,6 +31,23 @@ export function toolTakesExtras(tool: DirectorTool): boolean {
   return tool === "colorize" || tool === "emotion";
 }
 
+/**
+ * Background Removal is the one Director Tool NovelAI bills for at any size.
+ *
+ * Every tool is priced as a 28-step generation at the input's normalised size,
+ * so cost follows the source image rather than the tool: a 1MP or smaller
+ * source falls inside Opus's free allowance, a 3MP upscale does not and is
+ * charged on every plan. Background Removal is excluded from the allowance
+ * outright and billed at roughly triple the rate, so it is never free.
+ *
+ * Only this second rule is expressible here. The size rule is not: nothing in
+ * `OutputImage` carries the source's pixel dimensions, so the modal states the
+ * 1MP threshold in words instead. See docs/NOVELAI.md.
+ */
+export function toolAlwaysCostsAnlas(tool: DirectorTool): boolean {
+  return tool === "bg-removal";
+}
+
 /** NovelAI's `defry` range, and the middle of it as a starting point. */
 export const DEFRY_MAX = 5;
 const DEFRY_DEFAULT = 0;

@@ -329,15 +329,58 @@ key:
   generation spends the host's real Anlas, so a LAN guest must not be able to
   bill the person running the instance.
 
+### Director Tool pricing
+
+NovelAI's docs say nothing about what a Director Tool costs. This was worked
+out from the cost function in NovelAI's own web bundle (the same one
+`novelaiCost.ts` was fitted against, down to the shared
+`5.753298233447344e-7` step coefficient), then checked against reported
+charges.
+
+`/ai/augment-image` normalises the input to between 1MP and 3MP and prices the
+call as a 28-step generation at that size. Note the absence of `novelaiCost.ts`'s
+1.5 `COST_FACTOR`: augmentation is billed off the raw figure.
+
+```
+base = ceil(2.951823174884865e-6 * px + 5.753298233447344e-7 * px * 28)
+```
+
+The cost therefore tracks the **source image's size**, not the tool:
+
+| Source | Line Art / Sketch / Colorize / Emotion / Declutter | Background Removal |
+|--------|---------------------------------------------------|--------------------|
+| 1MP or under, e.g. 832x1216 | 20, or free on Opus | 65 |
+| 2MP, e.g. 1024x1536 | 30 | 95 |
+| 3MP upscale, e.g. 1467x2144 | 60 | 185 |
+
+Two rules produce that table:
+
+- Opus's free generation allowance is 1MP or under at 28 steps or fewer. A tool
+  run on an image inside it is free; run on an upscale it is not, on any plan.
+  The 1467x2144 row is a user-reported charge the formula reproduces exactly.
+- Background Removal is excluded from the allowance outright and billed
+  `base * 3 + 5`, so it costs Anlas on every plan at every size. The 832x1216
+  row is a reported charge.
+
+`toolAlwaysCostsAnlas()` in `directorTools.svelte.ts` encodes the second rule.
+The first is deliberately not in code: the modal has no cheap way to learn the
+source image's pixel size. `OutputImage` carries no dimensions, the preview it
+is handed is a thumbnail, and a JXL gallery entry cannot be measured without a
+full transcode. The UI states the 1MP threshold in words rather than showing a
+figure it cannot compute. Wiring `gallery_index`'s `width`/`height` columns
+through to the frontend would make a real per-image estimate possible.
+
 ## 6. Known unknowns
 
 These are inferences, not confirmed facts. They are listed so the next person
 does not mistake them for verified behaviour.
 
 1. **The Anlas cost badge is an estimate, not NovelAI's number.** The formula
-   in `src/lib/utils/novelaiCost.ts` was fitted from observed prices; NovelAI
-   publishes no formula and its web bundle carries no cost function to read one
-   from. The badge is prefixed with `~` and the readout above the generate
+   in `src/lib/utils/novelaiCost.ts` was fitted from observed prices. NovelAI
+   publishes no formula, though its web client does ship one: see the Director
+   Tool pricing note above, where the same step coefficient turns up. What is
+   still unverified is the 1.5 `COST_FACTOR` on top of it, which no extracted
+   source accounts for. The badge is prefixed with `~` and the readout above the generate
    button remains the authority on what was actually spent.
 2. **`n_samples` is clamped to 1 through 8** in `payload.rs`. NovelAI's real cap
    is unconfirmed.
@@ -438,8 +481,8 @@ selected and an API key is configured. There is nothing the user can do about
 either from an image context menu.
 
 **Testing needed:** yes. Every step below needs a NovelAI key and the NovelAI
-backend selected. No Anlas is needed: NovelAI does not charge for any Director
-Tool, and the modal says so.
+backend selected, and a real Anlas balance. The original claim here, that no
+Director Tool costs Anlas, was wrong; see the Director Tool pricing note below.
 
 | # | Step | Expected |
 |---|------|----------|
