@@ -14,6 +14,7 @@
   import { startup } from "./lib/stores/startup.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery, isVideoImage } from "./lib/stores/gallery.svelte.js";
+  import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
   import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
@@ -1149,6 +1150,14 @@
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
       ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
+      ...(directorToolsAvailable() && !isVideoImage(image)
+        ? [
+            {
+              label: locale.t("novelai.director.action"),
+              action: () => directorTools.open(image, image.thumbnailUrl || image.url || null),
+            },
+          ]
+        : []),
       ...(!isVideoImage(image)
         ? [
             { label: locale.t("gallery.make_video"), action: () => makeVideoFromImage(image) },
@@ -3867,6 +3876,18 @@
             onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
+        {/if}
+        <!-- Director Tools. Gallery images are acted on from here far more often
+             than from a grid tile's hover bar, so the NovelAI-only entry point
+             has to exist at full size too. -->
+        {#if directorToolsAvailable()}
+          <button
+            title={locale.t("novelai.director.action")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={() => gallery.selectedImage && directorTools.open(gallery.selectedImage, gallery.lightboxUrl ?? null)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2L19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2L11 5"/></svg>
           </button>
         {/if}
         <button
