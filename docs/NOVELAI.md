@@ -20,6 +20,9 @@ built the way it is. It is the design rationale, not a task list.
    the generation page, directly above the generate button. (The Opus
    generation allowance bar is not built: see section 6.)
 8. The Anlas cost of the pending request, on the generate button.
+9. An Enhance button in the gallery lightbox, and a matching gallery
+   context menu entry. It redraws an existing image at up to 3MP, using the
+   prompt already in the generation panel.
 
 NovelAI's recommended sampling defaults are applied when a NovelAI model is
 selected: 23 steps, guidance 7.0, Euler Ancestral, Karras, CFG rescale 0.
@@ -257,6 +260,54 @@ Three guards sit around the injection:
 Nothing else in the output path needed changing. The PNG NovelAI returns is
 passed through byte for byte and the gallery encoders are RGBA already.
 
+### 2.12 Enhance is an img2img pass, not a new endpoint
+
+NovelAI's own Enhance panel is an image-to-image generation at a larger canvas,
+not a separate upscaler, so nothing new was added on the Rust side. The modal
+builds the same `GenerationParams` a normal generation sends, sets
+`novelai.action` to `img2img`, attaches the source image, and hands it to
+`requestGeneration`. The result comes back through the usual synthetic `nai-`
+prompt id and `comfyui:*` events.
+
+Three consequences follow from that, and they are the whole design:
+
+- **The generation panel is the enhance prompt box.** Prompt, undesired content
+  and characters all come from `generation.toParams()`, so whatever is typed in
+  the panel is what the enhance draws. There is deliberately no prompt field in
+  the modal: a second copy would have to be kept in sync with the character
+  boxes and the V4/V5 prompt encoding, and NovelAI's panel works the same way.
+- **Magnitude is a UI over strength and noise.** NovelAI exposes the raw pair;
+  most users only want "change it a little" or "change it a lot". The modal
+  shows a single Magnitude control from 1 to 5, defaulting to 3, and
+  `magnitudeToDenoise()` in `src/lib/utils/novelaiEnhance.ts` interpolates the
+  strength/noise pair from a five-row table. The advanced disclosure swaps in
+  the two raw sliders, and while it is open they win, because a magnitude the
+  user cannot see must not override the sliders they are looking at.
+- **The quoted size must be the generated size.** `build_request` re-snaps every
+  dimension to the nearest multiple of 64, so the frontend mirrors that rule in
+  `snapDimension()` rather than quoting a size the backend will change.
+  `maxEnhanceScale()` then walks the scale down in 1% steps until the *snapped*
+  target fits under 3MP, because snapping can round a nominally-fitting scale
+  back over the ceiling.
+
+3MP is NovelAI's own ceiling for this path, the same figure the Director Tool
+pricing note works against. A source already at or near it gets no usable
+enlargement, so the Max button is hidden below 1.05x rather than offered as a
+button that quotes the same resolution as 1x.
+
+Cost is quoted with the existing `estimateNovelAiCost()`, at the target size,
+one sample, and the enhance's own strength (`strength < 1` scales the per-sample
+cost). Unlike the Director Tools modal, this one *can* state a real figure,
+because it has already decoded the source to learn its true pixel size.
+
+Reading those dimensions is the one piece of work the modal does up front.
+`OutputImage` carries no width or height, and `metadata.size` records what was
+*requested*, which an upscaled or imported image no longer matches. The modal
+therefore decodes the source once on open through
+`loadOutputImageForGenerationInput()`, caches the base64 so submitting is
+instant, and guards the write with an identity check on the store's `source` so
+a stale in-flight decode cannot land in a re-pointed modal.
+
 ## 3. The free local post-process
 
 NovelAI has already been paid for the pixels it returns, so upscaling and face
@@ -415,6 +466,50 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-25 - Image Enhance from the lightbox
+
+**Requested by:** the user: "add an enhance button to the lightbox, which opens
+a modal that lets users choose between 1x and max whatever NAI's actual max is
+with an anlas cost, as well as an optional dropdown that shows strength and
+noise but otherwise just shows magnitude, with 3 being the default and middle",
+then "make it so the original prompt box acts as the prompt box for the enhance
+button, including UC and characters".
+
+**What changed.** An Enhance button in the gallery lightbox toolbar, beside
+Director Tools, plus a gallery context menu entry, both gated on NovelAI mode
+with a key configured. They open `NaiImageEnhanceModal`, which offers 1x or Max
+with an Anlas quote per button, a Magnitude control from 1 to 5 (default 3,
+typed to two decimals, slider stepping in whole numbers), and an advanced
+disclosure with the raw strength and noise sliders. No Rust change: the modal
+sends an ordinary `img2img` NovelAI generation at the larger canvas. Section
+2.12 has the reasoning.
+
+**Testing needed:** yes. Every step from 4 down spends Anlas, one image each.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Select a ComfyUI model, open any gallery image in the lightbox | No Enhance button |
+| 2 | Switch to a NovelAI model with a key set, reopen the lightbox | Enhance button appears next to Director Tools |
+| 3 | Click it | Modal opens, thumbnail shows, both size buttons quote a real WxH and an Anlas figure |
+| 4 | Open it on an image already at or above 3MP | Only the 1x button is offered |
+| 5 | Type a prompt in the generation panel, then Enhance at 1x | Result follows that prompt; the panel's prompt box is untouched |
+| 6 | Add undesired content and a character in the panel, Enhance again | Both are honoured in the result |
+| 7 | Enhance at Max | Result arrives at the size the button quoted, at or under 3MP, dimensions multiples of 64 |
+| 8 | Type `1.25` into Magnitude | Value sticks at 1.25, the slider sits on 1, the cost updates |
+| 9 | Drag the slider | Whole numbers only, the number box follows |
+| 10 | Set Magnitude to 1, enhance; then 5, enhance | 1 is nearly the same picture, 5 is a free redraw |
+| 11 | Show Advanced | Strength and noise seed from the current magnitude, not from a default |
+| 12 | Change strength with advanced open, enhance | The sliders win, the magnitude behind them is ignored |
+| 13 | Press Escape, or click the backdrop | Modal closes with nothing sent |
+| 14 | Enhance a JXL gallery entry and a fresh session output | Both decode; neither reports "Could not read this image" |
+| 15 | Watch the session grid after submitting | Image lands there and in the gallery on its own, no manual refresh |
+| 16 | Repeat step 5 in browser mode (LAN URL) | Identical behaviour, and a non-moderator guest cannot reach it |
+| 17 | Switch UI language | Every label, hint and the cost line are translated |
+
+**Do not skip:** 3, 5, 7, 8, 14. Those cover the quote, the prompt source, the
+3MP ceiling and snapping, the decimal entry, and reading both storage paths.
+**Low-risk, skip if short on time:** 9, 13, 17.
 
 ### 2026-08-25 - Transparent BG for V5
 
