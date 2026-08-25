@@ -15,6 +15,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery, isVideoImage } from "./lib/stores/gallery.svelte.js";
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
+  import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
   import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
@@ -56,6 +57,7 @@
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
   import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
   import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
+  import NaiImageEnhanceModal from "./lib/components/generation/NaiImageEnhanceModal.svelte";
   import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
   import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
   import { styleEditors } from "./lib/stores/styleEditors.svelte.js";
@@ -1155,6 +1157,14 @@
             {
               label: locale.t("novelai.director.action"),
               action: () => directorTools.open(image, image.thumbnailUrl || image.url || null),
+            },
+          ]
+        : []),
+      ...(naiImageEnhanceAvailable() && !isVideoImage(image)
+        ? [
+            {
+              label: locale.t("novelai.enhance.action"),
+              action: () => naiImageEnhance.open(image, image.thumbnailUrl || image.url || null),
             },
           ]
         : []),
@@ -3890,6 +3900,17 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2L19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2L11 5"/></svg>
           </button>
         {/if}
+        <!-- Enhance. Sits beside Director Tools for the same reason: the image
+             being enlarged is usually the one already open at full size here. -->
+        {#if naiImageEnhanceAvailable()}
+          <button
+            title={locale.t("novelai.enhance.action")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={() => gallery.selectedImage && naiImageEnhance.open(gallery.selectedImage, gallery.lightboxUrl ?? null)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/></svg>
+          </button>
+        {/if}
         <button
           title={locale.t("gallery.make_video")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
@@ -4154,6 +4175,10 @@
      gallery mid-review must not discard a result not yet applied. -->
 <NaiEnhanceModal />
 <DirectorToolsModal />
+
+<!-- NovelAI image Enhance. Root-mounted for the same reason Director Tools is:
+     it acts on whatever image is open, not on the generation panel. -->
+<NaiImageEnhanceModal />
 
 <!-- Global human-readable error surface -->
 <GlobalErrorModal />
