@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v2.2.1
+
+### Fixes and maintenance
+- **ComfyUI updated to v0.34.0**: the bundled ComfyUI pin moves from v0.31.0 to v0.34.0, so fresh installs and the in-app Update ComfyUI action both target the current release. This also picks up ComfyUI's native support for Anima tunes with extra blocks, which means community checkpoints like Anima 2.9B load without any extra custom node. ([#638](https://github.com/Mooshieblob1/MooshieUI/pull/638))
+- **Fixed the weekly ComfyUI compatibility check**: the check required the Anima TeaCache node but never deployed it into its test ComfyUI, so it had been failing since mid-August and holding the ComfyUI pin back. The app itself always installed the node correctly, so nothing was broken for users. ([#638](https://github.com/Mooshieblob1/MooshieUI/pull/638))
+
+---
+
 ## What's New in v2.2.0
 
 ### New features
