@@ -58,6 +58,7 @@ NODE_FILE_MAP = [
     ("src-tauri/src/comfyui/mooshie_nodes.py", "mooshie-nodes/__init__.py"),
     ("comfyui-nodes/nodes_tiled_diffusion.py", "nodes_tiled_diffusion.py"),
     ("comfyui-nodes/nodes_guidance.py", "nodes_guidance.py"),
+    ("comfyui-nodes/nodes_anima_teacache.py", "nodes_anima_teacache.py"),
     # Source name has the _combined suffix; deployed name drops it (see nodes.rs).
     ("comfyui-nodes/nodes_sdxl_flux2vae_combined.py", "nodes_sdxl_flux2vae.py"),
     ("comfyui-nodes/nanosaur_support/__init__.py", "nanosaur_support/__init__.py"),
