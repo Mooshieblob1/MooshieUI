@@ -1,5 +1,25 @@
 # Changelog
 
+## What's New in v2.2.0
+
+### New features
+- **NovelAI as a second generation backend**: MooshieUI can now generate through the NovelAI API alongside ComfyUI, with your own API key. Supports NovelAI V4, V4.5 and V5 (including Curated), text-to-image, img2img and inpainting, per-character prompts and negatives, Precise Reference and Vibe Transfer, and the NovelAI-only sampling options (quality tags, undesired-content preset, Variety+, dynamic thresholding, guidance rescale). Anlas remaining, Opus subscription status and the Opus generation allowance bar are shown in Settings, with an option to pin a compact readout above the generate button, and the generate button shows the Anlas cost of the pending request. ([#618](https://github.com/Mooshieblob1/MooshieUI/pull/618))
+- **Free-placement character positioning**: the old 5x5 grid picker is replaced by a Position toggle (Let NAI decide / Custom) whose Edit positions button opens a canvas drawn at the selected aspect ratio, where each enabled character is a numbered circle you drag anywhere. Arrow keys nudge in 5% steps, the panel is resizable, and characters sitting closer than NovelAI's own overlap threshold are flagged. Positions saved under the old grid load unchanged.
+- **22 character slots on V5**: the character cap is now per model, 22 on NovelAI V5 and 6 on V4/V4.5, applied to the Add button, the Enhance character merge and metadata import.
+- **Automatic Text: blocks on V5**: quoted text in a V5 prompt is auto-formatted into a trailing `Text:` block the way NovelAI's own frontend does it. Straight, typographic and CJK quote pairs are recognised, and a prompt that already carries a manual `Text:` line is left alone.
+- **NovelAI Upscale, Variations and vision prompt enhance**: an Enhance button in the gallery lightbox and a matching context menu entry redraw an existing image at up to 3MP, generate variations of it, or upscale it, and the V5 prompt enhance can take up to four reference images. ([#633](https://github.com/Mooshieblob1/MooshieUI/pull/633), [#634](https://github.com/Mooshieblob1/MooshieUI/pull/634))
+- **Director Tools in the gallery lightbox**: Director Tools now have entry points directly from the lightbox and the gallery context menu. ([#632](https://github.com/Mooshieblob1/MooshieUI/pull/632))
+- **Transparent background toggle for NovelAI V5**: generate images with a real alpha channel on V5. ([#622](https://github.com/Mooshieblob1/MooshieUI/pull/622))
+
+### Fixes and maintenance
+- **V5 costs are correct once the Opus allowance runs out**: NovelAI V5 is not covered by Opus unlimited, it draws from a timed generation allowance, so an empty allowance means a V5 generation costs real Anlas. The generate button badge, the Enhance modal and the free tags on the aspect-ratio presets now account for this. V4 and V4.5 keep the unconditional Opus discount.
+- **V5 requests send `params_version: 4`**: V5 endpoints silently discard free-placement character centres from a version-3 request. The params version is now a per-model capability rather than hardcoded, and the prompt blocks carry the flag set the V5 reference implementations use (`legacy_uc` inside `v4_prompt`, explicit `use_coords` and `use_order` on the negative block). Requests carrying characters also log a one-line wire summary (model, params version, flags, centres, never prompt text) so placement behaviour is provable from the log export.
+- **V5 Curated inpainting uses V4.5 Curated's model**: V5 Curated's own inpainting model is still training upstream and NovelAI's client substitutes V4.5 Curated's, so MooshieUI now does the same instead of requesting a model that does not exist yet.
+- **Fixed the heartbeat watchdog shutting down the server in LAN browser mode**: the 120s idle watchdog was armed even when LAN mode was enabled. ([#620](https://github.com/Mooshieblob1/MooshieUI/pull/620))
+- **Attention backend flag now reaches GPU worker processes**: the flag was applied to the main ComfyUI process only, so worker processes ran with a different attention backend than configured. ([#621](https://github.com/Mooshieblob1/MooshieUI/pull/621))
+
+---
+
 ## What's New in v2.1.5
 
 ### New features

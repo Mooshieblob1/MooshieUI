@@ -20,6 +20,16 @@ export interface NovelAiCostInput {
   strength: number;
   /** Opus makes a single small, short, batch-of-one request free. */
   isOpus: boolean;
+  /**
+   * The model draws on the Opus V5 generation allowance and it is used up.
+   *
+   * V5 is not part of Opus unlimited: its free generations come out of a
+   * battery-style allowance that refills over time, and once it is drained a
+   * V5 generation is billed in full until it recovers. Older models keep the
+   * unconditional Opus discount, so pass false for them regardless of the
+   * battery. Defaults to false.
+   */
+  opusExhausted?: boolean;
   /** Vibes with no cached encoding, each of which is billed an encode. */
   vibeEncodes: number;
 }
@@ -68,15 +78,24 @@ const COST_FACTOR = 1.5;
  * steps, or above one megapixel, NovelAI bills the full price. The batch rule
  * lives in `estimateNovelAiCost`, because it is a property of the request
  * rather than of the dimensions this function is also asked about on its own.
+ *
+ * `opusExhausted` is the V5 battery: V5 models are excluded from Opus
+ * unlimited, so once their allowance is drained nothing is covered until it
+ * refills. Callers pass true only for a V5 model with an empty allowance;
+ * older models stay on the unconditional discount.
  */
 export function novelAiOpusCovers(
   width: number,
   height: number,
   steps: number,
   isOpus: boolean,
+  opusExhausted = false,
 ): boolean {
   return (
-    isOpus && width * height <= OPUS_FREE_PIXELS && steps <= OPUS_FREE_STEPS
+    isOpus &&
+    !opusExhausted &&
+    width * height <= OPUS_FREE_PIXELS &&
+    steps <= OPUS_FREE_STEPS
   );
 }
 
@@ -147,7 +166,13 @@ export function estimateNovelAiCost(input: NovelAiCostInput): number {
   const perSample = novelAiCostPerSample(input);
   const free =
     samples === 1 &&
-    novelAiOpusCovers(input.width, input.height, input.steps, input.isOpus);
+    novelAiOpusCovers(
+      input.width,
+      input.height,
+      input.steps,
+      input.isOpus,
+      input.opusExhausted ?? false,
+    );
   const encodes = Math.max(0, Math.floor(input.vibeEncodes)) * VIBE_ENCODE_COST;
   return (free ? 0 : samples * perSample) + encodes;
 }

@@ -7,7 +7,7 @@ import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
 import type { NovelAiCharacter } from "../types/index.js";
-import { NOVELAI_MAX_CHARACTERS, isNovelAiModel } from "./novelaiModels.js";
+import { novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
 import type {
   NovelAiImportSelection,
@@ -276,7 +276,7 @@ function applyNovelAiCharacters(meta: Record<string, string>, append: boolean): 
   if (incoming.length === 0) return false;
   const existing = append ? (generation.novelaiSettings.characters ?? []) : [];
   generation.updateNovelAiSettings({
-    characters: [...existing, ...incoming].slice(0, NOVELAI_MAX_CHARACTERS),
+    characters: [...existing, ...incoming].slice(0, novelAiMaxCharacters(generation.checkpoint)),
   });
   return true;
 }

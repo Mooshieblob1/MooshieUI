@@ -4,30 +4,25 @@
    *
    * NovelAI splits a scene into a base prompt plus one block per character,
    * each with its own undesired content and an optional placement. Placement
-   * is a 5 by 5 grid in its own UI; the coordinates it sends are the cell
-   * centres (0.1, 0.3, 0.5, 0.7, 0.9), which is what `NovelAiCoord::from_grid`
-   * produces on the Rust side.
+   * is either left to NovelAI or set by hand; the hand-placed case opens the
+   * position canvas in a modal (NovelAiPositionModal, mounted at the app root),
+   * because at panel width the canvas was too small to place anything
+   * precisely. Positions saved by the old inline canvas, and by the 5 by 5 grid
+   * before it, load unchanged: all three write the same normalised 0..1 centre.
    */
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { NOVELAI_MAX_CHARACTERS } from "../../utils/novelaiModels.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { novelAiMaxCharacters } from "../../utils/novelaiModels.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import NovelAiCharacterPrompt from "./NovelAiCharacterPrompt.svelte";
 
-  const GRID = [0, 1, 2, 3, 4];
-
-  /** Cell centre for a 5x5 grid index, matching `NovelAiCoord::from_grid`. */
-  function cellCentre(index: number): number {
-    return (index * 2 + 1) / 10;
-  }
-
-  /** Which grid cell a stored coordinate falls in, for highlighting. */
-  function cellIndex(value: number): number {
-    return Math.min(4, Math.max(0, Math.round((value * 10 - 1) / 2)));
-  }
-
   const characters = $derived(generation.novelaiSettings.characters);
-  const atLimit = $derived(characters.length >= NOVELAI_MAX_CHARACTERS);
+  const maxCharacters = $derived(novelAiMaxCharacters(generation.checkpoint));
+  const atLimit = $derived(characters.length >= maxCharacters);
+
+  /** Nothing to place until at least one character is enabled. */
+  const hasEnabledCharacter = $derived(characters.some((character) => character.enabled));
 </script>
 
 <div class="space-y-3">
@@ -95,58 +90,52 @@
           placeholder={locale.t("generation.novelai.characters.negative_placeholder")}
           minHeight="min-h-12"
         />
-
-        {#if generation.novelaiSettings.use_coords}
-          <div class="space-y-1">
-            <span class="text-[11px] text-neutral-500">
-              {locale.t("generation.novelai.characters.position")}
-            </span>
-            <div class="grid grid-cols-5 gap-1 w-fit">
-              {#each GRID as row (row)}
-                {#each GRID as col (col)}
-                  {@const active =
-                    cellIndex(character.center.x) === col && cellIndex(character.center.y) === row}
-                  <button
-                    class="w-6 h-6 rounded border transition-colors {active
-                      ? 'bg-indigo-600 border-indigo-500'
-                      : 'bg-neutral-950 border-neutral-800 hover:border-neutral-600'}"
-                    aria-label={locale.t("generation.novelai.characters.position_cell", {
-                      col: String(col + 1),
-                      row: String(row + 1),
-                    })}
-                    aria-pressed={active}
-                    onclick={() =>
-                      generation.updateNovelAiCharacter(index, {
-                        center: { x: cellCentre(col), y: cellCentre(row) },
-                      })}
-                  ></button>
-                {/each}
-              {/each}
-            </div>
-          </div>
-        {/if}
       </div>
     {/each}
 
-    <div class="flex items-center justify-between">
-      <label class="flex items-center gap-2 text-xs text-neutral-300">
-        <input
-          type="checkbox"
-          class="accent-indigo-500"
-          checked={generation.novelaiSettings.use_coords}
-          onchange={(e) =>
-            generation.updateNovelAiSettings({ use_coords: e.currentTarget.checked })}
-        />
-        {locale.t("generation.novelai.characters.use_coords")}
-      </label>
+    <div class="space-y-1.5">
+      <span class="text-[11px] text-neutral-500">
+        {locale.t("generation.novelai.characters.position")}
+      </span>
+      <div class="flex items-center gap-2">
+        <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
+          <button
+            class="px-2.5 py-0.5 text-[11px] rounded-md transition-colors {generation
+              .novelaiSettings.use_coords
+              ? 'text-neutral-400 hover:text-neutral-200'
+              : 'bg-neutral-700 text-white'}"
+            onclick={() => generation.updateNovelAiSettings({ use_coords: false })}
+          >
+            {locale.t("generation.novelai.characters.position_auto")}
+          </button>
+          <button
+            class="px-2.5 py-0.5 text-[11px] rounded-md transition-colors {generation
+              .novelaiSettings.use_coords
+              ? 'bg-neutral-700 text-white'
+              : 'text-neutral-400 hover:text-neutral-200'}"
+            onclick={() => generation.updateNovelAiSettings({ use_coords: true })}
+          >
+            {locale.t("generation.novelai.characters.position_custom")}
+          </button>
+        </div>
+        {#if generation.novelaiSettings.use_coords}
+          <button
+            class="px-2 py-1 text-[11px] rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed"
+            onclick={() => (novelai.characterPositionOpen = true)}
+            disabled={!hasEnabledCharacter}
+          >
+            {locale.t("generation.novelai.characters.edit_positions")}
+          </button>
+        {/if}
+      </div>
+      <p class="text-[11px] text-neutral-500">
+        {locale.t("generation.novelai.characters.use_coords_desc")}
+      </p>
     </div>
-    <p class="text-[11px] text-neutral-500">
-      {locale.t("generation.novelai.characters.use_coords_desc")}
-    </p>
 
     {#if atLimit}
       <p class="text-[11px] text-neutral-500">
-        {locale.t("generation.novelai.characters.limit", { count: String(NOVELAI_MAX_CHARACTERS) })}
+        {locale.t("generation.novelai.characters.limit", { count: String(maxCharacters) })}
       </p>
     {/if}
   {/if}

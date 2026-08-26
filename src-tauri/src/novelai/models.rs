@@ -29,6 +29,19 @@ pub struct NovelAiModel {
     /// it: NovelAI ships the feature as a prompt tag, so this flag gates the
     /// tag rather than a parameter.
     pub alpha: bool,
+    /// Quoted prompt text is auto-formatted into a trailing `Text:` block, the
+    /// way NovelAI's own V5 frontend prepares text rendering. Like `alpha`,
+    /// this is a prompt transform rather than a request field; see
+    /// `payload::with_text_blocks`.
+    pub auto_text: bool,
+    /// Character slots accepted, mirroring NovelAI's own client. V5's free
+    /// positioning was demonstrated with up to 22 characters; V4/V4.5 stop
+    /// at 6.
+    pub max_characters: usize,
+    /// `parameters.params_version` the model's endpoint expects. V5 speaks 4
+    /// (per NovelAI's OpenAPI schema, mirrored by every V5-updated reference
+    /// client); V4/V4.5 stay on 3.
+    pub params_version: u8,
 }
 
 /// Every NovelAI model MooshieUI offers.
@@ -46,16 +59,25 @@ pub const MODELS: &[NovelAiModel] = &[
         vibe_transfer: false,
         character_negatives: true,
         alpha: true,
+        auto_text: true,
+        max_characters: 22,
+        params_version: 4,
     },
     NovelAiModel {
         id: "nai-diffusion-5-curated",
         label: "NovelAI V5 Curated",
-        inpainting_id: Some("nai-diffusion-5-curated-inpainting"),
+        // V5 Curated's own inpainting model is still training upstream, and
+        // NovelAI's client substitutes V4.5 Curated's in the meantime. Point
+        // back at `nai-diffusion-5-curated-inpainting` once it ships.
+        inpainting_id: Some("nai-diffusion-4-5-curated-inpainting"),
         v4_prompt: true,
         precise_reference: false,
         vibe_transfer: false,
         character_negatives: true,
         alpha: true,
+        auto_text: true,
+        max_characters: 22,
+        params_version: 4,
     },
     NovelAiModel {
         id: "nai-diffusion-4-5-full",
@@ -66,6 +88,9 @@ pub const MODELS: &[NovelAiModel] = &[
         vibe_transfer: true,
         character_negatives: true,
         alpha: false,
+        auto_text: false,
+        max_characters: 6,
+        params_version: 3,
     },
     NovelAiModel {
         id: "nai-diffusion-4-full",
@@ -76,6 +101,9 @@ pub const MODELS: &[NovelAiModel] = &[
         vibe_transfer: true,
         character_negatives: true,
         alpha: false,
+        auto_text: false,
+        max_characters: 6,
+        params_version: 3,
     },
 ];
 
@@ -144,6 +172,34 @@ mod tests {
         assert!(find("nai-diffusion-5-curated").unwrap().alpha);
         assert!(!find("nai-diffusion-4-5-full").unwrap().alpha);
         assert!(!find("nai-diffusion-4-full").unwrap().alpha);
+    }
+
+    #[test]
+    fn v5_curated_infill_borrows_v45_curated_inpainting() {
+        // Upstream substitution while V5 Curated's inpainting model trains.
+        let m = find("nai-diffusion-5-curated").unwrap();
+        assert_eq!(resolve_id(m, "generate"), "nai-diffusion-5-curated");
+        assert_eq!(
+            resolve_id(m, "infill"),
+            "nai-diffusion-4-5-curated-inpainting"
+        );
+    }
+
+    #[test]
+    fn only_v5_formats_text_blocks_and_seats_22() {
+        for m in MODELS {
+            let v5 = m.id.starts_with("nai-diffusion-5-");
+            assert_eq!(m.auto_text, v5, "{}", m.id);
+            assert_eq!(m.max_characters, if v5 { 22 } else { 6 }, "{}", m.id);
+        }
+    }
+
+    #[test]
+    fn v5_speaks_params_version_4() {
+        for m in MODELS {
+            let v5 = m.id.starts_with("nai-diffusion-5-");
+            assert_eq!(m.params_version, if v5 { 4 } else { 3 }, "{}", m.id);
+        }
     }
 
     #[test]

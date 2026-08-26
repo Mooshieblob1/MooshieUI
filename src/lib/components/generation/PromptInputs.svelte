@@ -10,6 +10,7 @@
   import ExtraPromptBoxList from "./ExtraPromptBoxList.svelte";
   import PromptChunkPicker from "./PromptChunkPicker.svelte";
   import NovelAiTokenBar from "./NovelAiTokenBar.svelte";
+  import NovelAiCharacters from "./NovelAiCharacters.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
   import { joinPromptBoxes } from "../../utils/promptSanitize.js";
@@ -53,8 +54,11 @@
   const hasRegionalPrompting = $derived(
     hasRegionalTags(generation.positivePrompt) || generation.regionalPrompts.length > 0,
   );
+  // Mirrors the guard in `toParams()`: the badge must not advertise tags the
+  // request will not carry. NovelAI is excluded there, so it is excluded here.
   const qualityTagsSupported = $derived(
     !isVideoMode &&
+      !generation.isNovelAi &&
       generation.autoQualityTags &&
       (generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur),
   );
@@ -461,6 +465,19 @@
     {#if generation.isNovelAi}
       <NovelAiTokenBar side="positive" />
     {/if}
+    {#if generation.isNovelAi && generation.supportsNovelAiTransparency}
+      <label class="mt-1 flex items-center gap-2 text-xs text-neutral-300">
+        <input
+          type="checkbox"
+          class="accent-indigo-500"
+          checked={generation.novelaiSettings.transparent_background}
+          onchange={(e) =>
+            generation.updateNovelAiSettings({ transparent_background: e.currentTarget.checked })}
+        />
+        {locale.t("generation.novelai.advanced.transparent_background")}
+        <InfoTip text={locale.t("generation.novelai.advanced.transparent_background_desc")} />
+      </label>
+    {/if}
     {#if !isVideoMode && !generation.isNovelAi && hasRegionalPrompting && !regionalPromptingSupported}
       <p class="mt-1 text-[10px] text-amber-300">
         {locale.t("generation.regional.unsupported")}
@@ -504,6 +521,12 @@
     <ExtraPromptBoxList side="negative" />
   </div>
   {/snippet}
+
+  {#if generation.isNovelAi}
+    <div class="border-t border-neutral-800 pt-2">
+      <NovelAiCharacters />
+    </div>
+  {/if}
 
   {#if !combinedMode}
     {@render negativeFields()}

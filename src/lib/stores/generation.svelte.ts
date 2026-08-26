@@ -28,7 +28,7 @@ import {
   isNovelAiModel,
   snapNovelAiDimension,
   toNovelAiSampler,
-  NOVELAI_MAX_CHARACTERS,
+  novelAiMaxCharacters,
   NOVELAI_MAX_VIBES,
   NOVELAI_MAX_DIRECTOR_REFERENCES,
 } from "../utils/novelaiModels.js";
@@ -1917,7 +1917,7 @@ class GenerationStore {
 
   /** Append a blank character prompt, up to the limit NovelAI's own UI offers. */
   addNovelAiCharacter() {
-    if (this.novelaiSettings.characters.length >= NOVELAI_MAX_CHARACTERS) return;
+    if (this.novelaiSettings.characters.length >= novelAiMaxCharacters(this.checkpoint)) return;
     this.updateNovelAiSettings({
       characters: [...this.novelaiSettings.characters, createNovelAiCharacter()],
     });
@@ -3048,7 +3048,15 @@ class GenerationStore {
     // from the image checkpoint and stays selected while video is active, so
     // without this guard H3 prose picks up `masterpiece, best quality` and
     // friends from whatever SDXL model happens to be loaded.
-    if (!isVideo && this.autoQualityTags) {
+    //
+    // Skipped in NovelAI mode for the same reason, stated rather than relied
+    // on: these tags are tuned for local SDXL derivatives and mean nothing to
+    // NovelAI's models, which carry their own quality vocabulary. Every entry
+    // into NovelAI mode does clear `modelFamily` to "unknown" today, so the
+    // getters below are already false -- but that is a property of four
+    // separate call sites, and one of them regressing would silently start
+    // billing Anlas for `score_9, score_8_up` in the prompt.
+    if (!isVideo && !this.isNovelAi && this.autoQualityTags) {
       // Anima models (positive before, negative after)
       if (this.isAnima) {
         positivePrompt = this.mergeTagPrompts(this.customAnimaPositiveQuality, positivePrompt);
@@ -3081,7 +3089,7 @@ class GenerationStore {
       this.upscaleEnabled &&
       !this.upscaleFastRefine &&
       (this.upscaleTiling || this.useSplitModel);
-    if (!isVideo && upscaleUsesTiling && this.autoQualityTags) {
+    if (!isVideo && !this.isNovelAi && upscaleUsesTiling && this.autoQualityTags) {
       if (this.isAnima) {
         upscalePositivePrompt = this.customAnimaPositiveQuality;
         upscaleNegativePrompt = this.customAnimaNegativeQuality;
