@@ -10,7 +10,6 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { models } from "../../stores/models.svelte.js";
-  import NovelAiCharacters from "./NovelAiCharacters.svelte";
   import NovelAiReferences from "./NovelAiReferences.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
@@ -71,11 +70,7 @@
 </script>
 
 <div class="space-y-4">
-  <NovelAiCharacters />
-
-  <div class="border-t border-neutral-800 pt-3">
-    <NovelAiReferences />
-  </div>
+  <NovelAiReferences />
 
   <div class="border-t border-neutral-800 pt-3 space-y-2">
     <span class="text-xs text-neutral-400">
@@ -129,20 +124,6 @@
       {locale.t("generation.novelai.advanced.variety_plus")}
       <InfoTip text={locale.t("generation.novelai.advanced.variety_plus_desc")} />
     </label>
-
-    {#if generation.supportsNovelAiTransparency}
-      <label class="flex items-center gap-2 text-xs text-neutral-300">
-        <input
-          type="checkbox"
-          class="accent-indigo-500"
-          checked={nai.transparent_background}
-          onchange={(e) =>
-            generation.updateNovelAiSettings({ transparent_background: e.currentTarget.checked })}
-        />
-        {locale.t("generation.novelai.advanced.transparent_background")}
-        <InfoTip text={locale.t("generation.novelai.advanced.transparent_background_desc")} />
-      </label>
-    {/if}
 
     <label class="flex items-center gap-2 text-xs text-neutral-300">
       <input

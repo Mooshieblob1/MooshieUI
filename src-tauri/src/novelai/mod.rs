@@ -238,6 +238,55 @@ fn log_vibe_summary(body: &serde_json::Value) {
             .unwrap_or(&null)
     );
 }
+
+/// One line per character-carrying request, read back off the body that is
+/// actually sent.
+///
+/// Placement is decided entirely on NovelAI's side, so when a character
+/// ignores its circle this line is the only local proof of whether the
+/// centres, `use_coords` and `params_version` left the machine at all.
+/// Prompt text and tokens are never logged; only counts and coordinates.
+fn log_character_summary(body: &serde_json::Value) {
+    let Some(parameters) = body.get("parameters") else {
+        return;
+    };
+    let Some(captions) = parameters
+        .get("v4_prompt")
+        .and_then(|p| p.get("caption"))
+        .and_then(|c| c.get("char_captions"))
+        .and_then(|c| c.as_array())
+    else {
+        return;
+    };
+    if captions.is_empty() {
+        return;
+    }
+    let centers: Vec<String> = captions
+        .iter()
+        .map(|c| {
+            c.get("centers")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".into())
+        })
+        .collect();
+    let null = serde_json::Value::Null;
+    log::info!(
+        "NovelAI characters: model={} params_version={} use_coords={} v4.use_coords={} v4.use_order={} centers=[{}]",
+        body.get("model").unwrap_or(&null),
+        parameters.get("params_version").unwrap_or(&null),
+        parameters.get("use_coords").unwrap_or(&null),
+        parameters
+            .get("v4_prompt")
+            .and_then(|p| p.get("use_coords"))
+            .unwrap_or(&null),
+        parameters
+            .get("v4_prompt")
+            .and_then(|p| p.get("use_order"))
+            .unwrap_or(&null),
+        centers.join(", ")
+    );
+}
+
 /// Hand the freshly minted tokens back to the client that asked for them.
 ///
 /// The client stores them next to the image it sent, so the same vibe costs
@@ -509,6 +558,7 @@ async fn run_inner(
     }
     let body = build_request(encoded.as_ref().unwrap_or(params))?;
     log_vibe_summary(&body);
+    log_character_summary(&body);
     let steps = params.steps.max(1);
 
     sink.emit(

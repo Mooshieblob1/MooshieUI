@@ -3,7 +3,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import type { ModelFamily } from "../../utils/modelFamily.js";
-  import { NOVELAI_DIMENSION_STEP } from "../../utils/novelaiModels.js";
+  import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
@@ -205,6 +205,9 @@
   const freePresets = $derived.by(() => {
     const free = new Set<string>();
     if (!generation.isNovelAi || !novelai.isOpus || generation.batchSize !== 1)
+      return free;
+    // V5 is outside Opus unlimited: with the allowance drained nothing is free.
+    if (naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty)
       return free;
     for (const p of presets) {
       const dims = dimsForAspect(p.w, p.h, sideLength);

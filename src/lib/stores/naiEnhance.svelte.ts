@@ -1,6 +1,6 @@
 import { generation } from "./generation.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
-import { NOVELAI_MAX_CHARACTERS } from "../utils/novelaiModels.js";
+import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
@@ -287,7 +287,7 @@ class NaiEnhanceStore {
       if (!row.selected) continue;
       if (row.targetIndex !== null && row.targetIndex < chars.length) {
         chars[row.targetIndex] = { ...chars[row.targetIndex], prompt: row.after };
-      } else if (chars.length < NOVELAI_MAX_CHARACTERS) {
+      } else if (chars.length < novelAiMaxCharacters(generation.checkpoint)) {
         chars.push({ ...createNovelAiCharacter(), prompt: row.after });
       }
     }

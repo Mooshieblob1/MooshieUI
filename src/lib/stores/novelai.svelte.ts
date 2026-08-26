@@ -25,6 +25,16 @@ const RETRY_AFTER_FAILURE_MS = 30_000;
 class NovelAiStore {
   apiKeyConfigured = $state(false);
 
+  /**
+   * Whether the character placement modal is open.
+   *
+   * Lives here rather than in the component that opens it because the modal is
+   * mounted at the app root: the canvas needs the full window to place anything
+   * precisely, and a `fixed` overlay rendered inside the prompt panel is bound
+   * by that panel's scroll container. Runtime only, never persisted.
+   */
+  characterPositionOpen = $state(false);
+
   /** True once the config has been consulted, so the UI can avoid a flash. */
   loaded = $state(false);
 
@@ -71,6 +81,18 @@ class NovelAiStore {
   /** What the Opus usage bar draws, or null when there is no bar to draw. */
   get opusAllowance() {
     return this.subscription?.opusAllowance ?? null;
+  }
+
+  /**
+   * The Opus V5 generation allowance is used up.
+   *
+   * Only meaningful for V5 models, which are excluded from Opus unlimited:
+   * callers combine this with `naiV5Variant` before feeding it to the cost
+   * estimate. False when there is no allowance record at all, because a
+   * missing record means a non-Opus account and `isOpus` already gates those.
+   */
+  get opusAllowanceEmpty(): boolean {
+    return this.opusAllowance?.isEmpty ?? false;
   }
 
   /**

@@ -17,6 +17,7 @@
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
+  import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
@@ -556,6 +557,9 @@
       nSamples: generation.batchSize,
       strength: generation.mode === "txt2img" ? 1 : nai.strength,
       isOpus: novelai.isOpus,
+      // V5 has no Opus unlimited: with the allowance drained it bills in full.
+      opusExhausted:
+        naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
       vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
     });
   });

@@ -15,10 +15,10 @@ built the way it is. It is the design rationale, not a task list.
 5. A free local upscale, so a paid image can be enlarged without spending
    Anlas. Anima at denoise 0.15 to 0.2 is the suggested refiner.
 6. FaceFix, also as a free local pass.
-7. Anlas remaining and Opus subscription status, in the Settings NovelAI
-   section. An option there also pins a compact version of the same readout to
-   the generation page, directly above the generate button. (The Opus
-   generation allowance bar is not built: see section 6.)
+7. Anlas remaining, Opus subscription status and the Opus generation
+   allowance bar, in the Settings NovelAI section. An option there also pins a
+   compact version of the same readout to the generation page, directly above
+   the generate button.
 8. The Anlas cost of the pending request, on the generate button.
 9. An Enhance button in the gallery lightbox, and a matching gallery
    context menu entry. It redraws an existing image at up to 3MP, using the
@@ -111,10 +111,26 @@ the same `director_reference_*` system.
 
 ### 2.6 Model capabilities are data, not branches
 
-`models.rs` carries per-model booleans (`v4_prompt`, `precise_reference`,
-`vibe_transfer`, `character_negatives`, `inpainting_id`). V5's reference
-features are wired but set to `false`, because NovelAI has not shipped them.
-Turning them on later is a two-boolean change, not a code change.
+`models.rs` carries per-model capabilities (`v4_prompt`, `precise_reference`,
+`vibe_transfer`, `character_negatives`, `inpainting_id`, `alpha`, `auto_text`,
+`max_characters`). V5's reference features are wired but set to `false`,
+because NovelAI has not shipped them. Turning them on later is a two-boolean
+change, not a code change.
+
+The same table also encodes an upstream substitution: V5 Curated's own
+inpainting model is still training, and NovelAI's client quietly uses V4.5
+Curated's in the meantime, so `nai-diffusion-5-curated` carries
+`inpainting_id: "nai-diffusion-4-5-curated-inpainting"` with a comment saying
+to point it back at `nai-diffusion-5-curated-inpainting` once it ships. The TS
+mirror in `src/lib/utils/novelaiModels.ts` says the same thing, but the Rust
+table is the one `resolve_id` actually reads.
+
+`max_characters` is 22 on both V5 models (the count NovelAI demonstrated with
+free positioning) and 6 before them. The frontend reads it through
+`novelAiMaxCharacters(checkpoint)` to gate the Add button, the enhance
+character merge and metadata import; `payload.rs` truncates the active
+character list to the same cap before the request goes out, because the API's
+behaviour past it is untested and a 400 there costs the user a paid request.
 
 ### 2.7 The generation stream is msgpack, not SSE
 
@@ -163,11 +179,26 @@ draws, mirroring the website's arithmetic so the two readouts agree:
 Doing this in Rust rather than the component keeps it under test, since the
 frontend has no test framework.
 
+The allowance also feeds the cost badges. V4 and V4.5 are free for Opus
+unconditionally inside the 1MP / 28-step window, but V5 draws from this timed
+allowance instead, so once it is empty a V5 generation costs real Anlas even
+on Opus. `OpusAllowance.isEmpty` (computed in Rust with the rest) surfaces as
+`novelai.opusAllowanceEmpty`, and the three cost call sites (the generate
+button badge, the Enhance modal, the free tags on the aspect-ratio presets)
+pass `opusExhausted` into `novelAiOpusCovers()` only when a V5 model is
+selected. `novelaiCost.ts` stays a leaf util: it takes the flag as data and
+never imports a store.
+
 ### 2.9 The NovelAI panel is one section, not scattered options
 
 Everything NovelAI owns that ComfyUI has no equivalent for lives in a single
 collapsible NovelAI section on the generation page, shown only in NovelAI mode:
-per-character prompts with a 5x5 placement grid, Precise Reference, Vibe
+per-character prompts with a Position toggle (Let NAI decide / Custom) whose
+Edit positions button opens a free-placement modal (numbered circles dragged
+anywhere on a black rectangle drawn at the selected aspect ratio, with a
+resizable panel and a warning when two circles sit closer than NovelAI's own
+0.1 overlap threshold; the old 5x5 grid was a coarse picker for the same 0..1
+space, so saved positions load unchanged), Precise Reference, Vibe
 Transfer, the NovelAI-only sampling options (quality tags, undesired-content
 preset, Variety+, dynamic thresholding, guidance rescale, undesired-content
 strength), the img2img/inpainting strength and noise, and the local
@@ -459,6 +490,21 @@ artist tag looks like any other danbooru tag, the artist index is what tells
 them apart. Saved styles keep a narrower rule (`animaArtistTagPrefix`), because
 only Anima-family checkpoints were trained on `@artist`.
 
+On V5, quoted prompt text is auto-formatted into a `Text:` block, mirroring
+what NovelAI's own frontend does for V5's text rendering.
+`payload::with_text_blocks` collects everything inside `"..."`, `“...”` or
+`「...」` pairs and appends it as a single `Text:` line at the very end of the
+prompt, multiple pieces separated by an empty line, the placement NovelAI's
+docs prescribe. The quoted text also stays where it was typed, since the docs
+recommend describing the text naturally in the prompt as well. Three
+deliberate rules: pre-V5 models are untouched (`auto_text` in the model
+table), a prompt that already contains a manual `Text:` line disables the
+auto-formatting entirely (NovelAI's own behaviour), and the block is appended
+*after* the transparent-background tag so it stays last. Straight quotes are
+paired by toggle scanning, first `"` opens and the next closes, so an inch
+mark like `5"` can start a false pair; NovelAI's client has the same
+ambiguity, and typographic or CJK quotes avoid it.
+
 ## 5. Security
 
 The NovelAI API key is a user secret and is handled like the existing Civitai
@@ -533,10 +579,11 @@ does not mistake them for verified behaviour.
 3. **The image estimate on the Opus bar is NovelAI's own approximation.** The
    allowance is a percentage, not an image count; `17.3` images per percent is
    the ratio the website applies, and it is presented as approximate there too.
-4. **The Opus generation allowance bar is not built.** The field names that
-   carry the remaining allowance are still unconfirmed, and a bar fed by a
-   guessed field would read wrong rather than read empty. Anlas remaining and
-   Opus status are shown instead.
+4. **The 22-character cap comes from NovelAI's announcement, not the API.**
+   V5's free positioning was demonstrated with 22 characters, so that is what
+   the model table seats, but the API's actual limit is unconfirmed and
+   `payload.rs` truncates to the table's cap rather than find out on a paid
+   request.
 5. **Whether NovelAI's stealth PNG metadata survives a transparent
    background.** NovelAI hides generation metadata in the low bits of the alpha
    channel of images that have no meaningful alpha. A real cut-out uses that
@@ -561,6 +608,116 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-26 - V5 battery costs, 22 seats, free placement, Text: blocks
+
+**Requested by:** the user: "V5 do the costs calculated after opus allowance
+is used up, update the character cap, check for V5 curated inpaint, and do the
+Text: block support", then mid-way: "also for positioning characters, use a
+more free place anywhere system, where you can click and drag each character
+as a numbered circle to be placed anywhere on the image, use the selected
+aspect ratio as the black image to place the circles on".
+
+**Costs after the battery runs dry.** V5 is not under the unconditional Opus
+discount; it draws from the timed generation allowance, so an empty battery
+means real Anlas. `OpusAllowance` gained `isEmpty` in Rust, the store exposes
+`opusAllowanceEmpty`, and the three cost surfaces (generate button, Enhance
+modal, aspect-preset free tags) pass `opusExhausted` into `novelAiOpusCovers()`
+when a V5 model is selected. V4/V4.5 badges are untouched. See section 2.8.
+
+**Character cap is per model.** The global `NOVELAI_MAX_CHARACTERS` (6) is
+gone; `novelAiMaxCharacters(checkpoint)` returns 22 on V5 and 6 before it, and
+it gates the Add button, the enhance character merge and metadata import.
+`payload.rs` truncates to the same cap so a stale UI state cannot send more
+than the model seats. See section 2.6.
+
+**V5 Curated inpaint borrows V4.5 Curated's.** Confirmed upstream: V5
+Curated's inpainting model is still training and NovelAI substitutes V4.5
+Curated's meanwhile. Both model tables now do the same, with a revert comment
+for when `nai-diffusion-5-curated-inpainting` ships. See section 2.6.
+
+**Text: blocks.** Quoted prompt text on V5 is appended as a trailing `Text:`
+block by `payload::with_text_blocks`; a manual `Text:` line disables it,
+multiple pieces are separated by an empty line, and the block lands after the
+transparency tag so it stays last. Covered by 8 new Rust tests. See section 4.
+The Enhance-for-V5 skill prompt was deliberately not taught the syntax:
+`naiSkill.ts` caches per `SKILL_VERSION`, and a bump would invalidate every
+user's cached skill for a teaching the model does not need.
+
+**Free placement.** The 5x5 grid picker is replaced by a black canvas at the
+selected aspect ratio where each enabled character is a numbered draggable
+circle. The store is only written on pointer release (settings persist on
+every store write), arrow keys nudge in 5% steps for keyboard access, and old
+grid positions load unchanged because the grid's cell centres live in the same
+0..1 space. New `drag_hint` locale key in all 12 locales; `position_cell`
+removed.
+
+**Follow-up fix, same day: V5 needs `params_version: 4`.** First hand-test
+report: "character is staying in the same spot even after I moved it
+drastically", on plain text-to-image with the character prompt filled and the
+circle persisting, so the payload was reaching the API intact and being
+ignored. The whole local path (drag commit, store, `toParams`, serde,
+`payload::build`) checked out; the difference against a working reference
+implementation (ComfyUI_RS_NAI_API_Request) was a single field: V5 endpoints
+expect `parameters.params_version: 4`, and a version-3 request is accepted but
+its free-placement centres are silently discarded. `params_version` is now a
+per-model capability in `models.rs` (4 on V5, 3 before it) instead of a
+hardcoded 3 in `payload.rs`. Covered by two new tests
+(`v5_speaks_params_version_4`, `params_version_follows_the_model`).
+
+**Second follow-up, same day: prompt-block flag alignment + wire logging.**
+The `params_version` fix alone did not resolve the hand-tested symptom (the
+character stayed centred; whether that test ran a rebuilt binary is unknown).
+A deeper diff against the V5-updated reference implementations
+(ComfyUI_RS_NAI_API_Request commit 2e6aa16, caru-ini/novelai-sdk commit
+ce2d549, both 2026-08-21) surfaced two structural gaps in our prompt blocks:
+`legacy_uc` must live inside `v4_prompt` itself (the references added it there
+in their V5 commits), and `v4_negative_prompt` pins `use_coords: false` /
+`use_order: false` explicitly rather than omitting them. Both are now sent
+(test `prompt_blocks_carry_the_reference_flag_set`). Because placement is
+decided entirely server-side, `mod.rs` also gained `log_character_summary`,
+which logs one line per character-carrying request off the body actually sent
+(model, `params_version`, both `use_coords` flags, `use_order`, every centre;
+never prompt text or tokens) so the wire content is provable via the log
+export instead of inferred.
+
+**Resolution: upstream model behaviour, not a client bug.** With the request
+provably correct on the wire (`params_version=4`, both `use_coords` flags
+true, centres intact, confirmed via the new log line), positioning was still
+ignored with a **single** character - but works with **two or more** through
+the identical payload path. Hand-testing showed the single-character case is
+centred on NovelAI's own site as well: V5's composition prior overrides the
+placement signal when there is only one subject, and only multi-character
+requests get their coordinates honoured. Nothing left to change locally; the
+`params_version` and flag-alignment fixes stay because they match the V5
+references and the official OpenAPI schema regardless. If NovelAI later fixes
+single-character adherence upstream, no client change should be needed. The
+flat `characterPrompts` array stays too - positioning demonstrably works with
+it present, so the earlier suspicion against it is dead.
+
+#### Manual test checklist
+
+The Rust half is covered by unit tests (`models.rs`, `payload.rs`; 397 pass).
+Steps 1 to 5 and 8 to 12 spend nothing; 6 and 7 are paid generations.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Opus account with battery charge, V5 model, 1MP at 28 steps or fewer | Generate button shows the free Opus badge |
+| 2 | Same once the battery is empty | Real Anlas estimate on the button; the aspect-ratio presets drop their free tags |
+| 3 | Battery still empty, switch to V4.5 | Free badge returns (V4.5 keeps the unconditional discount) |
+| 4 | V5 selected, add characters | Add button works up to 22, then disables; the limit note says 22 |
+| 5 | Switch to V4.5 with more than 6 characters in the list | Add disables at 6; a generation sends only the first 6 |
+| 6 | V5 Curated, inpaint an image | The request succeeds and respects the mask (V4.5 Curated inpainting under the hood) |
+| 7 | V5 prompt containing `a sign saying "hello"` | The image renders the word; the quoted text became a trailing Text: block server-side |
+| 8 | Prompt already carrying a manual `Text:` line plus quotes | No second block is appended |
+| 9 | Set Position to Custom with characters present, press Edit positions | Modal opens with a black canvas at the selected aspect ratio, one numbered circle per enabled character |
+| 10 | Drag a circle, release, change the aspect ratio | Circle stays where dropped (position persists); the canvas reshapes to the new ratio |
+| 11 | Tab to a circle, press the arrow keys | It nudges in 5% steps |
+| 12 | Load a generation saved under the old grid picker | Its character positions appear at the same spots on the canvas |
+| 13 | Drag two circles on top of each other | Both turn red and the overlap warning appears |
+
+**Do not skip:** 2, 4, 9, 10. Those cover the battery flip, the new cap, and
+the canvas working at all.
 
 ### 2026-08-26 - Reference images for the V5 prompt enhance
 

@@ -59,6 +59,7 @@
   import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
   import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
   import NaiImageEnhanceModal from "./lib/components/generation/NaiImageEnhanceModal.svelte";
+  import NovelAiPositionModal from "./lib/components/generation/NovelAiPositionModal.svelte";
   import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
   import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
   import { styleEditors } from "./lib/stores/styleEditors.svelte.js";
@@ -4461,6 +4462,10 @@
 <!-- NovelAI image Enhance. Root-mounted for the same reason Director Tools is:
      it acts on whatever image is open, not on the generation panel. -->
 <NaiImageEnhanceModal />
+
+<!-- NovelAI character placement. Root-mounted because the prompt panel that
+     opens it is a scroll container, which would bound the fixed overlay. -->
+<NovelAiPositionModal />
 
 <!-- Global human-readable error surface -->
 <GlobalErrorModal />

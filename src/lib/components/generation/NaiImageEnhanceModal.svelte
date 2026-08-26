@@ -36,6 +36,7 @@
     loadOutputImageForGenerationInput,
   } from "../../utils/galleryActions.js";
   import { estimateNovelAiCost, novelAiUpscaleCost } from "../../utils/novelaiCost.js";
+  import { naiV5Variant } from "../../utils/novelaiModels.js";
   import {
     MAGNITUDE_MAX,
     MAGNITUDE_MIN,
@@ -146,6 +147,8 @@
       nSamples: samples,
       strength,
       isOpus: novelai.isOpus,
+      opusExhausted:
+        naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
       vibeEncodes: generation.novelaiSettings.vibes.filter((v) => !v.encoding).length,
     });
   }
