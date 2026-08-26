@@ -1,3 +1,12 @@
+## What's New in v2.2.2
+
+### Fixes and maintenance
+- **Fixed ComfyUI failing to start after an interrupted update**: updating ComfyUI moved the source to the new version before reinstalling its Python libraries, so anything that interrupted that install (a dropped connection, antivirus locking a file, a full disk) left the new ComfyUI running against the old libraries and it would no longer start. Worse, the app then reported ComfyUI as up to date, which hid the Update button that would have repaired it. An update now marks itself as in progress and only clears that mark once every step has succeeded, so a half-applied update is reported as an update still available and can be retried. ([#640](https://github.com/Mooshieblob1/MooshieUI/pull/640))
+- **Fixed the wrong error dialog on a ComfyUI crash**: when ComfyUI started and then exited, the dialog said another ComfyUI was already running on the port and told you to close StabilityMatrix and kill stray python processes, none of which applied. Crashes now get their own dialog with a Repair and restart button that reinstalls ComfyUI's Python libraries for the installed version. ([#640](https://github.com/Mooshieblob1/MooshieUI/pull/640))
+- **ComfyUI dependency install errors now include the actual cause** instead of a bare "Failed to install ComfyUI dependencies". ([#640](https://github.com/Mooshieblob1/MooshieUI/pull/640))
+
+---
+
 ## What's New in v2.2.1
 
 ### Fixes and maintenance
