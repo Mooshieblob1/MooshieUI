@@ -116,6 +116,12 @@ const en: Record<string, string> = {
   "app.external_comfy.kill_and_restart": "Kill process & restart",
   "app.external_comfy.kill_busy": "Killing process…",
   "app.external_comfy.kill_failed": "Failed to free port {port}: {error}",
+  "app.external_comfy.title_crashed": "ComfyUI failed to start",
+  "app.external_comfy.crashed_body": "MooshieUI started ComfyUI, but it exited before it was ready. This is usually a broken Python environment, most often after an interrupted ComfyUI update that left the new version running against the old libraries.",
+  "app.external_comfy.step_crashed_repair": "Click Repair & restart to reinstall ComfyUI's Python libraries for the installed version.",
+  "app.external_comfy.step_crashed_logs": "If it still fails, open Technical details below and include that text in a bug report.",
+  "app.external_comfy.repair_and_restart": "Repair & restart",
+  "app.external_comfy.repair_busy": "Repairing…",
 
   // ── Setup Wizard ────────────────────────────────────────
   "setup.title": "MooshieUI",

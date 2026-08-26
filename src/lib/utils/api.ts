@@ -209,6 +209,12 @@ export interface ComfyUiVersionInfo {
   target: string;
   /** True when the installed version is older than the pinned target. */
   update_available: boolean;
+  /**
+   * True when a previous update moved the ComfyUI source but did not finish
+   * reinstalling its Python dependencies. The version numbers can look current
+   * while this is set, so `update_available` is forced true alongside it.
+   */
+  update_incomplete?: boolean;
 }
 
 export async function getComfyuiVersion(): Promise<ComfyUiVersionInfo> {

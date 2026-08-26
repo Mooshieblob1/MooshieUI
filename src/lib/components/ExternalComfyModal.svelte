@@ -1,8 +1,9 @@
 <script lang="ts">
   import { locale } from "../stores/locale.svelte.js";
-  import { killPortProcess } from "../utils/api.js";
+  import { killPortProcess, updateComfyui } from "../utils/api.js";
   import { ipcInvoke, ipcListen } from "../utils/ipc.js";
   import {
+    isCrashPayload,
     isNodeLoadFailurePayload,
     type ComfyServerErrorPayload,
   } from "../utils/comfyStartup.js";
@@ -22,11 +23,14 @@
   let localError = $state("");
 
   const isNodeLoadFailure = $derived(isNodeLoadFailurePayload(payload));
+  const isCrash = $derived(isCrashPayload(payload));
 
   const title = $derived(
     isNodeLoadFailure
       ? locale.t("app.external_comfy.title_missing_nodes")
-      : locale.t("app.external_comfy.title_already_running"),
+      : isCrash
+        ? locale.t("app.external_comfy.title_crashed")
+        : locale.t("app.external_comfy.title_already_running"),
   );
 
   const port = $derived(payload.port ?? 8188);
@@ -69,6 +73,37 @@
         unlistenError = fn;
       });
     });
+  }
+
+  /**
+   * Re-run the ComfyUI update. This is the recovery path for a crash caused by
+   * a half-applied update (new ComfyUI source against the previous release's
+   * Python dependencies): the update reinstalls the dependencies for whatever
+   * the checkout is currently on, so it repairs as well as upgrades.
+   */
+  async function repairAndRestart() {
+    busy = true;
+    localError = "";
+    try {
+      await updateComfyui();
+      const result = await ipcInvoke<string>("start_comfyui");
+      if (result === "already_running" || result === "skipped") {
+        onrestarted?.();
+        onclose();
+        return;
+      }
+      if (result !== "spawned") {
+        localError = locale.t("app.status.failed_to_start", { message: result });
+        return;
+      }
+      onrestarted?.();
+      await waitForComfyReady();
+      onclose();
+    } catch (e) {
+      localError = String(e);
+    } finally {
+      busy = false;
+    }
   }
 
   async function killAndRestart() {
@@ -128,19 +163,25 @@
         >×</button>
       </div>
 
-      <p class="text-sm text-neutral-300">
-        {locale.t("app.external_comfy.found_server_prefix")}
-        <span class="font-mono text-indigo-300">{serverUrl}</span>
-        {locale.t("app.external_comfy.found_server_suffix")}
-      </p>
+      {#if isCrash}
+        <p class="text-sm text-neutral-300">
+          {locale.t("app.external_comfy.crashed_body")}
+        </p>
+      {:else}
+        <p class="text-sm text-neutral-300">
+          {locale.t("app.external_comfy.found_server_prefix")}
+          <span class="font-mono text-indigo-300">{serverUrl}</span>
+          {locale.t("app.external_comfy.found_server_suffix")}
+        </p>
 
-      <p class="mt-3 text-sm text-neutral-400">
-        {#if isNodeLoadFailure}
-          {locale.t("app.external_comfy.missing_nodes_body")}
-        {:else}
-          {locale.t("app.external_comfy.already_running_body", { port })}
-        {/if}
-      </p>
+        <p class="mt-3 text-sm text-neutral-400">
+          {#if isNodeLoadFailure}
+            {locale.t("app.external_comfy.missing_nodes_body")}
+          {:else}
+            {locale.t("app.external_comfy.already_running_body", { port })}
+          {/if}
+        </p>
+      {/if}
 
       {#if payload.missing_nodes && payload.missing_nodes.length > 0}
         <p class="mt-2 text-xs font-mono text-amber-200/90 break-words">
@@ -152,14 +193,21 @@
         <p class="text-xs font-semibold text-neutral-300">
           {locale.t("app.external_comfy.what_to_do")}
         </p>
-        <ol class="mt-2 list-decimal list-inside space-y-1 text-xs text-neutral-400">
-          <li>{locale.t("app.external_comfy.step_close_apps")}</li>
-          <li>{locale.t("app.external_comfy.step_kill_process")}</li>
-          <li>{locale.t("app.external_comfy.step_try_again")}</li>
-        </ol>
-        <p class="mt-3 text-xs text-neutral-500">
-          {locale.t("app.external_comfy.external_hint")}
-        </p>
+        {#if isCrash}
+          <ol class="mt-2 list-decimal list-inside space-y-1 text-xs text-neutral-400">
+            <li>{locale.t("app.external_comfy.step_crashed_repair")}</li>
+            <li>{locale.t("app.external_comfy.step_crashed_logs")}</li>
+          </ol>
+        {:else}
+          <ol class="mt-2 list-decimal list-inside space-y-1 text-xs text-neutral-400">
+            <li>{locale.t("app.external_comfy.step_close_apps")}</li>
+            <li>{locale.t("app.external_comfy.step_kill_process")}</li>
+            <li>{locale.t("app.external_comfy.step_try_again")}</li>
+          </ol>
+          <p class="mt-3 text-xs text-neutral-500">
+            {locale.t("app.external_comfy.external_hint")}
+          </p>
+        {/if}
       </div>
 
       {#if payload.log_excerpt}
@@ -197,16 +245,29 @@
         >
           {locale.t("common.cancel")}
         </button>
-        <button
-          type="button"
-          class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm transition-colors cursor-pointer disabled:opacity-50"
-          onclick={killAndRestart}
-          disabled={busy}
-        >
-          {busy
-            ? locale.t("app.external_comfy.kill_busy")
-            : locale.t("app.external_comfy.kill_and_restart")}
-        </button>
+        {#if isCrash}
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm transition-colors cursor-pointer disabled:opacity-50"
+            onclick={repairAndRestart}
+            disabled={busy}
+          >
+            {busy
+              ? locale.t("app.external_comfy.repair_busy")
+              : locale.t("app.external_comfy.repair_and_restart")}
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm transition-colors cursor-pointer disabled:opacity-50"
+            onclick={killAndRestart}
+            disabled={busy}
+          >
+            {busy
+              ? locale.t("app.external_comfy.kill_busy")
+              : locale.t("app.external_comfy.kill_and_restart")}
+          </button>
+        {/if}
       </div>
     </div>
   </div>

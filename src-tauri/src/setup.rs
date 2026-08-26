@@ -1425,9 +1425,12 @@ async fn step_install_deps(
         net.pip_index_url.as_deref(),
     );
 
+    // Keep the underlying cause: the common failures here (a corrupted
+    // site-packages path, a proxy rejection, a full disk) are only actionable if
+    // the user can see which one it was.
     run_command_logged(app, cmd)
         .await
-        .map_err(|_| "Failed to install ComfyUI dependencies".to_string())
+        .map_err(|e| format!("Failed to install ComfyUI dependencies: {e}"))
 }
 
 /// True when the venv's torch is a CUDA build (`torch.version.cuda` is set).
@@ -2756,7 +2759,13 @@ pub async fn update_comfyui(
         .await
         .ok();
 
-    // 2. Move the working tree onto the pinned tag.
+    // 2. Move the working tree onto the pinned tag. The marker goes down first:
+    //    from here until every step below has succeeded the install is
+    //    half-applied (new source, dependencies still from the old release), and
+    //    the version report must say so rather than reading the checkout as
+    //    "up to date" and hiding the retry.
+    let marker = comfyui_dir.join(crate::comfyui_version::UPDATE_PENDING_MARKER);
+    std::fs::write(&marker, COMFYUI_REF).ok();
     emit(
         &app,
         "comfyui",
@@ -2783,6 +2792,9 @@ pub async fn update_comfyui(
     let comfy_str = comfyui_dir.to_string_lossy().to_string();
     crate::comfyui::nodes::ensure_mooshie_nodes(&comfy_str)?;
     step_install_custom_nodes(&base)?;
+
+    // 5. Every step landed, so the install is coherent again.
+    std::fs::remove_file(&marker).ok();
 
     emit(
         &app,

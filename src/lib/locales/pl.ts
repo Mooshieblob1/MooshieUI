@@ -115,6 +115,12 @@ const pl: Record<string, string> = {
   "app.external_comfy.kill_and_restart": "Zakończ proces i uruchom ponownie",
   "app.external_comfy.kill_busy": "Kończenie procesu...",
   "app.external_comfy.kill_failed": "Nie udało się zwolnić portu {port}: {error}",
+  "app.external_comfy.title_crashed": "Nie udało się uruchomić ComfyUI",
+  "app.external_comfy.crashed_body": "MooshieUI uruchomił ComfyUI, ale zakończył on działanie przed osiągnięciem gotowości. Zwykle to uszkodzone środowisko Python, najczęściej po przerwanej aktualizacji ComfyUI, która zostawiła nową wersję ze starymi bibliotekami.",
+  "app.external_comfy.step_crashed_repair": "Kliknij Napraw i uruchom ponownie, aby przeinstalować biblioteki Pythona ComfyUI dla zainstalowanej wersji.",
+  "app.external_comfy.step_crashed_logs": "Jeśli nadal się nie udaje, otwórz Szczegóły techniczne poniżej i dołącz ten tekst do zgłoszenia błędu.",
+  "app.external_comfy.repair_and_restart": "Napraw i uruchom ponownie",
+  "app.external_comfy.repair_busy": "Naprawianie…",
 
   // ── Setup Wizard ────────────────────────────────────────
   "setup.title": "MooshieUI",
