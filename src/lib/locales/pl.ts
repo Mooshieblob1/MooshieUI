@@ -71,6 +71,7 @@ const pl: Record<string, string> = {
   "generation.toast.failed_validation": "Generowanie nie powiodło się — model lub VAE może być niepoprawnie skonfigurowany. Sprawdź ustawienia modelu.",
   "generation.toast.failed_detail": "Generowanie nie powiodło się: {message}",
   "generation.error.out_of_memory": "Brak pamięci GPU. Spróbuj zmniejszyć rozmiar obrazu lub liczbę kroków, zamknij inne aplikacje korzystające z GPU lub włącz tryb niskiego VRAM. Zmniejszenie rozdzielczości zazwyczaj pomaga najbardziej.",
+  "generation.error.host_memory": "Zabrakło pamięci systemowej podczas ładowania modelu. Zamknij inne aplikacje, aby zwolnić RAM, i upewnij się, że dysk z systemem Windows ma wolne miejsce. Duże modele wideo wczytują wagi z dysku i potrzebują obu tych rzeczy.",
   "generation.error.vae_incompatible": "Wybrany VAE nie jest zgodny z tym checkpointem. Wybierz pasujący VAE lub ustaw VAE na Automatyczny, aby użyć wbudowanego VAE checkpointu.",
   "generation.error.model_not_found": "'{model}' jest niedostępny w ComfyUI. Wybierz ponownie model lub uruchom ponownie ComfyUI, jeśli właśnie dodałeś lub zmieniłeś nazwę pliku.",
   "generation.error.model_not_found_generic": "Wybrany model jest niedostępny w ComfyUI. Sprawdź ustawienia modelu i VAE lub uruchom ponownie ComfyUI, jeśli właśnie dodałeś lub zmieniłeś nazwę pliku.",
@@ -2970,6 +2971,10 @@ const pl: Record<string, string> = {
   "errors.out_of_memory.why": "Rozdzielczość, rozmiar partii lub model są zbyt duże dla dostępnej pamięci.",
 
   "errors.out_of_memory.fixes": "Zmniejsz rozdzielczość lub rozmiar partii i spróbuj ponownie. || Zamknij inne aplikacje intensywnie korzystające z GPU. || Użyj mniejszego lub bardziej skwantowanego modelu.",
+  "errors.host_memory.title": "Brak pamięci systemowej",
+  "errors.host_memory.what": "Nie udało się wczytać modelu z dysku do pamięci podczas generowania.",
+  "errors.host_memory.why": "Duże modele są wczytywane z dysku do przypiętej pamięci systemowej. Zabrakło wolnego RAM-u albo dysk systemowy z plikiem stronicowania był pełny.",
+  "errors.host_memory.fixes": "Zamknij inne aplikacje, aby zwolnić RAM, i spróbuj ponownie. || Zwolnij miejsce na dysku z systemem Windows i plikiem stronicowania. || Użyj mniejszego lub bardziej skwantowanego modelu albo takiego z mniejszym enkoderem tekstu.",
 
   "errors.unsupported_gpu.title": "GPU nie jest obsługiwany",
 

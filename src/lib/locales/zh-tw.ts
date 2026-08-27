@@ -2429,6 +2429,7 @@ const zhTw: Record<string, string> = {
 
   "generation.toast.failed_detail": "生成失敗：{message}",
   "generation.error.out_of_memory": "GPU 記憶體不足。請嘗試更小的圖片尺寸或更少的步數，關閉其他佔用 GPU 的應用程式，或啟用低顯存模式。降低解析度通常最有效。",
+  "generation.error.host_memory": "載入模型時系統記憶體不足。請關閉其他應用程式以釋放記憶體，並確認 Windows 所在磁碟有可用空間。大型影片模型需要從磁碟串流讀取權重，兩者缺一不可。",
   "generation.error.vae_incompatible": "所選 VAE 與此檢查點不相容。請選擇相符的 VAE，或將 VAE 設為自動以使用檢查點內建的 VAE。",
   "generation.error.model_not_found": "ComfyUI 中沒有「{model}」。請重新選擇模型，或者如果你剛新增或重新命名了檔案，請重新啟動 ComfyUI。",
   "generation.error.model_not_found_generic": "ComfyUI 中沒有所選的模型。請檢查模型和 VAE 設定，或者如果你剛新增或重新命名了檔案，請重新啟動 ComfyUI。",
@@ -2931,6 +2932,10 @@ const zhTw: Record<string, string> = {
   "errors.out_of_memory.why": "解析度、批次大小或模型超出可用記憶體限制。",
 
   "errors.out_of_memory.fixes": "降低解析度或批次大小後重試。 || 關閉其他佔用 GPU 的應用程式。 || 使用較小或量化程度更高的模型。",
+  "errors.host_memory.title": "系統記憶體不足",
+  "errors.host_memory.what": "生成過程中無法將模型從磁碟讀入記憶體。",
+  "errors.host_memory.why": "大型模型會從磁碟讀入鎖定的系統記憶體。可用記憶體不足，或存放分頁檔的系統磁碟已滿。",
+  "errors.host_memory.fixes": "關閉其他應用程式以釋放系統記憶體後重試。 || 清理存放 Windows 與分頁檔的磁碟空間。 || 使用較小或量化程度更高的模型，或文字編碼器較小的模型。",
 
   "errors.unsupported_gpu.title": "GPU 不受支援",
 

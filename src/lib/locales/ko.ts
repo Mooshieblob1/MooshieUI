@@ -2429,6 +2429,7 @@ const ko: Record<string, string> = {
 
   "generation.toast.failed_detail": "생성 실패: {message}",
   "generation.error.out_of_memory": "GPU 메모리가 부족합니다. 이미지 크기를 줄이거나 스텝 수를 낮추고, 다른 GPU 앱을 닫거나 저VRAM 모드를 켜보세요. 해상도를 낮추는 것이 가장 효과적입니다.",
+  "generation.error.host_memory": "모델을 불러오는 중 시스템 메모리가 부족해졌습니다. 다른 앱을 닫아 RAM을 확보하고, Windows가 설치된 드라이브에 여유 공간이 있는지 확인하세요. 대형 비디오 모델은 디스크에서 가중치를 읽어오므로 둘 다 필요합니다.",
   "generation.error.vae_incompatible": "선택한 VAE가 이 체크포인트와 호환되지 않습니다. 호환되는 VAE를 선택하거나 VAE를 자동으로 설정해 체크포인트에 내장된 VAE를 사용하세요.",
   "generation.error.model_not_found": "'{model}'을(를) ComfyUI에서 사용할 수 없습니다. 모델을 다시 선택하거나, 방금 파일을 추가하거나 이름을 변경했다면 ComfyUI를 다시 시작하세요.",
   "generation.error.model_not_found_generic": "선택한 모델을 ComfyUI에서 사용할 수 없습니다. 모델과 VAE 설정을 확인하거나, 방금 파일을 추가하거나 이름을 변경했다면 ComfyUI를 다시 시작하세요.",
@@ -2931,6 +2932,10 @@ const ko: Record<string, string> = {
   "errors.out_of_memory.why": "해상도, 배치 크기, 또는 모델이 사용 가능한 메모리에 비해 너무 큽니다.",
 
   "errors.out_of_memory.fixes": "해상도 또는 배치 크기를 낮추고 다시 시도하세요. || GPU를 많이 사용하는 다른 앱을 종료하세요. || 더 작거나 양자화된 모델을 사용하세요.",
+  "errors.host_memory.title": "시스템 메모리가 부족합니다",
+  "errors.host_memory.what": "생성 중에 모델을 디스크에서 메모리로 불러오지 못했습니다.",
+  "errors.host_memory.why": "대형 모델은 디스크에서 고정된 시스템 RAM으로 읽어들입니다. 여유 RAM이 부족했거나, 페이지 파일이 있는 시스템 드라이브가 가득 찼습니다.",
+  "errors.host_memory.fixes": "다른 앱을 닫아 시스템 RAM을 확보한 뒤 다시 시도하세요. || Windows와 페이지 파일이 있는 드라이브의 공간을 확보하세요. || 더 작거나 양자화된 모델, 또는 텍스트 인코더가 작은 모델을 사용하세요.",
 
   "errors.unsupported_gpu.title": "GPU가 지원되지 않습니다",
 
