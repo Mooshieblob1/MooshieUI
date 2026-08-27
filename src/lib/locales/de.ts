@@ -82,7 +82,7 @@ const de: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— fügen Sie dies an beliebiger Stelle im Prompt ein, um den Inhalt genau dort einzusetzen. Die ältere Form @preset:name funktioniert weiterhin.",
+  "generation.presets.inline_token_help": "— fügen Sie dies an beliebiger Stelle im Prompt ein. Einzeiliger Inhalt wird genau dort eingesetzt; bei mehrzeiligem Inhalt wird pro Generierung eine Zeile zufällig gewählt, wie bei einer Wildcard. Die ältere Form @preset:name funktioniert weiterhin.",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",

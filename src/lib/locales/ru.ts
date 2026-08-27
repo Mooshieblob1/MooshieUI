@@ -84,7 +84,7 @@ const ru: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— вставьте это в любое место промпта, чтобы содержимое подставилось именно там. Прежняя форма @preset:имя по-прежнему работает.",
+  "generation.presets.inline_token_help": "— вставьте это в любое место промпта. Однострочное содержимое подставляется именно там; из многострочного при каждой генерации случайно выбирается одна строка, как в вайлдкарде. Прежняя форма @preset:имя по-прежнему работает.",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",

@@ -84,7 +84,7 @@ const zhTw: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— 放在提示詞的任意位置，內容就會在該處展開。舊的 @preset:名稱 形式仍然可用。",
+  "generation.presets.inline_token_help": "— 放在提示詞的任意位置。單行內容會在該處直接展開；多行內容則像萬用字元一樣，每次生成隨機選取一行。舊的 @preset:名稱 形式仍然可用。",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",

@@ -84,7 +84,7 @@ const ja: Record<string, string> = {
     "generation.presets.name_placeholder": "e.g. Cool hair colors",
     "generation.presets.inline_token": "Inline token:",
     "generation.presets.copy_inline_token": "Click to copy",
-    "generation.presets.inline_token_help": "— プロンプトの任意の位置に置くと、その場所に内容が差し込まれます。従来の @preset:名前 形式も引き続き使えます。",
+    "generation.presets.inline_token_help": "— プロンプトの任意の位置に置けます。1行の内容はその場所に差し込まれ、複数行の内容はワイルドカードとして生成ごとに1行がランダムに選ばれます。従来の @preset:名前 形式も引き続き使えます。",
     "generation.presets.content_label": "Content",
     "generation.presets.wildcard_option": "{count} wildcard option",
     "generation.presets.wildcard_options": "{count} wildcard options",

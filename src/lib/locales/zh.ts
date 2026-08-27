@@ -84,7 +84,7 @@ const zh: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— 放在提示词的任意位置，内容就会在该处展开。旧的 @preset:名称 形式仍然可用。",
+  "generation.presets.inline_token_help": "— 放在提示词的任意位置。单行内容会在该处直接展开；多行内容则像通配符一样，每次生成随机选取一行。旧的 @preset:名称 形式仍然可用。",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",
