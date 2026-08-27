@@ -2471,6 +2471,7 @@ const zh: Record<string, string> = {
 
   "generation.toast.failed_detail": "生成失败：{message}",
   "generation.error.out_of_memory": "GPU 内存不足。请尝试更小的图像尺寸或更少的步数，关闭其他占用 GPU 的应用，或启用低显存模式。降低分辨率通常最有效。",
+  "generation.error.host_memory": "加载模型时系统内存不足。请关闭其他应用以释放内存，并确认 Windows 所在磁盘有可用空间。大型视频模型需要从磁盘流式读取权重，两者都不可少。",
   "generation.error.vae_incompatible": "所选 VAE 与此检查点不兼容。请选择匹配的 VAE，或将 VAE 设为自动以使用检查点内置的 VAE。",
   "generation.error.model_not_found": "ComfyUI 中没有“{model}”。请重新选择模型，或者如果你刚添加或重命名了文件，请重启 ComfyUI。",
   "generation.error.model_not_found_generic": "ComfyUI 中没有所选的模型。请检查模型和 VAE 设置，或者如果你刚添加或重命名了文件，请重启 ComfyUI。",
@@ -2932,6 +2933,10 @@ const zh: Record<string, string> = {
   "errors.out_of_memory.why": "分辨率、批次大小或模型超出可用内存。",
 
   "errors.out_of_memory.fixes": "降低分辨率或批次大小后重试。 || 关闭其他占用 GPU 的应用。 || 使用更小或量化程度更高的模型。",
+  "errors.host_memory.title": "系统内存不足",
+  "errors.host_memory.what": "生成过程中无法将模型从磁盘读入内存。",
+  "errors.host_memory.why": "大型模型会从磁盘读入锁定的系统内存。可用内存不足，或存放页面文件的系统盘已满。",
+  "errors.host_memory.fixes": "关闭其他应用以释放系统内存后重试。 || 清理存放 Windows 和页面文件的磁盘空间。 || 使用更小或量化程度更高的模型，或文本编码器更小的模型。",
 
   "errors.unsupported_gpu.title": "GPU 不受支持",
 

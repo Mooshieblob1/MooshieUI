@@ -2464,6 +2464,7 @@ const es: Record<string, string> = {
 
   "generation.toast.failed_detail": "Generación fallida: {message}",
   "generation.error.out_of_memory": "Sin memoria de GPU. Prueba con un tamaño de imagen menor o menos pasos, cierra otras apps que usen la GPU o activa el modo de poca VRAM. Bajar la resolución suele ayudar más.",
+  "generation.error.host_memory": "Se agotó la memoria del sistema al cargar el modelo. Cierra otras apps para liberar RAM y asegúrate de que la unidad de Windows tenga espacio libre. Los modelos de vídeo grandes leen sus pesos del disco y necesitan ambas cosas.",
   "generation.error.vae_incompatible": "El VAE seleccionado no es compatible con este checkpoint. Elige un VAE compatible o pon VAE en Automático para usar el VAE incluido en el checkpoint.",
   "generation.error.model_not_found": "'{model}' no está disponible en ComfyUI. Vuelve a seleccionar tu modelo o reinicia ComfyUI si acabas de añadir o renombrar el archivo.",
   "generation.error.model_not_found_generic": "Un modelo seleccionado no está disponible en ComfyUI. Revisa la configuración de modelo y VAE, o reinicia ComfyUI si acabas de añadir o renombrar un archivo.",
@@ -2960,6 +2961,10 @@ const es: Record<string, string> = {
   "errors.out_of_memory.why": "La resolución, el tamaño del lote o el modelo es demasiado grande para la memoria disponible.",
 
   "errors.out_of_memory.fixes": "Reduce la resolución o el tamaño del lote y vuelve a intentarlo. || Cierra otras apps que usen mucha GPU. || Usa un modelo más pequeño o más cuantizado.",
+  "errors.host_memory.title": "Memoria del sistema insuficiente",
+  "errors.host_memory.what": "El modelo no se pudo transferir del disco a la memoria durante la generación.",
+  "errors.host_memory.why": "Los modelos grandes se leen del disco a RAM del sistema fijada. No había suficiente RAM libre, o la unidad del sistema con el archivo de paginación estaba llena.",
+  "errors.host_memory.fixes": "Cierra otras apps para liberar RAM del sistema y vuelve a intentarlo. || Libera espacio en la unidad que contiene Windows y el archivo de paginación. || Usa un modelo más pequeño o más cuantizado, o uno con un codificador de texto menor.",
 
   "errors.unsupported_gpu.title": "GPU no compatible",
 
