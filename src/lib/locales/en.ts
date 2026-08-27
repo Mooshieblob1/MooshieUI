@@ -593,7 +593,7 @@ const en: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— drop this anywhere in your prompt to splice the content in at that exact spot. The older @preset:name form still works.",
+  "generation.presets.inline_token_help": "— drop this anywhere in your prompt. A single-line chunk is inserted at that exact spot; a multi-line chunk picks one line at random per generation, like a wildcard. The older @preset:name form still works.",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",

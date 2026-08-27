@@ -575,7 +575,7 @@ const pl: Record<string, string> = {
   "generation.presets.name_placeholder": "np. Fajne kolory włosów",
   "generation.presets.inline_token": "Token inline:",
   "generation.presets.copy_inline_token": "Kliknij, aby skopiować",
-  "generation.presets.inline_token_help": "— upuść to w dowolnym miejscu promptu, aby wstawić treść w tym konkretnym miejscu. Starsza forma @preset:nazwa nadal działa.",
+  "generation.presets.inline_token_help": "— upuść to w dowolnym miejscu promptu. Treść jednoliniowa jest wstawiana dokładnie w tym miejscu; przy wielu liniach jedna z nich jest losowana przy każdej generacji, jak wildcard. Starsza forma @preset:nazwa nadal działa.",
   "generation.presets.content_label": "Treść",
   "generation.presets.wildcard_option": "{count} opcja wildcard",
   "generation.presets.wildcard_options": "{count} opcji wildcard",

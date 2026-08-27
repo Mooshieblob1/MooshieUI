@@ -538,7 +538,7 @@ const es: Record<string, string> = {
   "generation.presets.name_placeholder": "p. ej. colores de pelo bonitos",
   "generation.presets.inline_token": "Token en línea:",
   "generation.presets.copy_inline_token": "Haz clic para copiar",
-  "generation.presets.inline_token_help": "— colócalo en cualquier lugar de tu prompt para insertar el contenido exactamente ahí. La forma antigua @preset:nombre sigue funcionando.",
+  "generation.presets.inline_token_help": "— colócalo en cualquier lugar de tu prompt. El contenido de una sola línea se inserta exactamente ahí; con varias líneas se elige una al azar por generación, como un comodín. La forma antigua @preset:nombre sigue funcionando.",
   "generation.presets.content_label": "Contenido",
   "generation.presets.wildcard_option": "{count} opción wildcard",
   "generation.presets.wildcard_options": "{count} opciones wildcard",

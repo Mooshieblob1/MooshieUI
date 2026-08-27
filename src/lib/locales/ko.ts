@@ -84,7 +84,7 @@ const ko: Record<string, string> = {
     "generation.presets.name_placeholder": "e.g. Cool hair colors",
     "generation.presets.inline_token": "Inline token:",
     "generation.presets.copy_inline_token": "Click to copy",
-    "generation.presets.inline_token_help": "— 프롬프트의 원하는 위치에 넣으면 그 자리에 내용이 삽입됩니다. 기존 @preset:이름 형식도 계속 사용할 수 있습니다.",
+    "generation.presets.inline_token_help": "— 프롬프트의 원하는 위치에 넣을 수 있습니다. 한 줄짜리 내용은 그 자리에 삽입되고, 여러 줄인 경우 와일드카드처럼 생성할 때마다 한 줄이 무작위로 선택됩니다. 기존 @preset:이름 형식도 계속 사용할 수 있습니다.",
     "generation.presets.content_label": "Content",
     "generation.presets.wildcard_option": "{count} wildcard option",
     "generation.presets.wildcard_options": "{count} wildcard options",
