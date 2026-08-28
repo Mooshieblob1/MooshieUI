@@ -227,8 +227,17 @@ pub struct Usage {
 /// fixed ratio the site applies.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct OpusAllowance {
-    /// Allowance remaining, clamped to 0 through 100 for the bar.
+    /// Allowance remaining, floored at 0 but *not* capped at 100.
+    ///
+    /// Anlatan hands out bonus allowance from time to time, which puts the
+    /// account above a full bar, so the readout has to be able to say 200%.
     pub percent: i64,
+    /// [`Self::percent`] capped at 100, for the bar's width only.
+    #[serde(rename = "barPercent")]
+    pub bar_percent: i64,
+    /// Above a full allowance, i.e. a bonus grant the bar cannot draw in full.
+    #[serde(rename = "isBonus")]
+    pub is_bonus: bool,
     /// Roughly how many images the remaining allowance covers.
     #[serde(rename = "approxImages")]
     pub approx_images: i64,
@@ -255,10 +264,12 @@ const IMAGES_PER_PERCENT: f64 = 17.3;
 impl Usage {
     fn allowance(&self) -> OpusAllowance {
         // A negative balance displays as empty rather than as a negative bar.
+        // No upper cap: a bonus grant legitimately reads above 100, and the
+        // bar's width is capped separately so only the drawing is bounded.
         let percent = if self.is_negative {
             0
         } else {
-            self.percent.clamp(0, 100)
+            self.percent.max(0)
         };
         let per_day = if self.time_until_next_percent > 0 {
             (86_400.0 / self.time_until_next_percent as f64 * 10.0).round() / 10.0
@@ -267,6 +278,8 @@ impl Usage {
         };
         OpusAllowance {
             percent,
+            bar_percent: percent.min(100),
+            is_bonus: percent > 100,
             approx_images: (IMAGES_PER_PERCENT * percent as f64).round() as i64,
             is_empty: self.is_negative || self.percent <= 0,
             is_low: self.is_negative || self.percent < 5,
@@ -552,6 +565,8 @@ mod tests {
         // 69 percent remaining, one point back every 7888 seconds.
         let a = opus_with(69, false, 7888).opus_allowance.unwrap();
         assert_eq!(a.percent, 69);
+        assert_eq!(a.bar_percent, 69);
+        assert!(!a.is_bonus);
         assert_eq!(a.approx_images, 1194);
         assert!(!a.is_low && !a.is_empty);
         assert_eq!(a.refill_percent_per_day, 11.0);
@@ -569,8 +584,25 @@ mod tests {
     fn a_negative_balance_draws_an_empty_bar_not_a_negative_one() {
         let a = opus_with(-12, true, 7888).opus_allowance.unwrap();
         assert_eq!(a.percent, 0);
+        assert_eq!(a.bar_percent, 0);
         assert_eq!(a.approx_images, 0);
         assert!(a.is_empty && a.is_low);
+    }
+
+    #[test]
+    fn a_bonus_grant_reads_past_a_full_bar() {
+        // Anlatan doubled the allowance once already, so 200 percent is real.
+        let a = opus_with(200, false, 7888).opus_allowance.unwrap();
+        assert_eq!(a.percent, 200);
+        assert_eq!(a.bar_percent, 100, "the bar itself never overflows");
+        assert!(a.is_bonus);
+        assert_eq!(a.approx_images, 3460);
+        assert!(!a.is_low && !a.is_empty);
+
+        // Exactly full is not a bonus, and still fills the bar.
+        let a = opus_with(100, false, 7888).opus_allowance.unwrap();
+        assert_eq!(a.bar_percent, 100);
+        assert!(!a.is_bonus);
     }
 
     #[test]

@@ -238,6 +238,55 @@ fn log_vibe_summary(body: &serde_json::Value) {
             .unwrap_or(&null)
     );
 }
+
+/// One line per character-carrying request, read back off the body that is
+/// actually sent.
+///
+/// Placement is decided entirely on NovelAI's side, so when a character
+/// ignores its circle this line is the only local proof of whether the
+/// centres, `use_coords` and `params_version` left the machine at all.
+/// Prompt text and tokens are never logged; only counts and coordinates.
+fn log_character_summary(body: &serde_json::Value) {
+    let Some(parameters) = body.get("parameters") else {
+        return;
+    };
+    let Some(captions) = parameters
+        .get("v4_prompt")
+        .and_then(|p| p.get("caption"))
+        .and_then(|c| c.get("char_captions"))
+        .and_then(|c| c.as_array())
+    else {
+        return;
+    };
+    if captions.is_empty() {
+        return;
+    }
+    let centers: Vec<String> = captions
+        .iter()
+        .map(|c| {
+            c.get("centers")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".into())
+        })
+        .collect();
+    let null = serde_json::Value::Null;
+    log::info!(
+        "NovelAI characters: model={} params_version={} use_coords={} v4.use_coords={} v4.use_order={} centers=[{}]",
+        body.get("model").unwrap_or(&null),
+        parameters.get("params_version").unwrap_or(&null),
+        parameters.get("use_coords").unwrap_or(&null),
+        parameters
+            .get("v4_prompt")
+            .and_then(|p| p.get("use_coords"))
+            .unwrap_or(&null),
+        parameters
+            .get("v4_prompt")
+            .and_then(|p| p.get("use_order"))
+            .unwrap_or(&null),
+        centers.join(", ")
+    );
+}
+
 /// Hand the freshly minted tokens back to the client that asked for them.
 ///
 /// The client stores them next to the image it sent, so the same vibe costs
@@ -331,6 +380,94 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
     payload::build(&input, &nai, model).map_err(AppError::Other)
 }
 
+/// `action` value that routes a request to the standalone upscaler instead of
+/// to a generation.
+///
+/// It is deliberately not one of the values `payload::normalise_action`
+/// understands: if an upscale ever reached the generation path, that function
+/// would fold this back to "generate" and NovelAI would bill a whole new image
+/// for it.
+pub const UPSCALE_ACTION: &str = "upscale";
+
+/// NovelAI's upscaler is a fixed 4x model. The endpoint takes the factor as a
+/// field but accepts no other value.
+pub const UPSCALE_SCALE: u32 = 4;
+
+/// The largest input the upscaler accepts.
+///
+/// Read as an area rather than as a pair of side limits, which is how NovelAI's
+/// own client behaves: a tall portrait can be well over the square root of this
+/// on one side and still be upscalable, because it is under this many pixels in
+/// total. It is also exactly where their price table stops, which is the same
+/// boundary seen from the other direction: an image they will not quote is an
+/// image they will not upscale. Mirrored in `novelaiEnhance.ts` so the button
+/// can say so before the click.
+pub const UPSCALE_MAX_PIXELS: u64 = 3_145_728;
+
+/// What `/ai/upscale` needs: the image and the size it currently is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpscaleInput {
+    /// Base64 PNG, with any `data:` prefix already stripped.
+    pub image: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Is this request a plain upscale rather than a generation?
+pub fn is_upscale_request(params: &GenerationParams) -> bool {
+    params
+        .novelai
+        .as_ref()
+        .is_some_and(|nai| nai.action == UPSCALE_ACTION)
+}
+
+/// Read an upscale request, or say why it is not one that can be sent.
+///
+/// The size is taken from `params` rather than decoded out of the PNG: the
+/// caller reads it off the decoded bitmap it is about to send, so this is the
+/// same number, and NovelAI rejects a mismatch loudly enough that guessing here
+/// would only hide where it came from.
+pub fn upscale_input(params: &GenerationParams) -> Result<UpscaleInput, String> {
+    let image = params
+        .input_image
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("Upscaling needs an image to work on.")?;
+
+    let (width, height) = (params.width, params.height);
+    if width == 0 || height == 0 {
+        return Err("The image's size is unknown, so it cannot be upscaled.".into());
+    }
+
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > UPSCALE_MAX_PIXELS {
+        return Err(format!(
+            "NovelAI's upscaler takes images up to {UPSCALE_MAX_PIXELS} pixels; \
+             this one is {width}x{height} ({pixels}). Use Enhance to enlarge it instead."
+        ));
+    }
+
+    Ok(UpscaleInput {
+        image: payload::strip_data_url(image).to_string(),
+        width,
+        height,
+    })
+}
+
+/// Check a request before a prompt id is minted.
+///
+/// Both entry points (the Tauri command and the browser route) call this so a
+/// bad request fails their own call rather than arriving later as an
+/// `execution_error` against an id the frontend has already committed to.
+pub fn preflight(params: &GenerationParams) -> Result<(), AppError> {
+    if is_upscale_request(params) {
+        upscale_input(params).map(|_| ()).map_err(AppError::Other)
+    } else {
+        build_request(params).map(|_| ())
+    }
+}
+
 /// NovelAI's dimension grid. Its own UI steps 1024 -> 1088 -> 1152.
 const DIMENSION_STEP: u32 = 64;
 
@@ -405,6 +542,14 @@ async fn run_inner(
     };
     let client = NovelAiClient::new(&state.http_client, &api_key)?;
 
+    // Checked before anything else touches the payload. An upscale has no
+    // prompt to encode, no vibes to pay for and no steps to report against, so
+    // every line below this would be work done for a request that uses none of
+    // it.
+    if is_upscale_request(params) {
+        return run_upscale(state, sink, prompt_id, params, &client).await;
+    }
+
     // The client has to exist before the payload does: vibe references are
     // encoded over the network, and V4 will not take the raw images.
     let encoded = encode_pending_vibes(&client, params).await?;
@@ -413,6 +558,7 @@ async fn run_inner(
     }
     let body = build_request(encoded.as_ref().unwrap_or(params))?;
     log_vibe_summary(&body);
+    log_character_summary(&body);
     let steps = params.steps.max(1);
 
     sink.emit(
@@ -488,6 +634,51 @@ async fn run_inner(
                 images.len()
             );
         }
+    }
+
+    for image in &images {
+        deliver_image(sink, prompt_id, image).await;
+    }
+
+    // `node: null` is the frontend's completion signal.
+    sink.emit(
+        "comfyui:executing",
+        serde_json::json!({ "prompt_id": prompt_id, "node": serde_json::Value::Null }),
+    );
+    state.prompt_queue.cleanup_alias(prompt_id);
+    Ok(RunOutcome::Completed)
+}
+
+/// Run NovelAI's standalone upscaler.
+///
+/// Separate from the generation path rather than folded into it, because the
+/// two share nothing before the request: there is no payload to build, no vibe
+/// to encode and no per-step progress to relay. What they do share is the tail,
+/// so the delivery, the terminal event and the queue cleanup are identical and
+/// the frontend cannot tell the two apart.
+async fn run_upscale(
+    state: &Arc<AppState>,
+    sink: &EventSink,
+    prompt_id: &str,
+    params: &GenerationParams,
+    client: &NovelAiClient<'_>,
+) -> Result<RunOutcome, AppError> {
+    let input = upscale_input(params).map_err(AppError::Other)?;
+
+    // A single 0/1 frame. The upscaler reports no progress of its own, and
+    // without one tick the frontend shows a queued prompt with no bar at all.
+    sink.emit(
+        "comfyui:progress",
+        serde_json::json!({ "prompt_id": prompt_id, "value": 0, "max": 1, "node": "NovelAI" }),
+    );
+
+    let images = client
+        .upscale(&input.image, input.width, input.height, UPSCALE_SCALE)
+        .await?;
+
+    if state.prompt_queue.is_cancelled(prompt_id) {
+        state.prompt_queue.cleanup_alias(prompt_id);
+        return Ok(RunOutcome::Completed);
     }
 
     for image in &images {
@@ -775,6 +966,117 @@ mod tests {
         assert_eq!(resolve_seed(0), 0);
         assert_eq!(resolve_seed(42), 42);
         assert_eq!(resolve_seed(MAX_SEED), MAX_SEED);
+    }
+
+    fn upscale_params(width: u32, height: u32, image: Option<&str>) -> GenerationParams {
+        let json = serde_json::json!({
+            "mode": "image_edit",
+            "positive_prompt": "",
+            "negative_prompt": "",
+            "checkpoint": "nai-diffusion-4-5-full",
+            "vae": null,
+            "loras": [],
+            "sampler_name": "k_euler_ancestral",
+            "scheduler": "karras",
+            "steps": 28,
+            "cfg": 5.0,
+            "seed": "1",
+            "width": width,
+            "height": height,
+            "batch_size": 1,
+            "denoise": 1.0,
+            "input_image": image,
+            "mask_image": null,
+            "grow_mask_by": null,
+            "upscale_enabled": false,
+            "upscale_method": "model",
+            "upscale_model": "4x-UltraSharp.pth",
+            "upscale_scale": 2.0,
+            "upscale_denoise": 0.18,
+            "upscale_steps": 20,
+            "upscale_tile_size": 1024,
+            "upscale_tiling": true,
+        });
+        let mut params: GenerationParams = serde_json::from_value(json).expect("params");
+        params.novelai = Some(params::NovelAiParams {
+            model: "nai-diffusion-4-5-full".into(),
+            action: UPSCALE_ACTION.into(),
+            ..Default::default()
+        });
+        params
+    }
+
+    #[test]
+    fn only_the_upscale_action_takes_the_upscaler_path() {
+        let mut params = upscale_params(832, 1216, Some("png"));
+        assert!(is_upscale_request(&params));
+
+        // Every generation action, img2img included, stays on the billed path.
+        for action in ["generate", "img2img", "infill"] {
+            params.novelai.as_mut().unwrap().action = action.into();
+            assert!(
+                !is_upscale_request(&params),
+                "{action} routed to the upscaler"
+            );
+        }
+
+        // A local generation has no NovelAI block at all.
+        params.novelai = None;
+        assert!(!is_upscale_request(&params));
+    }
+
+    #[test]
+    fn the_default_portrait_is_upscalable_despite_being_over_1024_on_one_side() {
+        // 832x1216 is NovelAI's own portrait default and its area is under the
+        // ceiling, so a per-side reading of "up to 1024x1024" would wrongly
+        // reject the most common image anyone would click this on.
+        let input = upscale_input(&upscale_params(832, 1216, Some("png"))).expect("upscalable");
+        assert_eq!(input.width, 832);
+        assert_eq!(input.height, 1216);
+        assert_eq!(input.image, "png");
+    }
+
+    #[test]
+    fn a_data_url_is_stripped_the_same_way_the_payload_strips_it() {
+        let input = upscale_input(&upscale_params(
+            512,
+            512,
+            Some("data:image/png;base64,abc123"),
+        ))
+        .expect("upscalable");
+        assert_eq!(input.image, "abc123");
+    }
+
+    #[test]
+    fn an_image_past_the_pixel_ceiling_is_refused_before_the_request() {
+        // Rejected here rather than by NovelAI, so the user reads why instead
+        // of a bare 400 from an endpoint they never chose to call.
+        let err =
+            upscale_input(&upscale_params(2048, 2048, Some("png"))).expect_err("over the ceiling");
+        assert!(err.contains("2048x2048"), "unhelpful message: {err}");
+        assert!(err.contains("Enhance"), "no alternative offered: {err}");
+
+        // Exactly at the ceiling still goes through -- 1536x2048 is the
+        // ceiling to the pixel, and is over it on one side, which is the case
+        // a per-side limit would have wrongly refused.
+        assert!(upscale_input(&upscale_params(1536, 2048, Some("png"))).is_ok());
+    }
+
+    #[test]
+    fn an_upscale_without_an_image_is_refused() {
+        assert!(upscale_input(&upscale_params(512, 512, None)).is_err());
+        assert!(upscale_input(&upscale_params(512, 512, Some("   "))).is_err());
+        // A size the caller could not read is the other way this arrives.
+        assert!(upscale_input(&upscale_params(0, 512, Some("png"))).is_err());
+    }
+
+    #[test]
+    fn preflight_checks_the_upscaler_rather_than_the_payload() {
+        // An upscale carries no prompt and no sampler, so building a generation
+        // payload for it would either fail on unrelated grounds or pass while
+        // missing the one limit that matters.
+        assert!(preflight(&upscale_params(832, 1216, Some("png"))).is_ok());
+        assert!(preflight(&upscale_params(2048, 2048, Some("png"))).is_err());
     }
 
     #[test]

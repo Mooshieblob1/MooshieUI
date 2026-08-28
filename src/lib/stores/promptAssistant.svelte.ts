@@ -14,6 +14,7 @@ import {
   setLlmBaseUrl,
   listExternalLlmModels,
   connectLlmOauth,
+  setLlmXaiClient,
   callExternalLlm,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
@@ -64,6 +65,7 @@ import {
   saveH3Skill,
 } from "../utils/h3Skill.js";
 import type {
+  LlmDeviceCode,
   LlmHardware,
   LlmCatalogEntry,
   LlmProviderState,
@@ -105,6 +107,14 @@ class PromptAssistantStore {
   externalModels = $state<string[]>([]);
   /** A provider mutation or model listing is in flight. */
   providerBusy = $state(false);
+  /**
+   * The code the xAI device sign-in is waiting on, or null when none is live.
+   *
+   * Held in the store rather than in the panel because the sign-in call does not
+   * resolve until the user approves it, so the code has to arrive out of band
+   * and stay on screen for as long as that takes.
+   */
+  deviceCode = $state<LlmDeviceCode | null>(null);
 
   /** True once at least one model is installed. */
   get hasInstalledModel(): boolean {
@@ -241,9 +251,38 @@ class PromptAssistantStore {
     await this.mutateProvider(() => setLlmBaseUrl(baseUrl));
   }
 
-  /** Desktop only: the PKCE loopback listener binds on the user's own machine. */
+  /**
+   * Sign in to a provider. Resolves only once the user finishes on the
+   * provider's page, so this stays in flight for as long as they take.
+   *
+   * OpenRouter and Nous are desktop only, because their PKCE redirect lands on a
+   * loopback listener bound wherever Rust runs. `xai-oauth` uses the device
+   * grant instead, which has no redirect, so it also works in browser mode and
+   * publishes a code the user has to type; that arrives on `llm:device_code`
+   * while this call is still blocked, and is cleared however the flow ends.
+   */
   async connectOauth(id: string): Promise<void> {
-    await this.mutateProvider(() => connectLlmOauth(id));
+    this.deviceCode = null;
+    const unlisten = await ipcListen("llm:device_code", (event: any) => {
+      this.deviceCode = event.payload as LlmDeviceCode;
+    });
+    try {
+      await this.mutateProvider(() => connectLlmOauth(id));
+    } finally {
+      unlisten();
+      this.deviceCode = null;
+    }
+  }
+
+  /**
+   * Store the xAI OAuth client id, and a scope override when one is given.
+   *
+   * Not a secret, and not part of the session: signing out leaves it in place,
+   * because it describes how this install identifies itself rather than who is
+   * signed in.
+   */
+  async saveXaiClient(clientId: string, scope: string): Promise<void> {
+    await this.mutateProvider(() => setLlmXaiClient(clientId, scope));
   }
 
   /** Turns the model field into a picker. Silent on failure — many self-hosted
@@ -463,6 +502,7 @@ class PromptAssistantStore {
   async enhanceForNai(
     prompt: string,
     ctx: NaiPromptContext,
+    referenceData: string[] = [],
   ): Promise<NaiRewriteResult> {
     this.isGenerating = true;
     try {
@@ -471,10 +511,22 @@ class PromptAssistantStore {
         const system = naiSystemWithSkill(naiRewriteSystemPrompt(ctx), skill);
         const user = naiUserPrompt(prompt, ctx);
 
+        // Skill authoring above deliberately runs without the images: it asks
+        // the model how it writes V5 prompts in general, and the answer is
+        // cached per backend and variant, so feeding one user's references into
+        // it would bias every later rewrite.
         const first = normalizeNaiResponse(
-          parseNaiResponse(await callExternalLlm(system, user, NAI_MAX_TOKENS)),
+          parseNaiResponse(
+            await callExternalLlm(
+              system,
+              user,
+              NAI_MAX_TOKENS,
+              null,
+              referenceData,
+            ),
+          ),
         );
-        const problems = validateNaiResponse(first, ctx);
+        const problems = validateNaiResponse(first);
         if (problems.length === 0) return { parsed: first, problems: [] };
 
         const second = normalizeNaiResponse(
@@ -485,10 +537,12 @@ class PromptAssistantStore {
 
 ${naiRetryInstruction(problems)}`,
               NAI_MAX_TOKENS,
+              null,
+              referenceData,
             ),
           ),
         );
-        const recheck = validateNaiResponse(second, ctx);
+        const recheck = validateNaiResponse(second);
         if (recheck.length === 0) return { parsed: second, problems: [] };
         // Prefer whichever attempt produced a base prompt; the second can come
         // back empty when the model gives up on the correction.

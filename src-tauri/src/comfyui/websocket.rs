@@ -37,6 +37,46 @@ pub(crate) struct ProcessedOutputImage {
     display_bytes: Option<Vec<u8>>, // WebP or PNG display copy (for JXL only)
     display_format: &'static str,   // "webp", "png", or "none"
     encode_ms: u64,
+    width: Option<u32>,  // size of what actually came back, when the frame says
+    height: Option<u32>, // ... so the frontend can record it (see stamp_dimensions)
+}
+
+impl ProcessedOutputImage {
+    /// Add the image's real size to an event payload, when it is known.
+    ///
+    /// The frontend cannot assume the request size describes the result: a
+    /// NovelAI standalone upscale is sent the *source's* dimensions, because
+    /// that is what the API scales from, and comes back four times bigger.
+    /// Without this the metadata panel reports the old resolution against the
+    /// new image.
+    ///
+    /// Absent rather than guessed when the frame does not say, so a consumer
+    /// can tell "no size here" from a wrong one.
+    pub(crate) fn stamp_dimensions(&self, payload: &mut serde_json::Value) {
+        if let (Some(w), Some(h)) = (self.width, self.height) {
+            payload["width"] = serde_json::json!(w);
+            payload["height"] = serde_json::json!(h);
+        }
+    }
+}
+
+/// Read a PNG's size out of its IHDR, without decoding it.
+///
+/// The passthrough tags hand the PNG over untouched, so unlike the raw-pixel
+/// tags there is no header of ours to read the size from. IHDR is the first
+/// chunk by spec and its width and height are the first two fields, so this is
+/// a fixed-offset read once the signature checks out.
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((width, height))
 }
 
 /// Decode a MOOSHIE_OUTPUT_IMAGE binary frame (event_type 100) and, for raw RGBA
@@ -49,6 +89,22 @@ pub(crate) async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputI
     }
     let format_tag = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
     let started = Instant::now();
+
+    // Taken from the frame rather than from the request, because they are not
+    // always the same image size -- see `stamp_dimensions`. The raw-pixel tags
+    // carry it in the header they already have; the passthrough tags carry a
+    // whole PNG, so it comes out of the IHDR.
+    let (width, height) = match format_tag {
+        3..=5 if data.len() >= 16 => (
+            Some(u32::from(u16::from_be_bytes([data[8], data[9]]))),
+            Some(u32::from(u16::from_be_bytes([data[10], data[11]]))),
+        ),
+        3..=5 => (None, None),
+        _ => match png_dimensions(&data[8..]) {
+            Some((w, h)) => (Some(w), Some(h)),
+            None => (None, None),
+        },
+    };
 
     let (out_format, out_ext, bit_depth, image_bytes, display_bytes, display_fmt): (
         &'static str,
@@ -191,6 +247,8 @@ pub(crate) async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputI
         display_bytes,
         display_format: display_fmt,
         encode_ms,
+        width,
+        height,
     })
 }
 
@@ -220,7 +278,7 @@ pub(crate) fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> 
         img.image_bytes.len(), img.encode_ms, prompt_id,
     );
 
-    if let Some(name) = temp_filename {
+    let mut payload = if let Some(name) = temp_filename {
         let mut payload = serde_json::json!({
             "temp_filename": name,
             "format": img.format,
@@ -244,7 +302,9 @@ pub(crate) fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> 
             "encode_ms": img.encode_ms,
             "prompt_id": prompt_id,
         })
-    }
+    };
+    img.stamp_dimensions(&mut payload);
+    payload
 }
 
 pub(crate) fn cache_temp_event(
@@ -736,7 +796,7 @@ pub async fn connect_websocket(
 
                                 // Tauri desktop: reference temp files only (no inline base64).
                                 // app.emit() silently drops events exceeding ~1-2 MB.
-                                let tauri_payload = if img.format == "jxl" {
+                                let mut tauri_payload = if img.format == "jxl" {
                                     match (temp_filename.as_ref(), display_temp_filename.as_ref()) {
                                         (Some(jxl_f), Some(disp_f)) => serde_json::json!({
                                             "temp_filename": jxl_f,
@@ -793,7 +853,7 @@ pub async fn connect_websocket(
 
                                 // SSE payload: always use temp filenames, including the
                                 // browser-display copy for JXL.
-                                let sse_payload = if let Some(name) = temp_filename {
+                                let mut sse_payload = if let Some(name) = temp_filename {
                                     let mut payload = serde_json::json!({
                                         "temp_filename": name,
                                         "format": img.format,
@@ -814,6 +874,11 @@ pub async fn connect_websocket(
                                 } else {
                                     tauri_payload.clone()
                                 };
+
+                                // Both, because the no-temp-file branch clones the
+                                // Tauri payload and stamping twice is a no-op.
+                                img.stamp_dimensions(&mut tauri_payload);
+                                img.stamp_dimensions(&mut sse_payload);
 
                                 emit_split(frontend_event, tauri_payload, sse_payload);
                             }
@@ -1357,4 +1422,51 @@ async fn connect_websocket_for_worker_inner(
 
     *worker.ws_handle.lock().await = Some(task);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::png_dimensions;
+
+    /// A PNG header only: signature, the IHDR length and tag, then the size.
+    /// Nothing here decodes the image, so the pixel data is beside the point.
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn reads_the_size_out_of_the_ihdr() {
+        // The case this exists for: a 4x upscale of a 1024x1024 source, whose
+        // request said 1024x1024 and whose result is not that.
+        assert_eq!(png_dimensions(&png_header(4096, 4096)), Some((4096, 4096)));
+        // Non-square, to catch a width/height swap.
+        assert_eq!(png_dimensions(&png_header(832, 1216)), Some((832, 1216)));
+    }
+
+    #[test]
+    fn anything_that_is_not_a_png_reads_as_unknown() {
+        // No size is better than a wrong one: the caller leaves the field off
+        // entirely and the frontend keeps the request size.
+        assert_eq!(png_dimensions(&[]), None);
+        assert_eq!(png_dimensions(b"RIFF____WEBPVP8 "), None);
+
+        // Truncated mid-IHDR: long enough to look plausible, too short to read.
+        let mut short = png_header(64, 64);
+        short.truncate(20);
+        assert_eq!(png_dimensions(&short), None);
+
+        // Right signature, wrong first chunk.
+        let mut wrong_chunk = png_header(64, 64);
+        wrong_chunk[12..16].copy_from_slice(b"iCCP");
+        assert_eq!(png_dimensions(&wrong_chunk), None);
+
+        // A zero side is not a size; treat it as absent rather than record it.
+        assert_eq!(png_dimensions(&png_header(0, 64)), None);
+        assert_eq!(png_dimensions(&png_header(64, 0)), None);
+    }
 }

@@ -55,8 +55,8 @@
     {:else if allowance}
       <div class="h-1 w-full rounded-full bg-neutral-800 overflow-hidden">
         <div
-          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : 'bg-teal-500'}"
-          style="width: {allowance.percent}%"
+          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : allowance.isBonus ? 'bg-emerald-500' : 'bg-teal-500'}"
+          style="width: {allowance.barPercent}%"
         ></div>
       </div>
       <p class="text-[10px] {allowance.isLow ? 'text-amber-400' : 'text-neutral-500'}">

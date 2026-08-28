@@ -110,17 +110,23 @@ pub async fn unload_llm(state: State<'_, Arc<AppState>>) -> Result<(), AppError>
 /// on the external providers keeps working for users who only have a local
 /// model installed.
 ///
-/// `image` only reaches the external path. The bundled llama-server runs
-/// text-only models, so it drops the image and answers from the prompt alone
-/// rather than failing.
+/// `images` only reach the external path. The bundled llama-server runs
+/// text-only models, so it drops them and answers from the prompt alone rather
+/// than failing.
 async fn chat_any(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
     system: &str,
     user: &str,
     max_tokens: u32,
-    image: Option<&crate::prompt_assistant::vision::VisionImage>,
+    images: &[crate::prompt_assistant::vision::VisionImage],
 ) -> Result<String, AppError> {
+    // Before reading the key, not after: providers whose sign-in issues an
+    // expiring token store it in the same field an API key lives in, so a
+    // stale one would be read out and sent as a bearer credential. No-op for
+    // every provider that has no OAuth session stored.
+    providers::ensure_fresh_token(&state.http_client, &state.config).await;
+
     let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
         let cfg = state.config.read().await;
         (
@@ -146,12 +152,12 @@ async fn chat_any(
             system,
             user,
             max_tokens,
-            image,
+            images,
         )
         .await;
     }
 
-    if image.is_some() {
+    if !images.is_empty() {
         log::info!(
             "[prompt-assistant] the bundled local model has no vision; \
              answering from the prompt text alone"
@@ -239,7 +245,7 @@ async fn run_generation(
         _ => 192,
     };
 
-    let raw = chat_any(app, state, &system, input, max_tokens, None).await?;
+    let raw = chat_any(app, state, &system, input, max_tokens, &[]).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
@@ -324,7 +330,12 @@ pub async fn list_external_llm_models(
     providers::list_available_models(&state.http_client, &state.config).await
 }
 
-/// Sign in to OpenRouter and store the API key the flow issues.
+/// Sign in to a provider that supports it and store what the flow issues.
+///
+/// The two supported flows end in different things, which is why they store
+/// differently: OpenRouter hands back a durable API key, Nous Portal hands back
+/// an expiring access token plus the refresh token and client id needed to
+/// renew it.
 ///
 /// Desktop only: the redirect lands on a loopback port owned by this process,
 /// which is unreachable from a browser on another machine. Browser mode offers
@@ -342,8 +353,32 @@ pub async fn connect_llm_oauth(
         )));
     }
 
-    let key = oauth::connect_openrouter(&state.http_client).await?;
-    providers::store_oauth_key(&state.config, &provider, key).await
+    match provider.as_str() {
+        "nous" => {
+            let session = oauth::connect_nous(&state.http_client).await?;
+            providers::store_oauth_session(&state.config, &provider, session).await
+        }
+        "xai-oauth" => providers::connect_xai_session(&state).await,
+        _ => {
+            let key = oauth::connect_openrouter(&state.http_client).await?;
+            providers::store_oauth_key(&state.config, &provider, key).await
+        }
+    }
+}
+
+/// Store the xAI OAuth client id (and optional scope override) this install
+/// should present when signing in.
+///
+/// Separate from the sign-in itself because xAI issues client ids by hand and
+/// MooshieUI ships none: without this the `xai-oauth` provider has nothing to
+/// identify itself with. Neither value is secret, so both round-trip to the UI.
+#[tauri::command]
+pub async fn set_llm_xai_client(
+    state: State<'_, Arc<AppState>>,
+    client_id: String,
+    scope: String,
+) -> Result<providers::LlmProviderState, AppError> {
+    providers::set_xai_client(&state.config, &client_id, &scope).await
 }
 
 /// Run one system+user turn through the configured backend and return it raw.
@@ -356,13 +391,17 @@ pub async fn connect_llm_oauth(
 /// spends the same key on client-supplied text, and `max_tokens` is clamped so
 /// a bad caller cannot run up an unbounded bill.
 ///
-/// `image_filename` names an image already uploaded to ComfyUI's input folder
-/// (a video first frame, say). The client passes the filename rather than the
-/// bytes: the bytes are the one thing it does not keep - an upload leaves only a
-/// name behind - and routing multiple megabytes of base64 back through IPC to
-/// send it straight out again would be pointless. Anything that goes wrong while
-/// fetching or encoding it degrades to a text-only turn, because a rewrite
-/// written from the prompt alone beats an error dialog.
+/// Two ways to attach an image, because the two callers hold them differently.
+/// `image_filename` names one already uploaded to ComfyUI's input folder (a
+/// video first frame, say): the client passes the name because the bytes are
+/// the one thing it does not keep, and routing megabytes of base64 back through
+/// IPC to send it straight out again would be pointless. `image_data` carries
+/// base64 directly, for the NovelAI prompt enhance, whose users may have no
+/// ComfyUI process running to upload to at all.
+///
+/// Both end up in one ordered list, filename first. Anything that goes wrong
+/// while fetching or encoding degrades to a turn without that image, because a
+/// rewrite written from the prompt alone beats an error dialog.
 #[tauri::command]
 pub async fn call_external_llm(
     app: AppHandle,
@@ -371,8 +410,10 @@ pub async fn call_external_llm(
     prompt: String,
     max_tokens: Option<u32>,
     image_filename: Option<String>,
+    image_data: Option<Vec<String>>,
 ) -> Result<String, AppError> {
     let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 4096);
-    let image = crate::prompt_assistant::vision::load_input_frame(&state, image_filename).await;
-    chat_any(&app, &state, &system, &prompt, max_tokens, image.as_ref()).await
+    let images =
+        crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data).await;
+    chat_any(&app, &state, &system, &prompt, max_tokens, &images).await
 }

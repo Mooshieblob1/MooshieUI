@@ -178,6 +178,36 @@ pub struct AppConfig {
     /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
     #[serde(default)]
     pub llm_external_model: String,
+    /// Refresh token for providers whose sign-in issues a *short-lived* access
+    /// token (Nous Portal). Empty for every other provider: an API key does not
+    /// expire, and OpenRouter's PKCE flow issues a long-lived key rather than
+    /// an OAuth token pair. Secret, and redacted the same way the key is.
+    #[serde(default)]
+    pub llm_oauth_refresh_token: String,
+    /// OAuth client id this install registered for itself via RFC 7591 dynamic
+    /// client registration. Needed to redeem `llm_oauth_refresh_token`, and
+    /// per-install rather than baked into the binary, so MooshieUI never has to
+    /// impersonate someone else's registered client.
+    #[serde(default)]
+    pub llm_oauth_client_id: String,
+    /// Unix seconds after which `llm_external_api_key` stops being accepted.
+    /// `0` means the credential does not expire, which is the case for every
+    /// API key and for OpenRouter's issued key.
+    #[serde(default)]
+    pub llm_oauth_expires_at: i64,
+    /// OAuth client id to present to xAI. Empty by default and never shipped
+    /// with a value: xAI allowlists client ids and has issued none to this
+    /// project, so signing in to a SuperGrok subscription stays off until
+    /// whoever runs the install supplies one. Unlike `llm_oauth_client_id` this
+    /// is operator configuration rather than a session artifact, so it outlives
+    /// signing out. Not a secret -- OAuth client ids are public by design.
+    #[serde(default)]
+    pub llm_xai_client_id: String,
+    /// Scope string for the xAI sign-in. Empty means the built-in default
+    /// (`openid profile email offline_access api:access`); an operator whose
+    /// client id was issued for a narrower or wider grant can override it.
+    #[serde(default)]
+    pub llm_xai_scope: String,
     /// Report proxy endpoint (Cloudflare Tunnel URL). When set, in-app error
     /// reports POST here instead of opening a prefilled GitHub issue. Defaults to
     /// the hosted proxy; set to null/empty to fall back to prefilled issues.
@@ -269,6 +299,11 @@ impl Default for AppConfig {
             llm_external_base_url: String::new(),
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
+            llm_oauth_refresh_token: String::new(),
+            llm_oauth_client_id: String::new(),
+            llm_oauth_expires_at: 0,
+            llm_xai_client_id: String::new(),
+            llm_xai_scope: String::new(),
             report_endpoint: default_report_endpoint(),
             gallery_never_expire: false,
         }
@@ -318,6 +353,16 @@ pub fn config_to_client_json(
             obj.insert(
                 "llm_external_api_key_configured".to_string(),
                 serde_json::json!(llm_configured),
+            );
+            // The refresh token is strictly more dangerous than the access
+            // token it mints: it survives the access token's expiry and can be
+            // redeemed indefinitely until the user revokes it. It has no
+            // `_configured` companion because nothing in the UI branches on it
+            // -- `llm_external_api_key_configured` already reports whether the
+            // provider row is authenticated.
+            obj.insert(
+                "llm_oauth_refresh_token".to_string(),
+                serde_json::Value::String(String::new()),
             );
         }
     }
@@ -534,6 +579,23 @@ pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
         incoming
             .llm_external_api_key
             .clone_from(&current.llm_external_api_key);
+    }
+    // The OAuth session is written entirely by the sign-in flow and the token
+    // refresh, both of which run behind the frontend's back, so a full-config
+    // save always carries a stale copy. Worse, the access token rotates on its
+    // own schedule: without this the first background refresh would be undone
+    // by the next unrelated autosave, silently signing the user out. Only the
+    // refresh token gates the carry-forward -- the client never sees it, so an
+    // empty one is proof the snapshot is stale rather than an intent to clear.
+    // Signing out goes through `set_llm_api_key("")`.
+    if incoming.llm_oauth_refresh_token.trim().is_empty() {
+        incoming
+            .llm_oauth_refresh_token
+            .clone_from(&current.llm_oauth_refresh_token);
+        incoming
+            .llm_oauth_client_id
+            .clone_from(&current.llm_oauth_client_id);
+        incoming.llm_oauth_expires_at = current.llm_oauth_expires_at;
     }
     // Blanked for non-admin clients, so an absent or empty NovelAI key is a
     // stale echo rather than an intent to clear. Clearing goes through

@@ -7,8 +7,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A point on NovelAI's 5x5 character-position grid, already normalised to the
-/// 0..1 coordinate space the API expects.
+/// A character position, normalised to the 0..1 coordinate space the API
+/// expects. Since V5 the UI places characters freely on the canvas, so any
+/// value in range is valid; the 5x5 grid helper below survives because the
+/// grid's cell centres live in the same space, which is what keeps positions
+/// saved by the old grid picker loading unchanged.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct NovelAiCoord {
     pub x: f64,
@@ -43,7 +46,7 @@ pub struct NovelAiCharacter {
     pub prompt: String,
     #[serde(default)]
     pub negative_prompt: String,
-    /// Grid centre. Only sent when `use_coords` is on for the generation.
+    /// Canvas position. Only sent when `use_coords` is on for the generation.
     #[serde(default)]
     pub center: NovelAiCoord,
     #[serde(default = "default_true")]

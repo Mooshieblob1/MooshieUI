@@ -47,11 +47,11 @@ pub async fn novelai_generate(
     let mut params = params;
     params.seed = novelai::resolve_seed(params.seed);
 
-    // Built before spawning so a bad request (no key, unknown model, missing
-    // NovelAI block) surfaces as a command error the caller can show inline,
-    // rather than as an async execution_error against a prompt id that the
-    // frontend has already committed to.
-    novelai::build_request(&params)?;
+    // Checked before spawning so a bad request (no key, unknown model, missing
+    // NovelAI block, an image too large to upscale) surfaces as a command error
+    // the caller can show inline, rather than as an async execution_error
+    // against a prompt id that the frontend has already committed to.
+    novelai::preflight(&params)?;
 
     let prompt_id = novelai::new_prompt_id();
     let seed = params.seed;
