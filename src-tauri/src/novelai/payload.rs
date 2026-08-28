@@ -35,10 +35,13 @@ pub fn build(
     model: &NovelAiModel,
 ) -> Result<Value, String> {
     let action = normalise_action(&nai.action, input);
+    // Transparency first, text second, so the `Text:` block ends up last: the
+    // API wants it at the very end of the prompt, after every tag.
     let positive_prompt = with_transparency(&input.positive_prompt, nai, model);
+    let positive_prompt = with_text_blocks(&positive_prompt, model);
     let mut parameters = Map::new();
 
-    parameters.insert("params_version".into(), json!(3));
+    parameters.insert("params_version".into(), json!(model.params_version));
     parameters.insert("width".into(), json!(input.width));
     parameters.insert("height".into(), json!(input.height));
     parameters.insert("scale".into(), json!(input.cfg));
@@ -73,7 +76,10 @@ pub fn build(
         },
     );
 
-    let characters = nai.active_characters();
+    // Capped at what the model seats (22 on V5, 6 before it): NovelAI's API
+    // past the cap is untested, and a 400 there costs the user a paid request.
+    let mut characters = nai.active_characters();
+    characters.truncate(model.max_characters);
     parameters.insert("use_coords".into(), json!(nai.use_coords));
 
     if model.v4_prompt {
@@ -92,6 +98,10 @@ pub fn build(
                 },
                 "use_coords": nai.use_coords,
                 "use_order": true,
+                // Lives in BOTH prompt blocks, not just the negative one; the
+                // V5 reference implementations added it here in their V5
+                // commits.
+                "legacy_uc": nai.legacy_uc,
             }),
         );
         parameters.insert(
@@ -107,6 +117,11 @@ pub fn build(
                         }))
                         .collect::<Vec<_>>(),
                 },
+                // Placement belongs to the positive block alone; the
+                // references pin both flags false here rather than omitting
+                // them.
+                "use_coords": false,
+                "use_order": false,
                 "legacy_uc": nai.legacy_uc,
             }),
         );
@@ -173,6 +188,64 @@ fn with_transparency(prompt: &str, nai: &NovelAiParams, model: &NovelAiModel) ->
         return TRANSPARENCY_TAG.to_string();
     }
     format!("{trimmed}, {TRANSPARENCY_TAG}")
+}
+
+/// Quote pairs that mark text to be rendered in the image. NovelAI's V5
+/// announcement shows CJK corner brackets and typographic double quotes; the
+/// straight ASCII quote is what most people type, so it pairs up too (first
+/// one opens, the next one closes).
+const TEXT_QUOTE_PAIRS: &[(char, char)] = &[('「', '」'), ('“', '”'), ('"', '"')];
+
+/// Auto-format quoted prompt text into a trailing `Text:` block, the way
+/// NovelAI's own V5 frontend does.
+///
+/// The quoted text stays where it was typed as well: NovelAI's docs recommend
+/// repeating the text in natural language for reliability, and their client
+/// keeps the quote in the prompt when it prepares the block. A `Text:` line the
+/// user wrote themselves turns the transform off entirely, which is also
+/// NovelAI's behaviour, so power users keep full control of the block.
+fn with_text_blocks(prompt: &str, model: &NovelAiModel) -> String {
+    if !model.auto_text {
+        return prompt.to_string();
+    }
+    if prompt
+        .lines()
+        .any(|line| line.trim_start().starts_with("Text:"))
+    {
+        return prompt.to_string();
+    }
+    let pieces = extract_quoted(prompt);
+    if pieces.is_empty() {
+        return prompt.to_string();
+    }
+    // Multiple pieces are separated by an empty line, per NovelAI's text
+    // rendering docs.
+    format!("{}\nText: {}", prompt.trim_end(), pieces.join("\n\n"))
+}
+
+/// Every properly closed quote in the prompt, in order of appearance.
+///
+/// An unmatched quote is skipped rather than swallowing the rest of the
+/// prompt, and an empty pair contributes nothing.
+fn extract_quoted(prompt: &str) -> Vec<String> {
+    let chars: Vec<char> = prompt.chars().collect();
+    let mut pieces = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if let Some(&(_, close)) = TEXT_QUOTE_PAIRS.iter().find(|(open, _)| *open == chars[i]) {
+            if let Some(j) = (i + 1..chars.len()).find(|&j| chars[j] == close) {
+                let piece: String = chars[i + 1..j].iter().collect();
+                let piece = piece.trim();
+                if !piece.is_empty() {
+                    pieces.push(piece.to_string());
+                }
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    pieces
 }
 
 /// NovelAI scales the Variety+ cutoff with the diagonal of the latent, so a
@@ -322,7 +395,10 @@ fn apply_image_action(
 }
 
 /// The frontend may send either a bare base64 blob or a full data URL.
-fn strip_data_url(s: &str) -> &str {
+///
+/// `pub(super)` because the standalone upscaler takes the same field from the
+/// same frontend and has to strip it the same way, without building a payload.
+pub(super) fn strip_data_url(s: &str) -> &str {
     s.split_once("base64,").map_or(s, |(_, rest)| rest)
 }
 
@@ -381,6 +457,18 @@ mod tests {
     }
 
     #[test]
+    fn params_version_follows_the_model() {
+        // V5 endpoints declare params_version 4 in NovelAI's OpenAPI schema;
+        // V4/V4.5 stay on 3.
+        let v5 = models::find("nai-diffusion-5-full").unwrap();
+        let body = build(&input(), &nai(), v5).unwrap();
+        assert_eq!(body["parameters"]["params_version"], 4);
+
+        let body = build(&input(), &nai(), v45()).unwrap();
+        assert_eq!(body["parameters"]["params_version"], 3);
+    }
+
+    #[test]
     fn character_captions_carry_centres_and_negatives() {
         let mut n = nai();
         n.use_coords = true;
@@ -409,6 +497,31 @@ mod tests {
         let negs = &body["parameters"]["v4_negative_prompt"]["caption"]["char_captions"];
         assert_eq!(negs[0]["char_caption"], "hat");
         assert_eq!(body["parameters"]["use_coords"], true);
+    }
+
+    #[test]
+    fn prompt_blocks_carry_the_reference_flag_set() {
+        // Mirrors the V5 reference implementations (raspie10032, caru-ini):
+        // `legacy_uc` lives inside BOTH prompt blocks, and the negative block
+        // pins `use_coords`/`use_order` to false.
+        let mut n = nai();
+        n.use_coords = true;
+        n.characters = vec![NovelAiCharacter {
+            prompt: "girl".into(),
+            center: NovelAiCoord { x: 0.1, y: 0.5 },
+            enabled: true,
+            ..Default::default()
+        }];
+        let v5 = models::find("nai-diffusion-5-full").unwrap();
+        let body = build(&input(), &n, v5).unwrap();
+        let pos = &body["parameters"]["v4_prompt"];
+        assert_eq!(pos["use_coords"], true);
+        assert_eq!(pos["use_order"], true);
+        assert_eq!(pos["legacy_uc"], false);
+        let neg = &body["parameters"]["v4_negative_prompt"];
+        assert_eq!(neg["use_coords"], false);
+        assert_eq!(neg["use_order"], false);
+        assert_eq!(neg["legacy_uc"], false);
     }
 
     #[test]
@@ -715,5 +828,109 @@ mod tests {
             build(&i, &n, v5()).unwrap()["input"],
             "2.1::transparent background::"
         );
+    }
+
+    #[test]
+    fn quoted_text_appends_a_text_block_on_v5() {
+        let mut i = input();
+        i.positive_prompt = "1girl, sign saying \"hello world\"".into();
+        let body = build(&i, &nai(), v5()).unwrap();
+        let expected = "1girl, sign saying \"hello world\"\nText: hello world";
+        assert_eq!(body["input"], expected);
+        // The structured caption carries the same transformed prompt.
+        assert_eq!(
+            body["parameters"]["v4_prompt"]["caption"]["base_caption"],
+            expected
+        );
+    }
+
+    #[test]
+    fn text_blocks_are_not_prepared_for_pre_v5_models() {
+        let mut i = input();
+        i.positive_prompt = "sign saying \"hello\"".into();
+        let body = build(&i, &nai(), v45()).unwrap();
+        assert_eq!(body["input"], "sign saying \"hello\"");
+    }
+
+    #[test]
+    fn a_manual_text_block_disables_the_auto_formatting() {
+        // Matching NovelAI's client: writing `Text:` yourself takes over.
+        let mut i = input();
+        i.positive_prompt = "sign saying \"hello\"\nText: HELLO".into();
+        let body = build(&i, &nai(), v5()).unwrap();
+        assert_eq!(body["input"], "sign saying \"hello\"\nText: HELLO");
+    }
+
+    #[test]
+    fn multiple_quotes_are_separated_by_an_empty_line() {
+        let mut i = input();
+        i.positive_prompt = "poster \"BIG SALE\" and a tag saying \"50% off\"".into();
+        let body = build(&i, &nai(), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "poster \"BIG SALE\" and a tag saying \"50% off\"\nText: BIG SALE\n\n50% off"
+        );
+    }
+
+    #[test]
+    fn cjk_and_typographic_quotes_are_matched_too() {
+        let mut i = input();
+        i.positive_prompt = "看板「こんにちは」, banner “Welcome”".into();
+        let body = build(&i, &nai(), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "看板「こんにちは」, banner “Welcome”\nText: こんにちは\n\nWelcome"
+        );
+    }
+
+    #[test]
+    fn unmatched_and_empty_quotes_add_no_block() {
+        // Straight quotes toggle-scan, so an empty pair contributes nothing
+        // and a final quote with no partner is skipped, not left swallowing
+        // the rest of the prompt.
+        let mut i = input();
+        i.positive_prompt = "empty \"\" pair, one lone \" quote".into();
+        let body = build(&i, &nai(), v5()).unwrap();
+        assert_eq!(body["input"], "empty \"\" pair, one lone \" quote");
+    }
+
+    #[test]
+    fn text_block_lands_after_the_transparency_tag() {
+        let mut n = nai();
+        n.transparent_background = true;
+        let mut i = input();
+        i.positive_prompt = "sticker saying \"nya\"".into();
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "sticker saying \"nya\", 2.1::transparent background::\nText: nya"
+        );
+    }
+
+    #[test]
+    fn characters_are_truncated_to_the_model_cap() {
+        let mut n = nai();
+        n.characters = (0..8)
+            .map(|idx| NovelAiCharacter {
+                prompt: format!("char {idx}"),
+                enabled: true,
+                ..Default::default()
+            })
+            .collect();
+        // V4.5 seats 6; the two extra slots must not reach the wire.
+        let body = build(&input(), &n, v45()).unwrap();
+        let caps = &body["parameters"]["v4_prompt"]["caption"]["char_captions"];
+        assert_eq!(caps.as_array().unwrap().len(), 6);
+        assert_eq!(
+            body["parameters"]["characterPrompts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            6
+        );
+        // V5 seats 22, so all eight survive there.
+        let body = build(&input(), &n, v5()).unwrap();
+        let caps = &body["parameters"]["v4_prompt"]["caption"]["char_captions"];
+        assert_eq!(caps.as_array().unwrap().len(), 8);
     }
 }

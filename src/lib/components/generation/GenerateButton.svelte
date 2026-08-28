@@ -17,6 +17,7 @@
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
+  import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
@@ -556,15 +557,35 @@
       nSamples: generation.batchSize,
       strength: generation.mode === "txt2img" ? 1 : nai.strength,
       isOpus: novelai.isOpus,
+      // V5 has no Opus unlimited: with the allowance drained it bills in full.
+      opusExhausted:
+        naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
       vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
     });
   });
 
+  /**
+   * Ctrl+Enter generates -- but only when nothing is sitting on top of the
+   * panel.
+   *
+   * The listener is on the window, so it hears the press even while a modal
+   * has focus, and a modal's own Ctrl+Enter (confirm the enhance, run the
+   * tool) used to fire a background generation alongside it.  Two guards,
+   * because they catch different cases: `defaultPrevented` covers a handler
+   * closer to the target that already claimed the press, and the overlay
+   * check covers a modal whose own listener is on the window too, where which
+   * of the two runs first is decided by mount order rather than by what is on
+   * top.
+   *
+   * `[data-modal-open]` is the opt-in: a modal that owns the keyboard while it
+   * is up marks its overlay with it.
+   */
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      handleGenerate();
-    }
+    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+    if (e.defaultPrevented) return;
+    if (document.querySelector("[data-modal-open]")) return;
+    e.preventDefault();
+    handleGenerate();
   }
 </script>
 

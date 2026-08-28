@@ -1,6 +1,6 @@
 import { generation } from "./generation.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
-import { NOVELAI_MAX_CHARACTERS } from "../utils/novelaiModels.js";
+import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
@@ -69,6 +69,35 @@ interface UndoSnapshot {
 /** Matches the text-enhance undo window in PromptInputs. */
 const UNDO_WINDOW_MS = 10000;
 
+/**
+ * How many reference images one rewrite may carry.
+ *
+ * Mirrors `MAX_VISION_IMAGES` in the Rust vision layer, which enforces it for
+ * real: every image is inlined into the request body, and no provider reads a
+ * long image list as carefully as a short one. Four is also as many thumbnails
+ * as fit on one row of the modal without shrinking them past recognition.
+ */
+export const NAI_MAX_REFERENCES = 4;
+
+/**
+ * One attached image.
+ *
+ * `base64` is bare PNG payload with no `data:` prefix, already downscaled in
+ * the browser by `fileToNovelAiBase64` -- the same helper the NovelAI reference
+ * fields use, so a picked gallery image costs the same here as it does there.
+ * `label` is the user's optional handle for it ("outfit"), which appears in the
+ * manifest line of the user turn so they can name an image instead of counting
+ * to it. Blank is the normal case and means the model refers to it by number.
+ */
+export interface NaiEnhanceReference {
+  /** Stable across reorder-free edits, so `{#each}` keys do not remount inputs. */
+  id: string;
+  base64: string;
+  label: string;
+}
+
+let referenceSeq = 0;
+
 class NaiEnhanceStore {
   stage = $state<NaiEnhanceStage | null>(null);
   /** What the user typed: a prompt to rewrite, or instructions for a new one. */
@@ -77,12 +106,61 @@ class NaiEnhanceStore {
   busy = $state(false);
   pending = $state<NaiEnhancePending | null>(null);
   showUndo = $state(false);
+  /**
+   * Attached reference images, in the order the model will see them.
+   *
+   * Lives here rather than in the modal so that a rewrite triggered from the
+   * input stage still has them during the review stage, where the modal has
+   * swapped over to the diff and no longer renders the picker.
+   */
+  references = $state<NaiEnhanceReference[]>([]);
 
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
 
   get isOpen(): boolean {
     return this.stage !== null;
+  }
+
+  get canAddReference(): boolean {
+    return this.references.length < NAI_MAX_REFERENCES;
+  }
+
+  /** How many more images will fit, for the gallery picker's own cap. */
+  get referenceSlotsLeft(): number {
+    return Math.max(0, NAI_MAX_REFERENCES - this.references.length);
+  }
+
+  /**
+   * Attach images, silently dropping any past the cap.
+   *
+   * Takes a list because two of the three sources hand over more than one at a
+   * time: a multi-select file picker and the gallery picker. Dropping the tail
+   * rather than refusing the batch keeps a five-image drop from being a no-op.
+   */
+  addReferences(base64: string[]): void {
+    const room = this.referenceSlotsLeft;
+    if (room <= 0) return;
+    const added = base64
+      .filter((b) => b.trim() !== "")
+      .slice(0, room)
+      .map((b) => ({ id: `ref-${++referenceSeq}`, base64: b, label: "" }));
+    if (added.length === 0) return;
+    this.references = [...this.references, ...added];
+  }
+
+  removeReference(id: string): void {
+    this.references = this.references.filter((r) => r.id !== id);
+  }
+
+  setReferenceLabel(id: string, label: string): void {
+    this.references = this.references.map((r) =>
+      r.id === id ? { ...r, label } : r,
+    );
+  }
+
+  clearReferences(): void {
+    this.references = [];
   }
 
   /** True once at least one row is ticked, which is what enables Apply. */
@@ -123,6 +201,7 @@ class NaiEnhanceStore {
     this.input = "";
     this.busy = false;
     this.pending = null;
+    this.references = [];
   }
 
   /** Paste the prompt box into the input, for the "tidy up what I have" case. */
@@ -141,6 +220,7 @@ class NaiEnhanceStore {
     this.pending = null;
     this.busy = false;
     this.input = "";
+    this.references = [];
   }
 
   toggleBase(): void {
@@ -207,7 +287,7 @@ class NaiEnhanceStore {
       if (!row.selected) continue;
       if (row.targetIndex !== null && row.targetIndex < chars.length) {
         chars[row.targetIndex] = { ...chars[row.targetIndex], prompt: row.after };
-      } else if (chars.length < NOVELAI_MAX_CHARACTERS) {
+      } else if (chars.length < novelAiMaxCharacters(generation.checkpoint)) {
         chars.push({ ...createNovelAiCharacter(), prompt: row.after });
       }
     }
@@ -217,6 +297,7 @@ class NaiEnhanceStore {
     this.stage = null;
     this.pending = null;
     this.input = "";
+    this.references = [];
     this.showUndo = true;
     if (this.undoTimer) clearTimeout(this.undoTimer);
     this.undoTimer = setTimeout(() => (this.showUndo = false), UNDO_WINDOW_MS);

@@ -197,6 +197,14 @@ type GalleryToast = {
   durationMs?: number;
 };
 
+/**
+ * How many variations runs the lightbox remembers.
+ *
+ * Only runs whose images are still on screen matter, and an unbounded list of
+ * prompt ids would outlive every image it describes.
+ */
+const VARIATION_BATCH_MEMORY = 32;
+
 class GalleryStore {
   images = $state<OutputImage[]>([]);
   /** Images generated during this app session (not loaded from disk). */
@@ -207,6 +215,32 @@ class GalleryStore {
   lightboxUrl = $state<string | null>(null);
   lightboxOpen = $state(false);
   lightboxLoading = $state(false);
+  /**
+   * True while the lightbox is showing a whole run as a grid instead of one
+   * image.  Decided when the lightbox opens and cleared when it closes, so
+   * nothing has to remember it between opens.
+   */
+  lightboxGrid = $state(false);
+  /**
+   * prompt_ids of the runs that produced a set of variations, newest last.
+   *
+   * Once the images land, a variations run is indistinguishable from any other
+   * batch -- same prompt id, same count -- so the modal marks its own run here
+   * and the lightbox reads the mark.  Session state on purpose: the mark is
+   * never written to disk, so a batch reopened after a restart is a plain set
+   * of images again, which is all it looks like from the gallery anyway.
+   */
+  variationBatchIds = $state<string[]>([]);
+  /**
+   * prompt_ids of runs whose result should take over the open lightbox.
+   *
+   * An enhance, an upscale or a set of variations started from the lightbox is
+   * a request to look at something else, so the result replaces the source
+   * there rather than landing silently in the gallery behind it.  Marked at the
+   * click, because that is the only moment that knows the lightbox was open and
+   * which run it belongs to, and consumed when the images arrive.
+   */
+  lightboxFollowIds = $state<string[]>([]);
   loading = $state(false);
   /** True while a save/download operation is in progress (prevents double-clicks). */
   saving = $state(false);
@@ -464,10 +498,76 @@ class GalleryStore {
     this.sessionImages = [...newImages, ...this.sessionImages];
   }
 
-  async openLightbox(image: OutputImage) {
+  /** Remember that `promptId` was a variations run, so its images grid together. */
+  markVariationBatch(promptId: string) {
+    if (!promptId || this.variationBatchIds.includes(promptId)) return;
+    this.variationBatchIds = [...this.variationBatchIds, promptId].slice(
+      -VARIATION_BATCH_MEMORY,
+    );
+  }
+
+  /** Ask for `promptId`'s result to take over the lightbox when it lands. */
+  markLightboxFollow(promptId: string) {
+    if (!promptId || this.lightboxFollowIds.includes(promptId)) return;
+    this.lightboxFollowIds = [...this.lightboxFollowIds, promptId].slice(
+      -VARIATION_BATCH_MEMORY,
+    );
+  }
+
+  /**
+   * Whether `promptId` was marked, clearing the mark either way.
+   *
+   * Consumed rather than read so a re-delivery of the same run (a recovery
+   * pass, a reconnect) does not yank the lightbox a second time off a mark
+   * that was already acted on.
+   */
+  takeLightboxFollow(promptId: string): boolean {
+    if (!promptId || !this.lightboxFollowIds.includes(promptId)) return false;
+    this.lightboxFollowIds = this.lightboxFollowIds.filter((id) => id !== promptId);
+    return true;
+  }
+
+  /**
+   * The images from `image`'s own run, in the order they came back.
+   *
+   * addImages() prepends a run's images as one block, so a filter over
+   * sessionImages preserves the order the backend returned them in -- which is
+   * the order the grid has to show, since nothing else identifies which
+   * variation is which.
+   */
+  batchFor(image: OutputImage | null): OutputImage[] {
+    if (!image) return [];
+    return this.sessionImages.filter((i) => i.prompt_id === image.prompt_id);
+  }
+
+  /** Whether `image` came from a variations run that returned more than one image. */
+  batchGridAvailable(image: OutputImage | null): boolean {
+    if (!image || !this.variationBatchIds.includes(image.prompt_id)) return false;
+    return this.batchFor(image).length > 1;
+  }
+
+  /** The open image's own run.  Empty unless the lightbox is on a batch. */
+  get lightboxBatch(): OutputImage[] {
+    return this.batchFor(this.selectedImage);
+  }
+
+  /** Whether the grid/single toggle has anything to toggle. */
+  get lightboxHasBatchGrid(): boolean {
+    return this.batchGridAvailable(this.selectedImage);
+  }
+
+  /**
+   * Open the lightbox on one image.
+   *
+   * `grid` overrides the default choice, which is "grid if this image came from
+   * a variations run".  The grid's own tiles pass it explicitly: selecting a
+   * tile stays in the grid, and expanding one leaves it.
+   */
+  async openLightbox(image: OutputImage, grid?: boolean) {
     this.selectedImage = image;
     this.lastSelectedImage = image;
     this.lightboxOpen = true;
+    this.lightboxGrid = grid ?? this.batchGridAvailable(image);
     const isJxl = image.gallery_filename?.endsWith(".jxl") ?? false;
     // Videos always play from the streaming URL. Never blob-ify an mp4: a 15 s
     // H3 clip can be hundreds of MB, and <video> needs Range requests to seek.
@@ -536,6 +636,8 @@ class GalleryStore {
     this.selectedImage = null;
     this.lightboxUrl = url;
     this.lightboxOpen = true;
+    // A raw URL has no image behind it, so there is no run to grid.
+    this.lightboxGrid = false;
     // If the URL belongs to a known session image, remember it so features
     // like "use as model thumbnail" can resolve a gallery file later (#232).
     const match = this.sessionImages.find((img) => img.url === url);
@@ -623,6 +725,7 @@ class GalleryStore {
       if (!isShared) URL.revokeObjectURL(this.lightboxUrl);
     }
     this.lightboxOpen = false;
+    this.lightboxGrid = false;
     this.selectedImage = null;
     this.lightboxUrl = null;
   }

@@ -34,6 +34,19 @@ export function isNodeLoadFailurePayload(payload: ComfyServerErrorPayload): bool
   );
 }
 
+/**
+ * True when ComfyUI itself started and then died, rather than the port being
+ * taken by someone else's server. These need entirely different advice: the
+ * "close StabilityMatrix and kill the process" steps send the user hunting a
+ * port conflict that does not exist.
+ */
+export function isCrashPayload(payload: ComfyServerErrorPayload): boolean {
+  return (
+    !isNodeLoadFailurePayload(payload) &&
+    (payload.kind === "crashed" || payload.crashed === true)
+  );
+}
+
 export function parseComfyServerError(
   raw: unknown,
   fallbackMessage = "",
@@ -55,7 +68,7 @@ export function parseComfyServerError(
       log_excerpt:
         typeof o.log_excerpt === "string" ? o.log_excerpt : null,
       port: typeof o.port === "number" ? o.port : undefined,
-      crashed: o.crashed === true,
+      crashed: o.crashed === true || o.kind === "crashed",
     };
   }
   const message =

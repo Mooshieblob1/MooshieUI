@@ -247,6 +247,8 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_api_key",
     "set_llm_model",
     "set_llm_base_url",
+    "set_llm_xai_client",
+    "connect_llm_oauth",
     "list_external_llm_models",
     // NovelAI: the key is the instance owner's and every generation spends
     // their Anlas, so all four follow `update_config` rather than `generate`.
@@ -2818,9 +2820,12 @@ async fn dispatch_command(
         // --- Generation ---
         "generate" => {
             crate::comfyui::process::mark_legacy_worker_idle(&state).await;
-            let params: crate::comfyui::types::GenerationParams =
+            let mut params: crate::comfyui::types::GenerationParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
+            // Browser mode reaches ComfyUI through this route rather than the
+            // Tauri command, so it needs the same NovelAI -> local model swap.
+            crate::templates::upscale_standalone::rewrite_novelai_request(&mut params)?;
             crate::templates::validate_generation_params(&params)?;
             {
                 let config = state.config.read().await;
@@ -3031,9 +3036,9 @@ async fn dispatch_command(
                     .map_err(|e| format!("Invalid params: {}", e))?;
             params.seed = crate::novelai::resolve_seed(params.seed);
 
-            // Built before the id is minted so a bad request fails this HTTP
+            // Checked before the id is minted so a bad request fails this HTTP
             // call instead of arriving later as an execution_error.
-            crate::novelai::build_request(&params).map_err(|e| e.to_string())?;
+            crate::novelai::preflight(&params).map_err(|e| e.to_string())?;
 
             let prompt_id = crate::novelai::new_prompt_id();
             let seed = params.seed;
@@ -5038,9 +5043,10 @@ async fn dispatch_command(
         // --- External LLM provider settings ---
         // Every arm returns the same key-free projection the desktop commands
         // return, so the settings UI is identical in both modes. `connect_llm_oauth`
-        // has no arm on purpose: the sign-in redirect lands on a loopback port owned
-        // by this process, which a browser on another machine cannot reach. Browser
-        // users paste an API key instead.
+        // is the exception: only the xAI device grant works here, because the
+        // OpenRouter and Portal flows redirect to a loopback port owned by this
+        // process, which a browser on another machine cannot reach. Users of those
+        // two paste an API key instead.
         #[cfg(any(feature = "desktop", feature = "server"))]
         "get_llm_provider" => {
             let s = crate::prompt_assistant::providers::read_state(&state.config).await;
@@ -5079,6 +5085,35 @@ async fn dispatch_command(
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_xai_client" => {
+            let client_id = args["clientId"].as_str().unwrap_or("").to_string();
+            let scope = args["scope"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::set_xai_client(
+                &state.config,
+                &client_id,
+                &scope,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "connect_llm_oauth" => {
+            // The device code reaches the caller over SSE, not in this response,
+            // which stays open until they approve or the code expires.
+            let provider = args["provider"].as_str().unwrap_or("").to_string();
+            if provider != "xai-oauth" {
+                return Err(
+                    "This sign-in only works in the desktop app. Paste an API key instead."
+                        .to_string(),
+                );
+            }
+            let s = crate::prompt_assistant::providers::connect_xai_session(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
         "list_external_llm_models" => {
             let models = crate::prompt_assistant::providers::list_available_models(
                 &state.http_client,
@@ -5100,9 +5135,14 @@ async fn dispatch_command(
             // Resolved before the SSE hand-off so a browser client sees the same
             // vision behaviour as the desktop app, including the silent fallback
             // to a text-only turn when the frame cannot be read.
-            let image = crate::prompt_assistant::vision::load_input_frame(
+            let images = crate::prompt_assistant::vision::collect_images(
                 &state,
                 args["imageFilename"].as_str().map(str::to_string),
+                args["imageData"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                }),
             )
             .await;
 
@@ -5115,40 +5155,34 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) = match chat_any_headless(
-                            &state,
-                            &system,
-                            &prompt,
-                            max_tokens,
-                            image.as_ref(),
-                        )
-                        .await
-                        {
-                            Ok(text) => (
-                                "llm:result",
-                                serde_json::json!({
-                                    "request_id": request_id,
-                                    "result": text,
-                                    "_target_user": owner,
-                                }),
-                            ),
-                            Err(e) => (
-                                "llm:error",
-                                serde_json::json!({
-                                    "request_id": request_id,
-                                    "error": e,
-                                    "_target_user": owner,
-                                }),
-                            ),
-                        };
+                        let (event, payload) =
+                            match chat_any_headless(&state, &system, &prompt, max_tokens, &images)
+                                .await
+                            {
+                                Ok(text) => (
+                                    "llm:result",
+                                    serde_json::json!({
+                                        "request_id": request_id,
+                                        "result": text,
+                                        "_target_user": owner,
+                                    }),
+                                ),
+                                Err(e) => (
+                                    "llm:error",
+                                    serde_json::json!({
+                                        "request_id": request_id,
+                                        "error": e,
+                                        "_target_user": owner,
+                                    }),
+                                ),
+                            };
                         state.broadcast(event, payload);
                     });
                     Ok(serde_json::json!({ "queued": true }))
                 }
                 None => {
                     let text =
-                        chat_any_headless(&state, &system, &prompt, max_tokens, image.as_ref())
-                            .await?;
+                        chat_any_headless(&state, &system, &prompt, max_tokens, &images).await?;
                     Ok(serde_json::Value::String(text))
                 }
             }
@@ -5421,7 +5455,7 @@ async fn run_interrogation_headless(
 /// download-progress callback because the browser model-download path has its
 /// own dispatch arm.
 ///
-/// `image` only reaches the external path; the bundled llama-server runs
+/// `images` only reach the external path; the bundled llama-server runs
 /// text-only models and answers from the prompt alone.
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub async fn chat_any_headless(
@@ -5429,9 +5463,14 @@ pub async fn chat_any_headless(
     system: &str,
     user: &str,
     max_tokens: u32,
-    image: Option<&crate::prompt_assistant::vision::VisionImage>,
+    images: &[crate::prompt_assistant::vision::VisionImage],
 ) -> Result<String, String> {
     use crate::prompt_assistant::hardware;
+
+    // Same reason as the desktop path: an OAuth provider parks its access token
+    // in the API-key field, so it has to be renewed before the read below
+    // copies it out.
+    crate::prompt_assistant::providers::ensure_fresh_token(&state.http_client, &state.config).await;
 
     let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
         let cfg = state.config.read().await;
@@ -5458,13 +5497,13 @@ pub async fn chat_any_headless(
             system,
             user,
             max_tokens,
-            image,
+            images,
         )
         .await
         .map_err(|e| e.to_string());
     }
 
-    if image.is_some() {
+    if !images.is_empty() {
         log::info!(
             "[prompt-assistant] the bundled local model has no vision; \
              answering from the prompt text alone"
@@ -5564,7 +5603,7 @@ pub async fn run_prompt_assistant_headless(
         Some("detailed") => 384,
         _ => 192,
     };
-    let raw = chat_any_headless(state, &system, input, max_tokens, None).await?;
+    let raw = chat_any_headless(state, &system, input, max_tokens, &[]).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose. The desktop path runs this too;

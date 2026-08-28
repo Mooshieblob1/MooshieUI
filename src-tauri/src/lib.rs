@@ -575,6 +575,7 @@ pub fn run() {
             commands::prompt_assistant::set_llm_base_url,
             commands::prompt_assistant::list_external_llm_models,
             commands::prompt_assistant::connect_llm_oauth,
+            commands::prompt_assistant::set_llm_xai_client,
             commands::prompt_assistant::call_external_llm,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,

@@ -27,6 +27,14 @@ pub async fn generate(
     // accumulation within a long session.
     crate::temp_images::cleanup(300);
 
+    let mut params = params;
+    // A NovelAI checkpoint arriving here means a local pass over an image
+    // NovelAI has already produced, i.e. the Refine button. ComfyUI has no such
+    // model file, so swap in the local one the NovelAI panel names before
+    // anything downstream reads the checkpoint.
+    templates::upscale_standalone::rewrite_novelai_request(&mut params)
+        .map_err(AppError::InvalidWorkflow)?;
+
     // Validate input image is present for modes that require it. Without this
     // guard, ComfyUI's LoadImage node receives an empty filename and reports
     // `[Errno 21] Is a directory: '<input_dir>/'`, which surfaces as a generic
@@ -60,7 +68,6 @@ pub async fn generate(
         .map_err(AppError::InvalidWorkflow)?;
     }
 
-    let mut params = params;
     // Misplaced model: the file lives in a folder that doesn't match what it
     // actually is (e.g. a Flux unet dropped into models/checkpoints/). ComfyUI's
     // stock loaders validate the filename against their own folder listing and

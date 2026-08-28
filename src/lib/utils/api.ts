@@ -209,6 +209,12 @@ export interface ComfyUiVersionInfo {
   target: string;
   /** True when the installed version is older than the pinned target. */
   update_available: boolean;
+  /**
+   * True when a previous update moved the ComfyUI source but did not finish
+   * reinstalling its Python dependencies. The version numbers can look current
+   * while this is set, so `update_available` is forced true alongside it.
+   */
+  update_incomplete?: boolean;
 }
 
 export async function getComfyuiVersion(): Promise<ComfyUiVersionInfo> {
@@ -1271,11 +1277,30 @@ export async function listExternalLlmModels(): Promise<string[]> {
 }
 
 /**
- * Desktop-only OAuth sign-in (PKCE, loopback redirect). Browser mode has no arm
- * for this: the loopback listener binds on the server, not the user's machine.
+ * OAuth sign-in. Resolves only once the user finishes, which for the xAI device
+ * grant means after they approve the code, so this call stays open for minutes.
+ *
+ * OpenRouter and Nous use PKCE with a loopback redirect, so they are desktop
+ * only: the listener binds on the machine running Rust, which in browser mode is
+ * the server rather than the user's. `xai-oauth` has no redirect at all and
+ * works in both, emitting its code over `llm:device_code`.
  */
 export async function connectLlmOauth(provider: string): Promise<LlmProviderState> {
   return ipcInvoke("connect_llm_oauth", { provider });
+}
+
+/**
+ * Store the xAI OAuth client id, and optionally a scope override.
+ *
+ * xAI allowlists client ids and issues them on request, and MooshieUI ships
+ * none, so sign-in stays unavailable until whoever runs the install supplies
+ * one. Empty scope means the backend default.
+ */
+export async function setLlmXaiClient(
+  clientId: string,
+  scope: string,
+): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_xai_client", { clientId, scope });
 }
 
 /**
@@ -1284,22 +1309,29 @@ export async function connectLlmOauth(provider: string): Promise<LlmProviderStat
  * H3 prompt rewrite, which needs its own system prompt instead of the booru
  * grounding enhance/compose apply.
  *
- * `imageFilename` names a frame already uploaded to ComfyUI's input folder.
- * Rust fetches, downscales, and inlines it, so the caller passes the name it
- * already has rather than shipping megabytes of base64 across the IPC boundary.
- * A model that cannot see one still answers from the text.
+ * Two ways to attach images, because the two callers hold them differently.
+ * `imageFilename` names a frame already uploaded to ComfyUI's input folder: the
+ * caller passes the name it already has rather than shipping megabytes of
+ * base64 back across IPC to send it straight out again. `imageData` carries
+ * raw base64 (no data: prefix needed), for the NovelAI reference images, which
+ * never touch ComfyUI and so have no filename to name.
+ *
+ * Both end up in one list, filename first, capped at four in Rust. A model that
+ * cannot see them still answers from the text.
  */
 export async function callExternalLlm(
   system: string,
   prompt: string,
   maxTokens?: number,
   imageFilename?: string | null,
+  imageData?: string[] | null,
 ): Promise<string> {
   return runPromptAssistant("call_external_llm", {
     system,
     prompt,
     maxTokens,
     imageFilename: imageFilename || undefined,
+    imageData: imageData && imageData.length > 0 ? imageData : undefined,
   });
 }
 

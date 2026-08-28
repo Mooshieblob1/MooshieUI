@@ -26,6 +26,17 @@ export interface NovelAiModelInfo {
    * asked for. V5's custom VAE is the first to carry one.
    */
   alpha: boolean;
+  /**
+   * Quoted prompt text is auto-formatted into a trailing `Text:` block, the
+   * way NovelAI's own V5 frontend does it. The transform itself runs in the
+   * Rust payload builder; this flag only mirrors it for the UI.
+   */
+  autoText: boolean;
+  /**
+   * Character slots the UI offers, mirroring NovelAI's own client. V5's free
+   * positioning was demonstrated with up to 22 characters; V4/V4.5 stop at 6.
+   */
+  maxCharacters: number;
 }
 
 /**
@@ -44,16 +55,23 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     vibeTransfer: false,
     characterNegatives: true,
     alpha: true,
+    autoText: true,
+    maxCharacters: 22,
   },
   {
     id: "nai-diffusion-5-curated",
     label: "NovelAI V5 Curated",
-    inpaintingId: "nai-diffusion-5-curated-inpainting",
+    // V5 Curated's own inpainting model is still training upstream, and
+    // NovelAI's client substitutes V4.5 Curated's in the meantime. Point back
+    // at `nai-diffusion-5-curated-inpainting` once it ships.
+    inpaintingId: "nai-diffusion-4-5-curated-inpainting",
     v4Prompt: true,
     preciseReference: false,
     vibeTransfer: false,
     characterNegatives: true,
     alpha: true,
+    autoText: true,
+    maxCharacters: 22,
   },
   {
     id: "nai-diffusion-4-5-full",
@@ -64,6 +82,8 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     vibeTransfer: true,
     characterNegatives: true,
     alpha: false,
+    autoText: false,
+    maxCharacters: 6,
   },
   {
     id: "nai-diffusion-4-full",
@@ -74,6 +94,8 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     vibeTransfer: true,
     characterNegatives: true,
     alpha: false,
+    autoText: false,
+    maxCharacters: 6,
   },
 ] as const;
 
@@ -177,13 +199,24 @@ export function toNovelAiSampler(name: string): string {
 }
 
 /**
+ * Character slots the UI offers for a given checkpoint.
+ *
+ * Per-model because V5 raised the ceiling to 22 while V4/V4.5 keep NovelAI's
+ * old limit of 6. Inpainting checkpoints and unknown ids fall back to the
+ * conservative 6 rather than erroring: the cap gates a button, not a request.
+ */
+export function novelAiMaxCharacters(id: string | null | undefined): number {
+  if (naiV5Variant(id) !== null) return 22;
+  return findNovelAiModel(id ?? "")?.maxCharacters ?? 6;
+}
+
+/**
  * How many of each reference input the UI offers.
  *
  * These mirror NovelAI's own client rather than a hard API limit: the API
  * accepts more, but going past what NovelAI itself allows is untested and
  * costs Anlas to discover.
  */
-export const NOVELAI_MAX_CHARACTERS = 6;
 export const NOVELAI_MAX_VIBES = 4;
 export const NOVELAI_MAX_DIRECTOR_REFERENCES = 4;
 
@@ -193,3 +226,40 @@ export const NOVELAI_REFERENCE_DESCRIPTIONS = [
   { value: "style", labelKey: "generation.novelai.reference.desc_style" },
   { value: "character&style", labelKey: "generation.novelai.reference.desc_character_style" },
 ] as const;
+
+/**
+ * How close two character centres may sit before NovelAI calls them stacked.
+ *
+ * Taken from NovelAI's own client, which flags any pair less than 0.1 apart
+ * (Euclidean, in the same normalised 0..1 canvas space we store) and warns
+ * that overlapping characters degrade the result. Mirrored rather than
+ * guessed so our canvas agrees with theirs instead of inventing a stricter
+ * or looser rule.
+ */
+export const NOVELAI_OVERLAP_DISTANCE = 0.1;
+
+/**
+ * Indices of the characters sitting on top of another one.
+ *
+ * Both members of every too-close pair land in the set, so the UI can mark
+ * each offending circle rather than guessing which one should move. Callers
+ * pass only the placements that are actually on the canvas: a disabled
+ * character has no circle to turn red.
+ */
+export function novelAiOverlappingCharacters(
+  centers: readonly { x: number; y: number }[],
+  threshold: number = NOVELAI_OVERLAP_DISTANCE,
+): Set<number> {
+  const overlapping = new Set<number>();
+  for (let i = 0; i < centers.length; i++) {
+    for (let j = i + 1; j < centers.length; j++) {
+      const a = centers[i];
+      const b = centers[j];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < threshold) {
+        overlapping.add(i);
+        overlapping.add(j);
+      }
+    }
+  }
+  return overlapping;
+}
