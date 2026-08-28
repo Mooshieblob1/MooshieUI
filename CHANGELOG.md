@@ -1,5 +1,21 @@
 # Changelog
 
+## What's New in v2.2.3
+
+### New features
+- **Sampler guidance controls**: three new guidance options in Sampler settings. RescaleCFG rescales the guidance vector each step so v-prediction checkpoints stop blowing out contrast and saturation at normal CFG. NAG (Normalized Attention Guidance) applies the negative prompt inside attention, so it keeps working at low CFG and low step counts where ordinary CFG stops doing anything. APG (Adaptive Projected Guidance) splits the guidance update into direction and magnitude with eta, norm threshold and momentum controls, so a high CFG improves prompt adherence without oversaturating colors. APG is flagged as inert at CFG 1 or below rather than silently doing nothing.
+- **DMD2 4-step preset for SDXL**: a single toggle that downloads the DMD2 distillation LoRA and switches the sampler to 4 steps, CFG 1, LCM and SGM uniform. Turning it back off removes the LoRA and leaves the sampler settings alone so you can restore your own. Pairs with NAG, which is the one guidance method that still applies a negative prompt at CFG 1.
+- **Anima ReStyler image editing**: a new edit family that redraws the character from a reference image in the Anima style, at the reference image's own size. A Reference strength slider controls how closely the output follows the source, and a Drastic restyle option runs the original split-screen recipe (reference and blank canvas generated side by side, new half cropped as the output) for much stronger style changes at roughly twice the generation time. The Anima Edit LoRA downloads from within the app.
+- **GMFSS frame interpolation**: GMFSS Fortuna is selectable alongside RIFE for both inline and post-hoc video interpolation. It is slower than RIFE but built for anime, with cleaner line art and flat shading and less warping. It comes from the same custom node pack as RIFE, so no extra install is needed, though it does fetch its own checkpoints on first use.
+- **SeedVR2 upscaling**: SeedVR2 is available as an upscale method. It is a one-step diffusion restoration model that rebuilds real detail while upscaling rather than just resizing, with no denoise or step count to tune. Its model and VAE download from within the app.
+
+### Fixes and maintenance
+- **Running out of system RAM now reports itself properly**: when the machine had no free RAM left to pin (or the page file drive was full), generation failed with a raw `hostbuf_file_reader_read failed` in a generic error toast. That failure now has its own error with actionable advice, and it no longer gets mistaken for a VRAM problem, so the dialog stops telling you to lower your resolution when the fix is freeing system RAM or disk space. ([#641](https://github.com/Mooshieblob1/MooshieUI/pull/641), fixes [#619](https://github.com/Mooshieblob1/MooshieUI/issues/619))
+- **Inline `@preset` tokens roll a random line again**: since v2.2.0 an inline `@preset:name` or `@[name]` token spliced every line of a multi-line preset into the prompt instead of picking one at random per generation, which broke prompts built on the older behavior. Multi-line presets roll one line again; single-line presets still insert verbatim, and pinning is unchanged. ([#643](https://github.com/Mooshieblob1/MooshieUI/pull/643), fixes [#642](https://github.com/Mooshieblob1/MooshieUI/issues/642))
+- **Dependency updates**: konva 10.3.1, marked 18.0.10, dompurify 3.4.14, svelte 5.56.10, serde_json 1.0.151, uuid 1.25.0, open 5.4.1, and the docker/setup-buildx-action and swatinem/rust-cache CI actions. ([#623](https://github.com/Mooshieblob1/MooshieUI/pull/623)-[#631](https://github.com/Mooshieblob1/MooshieUI/pull/631))
+
+---
+
 ## What's New in v2.2.2
 
 ### Fixes and maintenance
