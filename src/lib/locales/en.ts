@@ -1208,10 +1208,12 @@ const en: Record<string, string> = {
   "generation.sampler.nag_scale": "NAG scale",
   "generation.sampler.nag_scale_tip":
     "How strongly the negative prompt is pushed away. 5 is the recommended default; higher is stronger but can distort.",
+  "generation.sampler.nag_unavailable": "This ComfyUI has no NAGuidance node. Update ComfyUI to use NAG.",
   "generation.sampler.apg_label": "APG (projected guidance)",
   "generation.sampler.apg_tip":
     "Adaptive Projected Guidance splits CFG into direction and magnitude, so high CFG improves prompt adherence without oversaturating colors.",
   "generation.sampler.apg_cfg1_note": "APG has no effect at CFG 1 or below — raise CFG for it to do anything.",
+  "generation.sampler.apg_unavailable": "This ComfyUI has no APG node. Update ComfyUI to use APG.",
   "generation.sampler.apg_norm_threshold": "Norm threshold",
   "generation.sampler.apg_norm_threshold_tip":
     "Caps how large the guidance push can get. Lower values tame saturation harder; 5 is the recommended default.",
