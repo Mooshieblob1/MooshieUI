@@ -1297,6 +1297,32 @@
       </p>
 
       <div class="mt-2 flex items-center gap-2">
+        <span class="text-xs text-neutral-400" title={locale.t("generation.video.interp_engine_tip")}>
+          {locale.t("generation.video.interp_engine")}
+        </span>
+        <div class="flex rounded-lg overflow-hidden border border-neutral-700">
+          {#each [["rife", "RIFE"], ["gmfss", "GMFSS"]] as const as [value, label] (value)}
+            <button
+              type="button"
+              class="px-2 py-1 text-xs"
+              class:bg-neutral-700={generation.videoInterpEngine === value}
+              class:text-neutral-100={generation.videoInterpEngine === value}
+              class:text-neutral-400={generation.videoInterpEngine !== value}
+              onclick={() => {
+                generation.videoInterpEngine = value;
+                generation.saveSettings();
+              }}
+            >
+              {label}
+            </button>
+          {/each}
+        </div>
+      </div>
+      {#if generation.videoInterpEngine === "gmfss"}
+        <p class="mt-1 text-[11px] text-neutral-500">{locale.t("generation.video.gmfss_note")}</p>
+      {/if}
+
+      <div class="mt-2 flex items-center gap-2">
         <span class="text-xs text-neutral-400" title={locale.t("generation.video.rife_multiplier_tip")}>
           {locale.t("generation.video.rife_multiplier")}
         </span>
@@ -1319,6 +1345,8 @@
         </div>
       </div>
 
+      <!-- Scale/fast/ensemble are RIFE-arch knobs; the GMFSS node has none of them. -->
+      {#if generation.videoInterpEngine === "rife"}
       <details class="mt-2">
         <summary class="text-xs text-neutral-400 cursor-pointer select-none">
           {locale.t("generation.video.rife_advanced")}
@@ -1373,6 +1401,7 @@
           </label>
         </div>
       </details>
+      {/if}
     {:else}
       <p class="text-[11px] text-neutral-500">
         {locale.t("generation.video.rife_off_hint", { fps: H3_FPS })}

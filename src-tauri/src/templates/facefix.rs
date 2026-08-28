@@ -14,6 +14,7 @@ pub fn append_facefix_chain(
     current_image: (String, u32),
     seed: i64,
 ) -> (String, u32) {
+    let refiner_model = result.refiner_model();
     let next_id = &mut result.next_id;
     let workflow = &mut result.workflow;
 
@@ -56,7 +57,7 @@ pub fn append_facefix_chain(
             "class_type": "MooshieFaceDetailer",
             "inputs": {
                 "image": [current_image.0, current_image.1],
-                "model": [result.model_source.0.clone(), result.model_source.1],
+                "model": [refiner_model.0, refiner_model.1],
                 "vae": [result.vae_source.0.clone(), result.vae_source.1],
                 "positive": [positive_source.0, positive_source.1],
                 "negative": [result.negative_source.0.clone(), result.negative_source.1],

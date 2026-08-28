@@ -128,6 +128,10 @@ pub(crate) fn video_metadata_params(
     }
     if params.video_rife_enabled {
         put("mooshie_video_rife", "true".to_string());
+        put(
+            "mooshie_video_interp_engine",
+            params.video_interp_engine.clone(),
+        );
     }
     out
 }
@@ -914,6 +918,27 @@ mod tests {
         // audio VAE at its own rate.
         assert!(create_video["inputs"]["audio"].is_array());
         assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
+    }
+
+    #[test]
+    fn gmfss_engine_swaps_the_interpolation_node_in_the_inline_graph() {
+        let mut params = video_params("fl2va");
+        params.video_rife_enabled = true;
+        params.video_interp_engine = "gmfss".to_string();
+        let workflow = build(&params, 1, false);
+
+        assert!(nodes_of_class(&workflow, "RIFE VFI").is_empty());
+        assert_eq!(nodes_of_class(&workflow, "GMFSS Fortuna VFI").len(), 1);
+        let gmfss = nodes_of_class(&workflow, "GMFSS Fortuna VFI")[0];
+        let decode_id = node_id_of_class(&workflow, "VAEDecode");
+        assert_eq!(gmfss["inputs"]["frames"], json!([decode_id, 0]));
+        assert_eq!(gmfss["inputs"]["ckpt_name"], json!("GMFSS_fortuna_union"));
+        assert_eq!(gmfss["inputs"]["multiplier"], json!(2));
+
+        let gmfss_id = node_id_of_class(&workflow, "GMFSS Fortuna VFI");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["images"], json!([gmfss_id, 0]));
+        assert_eq!(create_video["inputs"]["fps"], json!(48.0));
     }
 
     #[test]

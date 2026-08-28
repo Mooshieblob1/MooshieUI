@@ -21,8 +21,32 @@ pub const MAX_MULTIPLIER: u32 = 4;
 /// nearest entry instead of being passed through.
 pub const SCALE_FACTORS: [f64; 5] = [0.25, 0.5, 1.0, 2.0, 4.0];
 
+/// Which VFI model from the Frame-Interpolation pack does the work. Both
+/// register from the same pack install, so `is_rife_installed` gates both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterpEngine {
+    #[default]
+    Rife,
+    /// GMFSS Fortuna: slower than RIFE but markedly better on anime line art.
+    /// Its checkpoints are auto-downloaded by the pack on first use into
+    /// `ComfyUI-Frame-Interpolation/ckpts/gmfss_fortuna/`.
+    Gmfss,
+}
+
+impl InterpEngine {
+    /// Untrusted strings (REST args, saved settings) fall back to RIFE rather
+    /// than erroring: an unknown engine name should degrade, not brick the job.
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "gmfss" => Self::Gmfss,
+            _ => Self::Rife,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RifeSettings {
+    pub engine: InterpEngine,
     pub multiplier: u32,
     pub scale_factor: f64,
     pub fast_mode: bool,
@@ -51,11 +75,17 @@ impl RifeSettings {
             .unwrap_or(1.0);
 
         Self {
+            engine: InterpEngine::Rife,
             multiplier: multiplier.clamp(MIN_MULTIPLIER, MAX_MULTIPLIER),
             scale_factor: nearest,
             fast_mode,
             ensemble,
         }
+    }
+
+    pub fn with_engine(mut self, engine: InterpEngine) -> Self {
+        self.engine = engine;
+        self
     }
 
     pub fn from_params(params: &GenerationParams) -> Self {
@@ -65,6 +95,7 @@ impl RifeSettings {
             params.video_rife_fast_mode,
             params.video_rife_ensemble,
         )
+        .with_engine(InterpEngine::parse(&params.video_interp_engine))
     }
 
     /// Playback rate after interpolation. Duration never changes: the node
@@ -74,25 +105,41 @@ impl RifeSettings {
         source_fps * self.multiplier as f64
     }
 
-    /// A complete `RIFE VFI` node. Every widget is sent explicitly: ComfyUI
-    /// errors on a missing required input, and the pack's own defaults are not
-    /// guaranteed to survive an upstream update.
+    /// A complete VFI node for the selected engine. Every widget is sent
+    /// explicitly: ComfyUI errors on a missing required input, and the pack's
+    /// own defaults are not guaranteed to survive an upstream update.
+    ///
+    /// GMFSS Fortuna takes no `fast_mode`/`ensemble`/`scale_factor` — those are
+    /// RIFE-arch knobs — so those settings are simply ignored under GMFSS.
     pub fn node(&self, frames: Value) -> Value {
-        json!({
-            "class_type": "RIFE VFI",
-            "inputs": {
-                "frames": frames,
-                "ckpt_name": crate::comfyui::nodes::RIFE_CKPT_FILENAME,
-                "clear_cache_after_n_frames": 10,
-                "multiplier": self.multiplier,
-                "fast_mode": self.fast_mode,
-                "ensemble": self.ensemble,
-                "scale_factor": self.scale_factor,
-                "dtype": "float32",
-                "torch_compile": false,
-                "batch_size": 1
-            }
-        })
+        match self.engine {
+            InterpEngine::Rife => json!({
+                "class_type": "RIFE VFI",
+                "inputs": {
+                    "frames": frames,
+                    "ckpt_name": crate::comfyui::nodes::RIFE_CKPT_FILENAME,
+                    "clear_cache_after_n_frames": 10,
+                    "multiplier": self.multiplier,
+                    "fast_mode": self.fast_mode,
+                    "ensemble": self.ensemble,
+                    "scale_factor": self.scale_factor,
+                    "dtype": "float32",
+                    "torch_compile": false,
+                    "batch_size": 1
+                }
+            }),
+            InterpEngine::Gmfss => json!({
+                "class_type": "GMFSS Fortuna VFI",
+                "inputs": {
+                    "frames": frames,
+                    // The union checkpoint runs RIFE 4.6 for the flow half, which
+                    // handles fast motion better than the pure-GMFSS weights.
+                    "ckpt_name": "GMFSS_fortuna_union",
+                    "clear_cache_after_n_frames": 10,
+                    "multiplier": self.multiplier
+                }
+            }),
+        }
     }
 }
 
@@ -166,5 +213,31 @@ mod tests {
         assert_eq!(node["inputs"]["dtype"], json!("float32"));
         assert_eq!(node["inputs"]["torch_compile"], json!(false));
         assert_eq!(node["inputs"]["batch_size"], json!(1));
+    }
+
+    #[test]
+    fn gmfss_engine_emits_the_fortuna_node_without_rife_knobs() {
+        let node = RifeSettings::sanitized(3, 1.0, true, true)
+            .with_engine(InterpEngine::Gmfss)
+            .node(json!(["7", 0]));
+        assert_eq!(node["class_type"], json!("GMFSS Fortuna VFI"));
+        assert_eq!(node["inputs"]["frames"], json!(["7", 0]));
+        assert_eq!(node["inputs"]["ckpt_name"], json!("GMFSS_fortuna_union"));
+        assert_eq!(node["inputs"]["clear_cache_after_n_frames"], json!(10));
+        assert_eq!(node["inputs"]["multiplier"], json!(3));
+        for rife_only in ["fast_mode", "ensemble", "scale_factor", "dtype"] {
+            assert!(
+                node["inputs"].get(rife_only).is_none(),
+                "GMFSS node must not send RIFE widget {rife_only}"
+            );
+        }
+    }
+
+    #[test]
+    fn engine_parse_defaults_unknown_strings_to_rife() {
+        assert_eq!(InterpEngine::parse("gmfss"), InterpEngine::Gmfss);
+        assert_eq!(InterpEngine::parse("rife"), InterpEngine::Rife);
+        assert_eq!(InterpEngine::parse("sepconv"), InterpEngine::Rife);
+        assert_eq!(InterpEngine::parse(""), InterpEngine::Rife);
     }
 }

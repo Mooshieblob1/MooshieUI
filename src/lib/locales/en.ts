@@ -792,6 +792,16 @@ const en: Record<string, string> = {
   "generation.image_edit.family_badge.qwen_edit": "Qwen Image Edit",
   "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
   "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
+  "generation.image_edit.family_badge.anima": "Anima ReStyler",
+  "generation.image_edit.anima_note":
+    "ReStyler redraws the character from your reference image in the Anima style. The output matches the reference size. Requires the Anima Edit LoRA (Civitai download; an API key or VPN may be needed).",
+  "generation.image_edit.anima_lora_download": "Download Anima Edit LoRA (350 MB)",
+  "generation.image_edit.reference_strength": "Reference strength",
+  "generation.image_edit.reference_strength_tip":
+    "How closely the output follows the reference image. 1.0 keeps the composition and details intact; lower it (try 0.5-0.8) to let the prompt and style change the image more.",
+  "generation.image_edit.split_screen": "Drastic restyle",
+  "generation.image_edit.split_screen_tip":
+    "Uses the original ReStyler split-screen recipe: the reference and a blank canvas are generated side by side, then the new half is cropped as the output. Much stronger style changes, but roughly twice the generation time.",
 
   // Video (MiniMax H3)
   "generation.video.title": "Video",
@@ -854,6 +864,11 @@ const en: Record<string, string> = {
   "generation.video.rife_ensemble": "Ensemble",
   "generation.video.rife_ensemble_tip":
     "Averages a forward and a backward motion estimate. Steadier results, a little slower.",
+  "generation.video.interp_engine": "Engine",
+  "generation.video.interp_engine_tip":
+    "RIFE is fast and light. GMFSS is slower but built for anime: cleaner line art and flat shading with less warping.",
+  "generation.video.gmfss_note":
+    "GMFSS downloads its checkpoints on first use, so the first job pauses for a while with no progress shown.",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "A distilled adapter that samples in 4 to 8 steps instead of 20, around five times faster. Motion stays close to the full model; the finest detail softens a little.",
   "generation.video.turbo_on_hint": "Sampling in {steps} steps, around five times faster.",
@@ -1157,6 +1172,10 @@ const en: Record<string, string> = {
   "generation.upscale.tile_size_tip": "The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory.",
   "generation.upscale.method_model_option": "Model (Upscaler)",
   "generation.upscale.method_algorithmic_option": "Algorithmic",
+  "generation.upscale.method_seedvr2_option": "SeedVR2 (restoration)",
+  "generation.upscale.seedvr2_note":
+    "One-step diffusion restoration: rebuilds real detail while upscaling instead of just resizing. No denoise or steps to tune; runs after sampling with its own model.",
+  "generation.upscale.seedvr2_download": "Download SeedVR2 models (~3.7 GB)",
   "generation.upscale.downloading": "Downloading {model}...",
   "generation.upscale.tiling_label": "Tiled diffusion",
   "generation.upscale.tiling_forced_label": "Tiled diffusion (always on for Anima)",
@@ -1177,6 +1196,36 @@ const en: Record<string, string> = {
   "generation.upscale.target_scale_value_tip": "The effective scale the refine pass targets. Can't exceed the selected model's native scale.",
   "generation.sampler.smart_guidance_label": "Smart Guidance",
   "generation.sampler.smart_guidance_tip": "Positive-biased adaptive guidance — makes the model follow your prompt more closely instead of just avoiding the negative. Applies to all generation steps. No tuning needed.",
+  "generation.sampler.vpred_rescale_label": "RescaleCFG",
+  "generation.sampler.vpred_rescale_tip":
+    "Rescales guidance so v-prediction models don't blow out contrast and saturation at normal CFG. Recommended on for v-pred checkpoints.",
+  "generation.sampler.vpred_rescale_multiplier": "Rescale strength",
+  "generation.sampler.vpred_rescale_multiplier_tip":
+    "How strongly guidance is rescaled. 0.7 is the standard value; lower keeps more of the raw CFG look.",
+  "generation.sampler.nag_label": "NAG (attention guidance)",
+  "generation.sampler.nag_tip":
+    "Normalized Attention Guidance applies your negative prompt inside attention, so it keeps working at low CFG and few steps — including with DMD2.",
+  "generation.sampler.nag_scale": "NAG scale",
+  "generation.sampler.nag_scale_tip":
+    "How strongly the negative prompt is pushed away. 5 is the recommended default; higher is stronger but can distort.",
+  "generation.sampler.apg_label": "APG (projected guidance)",
+  "generation.sampler.apg_tip":
+    "Adaptive Projected Guidance splits CFG into direction and magnitude, so high CFG improves prompt adherence without oversaturating colors.",
+  "generation.sampler.apg_cfg1_note": "APG has no effect at CFG 1 or below — raise CFG for it to do anything.",
+  "generation.sampler.apg_norm_threshold": "Norm threshold",
+  "generation.sampler.apg_norm_threshold_tip":
+    "Caps how large the guidance push can get. Lower values tame saturation harder; 5 is the recommended default.",
+  "generation.sampler.apg_eta": "Eta",
+  "generation.sampler.apg_eta_tip":
+    "How much of the parallel (saturating) guidance component is kept. 1 behaves like normal CFG; 0 removes the saturation push entirely.",
+  "generation.sampler.apg_momentum": "Momentum",
+  "generation.sampler.apg_momentum_tip":
+    "Smooths guidance across steps. 0 is off; small negative values can steady composition.",
+  "generation.sampler.dmd2_title": "DMD2 4-step preset (SDXL)",
+  "generation.sampler.dmd2_toggle": "Use DMD2 (4 steps, CFG 1)",
+  "generation.sampler.dmd2_tip":
+    "Loads the DMD2 distillation LoRA and sets 4 steps, CFG 1, LCM sampler, SGM uniform scheduler — near full quality in a fraction of the time. Turning it off removes the LoRA but leaves the sampler settings for you to restore.",
+  "generation.sampler.dmd2_downloading": "Downloading the DMD2 LoRA...",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",

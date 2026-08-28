@@ -261,6 +261,22 @@ pub struct WorkflowResult {
     pub vae_source: (String, u32),
     /// The KSampler node ID — needed to rewire positive/negative after ControlNet injection.
     pub sampler_id: String,
+    /// Model for the appended refinement samplers (upscale/facefix/segment)
+    /// when it must differ from `model_source`. The Anima ReStyler's Cosmos
+    /// reference patch concatenates a fixed-size reference latent on every
+    /// step, so it only works at the base generation size — reusing it in a
+    /// hires or detailer pass crashes with a tensor size mismatch. `None`
+    /// means the chains use `model_source` as usual.
+    pub refiner_model_source: Option<(String, u32)>,
+}
+
+impl WorkflowResult {
+    /// Model source for the appended refinement samplers (upscale/facefix/segment).
+    pub fn refiner_model(&self) -> (String, u32) {
+        self.refiner_model_source
+            .clone()
+            .unwrap_or_else(|| self.model_source.clone())
+    }
 }
 
 /// Outputs from the model loading stage (checkpoint or split model).
@@ -546,6 +562,9 @@ pub fn build_workflow(
     // Apply Smart Guidance (positive-biased adaptive guidance) — patches model so all
     // downstream KSamplers (main, upscale, facefix) inherit it.
     inject_smart_guidance(&mut result, params);
+
+    // NAG + APG (core ComfyUI model patchers) for SDXL-family models
+    inject_sdxl_guidance_extras(&mut result, params);
 
     // Inject ControlNet if enabled
     if let Some(ref cn) = params.controlnet {
@@ -1023,6 +1042,26 @@ fn inject_vpred_zsnr_sampling(result: &mut WorkflowResult, params: &GenerationPa
     result.model_source = (node_id, 0);
     result.next_id += 1;
 
+    // RescaleCFG companion: v-pred models oversaturate at normal CFG without a
+    // per-step rescale of the guidance vector. MooshieSoftGuidance implements
+    // the same math as ComfyUI's core RescaleCFG (Common Diffusion Noise
+    // Schedules, Appendix I) and ships with the app, so no extra install.
+    if params.vpred_rescale_cfg && params.vpred_rescale_cfg_multiplier > 0.0 {
+        let rescale_id = result.next_id.to_string();
+        result.workflow.insert(
+            rescale_id.clone(),
+            json!({
+                "class_type": "MooshieSoftGuidance",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "multiplier": params.vpred_rescale_cfg_multiplier.clamp(0.0, 1.0)
+                }
+            }),
+        );
+        result.model_source = (rescale_id, 0);
+        result.next_id += 1;
+    }
+
     if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
         if let Some(inputs) = sampler_node.get_mut("inputs") {
             inputs["model"] = json!([result.model_source.0, result.model_source.1]);
@@ -1079,6 +1118,61 @@ fn inject_smart_guidance(result: &mut WorkflowResult, params: &GenerationParams)
     result.next_id += 1;
 
     // Rewire KSampler to use the Smart Guidance-patched model
+    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+        if let Some(inputs) = sampler_node.get_mut("inputs") {
+            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+        }
+    }
+}
+
+/// NAG (Normalized Attention Guidance) and APG (Adaptive Projected Guidance)
+/// for SDXL-family models. Both are core ComfyUI model patchers that stack with
+/// Smart Guidance and RescaleCFG: NAG patches attn1 so the negative prompt
+/// stays effective (works even at CFG 1), APG projects the guidance vector to
+/// its perpendicular component to prevent oversaturation at higher CFG.
+fn inject_sdxl_guidance_extras(result: &mut WorkflowResult, params: &GenerationParams) {
+    if !params.is_sdxl_like {
+        return;
+    }
+
+    if params.nag_enabled {
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "NAGuidance",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "nag_scale": params.nag_scale.clamp(0.0, 50.0),
+                    "nag_alpha": 0.5,
+                    "nag_tau": 1.5
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+    }
+
+    // APG intercepts pre-CFG and needs both cond and uncond batches, which only
+    // exist at CFG > 1 — at CFG <= 1 ComfyUI skips the uncond pass entirely.
+    if params.apg_enabled && params.cfg > 1.0 {
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "APG",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "eta": params.apg_eta.clamp(-10.0, 10.0),
+                    "norm_threshold": params.apg_norm_threshold.clamp(0.0, 50.0),
+                    "momentum": params.apg_momentum.clamp(-5.0, 1.0)
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+    }
+
     if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
         if let Some(inputs) = sampler_node.get_mut("inputs") {
             inputs["model"] = json!([result.model_source.0, result.model_source.1]);

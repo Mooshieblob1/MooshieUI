@@ -165,5 +165,6 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         negative_source: neg_source,
         vae_source,
         sampler_id,
+        refiner_model_source: None,
     }
 }

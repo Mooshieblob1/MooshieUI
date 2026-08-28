@@ -16,6 +16,44 @@
   let downloading = $state<string | null>(null);
   let downloadError = $state<string | null>(null);
 
+  // SeedVR2 restoration model + VAE from the official Comfy-Org/SeedVR2 repo.
+  // Filenames must match SEEDVR2_UNET_FILE / SEEDVR2_VAE_FILE in
+  // src-tauri/src/templates/upscale.rs — the workflow loads them by name.
+  const seedvr2Files = [
+    {
+      url: "https://huggingface.co/Comfy-Org/SeedVR2/resolve/main/diffusion_models/seedvr2_3b_int8_convrot.safetensors",
+      category: "diffusion_models",
+      filename: "seedvr2_3b_int8_convrot.safetensors",
+    },
+    {
+      url: "https://huggingface.co/Comfy-Org/SeedVR2/resolve/main/vae/seedvr2_ema_vae_fp16.safetensors",
+      category: "vae",
+      filename: "seedvr2_ema_vae_fp16.safetensors",
+    },
+  ];
+
+  // endsWith so a file nested in a subfolder (models list uses relative paths)
+  // still counts as installed.
+  const seedvr2Installed = $derived(
+    models.diffusionModels.some((m) => m.endsWith(seedvr2Files[0].filename)) &&
+      models.vaes.some((m) => m.endsWith(seedvr2Files[1].filename))
+  );
+
+  async function downloadSeedvr2() {
+    downloadError = null;
+    try {
+      for (const f of seedvr2Files) {
+        downloading = f.filename;
+        await downloadModel(f.url, f.category, f.filename);
+      }
+      await models.refresh();
+    } catch (e) {
+      downloadError = `Download failed: ${e}`;
+    } finally {
+      downloading = null;
+    }
+  }
+
   // Download progress tracking
   let dlBytes = $state(0);
   let dlTotal = $state(0);
@@ -153,10 +191,11 @@
       >
         <option value="model">{locale.t('generation.upscale.method_model_option')}</option>
         <option value="algorithmic">{locale.t('generation.upscale.method_algorithmic_option')}</option>
+        <option value="seedvr2">{locale.t('generation.upscale.method_seedvr2_option')}</option>
       </select>
     </div>
 
-    {#if generation.upscaleMethod === "algorithmic"}
+    {#if generation.upscaleMethod === "algorithmic" || generation.upscaleMethod === "seedvr2"}
       <!-- Scale -->
       <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
@@ -172,6 +211,45 @@
           class="w-full accent-indigo-500"
         />
       </div>
+    {/if}
+
+    <!-- SeedVR2: one-step restoration model, no tunables beyond scale -->
+    {#if generation.upscaleMethod === "seedvr2"}
+      <p class="text-[11px] text-neutral-500">{locale.t('generation.upscale.seedvr2_note')}</p>
+      {#if !seedvr2Installed}
+        <button
+          class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
+          disabled={downloading !== null}
+          onclick={downloadSeedvr2}
+        >
+          {locale.t('generation.upscale.seedvr2_download')}
+        </button>
+      {/if}
+      {#if downloading}
+        <div class="bg-neutral-800/80 rounded-lg px-3 py-2">
+          <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+            <span class="truncate mr-2">{locale.t('generation.upscale.downloading', { model: downloading || '' })}</span>
+            {#if dlTotal > 0}
+              <span class="shrink-0 tabular-nums">{locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)</span>
+            {/if}
+          </div>
+          {#if dlTotal > 0}
+            <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+              <div
+                class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
+                style="width: {dlPercent}%"
+              ></div>
+            </div>
+          {:else}
+            <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+              <div class="bg-indigo-400 h-full rounded-full w-1/3 animate-pulse"></div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#if downloadError}
+        <p class="text-xs text-red-400">{downloadError}</p>
+      {/if}
     {/if}
 
     <!-- Upscale Model (only for model method) -->
@@ -251,6 +329,9 @@
       {/if}
     {/if}
 
+    <!-- Refine-pass knobs don't apply to SeedVR2: its KSampler settings are -->
+    <!-- pinned by the model (1 step, cfg 1, denoise 1) and VAE tiling is baked in. -->
+    {#if generation.upscaleMethod !== "seedvr2"}
     <div class="grid grid-cols-2 gap-3">
       <!-- Denoise -->
       <div use:scrollCapture>
@@ -379,6 +460,7 @@
         class="w-full accent-indigo-500"
       />
     </div>
+    {/if}
     {/if}
 
   {/if}

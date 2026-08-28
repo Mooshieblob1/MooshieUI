@@ -65,6 +65,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
             // rewiring is keyed on `workflow.get_mut(&sampler_id)` and a
             // missing key is a safe no-op.
             sampler_id: String::new(),
+            refiner_model_source: None,
         };
     }
 
@@ -135,5 +136,6 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         negative_source: neg_source,
         vae_source,
         sampler_id,
+        refiner_model_source: None,
     }
 }

@@ -235,9 +235,12 @@
       params.refine_only = true;
       params.upscale_enabled = true;
       // Default the refiner to the OmniSR 2x model upscaler unless the user
-      // has explicitly chosen a model upscaler in the Upscale settings.
+      // has explicitly chosen a model upscaler or SeedVR2 in the Upscale settings.
       let appliedDefaultUpscaler = false;
-      if (generation.upscaleMethod !== "model" || !generation.upscaleModel) {
+      if (
+        generation.upscaleMethod !== "seedvr2" &&
+        (generation.upscaleMethod !== "model" || !generation.upscaleModel)
+      ) {
         if (await ensureDefaultRefineUpscaler()) {
           params.upscale_method = "model";
           params.upscale_model = DEFAULT_REFINE_UPSCALER;

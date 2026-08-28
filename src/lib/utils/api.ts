@@ -882,6 +882,7 @@ export async function interpolateVideo(
   scaleFactor: number,
   fastMode: boolean,
   ensemble: boolean,
+  engine: string = "rife",
 ): Promise<{ prompt_id: string }> {
   return ipcInvoke("interpolate_video", {
     filename,
@@ -889,6 +890,7 @@ export async function interpolateVideo(
     scaleFactor,
     fastMode,
     ensemble,
+    engine,
   });
 }
 
