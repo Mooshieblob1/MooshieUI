@@ -82,7 +82,7 @@ const fr: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— placez ceci n'importe où dans votre prompt pour y insérer le contenu à cet endroit précis. L'ancienne forme @preset:nom fonctionne toujours.",
+  "generation.presets.inline_token_help": "— placez ceci n'importe où dans votre prompt. Un contenu d'une seule ligne est inséré à cet endroit précis ; avec plusieurs lignes, une ligne est tirée au hasard à chaque génération, comme un wildcard. L'ancienne forme @preset:nom fonctionne toujours.",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",
@@ -2455,6 +2455,7 @@ const fr: Record<string, string> = {
 
   "generation.toast.failed_detail": "Échec de la génération : {message}",
   "generation.error.out_of_memory": "Mémoire GPU insuffisante. Essayez une taille d'image plus petite ou moins d'étapes, fermez les autres applications GPU ou activez le mode faible VRAM. Réduire la résolution aide généralement le plus.",
+  "generation.error.host_memory": "Mémoire système épuisée lors du chargement du modèle. Fermez d'autres applications pour libérer de la RAM et vérifiez que le disque de Windows dispose d'espace libre. Les grands modèles vidéo lisent leurs poids depuis le disque et ont besoin des deux.",
   "generation.error.vae_incompatible": "Le VAE sélectionné n'est pas compatible avec ce checkpoint. Choisissez un VAE compatible ou réglez le VAE sur Automatique pour utiliser le VAE intégré au checkpoint.",
   "generation.error.model_not_found": "'{model}' n'est pas disponible dans ComfyUI. Resélectionnez votre modèle ou redémarrez ComfyUI si vous venez d'ajouter ou de renommer le fichier.",
   "generation.error.model_not_found_generic": "Un modèle sélectionné n'est pas disponible dans ComfyUI. Vérifiez vos paramètres de modèle et de VAE, ou redémarrez ComfyUI si vous venez d'ajouter ou de renommer un fichier.",
@@ -2957,6 +2958,10 @@ const fr: Record<string, string> = {
   "errors.out_of_memory.why": "La résolution, la taille du lot ou le modèle est trop grand pour la mémoire disponible.",
 
   "errors.out_of_memory.fixes": "Réduisez la résolution ou la taille du lot et réessayez. || Fermez d'autres applications utilisant intensivement le GPU. || Utilisez un modèle plus petit ou plus quantifié.",
+  "errors.host_memory.title": "Mémoire système insuffisante",
+  "errors.host_memory.what": "Le modèle n'a pas pu être transféré du disque vers la mémoire pendant la génération.",
+  "errors.host_memory.why": "Les grands modèles sont lus depuis le disque vers de la RAM système verrouillée. Il n'y avait pas assez de RAM libre, ou le disque système contenant le fichier d'échange était plein.",
+  "errors.host_memory.fixes": "Fermez d'autres applications pour libérer de la RAM système, puis réessayez. || Libérez de l'espace sur le disque contenant Windows et le fichier d'échange. || Utilisez un modèle plus petit ou plus quantifié, ou avec un encodeur de texte plus léger.",
 
   "errors.unsupported_gpu.title": "GPU non pris en charge",
 
