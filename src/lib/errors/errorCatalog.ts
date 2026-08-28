@@ -27,6 +27,10 @@ export const CATALOG: CatalogEntry[] = [
   { id: "comfyui_launch_failed", match: re(/failed to start comfyui|process.*spawn|failed to spawn/i) },
   { id: "python_env_broken", match: re(/python.*(not found|missing)|venv|virtualenv|no module named/i) },
   { id: "attention_backend_install", match: re(/attention backend|flash.?attn|sage.?attn|xformers/i) },
+  // Must precede out_of_memory: aimdo's host-buffer read failure is a *host*
+  // RAM/disk exhaustion, and pointing the user at VRAM would send them the
+  // wrong way.
+  { id: "host_memory", match: re(/hostbuf_file_reader|read_file_to_device|host_buffer\.py/i) },
   { id: "out_of_memory", match: re(/out of memory|cuda.*memory|oom|allocat.*fail/i) },
   { id: "unsupported_gpu", match: re(/unsupported gpu|no cuda|no gpu|device.*not supported/i) },
 

@@ -84,7 +84,7 @@ const pt: Record<string, string> = {
   "generation.presets.name_placeholder": "e.g. Cool hair colors",
   "generation.presets.inline_token": "Inline token:",
   "generation.presets.copy_inline_token": "Click to copy",
-  "generation.presets.inline_token_help": "— coloque isto em qualquer ponto do prompt para inserir o conteúdo exatamente ali. A forma antiga @preset:nome continua funcionando.",
+  "generation.presets.inline_token_help": "— coloque isto em qualquer ponto do prompt. Conteúdo de uma única linha é inserido exatamente ali; com várias linhas, uma é escolhida ao acaso a cada geração, como um curinga. A forma antiga @preset:nome continua funcionando.",
   "generation.presets.content_label": "Content",
   "generation.presets.wildcard_option": "{count} wildcard option",
   "generation.presets.wildcard_options": "{count} wildcard options",
@@ -2430,6 +2430,7 @@ const pt: Record<string, string> = {
 
   "generation.toast.failed_detail": "Geração falhou: {message}",
   "generation.error.out_of_memory": "Sem memória de GPU. Tente um tamanho de imagem menor ou menos passos, feche outros apps que usam a GPU ou ative o modo de pouca VRAM. Reduzir a resolução costuma ajudar mais.",
+  "generation.error.host_memory": "A memória do sistema acabou ao carregar o modelo. Feche outros apps para liberar RAM e verifique se a unidade do Windows tem espaço livre. Modelos de vídeo grandes leem os pesos do disco e precisam dos dois.",
   "generation.error.vae_incompatible": "O VAE selecionado não é compatível com este checkpoint. Escolha um VAE compatível ou defina o VAE como Automático para usar o VAE incluído no checkpoint.",
   "generation.error.model_not_found": "'{model}' não está disponível no ComfyUI. Selecione o modelo novamente ou reinicie o ComfyUI se você acabou de adicionar ou renomear o arquivo.",
   "generation.error.model_not_found_generic": "Um modelo selecionado não está disponível no ComfyUI. Verifique as configurações de modelo e VAE ou reinicie o ComfyUI se você acabou de adicionar ou renomear um arquivo.",
@@ -2932,6 +2933,10 @@ const pt: Record<string, string> = {
   "errors.out_of_memory.why": "A resolução, tamanho do lote ou modelo é muito grande para a memória disponível.",
 
   "errors.out_of_memory.fixes": "Reduza a resolução ou o tamanho do lote e tente novamente. || Feche outros aplicativos que usam GPU intensivamente. || Use um modelo menor ou mais quantizado.",
+  "errors.host_memory.title": "Memória do sistema insuficiente",
+  "errors.host_memory.what": "Não foi possível carregar o modelo do disco para a memória durante a geração.",
+  "errors.host_memory.why": "Modelos grandes são lidos do disco para a RAM do sistema fixada. Não havia RAM livre suficiente, ou a unidade do sistema com o arquivo de paginação estava cheia.",
+  "errors.host_memory.fixes": "Feche outros apps para liberar RAM do sistema e tente novamente. || Libere espaço na unidade que contém o Windows e o arquivo de paginação. || Use um modelo menor ou mais quantizado, ou com um codificador de texto menor.",
 
   "errors.unsupported_gpu.title": "GPU não suportado",
 
