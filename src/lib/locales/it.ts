@@ -84,7 +84,7 @@ const it: Record<string, string> = {
     "generation.presets.name_placeholder": "e.g. Cool hair colors",
     "generation.presets.inline_token": "Inline token:",
     "generation.presets.copy_inline_token": "Click to copy",
-    "generation.presets.inline_token_help": "— inseriscilo in qualsiasi punto del prompt per innestare il contenuto esattamente lì. La vecchia forma @preset:nome funziona ancora.",
+    "generation.presets.inline_token_help": "— inseriscilo in qualsiasi punto del prompt. Un contenuto su una sola riga viene innestato esattamente lì; con più righe ne viene scelta una a caso per ogni generazione, come una wildcard. La vecchia forma @preset:nome funziona ancora.",
     "generation.presets.content_label": "Content",
     "generation.presets.wildcard_option": "{count} wildcard option",
     "generation.presets.wildcard_options": "{count} wildcard options",
@@ -2429,6 +2429,7 @@ const it: Record<string, string> = {
 
   "generation.toast.failed_detail": "Generazione non riuscita: {message}",
   "generation.error.out_of_memory": "Memoria GPU esaurita. Prova con una dimensione dell'immagine più piccola o meno passi, chiudi altre app che usano la GPU o attiva la modalità a bassa VRAM. Ridurre la risoluzione di solito aiuta di più.",
+  "generation.error.host_memory": "Memoria di sistema esaurita durante il caricamento del modello. Chiudi altre app per liberare RAM e assicurati che l'unità di Windows abbia spazio libero. I modelli video grandi leggono i pesi dal disco e hanno bisogno di entrambi.",
   "generation.error.vae_incompatible": "Il VAE selezionato non è compatibile con questo checkpoint. Scegli un VAE compatibile oppure imposta il VAE su Automatico per usare il VAE incluso nel checkpoint.",
   "generation.error.model_not_found": "'{model}' non è disponibile in ComfyUI. Riseleziona il modello o riavvia ComfyUI se hai appena aggiunto o rinominato il file.",
   "generation.error.model_not_found_generic": "Un modello selezionato non è disponibile in ComfyUI. Controlla le impostazioni di modello e VAE oppure riavvia ComfyUI se hai appena aggiunto o rinominato un file.",
@@ -2931,6 +2932,10 @@ const it: Record<string, string> = {
   "errors.out_of_memory.why": "La risoluzione, la dimensione del batch o il modello è troppo grande per la memoria disponibile.",
 
   "errors.out_of_memory.fixes": "Riduci la risoluzione o la dimensione del batch e riprova. || Chiudi altre app che utilizzano il GPU in modo intensivo. || Usa un modello più piccolo o più quantizzato.",
+  "errors.host_memory.title": "Memoria di sistema esaurita",
+  "errors.host_memory.what": "Non è stato possibile trasferire il modello dal disco alla memoria durante la generazione.",
+  "errors.host_memory.why": "I modelli grandi vengono letti dal disco nella RAM di sistema bloccata. Non c'era abbastanza RAM libera, oppure l'unità di sistema con il file di paging era piena.",
+  "errors.host_memory.fixes": "Chiudi altre app per liberare RAM di sistema e riprova. || Libera spazio sull'unità che contiene Windows e il file di paging. || Usa un modello più piccolo o più quantizzato, o con un encoder di testo più leggero.",
 
   "errors.unsupported_gpu.title": "GPU non supportato",
 
