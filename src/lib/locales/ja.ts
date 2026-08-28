@@ -84,7 +84,7 @@ const ja: Record<string, string> = {
     "generation.presets.name_placeholder": "e.g. Cool hair colors",
     "generation.presets.inline_token": "Inline token:",
     "generation.presets.copy_inline_token": "Click to copy",
-    "generation.presets.inline_token_help": "— プロンプトの任意の位置に置くと、その場所に内容が差し込まれます。従来の @preset:名前 形式も引き続き使えます。",
+    "generation.presets.inline_token_help": "— プロンプトの任意の位置に置けます。1行の内容はその場所に差し込まれ、複数行の内容はワイルドカードとして生成ごとに1行がランダムに選ばれます。従来の @preset:名前 形式も引き続き使えます。",
     "generation.presets.content_label": "Content",
     "generation.presets.wildcard_option": "{count} wildcard option",
     "generation.presets.wildcard_options": "{count} wildcard options",
@@ -2454,6 +2454,7 @@ const ja: Record<string, string> = {
 
   "generation.toast.failed_detail": "生成に失敗しました: {message}",
   "generation.error.out_of_memory": "GPUメモリが不足しています。画像サイズを小さくするかステップ数を減らす、他のGPUアプリを閉じる、または低VRAMモードを有効にしてください。解像度を下げるのが最も効果的です。",
+  "generation.error.host_memory": "モデルの読み込み中にシステムメモリが不足しました。他のアプリを閉じて RAM を空け、Windows のあるドライブに空き容量があることを確認してください。大きな動画モデルはディスクから重みを読み込むため、その両方が必要です。",
   "generation.error.vae_incompatible": "選択したVAEはこのチェックポイントと互換性がありません。対応するVAEを選ぶか、VAEを「自動」に設定してチェックポイント内蔵のVAEを使用してください。",
   "generation.error.model_not_found": "'{model}' はComfyUIで利用できません。モデルを選び直すか、ファイルを追加・名前変更した直後の場合はComfyUIを再起動してください。",
   "generation.error.model_not_found_generic": "選択したモデルがComfyUIで利用できません。モデルとVAEの設定を確認するか、ファイルを追加・名前変更した直後の場合はComfyUIを再起動してください。",
@@ -2956,6 +2957,10 @@ const ja: Record<string, string> = {
   "errors.out_of_memory.why": "解像度、バッチサイズ、またはモデルが利用可能なメモリに対して大きすぎます。",
 
   "errors.out_of_memory.fixes": "解像度またはバッチサイズを下げて再試行してください。 || GPU を多用する他のアプリを閉じてください。 || より小さいまたは量子化されたモデルを使用してください。",
+  "errors.host_memory.title": "システムメモリ不足",
+  "errors.host_memory.what": "生成中にモデルをディスクからメモリへ読み込めませんでした。",
+  "errors.host_memory.why": "大きなモデルはディスクからピン留めされたシステム RAM に読み込まれます。空き RAM が不足していたか、ページファイルのあるシステムドライブが満杯でした。",
+  "errors.host_memory.fixes": "他のアプリを閉じてシステム RAM を空け、再試行してください。 || Windows とページファイルのあるドライブの空き容量を増やしてください。 || より小さいまたは量子化されたモデル、テキストエンコーダーの小さいモデルを使用してください。",
 
   "errors.unsupported_gpu.title": "GPU がサポートされていません",
 
