@@ -25,6 +25,10 @@
   const RDBT_ANIMA_URL =
     "https://huggingface.co/Kutches/Anim4/resolve/main/rdbt_v1.0_anima_b1_16-step.safetensors";
 
+  const DMD2_FILENAME = "dmd2_sdxl_4step_lora_fp16.safetensors";
+  const DMD2_URL =
+    "https://huggingface.co/tianweiy/DMD2/resolve/main/dmd2_sdxl_4step_lora_fp16.safetensors";
+
   let rdbtDownloading = $state(false);
   let rdbtDownloadError = $state<string | null>(null);
   let rdbtDlBytes = $state(0);
@@ -34,16 +38,34 @@
     generation.loras.some((l) => l.name === RDBT_ANIMA_FILENAME && l.enabled)
   );
 
+  let dmd2Downloading = $state(false);
+  let dmd2DownloadError = $state<string | null>(null);
+  let dmd2DlBytes = $state(0);
+  let dmd2DlTotal = $state(0);
+  const dmd2DlPercent = $derived(dmd2DlTotal > 0 ? Math.round((dmd2DlBytes / dmd2DlTotal) * 100) : 0);
+  const dmd2Enabled = $derived(
+    generation.loras.some((l) => l.name === DMD2_FILENAME && l.enabled)
+  );
+
   onMount(async () => {
     await ipcListen("download:progress", (event: any) => {
       const data = event.payload as { filename: string; downloaded: number; total: number; done: boolean };
-      if (data.filename !== RDBT_ANIMA_FILENAME) return;
-      if (data.done) {
-        rdbtDlBytes = 0;
-        rdbtDlTotal = 0;
-      } else {
-        rdbtDlBytes = data.downloaded;
-        rdbtDlTotal = data.total;
+      if (data.filename === RDBT_ANIMA_FILENAME) {
+        if (data.done) {
+          rdbtDlBytes = 0;
+          rdbtDlTotal = 0;
+        } else {
+          rdbtDlBytes = data.downloaded;
+          rdbtDlTotal = data.total;
+        }
+      } else if (data.filename === DMD2_FILENAME) {
+        if (data.done) {
+          dmd2DlBytes = 0;
+          dmd2DlTotal = 0;
+        } else {
+          dmd2DlBytes = data.downloaded;
+          dmd2DlTotal = data.total;
+        }
       }
     });
   });
@@ -80,6 +102,44 @@
     }
   }
 
+  async function toggleDmd2() {
+    const idx = generation.loras.findIndex((l) => l.name === DMD2_FILENAME);
+
+    if (dmd2Enabled) {
+      if (idx >= 0) generation.toggleLora(idx);
+      return;
+    }
+
+    if (!models.loras.includes(DMD2_FILENAME)) {
+      dmd2Downloading = true;
+      dmd2DownloadError = null;
+      try {
+        await downloadModel(DMD2_URL, "loras", DMD2_FILENAME);
+        await models.refresh();
+      } catch (e) {
+        dmd2DownloadError = `${e}`;
+        dmd2Downloading = false;
+        return;
+      }
+      dmd2Downloading = false;
+    }
+
+    if (idx >= 0) {
+      generation.toggleLora(idx);
+    } else {
+      generation.loras = [
+        ...generation.loras,
+        { name: DMD2_FILENAME, strength_model: 1.0, strength_clip: 1.0, enabled: true },
+      ];
+    }
+
+    // DMD2 is a distilled few-step LoRA: it only works at these settings.
+    generation.steps = 4;
+    generation.cfg = 1.0;
+    generation.samplerName = "lcm";
+    generation.scheduler = "sgm_uniform";
+  }
+
   let randomSeed = $derived(generation.seed === "-1");
   const activeModelName = $derived((generation.diffusionModel || generation.checkpoint || "").toLowerCase());
   const hasAnimaRecommendation = $derived(generation.isAnima || activeModelName.includes("anima"));
@@ -94,11 +154,13 @@
   let animaRecOpen = $state(true);
   let juiceRecOpen = $state(true);
   let nanosaurRecOpen = $state(true);
+  let dmd2RecOpen = $state(false);
 
   function recommendedStepRange() {
     // NovelAI ignores `samplerName` entirely, so the ComfyUI heuristics below
     // would rate its own recommended 23 steps as out of range.
     if (generation.isNovelAi) return { min: 20, max: 28 };
+    if (dmd2Enabled) return { min: 4, max: 8 };
     const sampler = generation.samplerName.toLowerCase();
     if (sampler.includes("euler")) return { min: 18, max: 28 };
     if (sampler.includes("dpmpp")) return { min: 24, max: 36 };
@@ -107,6 +169,7 @@
 
   function recommendedCfgRange() {
     if (generation.isNovelAi) return { min: 4.0, max: 8.0, target: NOVELAI_DEFAULTS.cfg };
+    if (dmd2Enabled) return { min: 1.0, max: 1.5, target: 1.0 };
     if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
@@ -285,6 +348,61 @@
             {locale.t('common.apply')}
           </button>
         </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if !generation.isNovelAi && generation.isSdxlLike}
+    <div class="rounded-lg border border-amber-700/50 bg-amber-900/15 overflow-hidden">
+      <button
+        class="w-full flex items-center justify-between px-2.5 py-2 text-left"
+        onclick={() => (dmd2RecOpen = !dmd2RecOpen)}
+      >
+        <p class="text-xs text-amber-300 font-medium">{locale.t('generation.sampler.dmd2_title')}</p>
+        <svg class="w-3 h-3 text-amber-400 shrink-0 transition-transform {dmd2RecOpen ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {#if dmd2RecOpen}
+        <div class="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+          <label class="text-[11px] text-neutral-300">
+            {locale.t('generation.sampler.dmd2_toggle')}<InfoTip text={locale.t('generation.sampler.dmd2_tip')} />
+          </label>
+          <button
+            class="relative w-10 h-5 rounded-full transition-colors shrink-0 {dmd2Enabled
+              ? 'bg-amber-600'
+              : 'bg-neutral-700'}"
+            onclick={toggleDmd2}
+            disabled={dmd2Downloading}
+            role="switch"
+            aria-checked={dmd2Enabled}
+            aria-label={locale.t('generation.sampler.dmd2_toggle')}
+          >
+            <span
+              class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {dmd2Enabled
+                ? 'translate-x-5'
+                : ''}"
+            ></span>
+          </button>
+        </div>
+        {#if dmd2Downloading}
+          <div class="mx-2.5 mb-2.5 bg-neutral-900/60 rounded-lg px-3 py-2">
+            <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+              <span class="truncate mr-2">{locale.t('generation.sampler.dmd2_downloading')}</span>
+              {#if dmd2DlTotal > 0}
+                <span class="shrink-0 tabular-nums">{locale.formatBytes(dmd2DlBytes)} / {locale.formatBytes(dmd2DlTotal)} ({dmd2DlPercent}%)</span>
+              {/if}
+            </div>
+            <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+              {#if dmd2DlTotal > 0}
+                <div class="bg-amber-400 h-full rounded-full transition-[width] duration-300 ease-out" style="width: {dmd2DlPercent}%"></div>
+              {:else}
+                <div class="bg-amber-400 h-full rounded-full w-1/3 animate-pulse"></div>
+              {/if}
+            </div>
+          </div>
+        {/if}
+        {#if dmd2DownloadError}
+          <p class="text-xs text-red-400 mx-2.5 mb-2.5">{dmd2DownloadError}</p>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -584,6 +702,139 @@
         {locale.t('generation.sampler.smart_guidance_label')}<InfoTip text={locale.t('generation.sampler.smart_guidance_tip')} />
       </label>
     </div>
+  {/if}
+
+  <!-- RescaleCFG: v-pred checkpoints oversaturate at normal CFG without a
+       per-step rescale of the guidance vector, so it defaults on and only
+       shows when the active model is detected as v-prediction. -->
+  {#if !generation.isNovelAi && generation.isVpredModel}
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="vpred-rescale-cfg"
+        bind:checked={generation.vpredRescaleCfg}
+        onchange={() => generation.saveSettings()}
+        class="w-4 h-4 accent-indigo-500 rounded"
+      />
+      <label for="vpred-rescale-cfg" class="text-xs text-neutral-400">
+        {locale.t('generation.sampler.vpred_rescale_label')}<InfoTip text={locale.t('generation.sampler.vpred_rescale_tip')} />
+      </label>
+    </div>
+    {#if generation.vpredRescaleCfg}
+      <div use:scrollCapture>
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          <span>{locale.t('generation.sampler.vpred_rescale_multiplier')}<InfoTip text={locale.t('generation.sampler.vpred_rescale_multiplier_tip')} /></span>
+          <EditableValue value={generation.vpredRescaleCfgMultiplier} min={0} max={1} step={0.05} decimals={2} onchange={(v) => { generation.vpredRescaleCfgMultiplier = v; generation.saveSettings(); }} />
+        </label>
+        <input
+          type="range"
+          bind:value={generation.vpredRescaleCfgMultiplier}
+          onchange={() => generation.saveSettings()}
+          min="0"
+          max="1"
+          step="0.05"
+          class="w-full accent-indigo-500"
+        />
+      </div>
+    {/if}
+  {/if}
+
+  <!-- NAG + APG: core ComfyUI guidance patchers, SDXL-family only. -->
+  {#if !generation.isNovelAi && generation.isSdxlLike}
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="nag-enabled"
+        bind:checked={generation.nagEnabled}
+        onchange={() => generation.saveSettings()}
+        class="w-4 h-4 accent-indigo-500 rounded"
+      />
+      <label for="nag-enabled" class="text-xs text-neutral-400">
+        {locale.t('generation.sampler.nag_label')}<InfoTip text={locale.t('generation.sampler.nag_tip')} />
+      </label>
+    </div>
+    {#if generation.nagEnabled}
+      <div use:scrollCapture>
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          <span>{locale.t('generation.sampler.nag_scale')}<InfoTip text={locale.t('generation.sampler.nag_scale_tip')} /></span>
+          <EditableValue value={generation.nagScale} min={0} max={20} step={0.5} decimals={1} onchange={(v) => { generation.nagScale = v; generation.saveSettings(); }} />
+        </label>
+        <input
+          type="range"
+          bind:value={generation.nagScale}
+          onchange={() => generation.saveSettings()}
+          min="0"
+          max="20"
+          step="0.5"
+          class="w-full accent-indigo-500"
+        />
+      </div>
+    {/if}
+
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="apg-enabled"
+        bind:checked={generation.apgEnabled}
+        onchange={() => generation.saveSettings()}
+        class="w-4 h-4 accent-indigo-500 rounded"
+      />
+      <label for="apg-enabled" class="text-xs text-neutral-400">
+        {locale.t('generation.sampler.apg_label')}<InfoTip text={locale.t('generation.sampler.apg_tip')} />
+      </label>
+    </div>
+    {#if generation.apgEnabled}
+      {#if generation.cfg <= 1.0}
+        <p class="text-[10px] text-amber-400 -mt-1">{locale.t('generation.sampler.apg_cfg1_note')}</p>
+      {/if}
+      <div use:scrollCapture>
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          <span>{locale.t('generation.sampler.apg_norm_threshold')}<InfoTip text={locale.t('generation.sampler.apg_norm_threshold_tip')} /></span>
+          <EditableValue value={generation.apgNormThreshold} min={0} max={20} step={0.5} decimals={1} onchange={(v) => { generation.apgNormThreshold = v; generation.saveSettings(); }} />
+        </label>
+        <input
+          type="range"
+          bind:value={generation.apgNormThreshold}
+          onchange={() => generation.saveSettings()}
+          min="0"
+          max="20"
+          step="0.5"
+          class="w-full accent-indigo-500"
+        />
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div use:scrollCapture>
+          <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+            <span>{locale.t('generation.sampler.apg_eta')}<InfoTip text={locale.t('generation.sampler.apg_eta_tip')} /></span>
+            <EditableValue value={generation.apgEta} min={-2} max={2} step={0.05} decimals={2} onchange={(v) => { generation.apgEta = v; generation.saveSettings(); }} />
+          </label>
+          <input
+            type="range"
+            bind:value={generation.apgEta}
+            onchange={() => generation.saveSettings()}
+            min="-2"
+            max="2"
+            step="0.05"
+            class="w-full accent-indigo-500"
+          />
+        </div>
+        <div use:scrollCapture>
+          <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+            <span>{locale.t('generation.sampler.apg_momentum')}<InfoTip text={locale.t('generation.sampler.apg_momentum_tip')} /></span>
+            <EditableValue value={generation.apgMomentum} min={-0.5} max={0.5} step={0.05} decimals={2} onchange={(v) => { generation.apgMomentum = v; generation.saveSettings(); }} />
+          </label>
+          <input
+            type="range"
+            bind:value={generation.apgMomentum}
+            onchange={() => generation.saveSettings()}
+            min="-0.5"
+            max="0.5"
+            step="0.05"
+            class="w-full accent-indigo-500"
+          />
+        </div>
+      </div>
+    {/if}
   {/if}
 
   {#if generation.isAnima}

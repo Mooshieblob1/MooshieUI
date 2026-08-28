@@ -30,6 +30,7 @@
   let scaleFactor = $state(generation.videoRifeScaleFactor);
   let fastMode = $state(generation.videoRifeFastMode);
   let ensemble = $state(generation.videoRifeEnsemble);
+  let engine = $state(generation.videoInterpEngine);
   let submitting = $state(false);
   let queued = $state(false);
   let errorText = $state<string | null>(null);
@@ -48,7 +49,7 @@
     submitting = true;
     errorText = null;
     try {
-      await interpolateVideo(filename, multiplier, scaleFactor, fastMode, ensemble);
+      await interpolateVideo(filename, multiplier, scaleFactor, fastMode, ensemble, engine);
       queued = true;
     } catch (e) {
       errorText = locale.t("video.interpolate.failed", { error: String(e) });
@@ -80,6 +81,26 @@
     {/if}
   {:else}
     <div class="flex items-center gap-2">
+      <span class="text-xs text-neutral-400">{locale.t("generation.video.interp_engine")}</span>
+      <div class="flex rounded-lg overflow-hidden border border-neutral-700">
+        {#each [["rife", "RIFE"], ["gmfss", "GMFSS"]] as const as [value, label] (value)}
+          <button
+            type="button"
+            class="px-2 py-1 text-xs"
+            class:bg-neutral-700={engine === value}
+            class:text-neutral-400={engine !== value}
+            onclick={() => (engine = value)}
+          >
+            {label}
+          </button>
+        {/each}
+      </div>
+    </div>
+    {#if engine === "gmfss"}
+      <p class="text-[11px] text-neutral-500">{locale.t("generation.video.gmfss_note")}</p>
+    {/if}
+
+    <div class="flex items-center gap-2">
       <span class="text-xs text-neutral-400">{locale.t("generation.video.rife_multiplier")}</span>
       <div class="flex rounded-lg overflow-hidden border border-neutral-700">
         {#each RIFE_MULTIPLIERS as factor (factor)}
@@ -106,6 +127,8 @@
     </p>
     <p class="text-[11px] text-neutral-500">{locale.t("video.interpolate.duration_note")}</p>
 
+    <!-- Scale/fast/ensemble are RIFE-arch knobs; the GMFSS node has none of them. -->
+    {#if engine === "rife"}
     <details>
       <summary class="text-xs text-neutral-400 cursor-pointer select-none">
         {locale.t("generation.video.rife_advanced")}
@@ -141,6 +164,7 @@
         </label>
       </div>
     </details>
+    {/if}
 
     {#if heavy}
       <p class="text-[11px] text-amber-400">

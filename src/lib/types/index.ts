@@ -342,6 +342,21 @@ export interface GenerationParams {
   model_architecture: string;
   is_sdxl_like?: boolean;
   is_vpred_model?: boolean;
+  /** RescaleCFG for v-pred models: rescale the guidance vector each step to
+   *  stop oversaturation/burn. Applied only when is_vpred_model is true. */
+  vpred_rescale_cfg?: boolean;
+  /** RescaleCFG blend (0 = plain CFG, 0.7 = recommended, 1 = full rescale). */
+  vpred_rescale_cfg_multiplier?: number;
+  /** NAG (Normalized Attention Guidance): attention-level negative guidance.
+   *  SDXL-family only. */
+  nag_enabled?: boolean;
+  nag_scale?: number;
+  /** APG (Adaptive Projected Guidance): projects the CFG update to prevent
+   *  oversaturation at higher CFG. SDXL-family only, needs CFG > 1. */
+  apg_enabled?: boolean;
+  apg_eta?: number;
+  apg_norm_threshold?: number;
+  apg_momentum?: number;
   output_bit_depth: string;
   /** Storage format for this generation: "png" (default), "jxl", or "webp". */
   output_format: string;
@@ -363,6 +378,10 @@ export interface GenerationParams {
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
+  /** Anima ReStyler reference adherence: 1.0 full, lower restyles harder. */
+  edit_reference_strength?: number;
+  /** Anima ReStyler drastic restyle: split-screen inpaint of a 2x-wide composite, right half cropped as output. */
+  edit_split_screen?: boolean;
   // --- Video generation (MiniMax H3) ---
   video_variant?: VideoVariant;
   /** 1-15 s; the backend snaps this to the nearest 17n+5 frame count at 24 fps. */
@@ -382,6 +401,8 @@ export interface GenerationParams {
   video_rife_scale_factor?: number;
   video_rife_fast_mode?: boolean;
   video_rife_ensemble?: boolean;
+  /** VFI model: "rife" (fast, default) or "gmfss" (slower, better on anime). */
+  video_interp_engine?: string;
   /** MiniMax-H3 Turbo LoRA (distilled few-step sampling). */
   video_turbo_enabled?: boolean;
   /** Sampling steps while Turbo is on; the backend clamps to 4..8. */

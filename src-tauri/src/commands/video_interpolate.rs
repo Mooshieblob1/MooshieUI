@@ -13,6 +13,8 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::state::AppState;
+#[cfg(feature = "desktop")]
+use crate::templates::rife::InterpEngine;
 use crate::templates::rife::RifeSettings;
 
 #[derive(serde::Serialize)]
@@ -148,11 +150,13 @@ pub async fn interpolate_video(
     scale_factor: f64,
     fast_mode: bool,
     ensemble: bool,
+    engine: Option<String>,
 ) -> Result<InterpolateVideoResponse, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let source = resolve_gallery_video(&dir, &filename)?;
-    let settings = RifeSettings::sanitized(multiplier, scale_factor, fast_mode, ensemble);
+    let settings = RifeSettings::sanitized(multiplier, scale_factor, fast_mode, ensemble)
+        .with_engine(InterpEngine::parse(engine.as_deref().unwrap_or("rife")));
     let prompt_id = submit_interpolation(state.inner(), &source, settings, None).await?;
     Ok(InterpolateVideoResponse { prompt_id })
 }

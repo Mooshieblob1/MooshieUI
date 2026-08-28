@@ -630,7 +630,7 @@ class GenerationStore {
   growMaskBy = $state(6);
   differentialDiffusion = $state(false);
   upscaleEnabled = $state(false);
-  upscaleMethod = $state<"algorithmic" | "model">("algorithmic");
+  upscaleMethod = $state<"algorithmic" | "model" | "seedvr2">("algorithmic");
   upscaleModel = $state<string | null>(null);
   upscaleScale = $state(2.0);
   /** Optional cap on the effective upscale multiplier when using a model upscaler
@@ -653,6 +653,21 @@ class GenerationStore {
    */
   refineOnly = $state(false);
   smartGuidance = $state(false);
+  /** RescaleCFG for v-pred models: rescales the guidance vector each step so
+   *  v-pred checkpoints don't oversaturate/burn at normal CFG. Only sent to the
+   *  backend when the active model is detected as v-pred. */
+  vpredRescaleCfg = $state(true);
+  vpredRescaleCfgMultiplier = $state(0.7);
+  /** NAG (Normalized Attention Guidance): attention-level negative guidance
+   *  that keeps the negative prompt effective. SDXL-family only. */
+  nagEnabled = $state(false);
+  nagScale = $state(5.0);
+  /** APG (Adaptive Projected Guidance): projects the CFG update onto its
+   *  perpendicular component so high CFG stops oversaturating. SDXL only. */
+  apgEnabled = $state(false);
+  apgEta = $state(1.0);
+  apgNormThreshold = $state(5.0);
+  apgMomentum = $state(0.0);
   /**
    * FluxGuidance value (used by Flux Dev / Flux 2 Klein family). Replaces
    * CFG for those models since they're guidance-distilled and ignore CFG.
@@ -689,6 +704,10 @@ class GenerationStore {
   styleReferenceImage = $state<string | null>(null);
   /** Image Edit mode reference images; slot 0 primary, slots 1-2 Qwen Edit Plus extras. */
   editReferenceImages = $state<(string | null)[]>([null, null, null]);
+  /** Anima ReStyler reference adherence: 1.0 sticks to the reference, lower restyles harder. */
+  editReferenceStrength = $state(1.0);
+  /** Anima ReStyler drastic restyle: original split-screen inpaint recipe (stronger style change, ~2x generation area). */
+  editSplitScreen = $state(false);
   styleTransferLowScaleEnd = $state(1.5);
   styleTransferHighScaleStart = $state(1.0);
   styleTransferBeta = $state(50);
@@ -774,6 +793,9 @@ class GenerationStore {
   videoRifeScaleFactor = $state(1);
   videoRifeFastMode = $state(true);
   videoRifeEnsemble = $state(true);
+  /** VFI model: "rife" (fast, default) or "gmfss" (GMFSS Fortuna — slower,
+   *  better on anime line art). Both come from the same node pack install. */
+  videoInterpEngine = $state<"rife" | "gmfss">("rife");
   /** MiniMax-H3 Turbo LoRA: distilled few-step sampling. Only ever true once the
    *  lazy install has put the node pack and the adapter on disk. */
   videoTurboEnabled = $state(false);
@@ -1067,9 +1089,9 @@ class GenerationStore {
     return this.modelFamily === "flux1kontext";
   }
 
-  /** True when the selected model is an Image Edit family. */
+  /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
   get supportsImageEditMode(): boolean {
-    return this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext;
+    return this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isAnima;
   }
 
   /** Number of reference-image slots the current edit family accepts (3 for Plus, else 1). */
@@ -1126,6 +1148,11 @@ class GenerationStore {
   /** True when the model belongs to the SDXL-like family bucket. */
   get isSdxlLike(): boolean {
     return this.modelIsSdxlLike;
+  }
+
+  /** True when metadata or filename marks the active model as v-prediction. */
+  get isVpredModel(): boolean {
+    return this.isSdxlLike && signalsIndicateVPred(this.modelFamilySignals());
   }
 
   /** True when the selected model uses a fast/turbo-style variant preset. */
@@ -2411,6 +2438,14 @@ class GenerationStore {
         if (saved.refineOnly !== undefined) this.refineOnly = saved.refineOnly;
         if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
         if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
+        if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
+        if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
+        if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
+        if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
+        if (saved.apgEnabled !== undefined) this.apgEnabled = saved.apgEnabled;
+        if (saved.apgEta !== undefined) this.apgEta = saved.apgEta;
+        if (saved.apgNormThreshold !== undefined) this.apgNormThreshold = saved.apgNormThreshold;
+        if (saved.apgMomentum !== undefined) this.apgMomentum = saved.apgMomentum;
         if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
@@ -2437,6 +2472,10 @@ class GenerationStore {
           while (slots.length < 3) slots.push(null);
           this.editReferenceImages = slots;
         }
+        if (saved.editReferenceStrength !== undefined)
+          this.editReferenceStrength = saved.editReferenceStrength;
+        if (saved.editSplitScreen !== undefined)
+          this.editSplitScreen = saved.editSplitScreen;
         if (saved.videoVariant === "fl2va" || saved.videoVariant === "ref2va")
           this.videoVariant = saved.videoVariant;
         if (saved.videoDurationSeconds !== undefined)
@@ -2468,6 +2507,7 @@ class GenerationStore {
           this.videoRifeScaleFactor = saved.videoRifeScaleFactor;
         if (saved.videoRifeFastMode !== undefined) this.videoRifeFastMode = saved.videoRifeFastMode;
         if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
+        if (saved.videoInterpEngine !== undefined) this.videoInterpEngine = saved.videoInterpEngine;
         if (saved.videoTurboEnabled !== undefined)
           this.videoTurboEnabled = saved.videoTurboEnabled;
         if (saved.videoTeacacheEnabled !== undefined)
@@ -2639,6 +2679,14 @@ class GenerationStore {
         refineOnly: this.refineOnly,
         savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
+        vpredRescaleCfg: this.vpredRescaleCfg,
+        vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
+        nagEnabled: this.nagEnabled,
+        nagScale: this.nagScale,
+        apgEnabled: this.apgEnabled,
+        apgEta: this.apgEta,
+        apgNormThreshold: this.apgNormThreshold,
+        apgMomentum: this.apgMomentum,
         fluxGuidance: this.fluxGuidance,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
@@ -2658,6 +2706,8 @@ class GenerationStore {
         styleTransferEnabled: this.styleTransferEnabled,
         styleReferenceImage: this.styleReferenceImage,
         editReferenceImages: this.editReferenceImages,
+        editReferenceStrength: this.editReferenceStrength,
+        editSplitScreen: this.editSplitScreen,
         styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
         styleTransferHighScaleStart: this.styleTransferHighScaleStart,
         styleTransferBeta: this.styleTransferBeta,
@@ -2712,6 +2762,7 @@ class GenerationStore {
         videoRifeScaleFactor: this.videoRifeScaleFactor,
         videoRifeFastMode: this.videoRifeFastMode,
         videoRifeEnsemble: this.videoRifeEnsemble,
+        videoInterpEngine: this.videoInterpEngine,
         videoTurboEnabled: this.videoTurboEnabled,
         videoTurboSteps: this.videoTurboSteps,
         videoTeacacheEnabled: this.videoTeacacheEnabled,
@@ -2771,6 +2822,14 @@ class GenerationStore {
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
       savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
+      vpredRescaleCfg: this.vpredRescaleCfg,
+      vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
+      nagEnabled: this.nagEnabled,
+      nagScale: this.nagScale,
+      apgEnabled: this.apgEnabled,
+      apgEta: this.apgEta,
+      apgNormThreshold: this.apgNormThreshold,
+      apgMomentum: this.apgMomentum,
       fluxGuidance: this.fluxGuidance,
       useSplitModel: this.useSplitModel,
       diffusionModel: this.diffusionModel,
@@ -2790,6 +2849,8 @@ class GenerationStore {
       styleTransferEnabled: this.styleTransferEnabled,
       styleReferenceImage: this.styleReferenceImage,
       editReferenceImages: this.editReferenceImages,
+      editReferenceStrength: this.editReferenceStrength,
+      editSplitScreen: this.editSplitScreen,
       styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
       styleTransferHighScaleStart: this.styleTransferHighScaleStart,
       styleTransferBeta: this.styleTransferBeta,
@@ -2844,6 +2905,7 @@ class GenerationStore {
       videoRifeScaleFactor: this.videoRifeScaleFactor,
       videoRifeFastMode: this.videoRifeFastMode,
       videoRifeEnsemble: this.videoRifeEnsemble,
+      videoInterpEngine: this.videoInterpEngine,
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
       videoTeacacheEnabled: this.videoTeacacheEnabled,
@@ -3263,6 +3325,14 @@ class GenerationStore {
       refine_only: this.mode === "img2img" && this.upscaleEnabled && this.refineOnly,
       save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
+      vpred_rescale_cfg: this.vpredRescaleCfg,
+      vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,
+      nag_enabled: this.nagEnabled,
+      nag_scale: this.nagScale,
+      apg_enabled: this.apgEnabled,
+      apg_eta: this.apgEta,
+      apg_norm_threshold: this.apgNormThreshold,
+      apg_momentum: this.apgMomentum,
       flux_guidance: this.fluxGuidance,
       upscale_positive_prompt: upscalePositivePrompt,
       upscale_negative_prompt: upscaleNegativePrompt,
@@ -3311,6 +3381,8 @@ class GenerationStore {
       style_transfer_blocks: this.styleTransferBlocks,
       anima_teacache_enabled: this.animaTeacacheEnabled,
       edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
+      edit_reference_strength: this.editReferenceStrength,
+      edit_split_screen: this.editSplitScreen,
       video_variant: this.videoVariant,
       video_duration_seconds: this.videoDurationSeconds,
       video_megapixels: this.videoMegapixels,
@@ -3327,6 +3399,7 @@ class GenerationStore {
       video_rife_scale_factor: this.videoRifeScaleFactor,
       video_rife_fast_mode: this.videoRifeFastMode,
       video_rife_ensemble: this.videoRifeEnsemble,
+      video_interp_engine: this.videoInterpEngine,
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? H3_TURBO_LORA.filename : null,

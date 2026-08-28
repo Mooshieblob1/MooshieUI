@@ -38,7 +38,7 @@ pub fn append_segment_chain(
                 "class_type": "MooshieSegmentDetailer",
                 "inputs": {
                     "image": [image.0, image.1],
-                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "model": [result.refiner_model().0, result.refiner_model().1],
                     "vae": [result.vae_source.0.clone(), result.vae_source.1],
                     "positive": [clip_id, 0],
                     "negative": [result.negative_source.0.clone(), result.negative_source.1],

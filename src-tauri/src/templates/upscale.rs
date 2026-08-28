@@ -3,6 +3,12 @@ use serde_json::json;
 use super::WorkflowResult;
 use crate::comfyui::types::GenerationParams;
 
+/// Model files from the official `Comfy-Org/SeedVR2` HF repo — the exact
+/// filenames ComfyUI's bundled "SeedVR2 3B Int8" template loads. The frontend
+/// download UI must fetch these same names into diffusion_models/ and vae/.
+pub const SEEDVR2_UNET_FILE: &str = "seedvr2_3b_int8_convrot.safetensors";
+pub const SEEDVR2_VAE_FILE: &str = "seedvr2_ema_vae_fp16.safetensors";
+
 /// Appends the upscale node chain to an existing workflow.
 /// Returns the (node_id, output_index) of the final upscaled IMAGE.
 pub fn append_upscale_chain(
@@ -10,6 +16,11 @@ pub fn append_upscale_chain(
     params: &GenerationParams,
     seed: i64,
 ) -> (String, u32) {
+    if params.upscale_method == "seedvr2" {
+        return append_seedvr2_chain(result, params, seed);
+    }
+
+    let refiner_model = result.refiner_model();
     let next_id = &mut result.next_id;
     let workflow = &mut result.workflow;
 
@@ -129,7 +140,7 @@ pub fn append_upscale_chain(
             json!({
                 "class_type": "ApplyTiledDiffusion",
                 "inputs": {
-                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "model": [refiner_model.0.clone(), refiner_model.1],
                     "method": "MultiDiffusion",
                     "tile_width": params.upscale_tile_size,
                     "tile_height": params.upscale_tile_size,
@@ -140,7 +151,7 @@ pub fn append_upscale_chain(
         *next_id += 1;
         (tiled_model_id, 0u32)
     } else {
-        (result.model_source.0.clone(), result.model_source.1)
+        refiner_model
     };
 
     // Apply Soft Guidance (CFG rescaling) to prevent hallucination during upscale.
@@ -281,5 +292,265 @@ pub fn append_upscale_chain(
         );
         *next_id += 1;
         (decode_id, 0)
+    }
+}
+
+/// SeedVR2 restoration upscale: a self-contained chain that ignores the base
+/// checkpoint entirely and runs the image through the dedicated SeedVR2 3B
+/// restoration model instead. Node chain and sampler settings mirror
+/// ComfyUI's official "SeedVR2 3B Int8: Upscale Image" template:
+/// resize -> SeedVR2Preprocess -> VAEEncodeTiled -> SeedVR2Conditioning ->
+/// KSampler(1 step, cfg 1, euler/simple, denoise 1) -> VAEDecodeTiled ->
+/// SeedVR2PostProcessing. `original_resized_images` takes the resize output
+/// (pre-Preprocess), matching the template's wiring.
+fn append_seedvr2_chain(
+    result: &mut WorkflowResult,
+    params: &GenerationParams,
+    seed: i64,
+) -> (String, u32) {
+    let next_id = &mut result.next_id;
+    let workflow = &mut result.workflow;
+
+    let resize_id = next_id.to_string();
+    workflow.insert(
+        resize_id.clone(),
+        json!({
+            "class_type": "ImageScaleBy",
+            "inputs": {
+                "image": [result.image_output.0.clone(), result.image_output.1],
+                "upscale_method": "lanczos",
+                "scale_by": params.upscale_scale
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let preprocess_id = next_id.to_string();
+    workflow.insert(
+        preprocess_id.clone(),
+        json!({
+            "class_type": "SeedVR2Preprocess",
+            "inputs": {
+                "resized_images": [resize_id.clone(), 0]
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let unet_id = next_id.to_string();
+    workflow.insert(
+        unet_id.clone(),
+        json!({
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": SEEDVR2_UNET_FILE,
+                "weight_dtype": "default"
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let vae_id = next_id.to_string();
+    workflow.insert(
+        vae_id.clone(),
+        json!({
+            "class_type": "VAELoader",
+            "inputs": {
+                "vae_name": SEEDVR2_VAE_FILE
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let encode_id = next_id.to_string();
+    workflow.insert(
+        encode_id.clone(),
+        json!({
+            "class_type": "VAEEncodeTiled",
+            "inputs": {
+                "pixels": [preprocess_id, 0],
+                "vae": [vae_id.clone(), 0],
+                "tile_size": 512,
+                "overlap": 128,
+                "temporal_size": 4096,
+                "temporal_overlap": 8
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let conditioning_id = next_id.to_string();
+    workflow.insert(
+        conditioning_id.clone(),
+        json!({
+            "class_type": "SeedVR2Conditioning",
+            "inputs": {
+                "model": [unet_id.clone(), 0],
+                "vae_conditioning": [encode_id.clone(), 0]
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let sampler_id = next_id.to_string();
+    workflow.insert(
+        sampler_id.clone(),
+        json!({
+            "class_type": "KSampler",
+            "inputs": {
+                "model": [unet_id, 0],
+                "positive": [conditioning_id.clone(), 0],
+                "negative": [conditioning_id, 1],
+                "latent_image": [encode_id, 0],
+                "seed": seed + 1,
+                "steps": 1,
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "denoise": 1.0
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let decode_id = next_id.to_string();
+    workflow.insert(
+        decode_id.clone(),
+        json!({
+            "class_type": "VAEDecodeTiled",
+            "inputs": {
+                "samples": [sampler_id, 0],
+                "vae": [vae_id, 0],
+                "tile_size": 512,
+                "overlap": 128,
+                "temporal_size": 4096,
+                "temporal_overlap": 8
+            }
+        }),
+    );
+    *next_id += 1;
+
+    let postprocess_id = next_id.to_string();
+    workflow.insert(
+        postprocess_id.clone(),
+        json!({
+            "class_type": "SeedVR2PostProcessing",
+            "inputs": {
+                "images": [decode_id, 0],
+                "original_resized_images": [resize_id, 0],
+                "color_correction_method": "none"
+            }
+        }),
+    );
+    *next_id += 1;
+
+    (postprocess_id, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_result() -> WorkflowResult {
+        WorkflowResult {
+            workflow: serde_json::Map::new(),
+            next_id: 10,
+            image_output: ("8".into(), 0),
+            model_source: ("1".into(), 0),
+            clip_source: ("1".into(), 1),
+            positive_source: ("2".into(), 0),
+            negative_source: ("3".into(), 0),
+            vae_source: ("1".into(), 2),
+            sampler_id: "7".into(),
+            refiner_model_source: None,
+        }
+    }
+
+    fn seedvr2_params() -> GenerationParams {
+        serde_json::from_value(serde_json::json!({
+            "mode": "txt2img",
+            "positive_prompt": "girl",
+            "negative_prompt": "bad",
+            "checkpoint": "model.safetensors",
+            "loras": [],
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "steps": 20,
+            "cfg": 7.0,
+            "seed": "42",
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1,
+            "denoise": 1.0,
+            "upscale_enabled": true,
+            "upscale_method": "seedvr2",
+            "upscale_scale": 2.0,
+            "upscale_denoise": 0.4,
+            "upscale_steps": 20,
+            "upscale_tile_size": 1024,
+            "upscale_tiling": false,
+        }))
+        .expect("params")
+    }
+
+    fn nodes_of_type<'a>(
+        result: &'a WorkflowResult,
+        class_type: &str,
+    ) -> Vec<&'a serde_json::Value> {
+        result
+            .workflow
+            .values()
+            .filter(|n| n["class_type"] == class_type)
+            .collect()
+    }
+
+    #[test]
+    fn seedvr2_method_builds_the_dedicated_restoration_chain() {
+        let mut result = base_result();
+        let (out_id, out_port) = append_upscale_chain(&mut result, &seedvr2_params(), 42);
+
+        for class in [
+            "ImageScaleBy",
+            "SeedVR2Preprocess",
+            "UNETLoader",
+            "VAELoader",
+            "VAEEncodeTiled",
+            "SeedVR2Conditioning",
+            "KSampler",
+            "VAEDecodeTiled",
+            "SeedVR2PostProcessing",
+        ] {
+            assert_eq!(nodes_of_type(&result, class).len(), 1, "missing {class}");
+        }
+        assert_eq!(out_port, 0);
+        assert_eq!(
+            result.workflow[&out_id]["class_type"],
+            "SeedVR2PostProcessing"
+        );
+
+        // SeedVR2 is a one-step restoration model: the official template pins
+        // these sampler settings, and the user's own sampler/steps/cfg must
+        // not leak into this pass.
+        let sampler = nodes_of_type(&result, "KSampler")[0];
+        assert_eq!(sampler["inputs"]["steps"], 1);
+        assert_eq!(sampler["inputs"]["cfg"], 1.0);
+        assert_eq!(sampler["inputs"]["sampler_name"], "euler");
+        assert_eq!(sampler["inputs"]["scheduler"], "simple");
+        assert_eq!(sampler["inputs"]["denoise"], 1.0);
+
+        // The base checkpoint's model/vae/conditioning are never referenced.
+        let loader = nodes_of_type(&result, "UNETLoader")[0];
+        assert_eq!(loader["inputs"]["unet_name"], SEEDVR2_UNET_FILE);
+        let vae = nodes_of_type(&result, "VAELoader")[0];
+        assert_eq!(vae["inputs"]["vae_name"], SEEDVR2_VAE_FILE);
+
+        // PostProcessing compares against the raw resize output, not the
+        // Preprocess output (matches the official template wiring).
+        let post = nodes_of_type(&result, "SeedVR2PostProcessing")[0];
+        let resize_ref = &post["inputs"]["original_resized_images"][0];
+        assert_eq!(
+            result.workflow[resize_ref.as_str().unwrap()]["class_type"],
+            "ImageScaleBy"
+        );
     }
 }

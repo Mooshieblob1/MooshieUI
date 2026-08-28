@@ -343,6 +343,7 @@ mod tests {
             negative_source: ("negative".into(), 0),
             vae_source: ("vae".into(), 0),
             sampler_id: "1".into(),
+            refiner_model_source: None,
         }
     }
 

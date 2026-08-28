@@ -5235,7 +5235,10 @@ async fn dispatch_command(
                 args["scaleFactor"].as_f64().unwrap_or(1.0),
                 args["fastMode"].as_bool().unwrap_or(true),
                 args["ensemble"].as_bool().unwrap_or(true),
-            );
+            )
+            .with_engine(crate::templates::rife::InterpEngine::parse(
+                args["engine"].as_str().unwrap_or("rife"),
+            ));
             let prompt_id = crate::commands::video_interpolate::submit_interpolation(
                 &state,
                 &source,

@@ -248,6 +248,11 @@ pub struct GenerationParams {
     pub video_rife_fast_mode: bool,
     #[serde(default = "default_rife_ensemble")]
     pub video_rife_ensemble: bool,
+    /// Which VFI model interpolates: "rife" (fast, default) or "gmfss"
+    /// (GMFSS Fortuna — slower, better on anime). Unknown values fall back to
+    /// RIFE in `InterpEngine::parse`.
+    #[serde(default = "default_video_interp_engine")]
+    pub video_interp_engine: String,
     /// MiniMax-H3 Turbo LoRA — distilled few-step sampling (4-8 steps instead
     /// of 20). Requires the `ComfyUI-MiniMax-H3-Turbo` custom node pack.
     #[serde(default)]
@@ -302,9 +307,38 @@ pub struct GenerationParams {
     /// True when metadata or filename indicates a v-pred SDXL variant.
     #[serde(default)]
     pub is_vpred_model: bool,
+    /// RescaleCFG for v-pred models — rescales the CFG vector each step so its
+    /// magnitude matches the positive-only prediction (Common Diffusion Noise
+    /// Schedules paper, Appendix I). V-pred models oversaturate and burn at
+    /// normal CFG without it. Only applied when `is_vpred_model` is true.
+    #[serde(default = "default_vpred_rescale_cfg")]
+    pub vpred_rescale_cfg: bool,
+    /// RescaleCFG blend multiplier (0 = plain CFG, 0.7 = recommended, 1 = full rescale).
+    #[serde(default = "default_vpred_rescale_cfg_multiplier")]
+    pub vpred_rescale_cfg_multiplier: f64,
     /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
     #[serde(default)]
     pub smart_guidance: bool,
+    /// NAG (Normalized Attention Guidance) — keeps the negative prompt effective
+    /// via an attention-level patch. SDXL-family only.
+    #[serde(default)]
+    pub nag_enabled: bool,
+    /// NAG guidance scale (core node default 5.0).
+    #[serde(default = "default_nag_scale")]
+    pub nag_scale: f64,
+    /// APG (Adaptive Projected Guidance) — projects the CFG update onto its
+    /// perpendicular component to prevent oversaturation. SDXL-family only.
+    #[serde(default)]
+    pub apg_enabled: bool,
+    /// APG parallel-component scale (1.0 = default CFG behavior).
+    #[serde(default = "default_apg_eta")]
+    pub apg_eta: f64,
+    /// APG guidance-vector norm clamp (0 disables normalization).
+    #[serde(default = "default_apg_norm_threshold")]
+    pub apg_norm_threshold: f64,
+    /// APG guidance running-average momentum (0 disables).
+    #[serde(default)]
+    pub apg_momentum: f64,
     /// FluxGuidance value for Flux Dev / Flux 2 Klein family. Default 3.5.
     #[serde(default = "default_flux_guidance")]
     pub flux_guidance: f32,
@@ -376,6 +410,17 @@ pub struct GenerationParams {
     /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
     #[serde(default)]
     pub edit_reference_images: Vec<String>,
+    /// Anima ReStyler: how strongly the output follows the reference image.
+    /// Scales the reference latent before the Cosmos temporal concat; 1.0 is
+    /// full adherence, lower values let the prompt/style diverge more.
+    #[serde(default = "default_edit_reference_strength")]
+    pub edit_reference_strength: f64,
+    /// Anima ReStyler "drastic restyle": sample a 2x-wide split-screen canvas
+    /// (reference left, inpainted output right, ~1.4 MP total) with the
+    /// original ReStyler's `(split screen, multiple views, split screen:1.2)`
+    /// prompt hack, then crop the right half and scale it to the target size.
+    #[serde(default)]
+    pub edit_split_screen: bool,
     /// NovelAI-specific parameters. Present only when `checkpoint` names a
     /// NovelAI model.
     #[serde(default)]
@@ -470,6 +515,10 @@ fn default_rife_ensemble() -> bool {
     true
 }
 
+fn default_video_interp_engine() -> String {
+    "rife".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlNetParam {
     #[serde(default)]
@@ -499,12 +548,36 @@ fn default_facefix_denoise() -> f64 {
     0.4
 }
 
+fn default_edit_reference_strength() -> f64 {
+    1.0
+}
+
 fn default_flux_guidance() -> f32 {
     3.5
 }
 
 fn default_soft_guidance_multiplier() -> f64 {
     0.4
+}
+
+fn default_vpred_rescale_cfg() -> bool {
+    true
+}
+
+fn default_vpred_rescale_cfg_multiplier() -> f64 {
+    0.7
+}
+
+fn default_nag_scale() -> f64 {
+    5.0
+}
+
+fn default_apg_eta() -> f64 {
+    1.0
+}
+
+fn default_apg_norm_threshold() -> f64 {
+    5.0
 }
 
 fn default_upscale_model_downscale_ratio() -> f64 {

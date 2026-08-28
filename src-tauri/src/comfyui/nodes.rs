@@ -33,7 +33,23 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         verify_nodes: &["ImageScaleToTotalPixelsX"],
         requirements_file: "requirements.txt",
     },
+    // Anima ReStyler (image_edit mode): patches the model so a reference latent
+    // is concatenated along the temporal dimension during sampling. Pure-Python,
+    // ships no requirements.txt — the clone is the entire install.
+    RequiredCustomNodePackage {
+        name: "ComfyUI-Cosmos-Reference",
+        git_url: "https://github.com/Mirumo0u0/ComfyUI-Cosmos-Reference.git",
+        verify_nodes: &["ApplyCosmosReferenceLatent"],
+        requirements_file: "requirements.txt",
+    },
 ];
+
+/// Anima Edit LoRA used by the ReStyler image_edit workflow. The template loads
+/// it by this exact filename; the frontend download button must save it under
+/// the same name (see ImageEditSettings.svelte).
+pub const ANIMA_EDIT_LORA_FILENAME: &str = "AnimeEditV2.safetensors";
+/// Civitai "Anima Edit" v2.0 (model 2650553, version 3089149).
+pub const ANIMA_EDIT_LORA_URL: &str = "https://civitai.com/api/download/models/3089149";
 
 // GGUF-quantized diffusion models / text encoders cannot be loaded by core
 // ComfyUI loaders; the workflow builder emits UnetLoaderGGUF / CLIPLoaderGGUF
@@ -73,11 +89,12 @@ const RIFE_PACKAGE_DIR: &str = "ComfyUI-Frame-Interpolation";
 const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: RIFE_PACKAGE_DIR,
     git_url: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git",
-    verify_nodes: &["RIFE VFI"],
+    verify_nodes: &["RIFE VFI", "GMFSS Fortuna VFI"],
     // The pack ships no requirements.txt. `requirements-with-cupy.txt` pulls a
-    // multi-hundred-MB CUDA-version-specific cupy wheel, which only the
-    // sepconv/GMFSS backends need; RIFE's arch imports torch only, and the ops
-    // backend is imported lazily inside each model's `vfi()` method.
+    // multi-hundred-MB CUDA-version-specific cupy wheel; the no-cupy file
+    // installs taichi instead, which is the ops backend both the RIFE and
+    // GMFSS Fortuna paths run on. The ops backend is imported lazily inside
+    // each model's `vfi()` method.
     requirements_file: "requirements-no-cupy.txt",
 }];
 
@@ -537,7 +554,8 @@ pub async fn ensure_required_style_transfer_nodes(
     } else {
         log::warn!(
             "Some style transfer custom node packages could not be installed ({}). \
-             Anima Untwisting RoPE style transfer is unavailable until these install.",
+             Anima Untwisting RoPE style transfer and/or the Anima ReStyler are \
+             unavailable until these install.",
             failures.join("; ")
         );
     }

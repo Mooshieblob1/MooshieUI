@@ -1,8 +1,12 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { uploadImageBytes, readClipboardImageSafe } from "../../utils/api.js";
+  import { uploadImageBytes, readClipboardImageSafe, downloadModel } from "../../utils/api.js";
+  import { ipcListen } from "../../utils/ipc.js";
+  import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
 
   // Local object-URL previews, indexed by slot. Reference filenames live in the
   // store (generation.editReferenceImages); previews are lost across reloads, in
@@ -21,8 +25,54 @@
         ? locale.t("generation.image_edit.family_badge.flux1kontext")
         : generation.isQwenEdit
           ? locale.t("generation.image_edit.family_badge.qwen_edit")
-          : null,
+          : generation.isAnima
+            ? locale.t("generation.image_edit.family_badge.anima")
+            : null,
   );
+
+  // Anima ReStyler needs the Anima Edit LoRA; the workflow loads it by this exact
+  // filename (ANIMA_EDIT_LORA_FILENAME in src-tauri/src/comfyui/nodes.rs).
+  const animaEditLora = {
+    url: "https://civitai.com/api/download/models/3089149",
+    category: "loras",
+    filename: "AnimeEditV2.safetensors",
+  };
+  // endsWith so a file nested in a subfolder still counts as installed.
+  const animaLoraInstalled = $derived(
+    models.loras.some((m) => m.endsWith(animaEditLora.filename)),
+  );
+
+  let loraDownloading = $state(false);
+  let loraDownloadError = $state<string | null>(null);
+  let dlBytes = $state(0);
+  let dlTotal = $state(0);
+  const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
+
+  async function downloadAnimaLora() {
+    loraDownloadError = null;
+    loraDownloading = true;
+    try {
+      await downloadModel(animaEditLora.url, animaEditLora.category, animaEditLora.filename);
+      await models.refresh();
+    } catch (e) {
+      loraDownloadError = `Download failed: ${e}`;
+    } finally {
+      loraDownloading = false;
+    }
+  }
+
+  onMount(async () => {
+    await ipcListen("download:progress", (event: any) => {
+      const data = event.payload as { downloaded: number; total: number; done: boolean };
+      if (data.done) {
+        dlBytes = 0;
+        dlTotal = 0;
+      } else {
+        dlBytes = data.downloaded;
+        dlTotal = data.total;
+      }
+    });
+  });
 
   $effect(() => {
     const el = dropZone;
@@ -171,6 +221,88 @@
     </div>
   {:else}
     <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.hint")}</p>
+
+    {#if generation.isAnima}
+      <p class="text-[11px] text-neutral-500">
+        {locale.t("generation.image_edit.anima_note")}
+      </p>
+      {#if !animaLoraInstalled}
+        <button
+          class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
+          disabled={loraDownloading}
+          onclick={downloadAnimaLora}
+        >
+          {locale.t("generation.image_edit.anima_lora_download")}
+        </button>
+      {/if}
+      {#if loraDownloading}
+        <div class="bg-neutral-800/80 rounded-lg px-3 py-2">
+          <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+            <span class="truncate mr-2">
+              {locale.t("generation.upscale.downloading", { model: animaEditLora.filename })}
+            </span>
+            {#if dlTotal > 0}
+              <span class="shrink-0 tabular-nums">
+                {locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)
+              </span>
+            {/if}
+          </div>
+          {#if dlTotal > 0}
+            <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+              <div
+                class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
+                style="width: {dlPercent}%"
+              ></div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#if loraDownloadError}
+        <p class="text-[11px] text-red-400">{loraDownloadError}</p>
+      {/if}
+
+      <div>
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          <span>
+            {locale.t("generation.image_edit.reference_strength")}
+            <InfoTip text={locale.t("generation.image_edit.reference_strength_tip")} />
+          </span>
+          <EditableValue
+            value={generation.editReferenceStrength}
+            min={0}
+            max={1}
+            step={0.05}
+            decimals={2}
+            onchange={(v) => {
+              generation.editReferenceStrength = v;
+              generation.saveSettings();
+            }}
+          />
+        </label>
+        <input
+          type="range"
+          bind:value={generation.editReferenceStrength}
+          onchange={() => generation.saveSettings()}
+          min="0"
+          max="1"
+          step="0.05"
+          class="w-full accent-indigo-500"
+        />
+      </div>
+
+      <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
+        <span class="leading-tight">
+          {locale.t("generation.image_edit.split_screen")}
+          <InfoTip text={locale.t("generation.image_edit.split_screen_tip")} />
+        </span>
+        <input
+          type="checkbox"
+          bind:checked={generation.editSplitScreen}
+          onchange={() => generation.saveSettings()}
+          class="accent-indigo-500 w-4 h-4 shrink-0"
+        />
+      </label>
+    {/if}
 
     {#each Array(slotCount) as _, slot (slot)}
       {@const filename = generation.editReferenceImages[slot]}
