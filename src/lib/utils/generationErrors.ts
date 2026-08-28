@@ -164,7 +164,22 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     return { messageKey: "generation.error.out_of_memory", durationMs: ACTIONABLE_MS };
   }
 
-  // 3. VAE incompatible with the checkpoint's latent format. The signature is a
+  // 3. Out of *host* memory (or disk) while streaming weights. comfy-aimdo's
+  // DynamicVRAM path reads weight slices straight off the safetensors file into
+  // a pinned host buffer; when the machine has no free RAM left to pin (or the
+  // system drive holding the pagefile is full) that read fails with a bare
+  // `RuntimeError: hostbuf_file_reader_read failed`, which reads as an internal
+  // C error rather than the resource exhaustion it actually is. Distinct from
+  // the CUDA OOM above: adding VRAM does not help, freeing RAM/disk does.
+  if (
+    haystack.includes("hostbuf_file_reader") ||
+    haystack.includes("read_file_to_device") ||
+    haystack.includes("host_buffer.py")
+  ) {
+    return { messageKey: "generation.error.host_memory", durationMs: ACTIONABLE_MS };
+  }
+
+  // 4. VAE incompatible with the checkpoint's latent format. The signature is a
   // VAEDecode/VAEEncode node raising an IndexError inside the memory-estimation
   // lambda (e.g. a 3D/video VAE like qwen_image_vae paired with an SD/SDXL
   // checkpoint, where shape[4] does not exist).
@@ -180,7 +195,7 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     return { messageKey: "generation.error.vae_incompatible", durationMs: ACTIONABLE_MS };
   }
 
-  // 4. A selected model file is no longer available to ComfyUI (renamed, moved,
+  // 5. A selected model file is no longer available to ComfyUI (renamed, moved,
   // or the validation cache is stale).
   if (
     haystack.includes("value_not_in_list") ||
@@ -199,7 +214,7 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     return { messageKey: "generation.error.model_not_found_generic", durationMs: ACTIONABLE_MS };
   }
 
-  // 5. A required custom node isn't installed.
+  // 6. A required custom node isn't installed.
   if (
     haystack.includes("does not exist") ||
     haystack.includes("is not installed") ||
@@ -216,7 +231,7 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     }
   }
 
-  // 6. Tensor shape mismatch: usually mixing model components from different
+  // 7. Tensor shape mismatch: usually mixing model components from different
   // families (e.g. an SDXL VAE/LoRA with an SD1.5 checkpoint).
   if (
     haystack.includes("shapes cannot be multiplied") ||
@@ -228,7 +243,7 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     return { messageKey: "generation.error.component_mismatch", durationMs: ACTIONABLE_MS };
   }
 
-  // 7. ComfyUI HTTP /prompt returned a structured error body. Surface its
+  // 8. ComfyUI HTTP /prompt returned a structured error body. Surface its
   // message if we can parse it.
   const apiMatch = raw.match(/API error \(\d+\): ([\s\S]+)/);
   if (apiMatch) {
@@ -271,7 +286,7 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     }
   }
 
-  // 8. The checkpoint is quantized in a format the pinned ComfyUI predates
+  // 9. The checkpoint is quantized in a format the pinned ComfyUI predates
   // (e.g. int8_tensorwise landed in ComfyUI v0.27.0). Left unclassified this
   // reaches the user as a bare Python KeyError like `'int8_tensorwise'`, which
   // says nothing about what to do. Updating ComfyUI is the fix.
@@ -284,7 +299,7 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     };
   }
 
-  // 9. Generic fallback. If we have any exception message, show it rather than
+  // 10. Generic fallback. If we have any exception message, show it rather than
   // a bare "Generation failed".
   if (typeof input === "object" && input) {
     const detail = asText(input.exception_message) || asText(input.error);

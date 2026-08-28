@@ -400,8 +400,8 @@ class PromptPresetsStore {
    * Resolve inline chunk directives within a prompt string, in either
    * spelling: `@preset:<slug>` and `@[Chunk Name]`.
    * - Single-line preset content is inserted verbatim (trimmed).
-   * - Multi-line preset content is spliced in whole, lines joined with
-   *   ", ", matching what click-activating the chunk inserts.
+   * - Multi-line preset content acts as an inline wildcard: one line is
+   *   picked at random per generation (a `fixedChoices` entry pins it).
    * - Empty presets resolve to an empty string; adjacent commas/whitespace
    *   are tidied so the prompt doesn't end up with `, ,` artefacts.
    * - Unknown names are left untouched (so typos are debuggable).
@@ -416,12 +416,12 @@ class PromptPresetsStore {
       if (fixedChoice) return fixedChoice;
       const choices = splitWildcardChoices(preset.content);
       if (choices.length === 0) return preset.content.trim();
-      // Splice the whole chunk in, lines joined with commas so per-line
-      // trailing commas from the editor do not double up. Typing a token
-      // means "insert this chunk here", the same as clicking it, which is
-      // what the inline help text promises. Random rolls stay an activation
-      // feature (the wildcard modes).
-      return choices.join(", ");
+      if (choices.length === 1) return choices[0];
+      // A multi-line chunk is an inline wildcard: exactly one line rolls in
+      // per generation, at this spot in the prompt. Users build prompts on
+      // this to control where a wildcard lands (activation-mode wildcards
+      // can only append) — joining every line instead breaks them (#642).
+      return choices[Math.floor(Math.random() * choices.length)];
     });
     // Tidy up commas/whitespace left behind when a preset resolved to "".
     resolved = resolved
