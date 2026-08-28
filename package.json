@@ -24,7 +24,7 @@
     "@tauri-apps/plugin-store": "^2.4.4",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "dompurify": "^3.4.14",
-    "konva": "^10.3.0",
+    "konva": "^10.3.1",
     "marked": "^18.0.10",
     "ntc-ts": "^0.0.8",
     "sortablejs": "^1.15.7",
