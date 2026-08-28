@@ -17,7 +17,8 @@
     NANOSAUR_SAMPLING,
     type SamplingRecommendation,
   } from "../../utils/samplingRecommendation.js";
-  import { downloadModel } from "../../utils/api.js";
+  import { connection } from "../../stores/connection.svelte.js";
+  import { checkNodeAvailable, downloadModel } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount } from "svelte";
 
@@ -46,6 +47,45 @@
   const dmd2Enabled = $derived(
     generation.loras.some((l) => l.name === DMD2_FILENAME && l.enabled)
   );
+
+  // NAG and APG are core ComfyUI guidance patchers, but they are recent
+  // additions: an older ComfyUI has neither class and the workflow would fail
+  // at sampling time instead of at build time. Probe by input signature, not
+  // just by name, so a same-named third-party node cannot pass for core's
+  // (the AnimaLLLiteApply collision in #522 is the precedent).
+  const NAG_NODE_CLASS = "NAGuidance";
+  const NAG_NODE_INPUTS = ["nag_scale", "nag_alpha", "nag_tau"];
+  const APG_NODE_CLASS = "APG";
+  const APG_NODE_INPUTS = ["eta", "norm_threshold", "momentum"];
+
+  // null = not probed yet. An unreachable ComfyUI must not read as
+  // "unsupported", or the notes below would fire while merely disconnected.
+  let nagAvailable = $state<boolean | null>(null);
+  let apgAvailable = $state<boolean | null>(null);
+
+  $effect(() => {
+    if (!connection.connected) return;
+    void (async () => {
+      const [nag, apg] = await Promise.all([
+        checkNodeAvailable(NAG_NODE_CLASS, NAG_NODE_INPUTS).catch(() => null),
+        checkNodeAvailable(APG_NODE_CLASS, APG_NODE_INPUTS).catch(() => null),
+      ]);
+      nagAvailable = nag;
+      apgAvailable = apg;
+      // A setting persisted from another install would still inject the node
+      // and break the run, so clear it once the probe says it is missing.
+      let cleared = false;
+      if (nag === false && generation.nagEnabled) {
+        generation.nagEnabled = false;
+        cleared = true;
+      }
+      if (apg === false && generation.apgEnabled) {
+        generation.apgEnabled = false;
+        cleared = true;
+      }
+      if (cleared) generation.saveSettings();
+    })();
+  });
 
   onMount(async () => {
     await ipcListen("download:progress", (event: any) => {
@@ -747,12 +787,16 @@
         id="nag-enabled"
         bind:checked={generation.nagEnabled}
         onchange={() => generation.saveSettings()}
-        class="w-4 h-4 accent-indigo-500 rounded"
+        disabled={nagAvailable === false}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-40 disabled:cursor-not-allowed"
       />
-      <label for="nag-enabled" class="text-xs text-neutral-400">
+      <label for="nag-enabled" class="text-xs {nagAvailable === false ? 'text-neutral-600' : 'text-neutral-400'}">
         {locale.t('generation.sampler.nag_label')}<InfoTip text={locale.t('generation.sampler.nag_tip')} />
       </label>
     </div>
+    {#if nagAvailable === false}
+      <p class="text-[10px] text-amber-400 -mt-1">{locale.t('generation.sampler.nag_unavailable')}</p>
+    {/if}
     {#if generation.nagEnabled}
       <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
@@ -777,12 +821,16 @@
         id="apg-enabled"
         bind:checked={generation.apgEnabled}
         onchange={() => generation.saveSettings()}
-        class="w-4 h-4 accent-indigo-500 rounded"
+        disabled={apgAvailable === false}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-40 disabled:cursor-not-allowed"
       />
-      <label for="apg-enabled" class="text-xs text-neutral-400">
+      <label for="apg-enabled" class="text-xs {apgAvailable === false ? 'text-neutral-600' : 'text-neutral-400'}">
         {locale.t('generation.sampler.apg_label')}<InfoTip text={locale.t('generation.sampler.apg_tip')} />
       </label>
     </div>
+    {#if apgAvailable === false}
+      <p class="text-[10px] text-amber-400 -mt-1">{locale.t('generation.sampler.apg_unavailable')}</p>
+    {/if}
     {#if generation.apgEnabled}
       {#if generation.cfg <= 1.0}
         <p class="text-[10px] text-amber-400 -mt-1">{locale.t('generation.sampler.apg_cfg1_note')}</p>
