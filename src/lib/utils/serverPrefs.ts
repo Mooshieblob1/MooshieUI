@@ -58,7 +58,10 @@ export async function fetchServerPrefs(): Promise<UserPrefsData | null> {
  * Push the current user's preferences to the server.
  * Fire-and-forget — never throws; failures are logged but do not block the UI.
  */
-export async function pushServerPrefs(prefs: UserPrefsData): Promise<void> {
+export async function pushServerPrefs(
+  prefs: UserPrefsData,
+  options: { keepalive?: boolean } = {},
+): Promise<void> {
   if (!isBrowserMode) return;
   const token = getAuthToken();
   if (!token) return;
@@ -70,6 +73,10 @@ export async function pushServerPrefs(prefs: UserPrefsData): Promise<void> {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(prefs),
+      // Lets a push started from `pagehide` outlive the page. Browsers cap
+      // keepalive bodies (64 KB), so it is opt-in for that one case rather
+      // than the default.
+      keepalive: options.keepalive === true,
     });
   } catch (e) {
     console.warn("[prefsSync] server push failed:", e);

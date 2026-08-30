@@ -1,5 +1,17 @@
 # Changelog
 
+## What's New in v2.2.4
+
+### Fixes and maintenance
+- **NovelAI Enhance shows its result**: after pressing Enhance in NAI mode the preview kept showing the original image. The preview's mode tracking re-ran whenever any result landed and snapped back to the last text-to-image output; it now only follows a real mode change, so the enhanced image appears as soon as it arrives.
+- **Enhance remembers resolution and magnitude**: the Enhance modal now opens on the scale (1x, 1.5x, Max) and magnitude the last enhance was sent with, persisted across launches. Cancelling, upscaling or making variations does not overwrite them.
+- **NAI quality tags and UC preset stay put**: quality tags default on and the undesired content preset defaults to Heavy, and whatever you set is kept. In browser and LAN mode a change made in the last couple of seconds before closing the tab could be lost to the debounced preference sync and overwritten by the older server snapshot on the next launch; pending preference pushes are now flushed when the page is hidden or closed.
+- **Escape closes the right thing**: with the Enhance or Director Tools modal open on top of the lightbox, Escape closed the lightbox underneath instead of the modal.
+- **Director Tools results follow into the lightbox**: a Director Tools run started from the lightbox now opens its result there, the same as Enhance.
+- **Clearer remote prompt assistant errors**: a remote chat completion that fails now reports the underlying cause (TLS, DNS, timeout) instead of reqwest's generic wording, and vision requests get a 300s budget instead of 120s since hosted models routinely take longer on image turns.
+
+---
+
 ## What's New in v2.2.3
 
 ### New features

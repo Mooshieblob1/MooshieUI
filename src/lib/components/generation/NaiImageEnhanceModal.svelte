@@ -326,6 +326,13 @@
       // what replaced it.  Only when it is already open, so an enhance started
       // from a gallery card does not force a lightbox the user did not ask for.
       if (gallery.lightboxOpen) gallery.markLightboxFollow(result.prompt_id);
+      // Only a sent enhance is worth remembering: a dismissed modal is a
+      // change of mind, and upscale/variations have no scale or magnitude.
+      if (current === "enhance")
+        generation.rememberNaiEnhance(
+          naiImageEnhance.scaleChoice,
+          naiImageEnhance.magnitude,
+        );
       naiImageEnhance.dismiss();
       gallery.showToast(
         locale.t(

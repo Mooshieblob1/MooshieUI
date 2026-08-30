@@ -118,6 +118,16 @@ export const MAGNITUDE_MAX = 5;
 /** The middle of the range, and what NovelAI's own panel opens on. */
 export const MAGNITUDE_DEFAULT = 3;
 
+/** Which of the Enhance modal's upscale buttons is selected. */
+export type EnhanceScaleChoice = "1x" | "1.5x" | "max";
+
+const ENHANCE_SCALE_CHOICES: readonly EnhanceScaleChoice[] = ["1x", "1.5x", "max"];
+
+/** Type guard for a persisted scale choice, which may come from an older blob. */
+export function isEnhanceScaleChoice(value: unknown): value is EnhanceScaleChoice {
+  return (ENHANCE_SCALE_CHOICES as readonly unknown[]).includes(value);
+}
+
 export interface EnhanceDenoise {
   /** img2img strength. Higher redraws more of the image. */
   strength: number;

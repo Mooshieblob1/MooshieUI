@@ -18,6 +18,7 @@
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
   import VideoPlayer from "../video/VideoPlayer.svelte";
   import type { GenerationParams } from "../../types/index.js";
+  import { untrack } from "svelte";
 
   let currentTipIndex = $state(0);
   let progressPercent = $state(0);
@@ -273,8 +274,13 @@
     }
   }
 
+  // Only the mode is a dependency here. `setActiveMode` reads
+  // `progress.modeLastOutput`, and tracking that too made this re-run every
+  // time any mode's result landed -- an NAI Enhance arrives as `image_edit`,
+  // so the re-run snapped the preview straight back to the txt2img image.
   $effect(() => {
-    progress.setActiveMode(generation.mode);
+    const mode = generation.mode;
+    untrack(() => progress.setActiveMode(mode));
   });
 
   /** What the Refine button does here: NovelAI's Enhance, or the local upscale

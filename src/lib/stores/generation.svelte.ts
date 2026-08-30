@@ -43,6 +43,12 @@ import {
   computeH3FrameLength,
 } from "../utils/videoParams.js";
 import type { NaiLanguageChoice } from "../utils/naiLanguage.js";
+import {
+  clampMagnitude,
+  isEnhanceScaleChoice,
+  MAGNITUDE_DEFAULT,
+  type EnhanceScaleChoice,
+} from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   ExtraPromptBox,
@@ -613,6 +619,14 @@ class GenerationStore {
    * because someone iterating on one image wants it for the whole session.
    */
   naiEnhanceIncludeExisting = $state(false);
+  /**
+   * What the last NovelAI image Enhance was run with. The Enhance modal opens
+   * on these, so someone who always enhances at 1.5x / magnitude 4 is not
+   * reset to the defaults every launch. Written only when an enhance is
+   * actually sent, not while the modal is being fiddled with.
+   */
+  naiEnhanceScaleChoice = $state<EnhanceScaleChoice>("1x");
+  naiEnhanceMagnitude = $state(MAGNITUDE_DEFAULT);
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
@@ -2536,6 +2550,10 @@ class GenerationStore {
           this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
         if (saved.naiEnhanceIncludeExisting !== undefined)
           this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
+        if (isEnhanceScaleChoice(saved.naiEnhanceScaleChoice))
+          this.naiEnhanceScaleChoice = saved.naiEnhanceScaleChoice;
+        if (typeof saved.naiEnhanceMagnitude === "number")
+          this.naiEnhanceMagnitude = clampMagnitude(saved.naiEnhanceMagnitude);
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -2774,6 +2792,8 @@ class GenerationStore {
         showNovelaiUsage: this.showNovelaiUsage,
         naiEnhanceLanguage: this.naiEnhanceLanguage,
         naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
+        naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
+        naiEnhanceMagnitude: this.naiEnhanceMagnitude,
       });
       triggerSync();
     } catch (e) {
@@ -2917,7 +2937,16 @@ class GenerationStore {
       showNovelaiUsage: this.showNovelaiUsage,
       naiEnhanceLanguage: this.naiEnhanceLanguage,
       naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
+      naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
+      naiEnhanceMagnitude: this.naiEnhanceMagnitude,
     };
+  }
+
+  /** Record what an Enhance was just sent with, so the next one opens on it. */
+  rememberNaiEnhance(scale: EnhanceScaleChoice, magnitude: number): void {
+    this.naiEnhanceScaleChoice = scale;
+    this.naiEnhanceMagnitude = clampMagnitude(magnitude);
+    this.saveSettings();
   }
 
   /** Collect prompt history for server-side sync. */

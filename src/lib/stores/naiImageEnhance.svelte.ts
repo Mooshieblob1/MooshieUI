@@ -14,6 +14,7 @@ import {
   VARIATION_COUNT_DEFAULT,
   VARIETY_DEFAULT,
   type EnhanceDenoise,
+  type EnhanceScaleChoice,
 } from "../utils/novelaiEnhance.js";
 import type { OutputImage } from "../types/index.js";
 
@@ -35,8 +36,9 @@ import type { OutputImage } from "../types/index.js";
  * image arrives in the session grid and the gallery on its own.
  */
 
-/** Which of the upscale buttons is selected. */
-export type EnhanceScaleChoice = "1x" | "1.5x" | "max";
+/** Which of the upscale buttons is selected. Defined in the utils module so
+ *  the hub `generation` store can persist it without importing this store. */
+export type { EnhanceScaleChoice } from "../utils/novelaiEnhance.js";
 
 /**
  * Which of the three things this modal can do to the image is showing.
@@ -222,9 +224,10 @@ class NaiImageEnhanceStore {
   /**
    * Open on an image.
    *
-   * Every field resets rather than carrying over: the last image's magnitude is
-   * rarely the right one for this image, and a stale setting quietly spending
-   * Anlas on the wrong result is worse than re-picking it.
+   * The scale and magnitude open on what the last enhance was run with, read
+   * from the persisted generation settings so they survive a relaunch; the
+   * modal shows both before anything is spent. Everything else resets: the
+   * variation and advanced controls describe one image rather than a habit.
    */
   open(
     image: OutputImage,
@@ -238,12 +241,12 @@ class NaiImageEnhanceStore {
     this.sourceHeight = 0;
     this.imageBase64 = null;
     this.loadingSource = false;
-    this.scaleChoice = "1x";
-    this.magnitude = MAGNITUDE_DEFAULT;
+    this.scaleChoice = generation.naiEnhanceScaleChoice;
+    this.magnitude = clampMagnitude(generation.naiEnhanceMagnitude);
     this.variationCount = VARIATION_COUNT_DEFAULT;
     this.variety = VARIETY_DEFAULT;
     this.showAdvanced = false;
-    const denoise = magnitudeToDenoise(MAGNITUDE_DEFAULT);
+    const denoise = magnitudeToDenoise(this.magnitude);
     this.strength = denoise.strength;
     this.noise = denoise.noise;
     this.busy = false;

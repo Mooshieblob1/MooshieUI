@@ -355,8 +355,17 @@
   // Document-level keyboard handler for lightbox (fallback for browser focus issues).
   // The compare viewer sits on top of the lightbox and owns Escape/arrows while
   // it is open, so stand down rather than closing the lightbox underneath it.
+  // The enhance and Director Tools modals stack on the lightbox the same way
+  // and own Escape while open; this document handler would otherwise run first
+  // (document before window) and close the lightbox underneath the modal.
   $effect(() => {
-    if (!gallery.lightboxOpen || gallery.compareOpen) return;
+    if (
+      !gallery.lightboxOpen ||
+      gallery.compareOpen ||
+      naiImageEnhance.isOpen ||
+      directorTools.isOpen
+    )
+      return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") gallery.closeLightbox();
       if (e.key === "ArrowLeft") navigateLightbox("prev");
@@ -2143,8 +2152,13 @@
     // is showing: the source is what was being looked at, and the result is the
     // point of the click.  Placed here rather than further down because the
     // artist-preview and style-thumbnail blocks below return early.
-    if (gallery.takeLightboxFollow(promptId) && gallery.lightboxOpen && newImages[0]) {
-      void gallery.openLightbox(newImages[0]);
+    if (gallery.takeLightboxFollow(promptId)) {
+      if (gallery.lightboxOpen && newImages[0]) {
+        console.log("[lightbox] follow", promptId, "->", newImages[0].filename);
+        void gallery.openLightbox(newImages[0]);
+      } else {
+        console.log("[lightbox] follow skipped, lightbox closed before", promptId, "landed");
+      }
     }
 
     // Route a finished artist-preview generation back to its placeholder card.

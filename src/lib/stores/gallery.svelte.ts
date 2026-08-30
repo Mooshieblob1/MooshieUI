@@ -509,6 +509,7 @@ class GalleryStore {
   /** Ask for `promptId`'s result to take over the lightbox when it lands. */
   markLightboxFollow(promptId: string) {
     if (!promptId || this.lightboxFollowIds.includes(promptId)) return;
+    console.log("[lightbox] follow marked for", promptId);
     this.lightboxFollowIds = [...this.lightboxFollowIds, promptId].slice(
       -VARIATION_BATCH_MEMORY,
     );
