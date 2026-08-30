@@ -54,6 +54,11 @@
       // "image_edit" and not "img2img": the result is a pass over an existing
       // image, and tagging it img2img would overwrite that tab's last output.
       progress.enqueue(result.prompt_id, false, "image_edit", null);
+      // Started from the lightbox, the result belongs there: what is on screen
+      // is the source, and the point of the click is to see what replaced it.
+      // Only when it is already open, so a card's DT button does not force a
+      // lightbox the user did not ask for.
+      if (gallery.lightboxOpen) gallery.markLightboxFollow(result.prompt_id);
       directorTools.dismiss();
       gallery.showToast(locale.t("novelai.director.started"), "success");
     } catch (e) {

@@ -36,6 +36,18 @@ class PrefsSyncStore {
 
   constructor() {
     registerSyncHandler(() => this.scheduleSync());
+    // A change made in the last two seconds before the tab closes would
+    // otherwise sit in the debounce timer and never reach the server, and the
+    // next launch's `loadAndApply` would then overwrite it with the stale
+    // snapshot. `pagehide` is the last reliable event on both desktop and
+    // mobile browsers; hidden tabs count too, because a backgrounded tab may
+    // be discarded without ever firing `pagehide`.
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", () => this.flush());
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") this.flush();
+      });
+    }
   }
 
   /** Gather the current state of all participating stores. */
@@ -123,7 +135,18 @@ class PrefsSyncStore {
     }, 2000);
   }
 
-  private async _doSync(): Promise<void> {
+  /**
+   * Push now if a debounced push is waiting. A no-op when nothing has changed
+   * since the last push, so it is safe to call on every hide.
+   */
+  flush(): void {
+    if (this._syncTimer === null) return;
+    clearTimeout(this._syncTimer);
+    this._syncTimer = null;
+    this._doSync({ keepalive: true }).catch(() => {});
+  }
+
+  private async _doSync(options: { keepalive?: boolean } = {}): Promise<void> {
     // If a push is already in flight, mark that another is needed rather than
     // dropping it — changes made mid-flight would otherwise never reach the
     // server until the next unrelated save.
@@ -133,7 +156,7 @@ class PrefsSyncStore {
     }
     this._syncing = true;
     try {
-      await pushServerPrefs(this.collectAll());
+      await pushServerPrefs(this.collectAll(), options);
     } finally {
       this._syncing = false;
     }

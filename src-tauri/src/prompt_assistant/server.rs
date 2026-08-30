@@ -420,22 +420,69 @@ fn external_models_urls(base_url: &str) -> Vec<String> {
     versioned_candidates(base, "models")
 }
 
+/// Per-request ceiling for a remote chat completion.
+///
+/// A vision turn ships up to four ~1 MP JPEGs and asks for a long answer, and
+/// hosted models routinely take well over two minutes on that; a text-only
+/// turn that has not answered in two minutes is not going to.
+fn chat_timeout(has_images: bool) -> Duration {
+    if has_images {
+        Duration::from_secs(300)
+    } else {
+        Duration::from_secs(120)
+    }
+}
+
+/// The whole cause chain of an error, outermost first.
+///
+/// reqwest's `Display` prints only its own kind and the URL ("error sending
+/// request for url (...)"), hiding the TLS, DNS or timeout detail underneath
+/// that is the only part worth reading in a log.
+fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut out = err.to_string();
+    let mut cur = err.source();
+    while let Some(src) = cur {
+        let text = src.to_string();
+        if !out.contains(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        cur = src.source();
+    }
+    out
+}
+
+/// Human-readable reason a request never produced a response.
+///
+/// A timeout is named as such (with the budget it blew) instead of being
+/// buried under reqwest's generic "error sending request" wording.
+fn describe_request_error(err: &reqwest::Error, timeout: Duration) -> String {
+    if err.is_timeout() {
+        return format!(
+            "timed out after {}s waiting for the model to answer",
+            timeout.as_secs()
+        );
+    }
+    error_chain(err)
+}
+
 async fn send_external_chat(
     client: &reqwest::Client,
     url: &str,
     api_key: &str,
     body: &serde_json::Value,
+    timeout: Duration,
 ) -> Result<reqwest::Response, AppError> {
-    let mut req = client
-        .post(url)
-        .json(body)
-        .timeout(Duration::from_secs(120));
+    let mut req = client.post(url).json(body).timeout(timeout);
     if !api_key.is_empty() {
         req = req.bearer_auth(api_key);
     }
-    req.send()
-        .await
-        .map_err(|e| AppError::LlmError(format!("External LLM request failed: {e}")))
+    req.send().await.map_err(|e| {
+        AppError::LlmError(format!(
+            "External LLM request failed: {}",
+            describe_request_error(&e, timeout)
+        ))
+    })
 }
 
 /// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
@@ -492,14 +539,15 @@ pub async fn chat_external(
         "stream": false
     });
     let urls = external_chat_urls(base_url);
-    let mut resp = send_external_chat(client, &urls[0], api_key, &body).await?;
+    let timeout = chat_timeout(!images.is_empty());
+    let mut resp = send_external_chat(client, &urls[0], api_key, &body, timeout).await?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
         log::info!(
             "[prompt-assistant] {} returned 404, retrying at {}",
             urls[0],
             urls[1]
         );
-        resp = send_external_chat(client, &urls[1], api_key, &body).await?;
+        resp = send_external_chat(client, &urls[1], api_key, &body, timeout).await?;
     }
     if !resp.status().is_success() {
         let status = resp.status();
@@ -641,15 +689,21 @@ pub async fn chat_anthropic(
         "temperature": 0.7,
         "messages": [ { "role": "user", "content": user_content } ]
     });
+    let timeout = chat_timeout(!images.is_empty());
     let resp = client
         .post(anthropic_url(base_url, "messages"))
         .header("x-api-key", api_key)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .json(&body)
-        .timeout(Duration::from_secs(120))
+        .timeout(timeout)
         .send()
         .await
-        .map_err(|e| AppError::LlmError(format!("Anthropic request failed: {e}")))?;
+        .map_err(|e| {
+            AppError::LlmError(format!(
+                "Anthropic request failed: {}",
+                describe_request_error(&e, timeout)
+            ))
+        })?;
     if !resp.status().is_success() {
         let status = resp.status();
         let detail = error_detail(resp).await;
@@ -750,13 +804,19 @@ pub async fn list_models(
         }
         req.send()
     };
-    let mut resp = send(urls[0].clone())
-        .await
-        .map_err(|e| AppError::LlmError(format!("Model list request failed: {e}")))?;
+    let mut resp = send(urls[0].clone()).await.map_err(|e| {
+        AppError::LlmError(format!(
+            "Model list request failed: {}",
+            describe_request_error(&e, Duration::from_secs(30))
+        ))
+    })?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
-        resp = send(urls[1].clone())
-            .await
-            .map_err(|e| AppError::LlmError(format!("Model list request failed: {e}")))?;
+        resp = send(urls[1].clone()).await.map_err(|e| {
+            AppError::LlmError(format!(
+                "Model list request failed: {}",
+                describe_request_error(&e, Duration::from_secs(30))
+            ))
+        })?;
     }
     if !resp.status().is_success() {
         let status = resp.status();
@@ -964,8 +1024,48 @@ fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::completion_content;
+    use super::{chat_timeout, completion_content, error_chain};
     use serde_json::json;
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct Outer(std::io::Error);
+
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "error sending request for url (https://api.x.ai/v1)")
+        }
+    }
+
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn error_chain_appends_the_hidden_cause() {
+        let e = Outer(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "connection reset by peer",
+        ));
+        assert_eq!(
+            error_chain(&e),
+            "error sending request for url (https://api.x.ai/v1): connection reset by peer"
+        );
+    }
+
+    #[test]
+    fn error_chain_without_a_source_is_just_the_message() {
+        let e = std::io::Error::other("plain");
+        assert_eq!(error_chain(&e), "plain");
+    }
+
+    #[test]
+    fn vision_requests_get_a_longer_budget() {
+        assert!(chat_timeout(true) > chat_timeout(false));
+        assert_eq!(chat_timeout(false), Duration::from_secs(120));
+    }
 
     #[test]
     fn returns_the_message_content() {
