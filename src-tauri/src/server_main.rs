@@ -29,25 +29,30 @@ async fn main() {
 
     match (&admin_user, &admin_pass) {
         (Some(user), Some(pass)) if !user.trim().is_empty() && pass.len() >= 4 => {
-            let force_password_change = pass == "changeme";
-            if force_password_change {
-                log::warn!("============================================================");
-                log::warn!("  Using default admin password 'changeme'.");
-                log::warn!("  The admin must choose a new password on first login.");
-                log::warn!("============================================================");
-            }
-            let auth = AuthState::new();
-            match auth.create_account_ex(user, pass, force_password_change) {
-                Ok(()) => {
-                    // Promote to admin so they have full access remotely (account management, settings, etc.)
-                    let _ = auth.set_account_role(user, "admin");
-                    log::info!("Created admin account '{}' from environment", user);
-                }
-                Err(e) if e.contains("already exists") => {
-                    log::debug!("Admin account '{}' already exists, skipping", user);
-                }
-                Err(e) => {
-                    log::error!("Failed to create admin account: {}", e);
+            // Refuse the well-known default password: it must not be accepted even
+            // with a forced-change flag because the account would be reachable with
+            // a known credential the moment it is created.
+            if pass == "changeme" {
+                log::error!("============================================================");
+                log::error!("  MOOSHIEUI_ADMIN_PASS is set to 'changeme'.");
+                log::error!("  This default password is not accepted for security reasons.");
+                log::error!("  Set a strong unique password in your .env / Kubernetes secret");
+                log::error!("  and restart the server. No admin account was created.");
+                log::error!("============================================================");
+            } else {
+                let auth = AuthState::new();
+                match auth.create_account_ex(user, pass, false) {
+                    Ok(()) => {
+                        // Promote to admin so they have full access remotely.
+                        let _ = auth.set_account_role(user, "admin");
+                        log::info!("Created admin account '{}' from environment", user);
+                    }
+                    Err(e) if e.contains("already exists") => {
+                        log::debug!("Admin account '{}' already exists, skipping", user);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to create admin account: {}", e);
+                    }
                 }
             }
         }

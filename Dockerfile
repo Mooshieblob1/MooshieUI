@@ -106,7 +106,7 @@ RUN git clone --depth=1 --branch ${COMFYUI_VERSION} \
 RUN uv venv ${COMFYUI_PATH}/.venv --python python3.12 && \
     . ${COMFYUI_PATH}/.venv/bin/activate && \
     uv pip install torch==${TORCH_VERSION} torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cu126 && \
+        --index-url https://download.pytorch.org/whl/cu128 && \
     uv pip install -r ${COMFYUI_PATH}/requirements.txt && \
     uv pip install ultralytics==8.4.34 && \
     uv pip install --force-reinstall --no-deps opencv-python-headless

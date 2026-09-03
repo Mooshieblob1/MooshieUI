@@ -245,6 +245,11 @@ pub async fn add_custom_interrogator_model(
     path: String,
 ) -> Result<(), AppError> {
     let dir = PathBuf::from(&path);
+    // Resolve symlinks and remove any `..` traversal before doing I/O.
+    let dir = dir
+        .canonicalize()
+        .map_err(|e| AppError::InterrogatorError(format!("Cannot access '{}': {}", path, e)))?;
+    let path = dir.to_string_lossy().to_string();
 
     // Validate that the folder contains the required files.
     if !dir.join(crate::interrogator::MODEL_FILENAME).exists() {

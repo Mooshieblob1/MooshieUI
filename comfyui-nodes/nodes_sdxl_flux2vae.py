@@ -11,6 +11,7 @@ import nodes
 import latent_preview
 
 
+log = logging.getLogger(__name__)
 _PATCHED = False
 
 # --- PATCH SDXL MODEL FORWARD PASS ---
@@ -34,8 +35,8 @@ def _wrap_latent_preview():
             latent_channels = getattr(self.latent_format, "latent_channels", None)
             if latent_channels == 32 and x0.shape[1] == 128:
                 x0 = F.pixel_shuffle(x0, 2)  # (N,128,H,W)->(N,32,H*2,W*2)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("[sdxl_flux2vae] decode_latent_to_preview patch failed: %s", e)
         return original_decode(self, x0)
 
     Latent2RGBPreviewer.decode_latent_to_preview = decode_latent_to_preview
@@ -56,8 +57,8 @@ def _patch_unetmodel_forward():
                 first_layer = self.input_blocks[0][0]
                 if hasattr(first_layer, "weight") and first_layer.weight.shape[1] == 32:
                     is_packed = True
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[sdxl_flux2vae] packed-input detection failed: %s", e)
 
         # 1. PRE-PROCESS: Unpack Input (128ch -> 32ch)
         if is_packed:

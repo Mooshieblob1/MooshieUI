@@ -248,15 +248,24 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     }
 
     // INT8-Fast guard: when enabled for a split-model family, the family must
-    // have a known OTUNetLoaderW8A8 model_type mapping. Pre-quantized GGUF
-    // models bypass this because they already route through UnetLoaderGGUF.
+    // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
+    // are incompatible with the INT8-Fast loader (they route through
+    // UnetLoaderGGUF, not OTUNetLoaderW8A8) so that combination is rejected
+    // here as a hard error rather than silently ignored.
     if params.int8_fast_enabled && params.use_split_model {
         let unet = params
             .diffusion_model
             .as_deref()
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !unet.ends_with(".gguf") && int8_fast_model_type(&params.model_architecture).is_none() {
+        if unet.ends_with(".gguf") {
+            return Err(
+                "INT8-Fast loader is not compatible with GGUF diffusion models. \
+                 Disable the INT8-Fast loader in Settings before using a GGUF checkpoint."
+                    .to_string(),
+            );
+        }
+        if int8_fast_model_type(&params.model_architecture).is_none() {
             return Err(format!(
                 "INT8-Fast loader does not support the '{}' model family. \
                  Supported families: Flux.2 (Klein/Dev), Z-Image, Chroma, Krea 2, \
@@ -1372,6 +1381,22 @@ mod tests {
         assert!(
             msg.contains("illustrious"),
             "Error must name the offending family: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_params_rejects_int8_fast_with_gguf_model() {
+        // INT8-Fast + GGUF diffusion model must be a hard error: the GGUF loader
+        // and the INT8-Fast loader are mutually exclusive code paths, so allowing
+        // this combination would silently ignore the INT8-Fast toggle.
+        let mut params = klein_int8_params("flux2d", true);
+        params.diffusion_model = Some("flux1-dev-Q4_K_M.gguf".to_string());
+        let err = validate_generation_params(&params);
+        assert!(err.is_err(), "INT8-Fast + GGUF must be rejected");
+        let msg = err.unwrap_err();
+        assert!(
+            msg.contains("INT8-Fast loader is not compatible with GGUF"),
+            "Error must explain the GGUF incompatibility: {msg}"
         );
     }
 

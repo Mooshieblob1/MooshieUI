@@ -2724,7 +2724,7 @@ async fn dispatch_command(
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
             Ok(serde_json::json!(bytes))
         }
         "load_gallery_image_display" => {
@@ -2739,7 +2739,7 @@ async fn dispatch_command(
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
             let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
                 tokio::task::spawn_blocking(move || commands::api::transcode_jxl_to_webp(&bytes))
                     .await
@@ -2762,7 +2762,7 @@ async fn dispatch_command(
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
             let lower = filename.to_ascii_lowercase();
             let out = if lower.ends_with(".jxl") || lower.ends_with(".webp") {
                 tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -4917,6 +4917,26 @@ async fn dispatch_command(
         "add_custom_interrogator_model" => {
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             let dir = std::path::PathBuf::from(&path);
+            // Resolve symlinks and remove `..` traversal before any I/O.
+            let dir = dir
+                .canonicalize()
+                .map_err(|e| format!("Cannot access '{}': {}", path, e))?;
+            // In server mode, restrict the path to the interrogator-managed models root
+            // to prevent a remote caller from registering arbitrary filesystem paths.
+            {
+                let interrogator = state.interrogator.read().await;
+                let root = interrogator.root_dir();
+                if let Ok(allowed) = root.canonicalize() {
+                    if !dir.starts_with(&allowed) {
+                        return Err(format!(
+                            "Custom tagger model path must be inside the interrogator \
+                             models directory ('{}').",
+                            allowed.display()
+                        ));
+                    }
+                }
+            }
+            let path = dir.to_string_lossy().to_string();
             if !dir.join(crate::interrogator::MODEL_FILENAME).exists() {
                 return Err(format!(
                     "Folder '{}' does not contain model.onnx.",
@@ -5259,7 +5279,9 @@ async fn dispatch_command(
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
-            std::fs::write(&path, &image_bytes).map_err(|e| e.to_string())?;
+            tokio::fs::write(&path, &image_bytes)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "export_video_animation" => {
