@@ -35,7 +35,7 @@ class RifeInstallStore {
 
   /** A disk check rather than a cached flag, so deleting the pack re-arms it. */
   async refresh(): Promise<void> {
-    this.installed = await isRifeInstalled().catch(() => false);
+    this.installed = await isRifeInstalled().catch((e) => { console.warn("RIFE install check failed:", e); return false; });
   }
 
   /** Subscribe once, however many components mount. */
@@ -77,10 +77,10 @@ class RifeInstallStore {
       return true;
     } catch (e) {
       this.error = String(e);
-      this.installed = await isRifeInstalled().catch(() => false);
+      this.installed = await isRifeInstalled().catch((e) => { console.warn("RIFE install check failed after install:", e); return false; });
       return false;
     } finally {
-      await models.refresh().catch(() => {});
+      await models.refresh().catch((e) => { console.warn("Failed to refresh models after RIFE install:", e); });
       this.installing = false;
       this.step = "";
       this.message = "";

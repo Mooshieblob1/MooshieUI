@@ -3289,7 +3289,6 @@ class GenerationStore {
     const regionalContext = regionalPromptingSupported
       ? buildRegionalContextPrompt(
           translatedPositiveBase,
-          translatedPositiveSegments,
           this.loras.filter((l) => l.enabled && l.name),
         )
       : "";

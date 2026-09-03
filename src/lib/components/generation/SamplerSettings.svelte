@@ -517,12 +517,16 @@
         <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.scheduler')}<InfoTip text={locale.t('generation.sampler.scheduler_tip')} /></label>
         <select
           bind:value={generation.scheduler}
-          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          disabled={generation.isFlux2}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {#each models.schedulers as s}
             <option value={s}>{s}</option>
           {/each}
         </select>
+        {#if generation.isFlux2}
+          <p class="mt-1 text-[10px] text-neutral-500">{locale.t('generation.sampler.scheduler_flux2_note')}</p>
+        {/if}
       </div>
     {/if}
   </div>

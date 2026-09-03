@@ -160,9 +160,18 @@
     imageUrl: string;
     leaving: boolean;
   };
-  async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
+  async function awaitFetchesWithTimeout(fetches: Promise<void>[], promptId?: string): Promise<void> {
+    let timedOut = false;
+    const timeout = new Promise<void>((resolve) =>
+      setTimeout(() => { timedOut = true; resolve(); }, FETCH_TIMEOUT_MS)
+    );
     await Promise.race([Promise.allSettled(fetches), timeout]);
+    if (timedOut) {
+      console.warn(
+        `[awaitFetchesWithTimeout] output image fetch timed out after ${FETCH_TIMEOUT_MS}ms` +
+        (promptId ? ` for prompt ${promptId}` : ""),
+      );
+    }
   }
   /** Fetch a `_temp_image` URL, retrying a few times with exponential backoff.
    *  A transient failure here (e.g. a 401 while the LAN session token refreshes,
@@ -3007,14 +3016,13 @@
         if (data.persisted === false) {
           const rawPath = typeof data.video_path === "string" ? data.video_path : null;
           if (!rawPath) return;
-          progress.lastUnsavedVideoPath = rawPath;
-          progress.lastUnsavedVideoMeta = {
+          progress.addPendingVideo(rawPath, {
             fps: videoFps ?? null,
             frameCount: typeof data.frame_count === "number" ? data.frame_count : 0,
             width: typeof data.width === "number" ? data.width : 0,
             height: typeof data.height === "number" ? data.height : 0,
             promptId: typeof data.prompt_id === "string" ? data.prompt_id : "",
-          };
+          });
           return;
         }
 
@@ -3053,7 +3061,7 @@
           // so without this await the images map would be empty.
           const fetches = pendingOutputFetches.get(promptId);
           if (fetches && fetches.length > 0) {
-            await awaitFetchesWithTimeout(fetches);
+            await awaitFetchesWithTimeout(fetches, promptId);
             pendingOutputFetches.delete(promptId);
           }
 
@@ -3185,7 +3193,7 @@
             // Wait for any in-flight output_image fetches
             const fetches = pendingOutputFetches.get(p.promptId);
             if (fetches && fetches.length > 0) {
-              await awaitFetchesWithTimeout(fetches);
+              await awaitFetchesWithTimeout(fetches, p.promptId);
               pendingOutputFetches.delete(p.promptId);
             }
             let images = pendingOutputImages.get(p.promptId) ?? [];
