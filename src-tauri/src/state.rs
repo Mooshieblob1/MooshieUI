@@ -519,6 +519,8 @@ pub struct AppState {
     /// `download_model_file` (and the browser-mode download loop) check this each
     /// chunk and abort cleanly, deleting the partial file (#399).
     pub download_cancels: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Set to true to abort an in-progress `civitai_bulk_scan` between models.
+    pub civitai_scan_cancel: std::sync::atomic::AtomicBool,
 }
 
 fn is_private_or_local_host(host: &str) -> bool {
@@ -574,6 +576,7 @@ impl AppState {
             model_requests: ModelRequestState::new(),
             notifications: NotificationState::new(),
             download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
+            civitai_scan_cancel: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

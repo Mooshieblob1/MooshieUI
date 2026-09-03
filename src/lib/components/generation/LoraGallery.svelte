@@ -13,6 +13,7 @@
     saveModelSidecarThumbnail,
     type LoraCivitaiInfo,
   } from "../../utils/api.js";
+  import { civitaiScan } from "../../stores/civitaiScan.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import {
@@ -577,6 +578,85 @@
     {/if}
     {#if presetError}
       <p class="text-amber-300">{presetError}</p>
+    {/if}
+  </div>
+
+  <!-- CivitAI bulk scan controls -->
+  <div class="px-2 pt-1 pb-0.5 shrink-0">
+    {#if !civitaiScan.running && !civitaiScan.summary && !civitaiScan.progress}
+      <button
+        type="button"
+        onclick={() => void civitaiScan.scan(false)}
+        class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-neutral-100"
+      >
+        {locale.t("lora.civitai_scan.button")}
+      </button>
+    {:else if civitaiScan.running}
+      <div class="space-y-1">
+        <div class="flex items-center gap-1.5">
+          <div class="flex-1 h-1.5 rounded-full bg-neutral-700 overflow-hidden">
+            <div
+              class="h-full rounded-full bg-indigo-500 transition-all duration-300"
+              style="width: {Math.round(civitaiScan.fraction * 100)}%"
+            ></div>
+          </div>
+          <span class="text-[10px] text-neutral-400 shrink-0">
+            {civitaiScan.progress
+              ? locale.t("lora.civitai_scan.progress", {
+                  current: String(civitaiScan.progress.current),
+                  total: String(civitaiScan.progress.total),
+                })
+              : ""}
+          </span>
+          <button
+            type="button"
+            disabled={civitaiScan.cancelling}
+            onclick={() => void civitaiScan.cancel()}
+            class="shrink-0 rounded border border-red-700/60 px-1.5 py-0.5 text-[10px] text-red-300 hover:border-red-500 disabled:opacity-50"
+          >
+            {civitaiScan.cancelling
+              ? locale.t("lora.civitai_scan.cancelling")
+              : locale.t("lora.civitai_scan.cancel")}
+          </button>
+        </div>
+        {#if civitaiScan.progress}
+          <p class="text-[10px] text-neutral-400 truncate" title={civitaiScan.progress.name}>
+            {civitaiScan.progress.status === "hashing"
+              ? locale.t("lora.civitai_scan.hashing", { name: civitaiScan.progress.name })
+              : civitaiScan.progress.name}
+          </p>
+        {/if}
+      </div>
+    {:else if civitaiScan.summary || (civitaiScan.progress && civitaiScan.progress.done)}
+      <div class="flex items-center gap-2">
+        <p class="flex-1 text-[10px] text-neutral-300 truncate">
+          {civitaiScan.progress?.cancelled
+            ? locale.t("lora.civitai_scan.cancelled")
+            : locale.t("lora.civitai_scan.done")}
+          {#if civitaiScan.summary}
+            &ndash;
+            {locale.t("lora.civitai_scan.summary", {
+              found: String(civitaiScan.summary.found),
+              not_found: String(civitaiScan.summary.not_found),
+              skipped: String(civitaiScan.summary.skipped),
+            })}
+          {/if}
+        </p>
+        <button
+          type="button"
+          onclick={() => civitaiScan.dismiss()}
+          class="shrink-0 rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500"
+        >
+          {locale.t("lora.civitai_scan.dismiss")}
+        </button>
+        <button
+          type="button"
+          onclick={() => void civitaiScan.scan(true)}
+          class="shrink-0 rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-300 hover:border-indigo-500"
+        >
+          {locale.t("lora.civitai_scan.button_force")}
+        </button>
+      </div>
     {/if}
   </div>
 

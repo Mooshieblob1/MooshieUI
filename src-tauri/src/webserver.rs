@@ -218,6 +218,7 @@ fn is_staff_only_event(event: &str) -> bool {
         || event.starts_with("download:")
         || event.starts_with("install:")
         || event.starts_with("attention:")
+        || event.starts_with("comfyui:civitai_scan")
         || event == "custom_node:installed"
 }
 
@@ -274,6 +275,8 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "delete_model_file",
     "move_model_file",
     "create_model_folder",
+    "civitai_bulk_scan",
+    "civitai_bulk_scan_cancel",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -5422,6 +5425,28 @@ async fn dispatch_command(
             let encoded: Vec<serde_json::Value> =
                 bytes.iter().map(|b| serde_json::json!(*b)).collect();
             Ok(serde_json::Value::Array(encoded))
+        }
+
+        "civitai_bulk_scan" => {
+            let force = args["force"].as_bool().unwrap_or(false);
+            let state_for_emit = state.clone();
+            let state_for_scan = state.clone();
+            // Spawn in the background -- the scan can take many minutes.
+            // Progress is delivered via comfyui:civitai_scan SSE events.
+            tokio::spawn(async move {
+                let emit = move |payload: serde_json::Value| {
+                    state_for_emit.broadcast("comfyui:civitai_scan", payload);
+                };
+                crate::commands::api::civitai_bulk_scan_core(&state_for_scan, force, emit).await;
+            });
+            Ok(serde_json::json!(null))
+        }
+
+        "civitai_bulk_scan_cancel" => {
+            state
+                .civitai_scan_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(serde_json::json!(null))
         }
 
         // For commands not yet mapped, return an error
