@@ -35,11 +35,28 @@ fn is_civitai_url(url: &str) -> bool {
 
 /// Returns true when a non-2xx upload response looks like a JSON-only gateway
 /// rejecting the multipart request rather than a ComfyUI error.
+///
+/// The previous heuristic (`body.contains("application/json")`) was too broad:
+/// any ComfyUI JSON 4xx response body would match it. We now require:
+///   - HTTP 415 (Unsupported Media Type) — ComfyUI never emits this; always a proxy.
+///   - HTTP 400/413/422 with a body that mentions multipart, content-type, or
+///     "unsupported media type" — patterns specific to a proxy rejecting the
+///     multipart form; a plain ComfyUI error body does not use these terms.
 fn is_proxy_upload_rejection(status: u16, body: &str) -> bool {
-    let body_lc = body.to_lowercase();
-    status == 415
-        || body_lc.contains("application/json")
-        || body_lc.contains("unsupported media type")
+    // 415 Unsupported Media Type is unambiguously a content-negotiation rejection.
+    // ComfyUI itself never returns 415.
+    if status == 415 {
+        return true;
+    }
+    // For other 4xx statuses only flag as proxy if the body mentions
+    // multipart-specific terms. A plain ComfyUI JSON error must pass through.
+    if matches!(status, 400 | 413 | 422) {
+        let body_lc = body.to_lowercase();
+        return body_lc.contains("multipart")
+            || body_lc.contains("content-type")
+            || body_lc.contains("unsupported media type");
+    }
+    false
 }
 
 /// Extract the host (and port if non-default) from a URL string,
@@ -915,5 +932,54 @@ impl AppState {
             });
         }
         Ok(resp.bytes().await?.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxy_rejection_415_always_matches() {
+        assert!(is_proxy_upload_rejection(415, ""));
+        assert!(is_proxy_upload_rejection(415, r#"{"error":"unsupported"}"#));
+        // Even an innocuous body: 415 alone is decisive
+        assert!(is_proxy_upload_rejection(415, "OK"));
+    }
+
+    #[test]
+    fn proxy_rejection_400_multipart_body() {
+        // A gateway that only accepts JSON might say this:
+        let body = r#"{"message":"Multipart form data is not supported. Use application/json."}"#;
+        assert!(is_proxy_upload_rejection(400, body));
+    }
+
+    #[test]
+    fn proxy_rejection_422_content_type_body() {
+        let body = "Invalid content-type header for this endpoint";
+        assert!(is_proxy_upload_rejection(422, body));
+    }
+
+    #[test]
+    fn proxy_rejection_does_not_match_plain_comfyui_json_error() {
+        // A normal ComfyUI JSON error body (e.g. validation failure) must NOT
+        // be classified as a proxy rejection even though it's JSON.
+        let body = r#"{"error":"node_not_found","details":"KSampler not registered"}"#;
+        assert!(!is_proxy_upload_rejection(400, body));
+        assert!(!is_proxy_upload_rejection(422, body));
+    }
+
+    #[test]
+    fn proxy_rejection_does_not_match_non_4xx() {
+        // Non-4xx errors are never proxy rejections in this heuristic.
+        let body = r#"{"error":"internal error"}"#;
+        assert!(!is_proxy_upload_rejection(500, body));
+        assert!(!is_proxy_upload_rejection(200, body));
+    }
+
+    #[test]
+    fn proxy_rejection_unsupported_media_type_phrase_in_body() {
+        let body = "413 - Request Entity Too Large: unsupported media type for upload";
+        assert!(is_proxy_upload_rejection(413, body));
     }
 }

@@ -86,7 +86,12 @@ pub async fn download_llm_model(
         let mut cfg = state.config.write().await;
         cfg.prompt_assistant_model_id = Some(id.clone());
         cfg.prompt_assistant_setup_done = true;
-        let _ = crate::config::save_config(&cfg);
+        if let Err(e) = crate::config::save_config(&cfg) {
+            log::warn!(
+                "Failed to persist prompt assistant config after model setup: {}",
+                e
+            );
+        }
     }
     Ok(())
 }

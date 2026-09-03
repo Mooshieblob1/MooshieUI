@@ -70,7 +70,10 @@ export function setAuthUser(username: string) {
 }
 
 export function getAuthUser(): string | null {
-  return localStorage.getItem(AUTH_USER_KEY) ?? sessionStorage.getItem(AUTH_USER_KEY);
+  // Use the same storage backend that setAuthUser() writes to so the two are
+  // always symmetric. Without this, switching "remember me" between sessions
+  // could cause reads to return a stale value from the wrong backend.
+  return authStorage().getItem(AUTH_USER_KEY);
 }
 
 /** Returns true if the user previously selected "Remember me". */

@@ -1118,7 +1118,9 @@ pub async fn save_to_gallery(
         "metadata": metadata,
     });
     state.broadcast("mooshie:image_saved", payload.clone());
-    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    if let Err(e) = state.dispatch_webhook_event("image_saved", payload).await {
+        log::warn!("Webhook dispatch failed (image_saved): {}", e);
+    }
     Ok(saved)
 }
 
@@ -1150,7 +1152,9 @@ pub async fn save_to_gallery_bytes(
         "metadata": metadata,
     });
     state.broadcast("mooshie:image_saved", payload.clone());
-    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    if let Err(e) = state.dispatch_webhook_event("image_saved", payload).await {
+        log::warn!("Webhook dispatch failed (image_saved): {}", e);
+    }
     Ok(saved)
 }
 
@@ -1185,7 +1189,9 @@ pub async fn save_to_gallery_temp(
         "metadata": metadata,
     });
     state.broadcast("mooshie:image_saved", payload.clone());
-    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    if let Err(e) = state.dispatch_webhook_event("image_saved", payload).await {
+        log::warn!("Webhook dispatch failed (image_saved): {}", e);
+    }
     Ok(saved)
 }
 
@@ -7742,10 +7748,16 @@ pub async fn install_attention_backend_core(
         "sageattention",
         "flash-attn",
     ];
-    let _ = tokio_command_no_window(&uv)
+    if let Err(e) = tokio_command_no_window(&uv)
         .args(&uninstall_old)
         .output()
-        .await;
+        .await
+    {
+        log::warn!(
+            "Failed to remove old attention packages (continuing): {}",
+            e
+        );
+    }
 
     // Step 2: Install the requested backend
     if backend != "default" {
@@ -7841,7 +7853,9 @@ pub async fn install_attention_backend_core(
             emit("Verification failed — rolling back...");
             let mut rollback: Vec<&str> = vec!["pip", "uninstall", "--python", &python_str];
             rollback.extend(base_names.iter().copied());
-            let _ = tokio_command_no_window(&uv).args(&rollback).output().await;
+            if let Err(e) = tokio_command_no_window(&uv).args(&rollback).output().await {
+                log::warn!("Attention backend rollback command failed: {}", e);
+            }
             return Err(AppError::Other(format!(
                 "Installed {} but could not import it: {}. Rolled back; keeping the previous backend.",
                 backend,
