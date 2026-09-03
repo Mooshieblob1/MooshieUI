@@ -9,6 +9,7 @@ import {
 } from "../utils/promptSchedule.js";
 import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
 import { joinPromptBoxes, sanitizePromptForSend } from "../utils/promptSanitize.js";
+import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
@@ -3122,12 +3123,31 @@ class GenerationStore {
       ...inlineNegativeIds,
       ...novelAiCharacters.inlineIds,
     ]);
-    const inlinePositive = promptPresets.resolveInline(effectivePositive, {
+    const inlinePositiveRaw = promptPresets.resolveInline(effectivePositive, {
       fixedChoices: options.fixedPresetChoices,
     });
-    const inlineNegative = promptPresets.resolveInline(effectiveNegative, {
+    const inlineNegativeRaw = promptPresets.resolveInline(effectiveNegative, {
       fixedChoices: options.fixedPresetChoices,
     });
+
+    // Expand random alternation syntax ({a|b|c}, {2$$a|b|c}, etc.).
+    // Seeded from the user seed so the same seed always produces the same roll.
+    // When seed is -1 (let backend choose), we pick a fresh random integer so
+    // the expansion is still deterministic within this submission; the gallery
+    // stores the resolved (expanded) prompt so regenerating always reproduces.
+    const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
+    const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
+    const numericSeed = parseInt(this.seed, 10);
+    const rngSeed: number =
+      !isNaN(numericSeed) && numericSeed !== -1
+        ? numericSeed >>> 0
+        : (Math.random() * 0x100000000) >>> 0;
+    const inlinePositive = hasPositiveRandom
+      ? expandRandomPrompt(inlinePositiveRaw, rngSeed)
+      : inlinePositiveRaw;
+    const inlineNegative = hasNegativeRandom
+      ? expandRandomPrompt(inlineNegativeRaw, rngSeed + 1)
+      : inlineNegativeRaw;
 
     // Parse <segment:...> auto-refinement tags from the user-typed prompt before
     // system fragments (style presets, artist styles, preset appends, quality
