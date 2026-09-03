@@ -457,6 +457,203 @@ impl PromptQueue {
         self.cancelled.write().unwrap().remove(placeholder_id);
     }
 
+    /// Move a held prompt (by placeholder_id) to a new position within the
+    /// caller's own held items. Returns `true` if the prompt was found in the
+    /// held list and moved; `false` if it has already been submitted to ComfyUI.
+    ///
+    /// `new_user_position` is 0-indexed among the user's held items
+    /// (0 = submit next, `len-1` = submit last).
+    pub fn reorder_held_prompt(
+        &self,
+        prompt_id: &str,
+        new_user_position: usize,
+        username: &Option<String>,
+    ) -> bool {
+        let mut held = self.held.lock().unwrap();
+        let mut queue = self.queue.write().unwrap();
+
+        // Locate this prompt in the held list.
+        let held_pos = match held.iter().position(|hp| hp.placeholder_id == prompt_id) {
+            Some(pos) => pos,
+            None => return false,
+        };
+
+        // Indices (within held Vec) belonging to this user, in order.
+        let user_held: Vec<usize> = held
+            .iter()
+            .enumerate()
+            .filter(|(_, hp)| hp.username == *username)
+            .map(|(i, _)| i)
+            .collect();
+
+        let current_in_user = match user_held.iter().position(|&i| i == held_pos) {
+            Some(pos) => pos,
+            None => return false,
+        };
+
+        let target_in_user = new_user_position.min(user_held.len().saturating_sub(1));
+
+        // ---- Reorder in held Vec ----
+        if current_in_user != target_in_user {
+            let hp = held.remove(held_pos);
+            // Recalculate user indices after removal.
+            let user_held_after: Vec<usize> = held
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| h.username == *username)
+                .map(|(i, _)| i)
+                .collect();
+            let insert_at = if target_in_user == 0 {
+                user_held_after.first().copied().unwrap_or(0)
+            } else if target_in_user >= user_held_after.len() {
+                user_held_after.last().map(|&i| i + 1).unwrap_or(held.len())
+            } else {
+                user_held_after[target_in_user]
+            };
+            held.insert(insert_at, hp);
+        }
+
+        // ---- Mirror the reorder in the display queue Vec ----
+        let queue_pos = match queue.iter().position(|(id, _)| id == prompt_id) {
+            Some(pos) => pos,
+            None => return true, // held moved; queue is stale but we still succeeded
+        };
+
+        let user_queue: Vec<usize> = queue
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, owner))| owner == username)
+            .map(|(i, _)| i)
+            .collect();
+
+        let current_q_in_user = user_queue.iter().position(|&i| i == queue_pos);
+        let target_q_in_user = new_user_position.min(user_queue.len().saturating_sub(1));
+
+        if current_q_in_user != Some(target_q_in_user) {
+            let item = queue.remove(queue_pos);
+            let user_queue_after: Vec<usize> = queue
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, owner))| owner == username)
+                .map(|(i, _)| i)
+                .collect();
+            let q_insert = if target_q_in_user == 0 {
+                user_queue_after.first().copied().unwrap_or(0)
+            } else if target_q_in_user >= user_queue_after.len() {
+                user_queue_after
+                    .last()
+                    .map(|&i| i + 1)
+                    .unwrap_or(queue.len())
+            } else {
+                user_queue_after[target_q_in_user]
+            };
+            queue.insert(q_insert, item);
+        }
+
+        true
+    }
+
+    /// Re-enqueue a prompt that was already submitted to ComfyUI but must be
+    /// resubmitted at a different position (reorder). Cleans up the old
+    /// ComfyUI alias and inserts a fresh `HeldPrompt` at `new_user_position`
+    /// so the drain reactor picks it up in the right order.
+    ///
+    /// Callers must delete the old real_id from ComfyUI's queue BEFORE calling
+    /// this, since this method removes the alias tracking for it.
+    pub fn re_hold_for_reorder(
+        &self,
+        placeholder_id: &str,
+        old_real_id: &str,
+        workflow: serde_json::Value,
+        new_user_position: usize,
+        username: Option<String>,
+    ) {
+        // Remove old alias and associated tracking for the real id.
+        {
+            let mut aliases = self.aliases.write().unwrap();
+            aliases.remove(old_real_id);
+        }
+        {
+            let mut owners = self.owners.write().unwrap();
+            owners.remove(old_real_id);
+        }
+        {
+            let mut worker_map = self.worker_map.write().unwrap();
+            worker_map.remove(old_real_id);
+        }
+        {
+            let mut inserted = self.inserted_at.write().unwrap();
+            inserted.remove(old_real_id);
+        }
+        // Make sure the placeholder is not in the cancelled set.
+        self.cancelled.write().unwrap().remove(placeholder_id);
+
+        // Build a fresh HeldPrompt. Nobody is awaiting its result slot
+        // (the original submission already resolved); the drain reactor will
+        // set it after the resubmit.
+        let hp = HeldPrompt {
+            workflow,
+            username: username.clone(),
+            placeholder_id: placeholder_id.to_string(),
+            submitted: Arc::new(tokio::sync::Notify::new()),
+            result: Arc::new(tokio::sync::Mutex::new(None)),
+        };
+
+        // Insert at the right position within the user's held items.
+        {
+            let mut held = self.held.lock().unwrap();
+            let user_held: Vec<usize> = held
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| h.username == username)
+                .map(|(i, _)| i)
+                .collect();
+            let insert_at = if new_user_position == 0 {
+                user_held.first().copied().unwrap_or(0)
+            } else if new_user_position >= user_held.len() {
+                user_held.last().map(|&i| i + 1).unwrap_or(held.len())
+            } else {
+                user_held[new_user_position]
+            };
+            held.insert(insert_at, hp);
+        }
+
+        // Mirror in the display queue Vec.
+        {
+            let mut queue = self.queue.write().unwrap();
+            let queue_pos = queue.iter().position(|(id, _)| id == placeholder_id);
+            if let Some(from) = queue_pos {
+                let item = queue.remove(from);
+                let user_queue_after: Vec<usize> = queue
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, owner))| *owner == username)
+                    .map(|(i, _)| i)
+                    .collect();
+                let insert_at = if new_user_position == 0 {
+                    user_queue_after.first().copied().unwrap_or(0)
+                } else if new_user_position >= user_queue_after.len() {
+                    user_queue_after
+                        .last()
+                        .map(|&i| i + 1)
+                        .unwrap_or(queue.len())
+                } else {
+                    user_queue_after[new_user_position]
+                };
+                queue.insert(insert_at, item);
+            }
+        }
+    }
+
+    /// Return the ComfyUI real_id for a given placeholder_id, if one is bound.
+    pub fn real_id_for_placeholder(&self, placeholder_id: &str) -> Option<String> {
+        let aliases = self.aliases.read().unwrap();
+        aliases
+            .iter()
+            .find(|(_, ph)| ph.as_str() == placeholder_id)
+            .map(|(real, _)| real.clone())
+    }
+
     /// Clear all queue tracking state (owners, worker_map, queue).
     /// Does NOT clear held or aliases — those are managed separately.
     pub fn clear_all(&self) {

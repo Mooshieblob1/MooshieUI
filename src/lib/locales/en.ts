@@ -1994,6 +1994,22 @@ const en: Record<string, string> = {
   "settings.queue.management_title": "Queue Management",
   "settings.queue.management_desc": "Clear all pending and active generations. This interrupts everyone's in-progress generation.",
 
+  // Queue panel (drawer)
+  "queue.panel.title": "Your Queue",
+  "queue.panel.empty": "No pending generations.",
+  "queue.panel.running": "Running",
+  "queue.panel.elapsed": "{secs}s",
+  "queue.panel.position": "#{pos}",
+  "queue.panel.cancel": "Cancel",
+  "queue.panel.move_to_front": "Move to front",
+  "queue.panel.move_up": "Move up",
+  "queue.panel.move_down": "Move down",
+  "queue.panel.clear_pending": "Clear pending",
+  "queue.panel.interrupt": "Interrupt running",
+  "queue.panel.reorder_failed": "Could not reorder: {error}",
+  "queue.panel.cancel_failed": "Could not cancel: {error}",
+  "queue.panel.already_running": "That generation already started running.",
+
   // ── CivitAI section ─────────────────────────────────────
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API Key",

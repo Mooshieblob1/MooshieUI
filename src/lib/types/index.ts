@@ -631,6 +631,25 @@ export interface QueueInfo {
   }>;
 }
 
+/** A single row in the queue panel, covering both running and pending items. */
+export interface QueuePanelItem {
+  promptId: string;
+  /** 1-based position among the current user's pending items (0 = running). */
+  userPosition: number;
+  /** Short summary derived from the prompt text. */
+  summary: string;
+  /** Model name used for this generation. */
+  modelName: string;
+  /** Image dimensions, e.g. "1024x768". */
+  dimensions: string;
+  /** Batch size, e.g. "x4". Empty string when batch = 1. */
+  batchLabel: string;
+  /** Elapsed seconds for the currently-running item; undefined for pending. */
+  elapsedSecs?: number;
+  /** True when this item is currently running in ComfyUI. */
+  running: boolean;
+}
+
 export interface QueueDisplayItem {
   id: string;
   promptId: string;

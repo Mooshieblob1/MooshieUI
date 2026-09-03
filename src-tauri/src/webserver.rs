@@ -3205,6 +3205,79 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
+        "reorder_queue_item" => {
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            ensure_prompt_owned(&state, prompt_id, username)?;
+            let new_position = args["newPosition"]
+                .as_u64()
+                .ok_or("Missing or invalid newPosition")? as usize;
+            let user_opt: Option<String> = username.map(str::to_string);
+
+            // Case 1: still held locally.
+            if state
+                .prompt_queue
+                .reorder_held_prompt(prompt_id, new_position, &user_opt)
+            {
+                state.broadcast_queue_positions();
+                return Ok(serde_json::json!(null));
+            }
+
+            // Case 2: already submitted to ComfyUI.
+            let real_id = state
+                .prompt_queue
+                .real_id_for_placeholder(prompt_id)
+                .unwrap_or_else(|| prompt_id.to_string());
+
+            let queue_info = state.get_queue_info().await.map_err(|e| e.to_string())?;
+
+            let is_running = queue_info.queue_running.iter().any(|entry| {
+                entry
+                    .as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_str())
+                    .map(|id| id == real_id)
+                    .unwrap_or(false)
+            });
+            if is_running {
+                return Err("queue_item_already_running".to_string());
+            }
+
+            let workflow = queue_info
+                .queue_pending
+                .iter()
+                .find(|entry| {
+                    entry
+                        .as_array()
+                        .and_then(|a| a.get(1))
+                        .and_then(|v| v.as_str())
+                        .map(|id| id == real_id)
+                        .unwrap_or(false)
+                })
+                .and_then(|entry| entry.as_array())
+                .and_then(|a| a.get(2))
+                .cloned()
+                .ok_or("queue_item_not_found_in_comfyui")?;
+
+            for worker in &state.gpu_manager.workers {
+                let _ = state
+                    .http_client
+                    .post(format!("{}/queue", worker.base_url))
+                    .json(&serde_json::json!({ "delete": [real_id] }))
+                    .send()
+                    .await;
+            }
+
+            state.prompt_queue.re_hold_for_reorder(
+                prompt_id,
+                &real_id,
+                workflow,
+                new_position,
+                user_opt,
+            );
+            state.prompt_queue.drain_notify.notify_one();
+            state.broadcast_queue_positions();
+            Ok(serde_json::json!(null))
+        }
         "upload_image_bytes" => {
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
