@@ -19,6 +19,7 @@
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
@@ -150,6 +151,26 @@
   let logoCropPanX = $state(0);
   let logoCropPanY = $state(0);
   let logoCropTarget = $state<"draft" | "active">("draft");
+
+  // OS notification permission state
+  let osNotifPermissionDenied = $state(false);
+
+  async function handleOsNotificationsToggle(enabled: boolean) {
+    generation.osNotificationsEnabled = enabled;
+    generation.saveSettings();
+    if (!enabled) {
+      osNotifPermissionDenied = false;
+      return;
+    }
+    const perm = await requestOsNotificationPermission();
+    if (perm === "denied") {
+      osNotifPermissionDenied = true;
+      generation.osNotificationsEnabled = false;
+      generation.saveSettings();
+    } else {
+      osNotifPermissionDenied = false;
+    }
+  }
 
   // Gallery import state
   let importBusy = $state(false);
@@ -1119,6 +1140,7 @@
     { key: "models", labelKey: "settings.sections.models", keywords: "models manage delete move lora checkpoint vae upscaler controlnet" },
     { key: "modelRequests", labelKey: "settings.sections.model_requests", keywords: "model requests approve deny pending download civitai hub" },
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
+    { key: "notifications", labelKey: "settings.sections.notifications", keywords: "notification desktop os system toast alert sound unfocused background window focus" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space" },
@@ -3310,6 +3332,63 @@
             />
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.paths.extra_args_desc')}</p>
           </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Notifications -->
+        {#if sectionVisible("notifications")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.notifications = !collapsed.notifications)}
+          >
+            {locale.t('settings.notifications.title')}
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.notifications ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.notifications}
+          <div class="px-5 pb-5 space-y-4">
+
+            <!-- OS desktop notifications -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.osNotificationsEnabled}
+                  onchange={(e) => {
+                    handleOsNotificationsToggle((e.target as HTMLInputElement).checked);
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.os_enabled_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.notifications.os_enabled_desc')}</p>
+              {#if osNotifPermissionDenied}
+                <p class="text-[10px] text-red-400 mt-1 ml-6">{locale.t('settings.notifications.permission_denied')}</p>
+              {/if}
+            </div>
+
+            <!-- Only when unfocused -->
+            {#if generation.osNotificationsEnabled}
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.osNotifyOnlyWhenUnfocused}
+                  onchange={(e) => {
+                    generation.osNotifyOnlyWhenUnfocused = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.os_unfocused_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.notifications.os_unfocused_desc')}</p>
+            </div>
+            {/if}
+
           </div>
           {/if}
         </section>

@@ -98,6 +98,7 @@
   } from "./lib/utils/styleTransferNodes.js";
   import { classifyGenerationError } from "./lib/utils/generationErrors.js";
   import { formatGenerationTime } from "./lib/utils/localeFormat.js";
+  import { notifyOs, isWindowUnfocused } from "./lib/utils/osNotify.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -2267,6 +2268,11 @@
       kind: "success",
     });
 
+    const osBody = images.length > 1
+      ? locale.t("notifications.os.generation_done.body", { count: String(images.length) })
+      : locale.t("notifications.os.generation_done.body_single");
+    void maybeOsNotify(locale.t("notifications.os.generation_done.title"), osBody);
+
     clearGenerationDoneToastTimers();
     generationDoneToast = {
       id: ++generationDoneToastSeq,
@@ -2277,6 +2283,19 @@
       dismissGenerationDoneToast,
       GENERATION_DONE_TOAST_VISIBLE_MS,
     );
+  }
+
+  /**
+   * Fire an OS notification if the user has enabled them and the
+   * onlyWhenUnfocused condition (if set) is satisfied.
+   */
+  async function maybeOsNotify(title: string, body?: string): Promise<void> {
+    if (!generation.osNotificationsEnabled) return;
+    if (generation.osNotifyOnlyWhenUnfocused) {
+      const unfocused = await isWindowUnfocused();
+      if (!unfocused) return;
+    }
+    void notifyOs({ title, body });
   }
 
   function openGenerateFromDoneToast() {
@@ -3032,6 +3051,10 @@
         progress.lastOutputVideo = await gallery.loadFullImage(videoFilename);
         progress.lastOutputVideoFps = videoFps ?? null;
         progress.lastOutputVideoFilename = videoFilename;
+        void maybeOsNotify(
+          locale.t("notifications.os.video_done.title"),
+          locale.t("notifications.os.video_done.body"),
+        );
       }),
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
@@ -3117,6 +3140,10 @@
           generation.saveSettings();
         }
         gallery.showToast(toastMsg, "error", classified.durationMs ? { durationMs: classified.durationMs } : false);
+        void maybeOsNotify(
+          locale.t("notifications.os.generation_error.title"),
+          locale.t("notifications.os.generation_error.body"),
+        );
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
