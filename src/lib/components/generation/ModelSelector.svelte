@@ -3,9 +3,10 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, getComputeCapability } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, getComputeCapability, checkNodeAvailable, installCustomNode, isCustomNodeInstalled } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy, tick } from "svelte";
+  import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
@@ -554,6 +555,55 @@
       generation.modelFamily === "krea2" &&
       !isKrea2Encoder(generation.clipModel)
   );
+
+  // INT8-Fast (ComfyUI-INT8-Fast) node availability probe.
+  // null = not yet probed / disconnected; false = installed but node absent;
+  // true = ready. We never auto-enable the setting, only auto-clear it when
+  // the node goes away (consistent with NAG/APG pattern in SamplerSettings).
+  const INT8_FAST_NODE_CLASS = "OTUNetLoaderW8A8";
+  const INT8_FAST_GIT_URL = "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git";
+  const INT8_FAST_PACKAGE_NAME = "ComfyUI-INT8-Fast";
+
+  let int8FastAvailable = $state<boolean | null>(null);
+  let int8FastInstalling = $state(false);
+  let int8FastInstallError = $state<string | null>(null);
+
+  // Auto-suggest hint: shown when the diffusion model filename looks like an
+  // INT8-ConvRot file but the toggle is off. We only suggest — never silently
+  // enable — to avoid surprising users who picked the file for another reason.
+  const showInt8FastHint = $derived(
+    generation.useSplitModel &&
+      !generation.int8FastEnabled &&
+      /int8/i.test(generation.diffusionModel ?? "") &&
+      /convrot/i.test(generation.diffusionModel ?? "")
+  );
+
+  $effect(() => {
+    if (!connection.connected) return;
+    void (async () => {
+      const available = await checkNodeAvailable(INT8_FAST_NODE_CLASS).catch(() => null);
+      int8FastAvailable = available;
+      // Clear a persisted-but-now-unavailable setting to avoid broken workflows.
+      if (available === false && generation.int8FastEnabled) {
+        generation.int8FastEnabled = false;
+        generation.saveSettings();
+      }
+    })();
+  });
+
+  async function handleInt8FastInstall() {
+    int8FastInstalling = true;
+    int8FastInstallError = null;
+    try {
+      await installCustomNode(INT8_FAST_GIT_URL, INT8_FAST_PACKAGE_NAME);
+      // Re-probe after install so the UI updates immediately.
+      int8FastAvailable = await checkNodeAvailable(INT8_FAST_NODE_CLASS).catch(() => null);
+    } catch (e) {
+      int8FastInstallError = `${e}`;
+    } finally {
+      int8FastInstalling = false;
+    }
+  }
 
   // Per-file download progress. Keyed by filename so parallel downloads of
   // different components (diffusion model / text encoder / VAE) each have
@@ -1566,6 +1616,74 @@
       {#if showKrea2EncoderWarning}
         <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
           {locale.t('generation.model.krea2_encoder_warning')}
+        </div>
+      {/if}
+    </div>
+
+    <!-- INT8-Fast (ConvRot) loader toggle — only relevant for split models that
+         are not .gguf (which already route through UnetLoaderGGUF). Follows the
+         NAG/APG gating pattern: probe OTUNetLoaderW8A8 availability on connect,
+         disable toggle + show install button when missing, never auto-enable. -->
+    <div>
+      <div class="flex items-center justify-between">
+        <label class="flex items-center gap-2 text-xs text-neutral-400 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            class="accent-indigo-500"
+            disabled={int8FastAvailable === false}
+            checked={generation.int8FastEnabled}
+            onchange={(e) => {
+              generation.int8FastEnabled = (e.target as HTMLInputElement).checked;
+              generation.saveSettings();
+            }}
+          />
+          {locale.t('generation.model.int8_fast_label')}
+          <InfoTip text={locale.t('generation.model.int8_fast_tip')} />
+        </label>
+        {#if int8FastAvailable === false}
+          <span class="text-[10px] text-amber-400">{locale.t('generation.model.int8_fast_not_installed')}</span>
+        {/if}
+      </div>
+
+      {#if int8FastAvailable === false}
+        <div class="mt-1.5">
+          <button
+            class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+            disabled={int8FastInstalling}
+            onclick={handleInt8FastInstall}
+          >
+            {int8FastInstalling ? locale.t('generation.model.int8_fast_installing') : locale.t('generation.model.int8_fast_install')}
+          </button>
+          {#if int8FastInstallError}
+            <div class="mt-1 text-[11px] text-red-400">
+              {locale.t('generation.model.int8_fast_install_error', { error: int8FastInstallError })}
+            </div>
+          {/if}
+          <div class="mt-1 text-[10px] text-neutral-500">{locale.t('generation.model.int8_fast_nvidia_only')}</div>
+        </div>
+      {/if}
+
+      {#if generation.int8FastEnabled && int8FastAvailable !== false}
+        <div class="mt-2 ml-4">
+          <label class="flex items-center gap-2 text-xs text-neutral-400 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              checked={generation.int8FastConvrot}
+              onchange={(e) => {
+                generation.int8FastConvrot = (e.target as HTMLInputElement).checked;
+                generation.saveSettings();
+              }}
+            />
+            {locale.t('generation.model.int8_fast_convrot_label')}
+            <InfoTip text={locale.t('generation.model.int8_fast_convrot_tip')} />
+          </label>
+        </div>
+      {/if}
+
+      {#if showInt8FastHint}
+        <div class="mt-1.5 rounded-lg border border-indigo-600/30 bg-indigo-600/10 px-3 py-2 text-[11px] text-indigo-300">
+          {locale.t('generation.model.int8_fast_hint')}
         </div>
       {/if}
     </div>

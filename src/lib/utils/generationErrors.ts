@@ -286,6 +286,19 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     }
   }
 
+  // 9a. INT8/ConvRot loader error: the stock UNETLoader cannot load a
+  // pre-quantized INT8 file. The symptom is "Unknown quantization format for
+  // layer ..." raised by the OTUNetLoaderW8A8 code path *or* by the stock
+  // loader when it encounters the INT8 weight format without the right handler.
+  // The fix is to enable the INT8-Fast toggle, not to update ComfyUI.
+  if (
+    haystack.includes("unknown quantization format for layer") ||
+    (haystack.includes("otunetloaderw8a8") && haystack.includes("quantiz")) ||
+    (haystack.includes("int8") && haystack.includes("quantization format") && haystack.includes("layer"))
+  ) {
+    return { messageKey: "generation.error.int8_fast_required", durationMs: ACTIONABLE_MS };
+  }
+
   // 9. The checkpoint is quantized in a format the pinned ComfyUI predates
   // (e.g. int8_tensorwise landed in ComfyUI v0.27.0). Left unclassified this
   // reaches the user as a bare Python KeyError like `'int8_tensorwise'`, which

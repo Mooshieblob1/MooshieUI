@@ -30,7 +30,13 @@ export interface H3ModelFile {
   sizeBytes: number;
 }
 
-export type H3TierId = "nvfp4" | "int8" | "fp8" | "bf16";
+export type H3TierId = "nvfp4" | "int8" | "fp8" | "bf16" | "custom";
+
+/**
+ * Locale key for the custom tier label. The tier has no fixed files and no
+ * download — the user supplies all four model paths from the model store.
+ */
+export const H3_CUSTOM_TIER_LABEL_KEY = "generation.video.stack.custom";
 
 export interface H3Tier {
   id: H3TierId;
@@ -229,11 +235,13 @@ export function h3TierFiles(id: H3TierId): H3StackEntry[] {
 }
 
 /**
- * Which tier a DiT filename belongs to, or null when it is not a stack file we
- * know. Order matters: the int8-over-NVFP4 mixed builds carry both markers, and
- * they are NVFP4 first.
+ * Which preset tier a DiT filename belongs to, or null when it is not a stack
+ * file we know (including custom-tier or unrecognised files). Order matters: the
+ * int8-over-NVFP4 mixed builds carry both markers, and they are NVFP4 first.
+ * Never returns "custom" — the panel tracks that separately via
+ * `generation.videoModelTier`.
  */
-export function h3TierForDiffusionModel(filename: string | null | undefined): H3TierId | null {
+export function h3TierForDiffusionModel(filename: string | null | undefined): Exclude<H3TierId, "custom"> | null {
   const name = (filename ?? "").toLowerCase();
   if (!name) return null;
   if (name.includes("nvfp4")) return "nvfp4";

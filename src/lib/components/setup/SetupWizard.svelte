@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import logo from "../../assets/logo.png";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
-  import { checkAttentionBackend, type BackendSupport } from "../../utils/api.js";
+  import { checkAttentionBackend, uploadImageBytes, type BackendSupport } from "../../utils/api.js";
 
   let {
     onSetupComplete,
@@ -29,6 +29,7 @@
   let pipIndexUrl = $state("");
   let remoteServerUrl = $state("");
   let remoteChecklist = $state<string[]>([]);
+  let remoteUploadWarning = $state<string | null>(null);
   let gpuLabel = $derived(
     gpu === "nvidia"
       ? locale.t("setup.gpu.nvidia")
@@ -344,6 +345,7 @@
     progressMessage = locale.t("setup.remote_validating");
     errorMessage = "";
     remoteChecklist = [];
+    remoteUploadWarning = null;
     let originalConfig: any = null;
     try {
       const normalizedUrl = normalizeRemoteServerUrl(remoteServerUrl);
@@ -359,6 +361,34 @@
       await ipcInvoke("check_server_health");
       progressPercent = 85;
       await ipcInvoke("start_comfyui");
+      progressPercent = 95;
+
+      // Non-blocking upload probe: send a 1x1 PNG to /upload/image to detect
+      // JSON-only proxies in front of ComfyUI before the user hits it at
+      // generation time. Failure here is a warning, not a fatal error.
+      try {
+        // Minimal valid 1x1 transparent PNG (68 bytes).
+        const PNG_1X1_B64 =
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        const binaryString = atob(PNG_1X1_B64);
+        const bytes = Array.from({ length: binaryString.length }, (_, i) =>
+          binaryString.charCodeAt(i),
+        );
+        await uploadImageBytes(bytes, "mooshie_upload_probe.png");
+      } catch (uploadErr: any) {
+        const raw = String(uploadErr);
+        const PREFIX = "upload_rejected_non_multipart:";
+        if (raw.startsWith(PREFIX)) {
+          const parts = raw.slice(PREFIX.length).split("|");
+          const host = parts[0] ?? "";
+          const status = parts[1] ?? "415";
+          remoteUploadWarning = locale.t("setup.remote_upload_warning_detail", { host, status });
+        }
+        // Non-proxy failures (e.g. network hiccup) are silently swallowed:
+        // the server is up, so let the user proceed and fail later only if
+        // they actually try a video generation.
+      }
+
       progressPercent = 100;
       phase = "choose-mode";
     } catch (e: any) {
@@ -386,6 +416,7 @@
     phase = "ready";
     errorMessage = "";
     remoteChecklist = [];
+    remoteUploadWarning = null;
   }
 
   function stepStatus(stepId: string): "done" | "active" | "pending" {
@@ -806,6 +837,13 @@
           <p class="text-neutral-400 text-sm mb-6">
             {locale.t("setup.choose_mode.question")}
           </p>
+
+          {#if remoteUploadWarning}
+            <div class="bg-amber-950/50 border border-amber-700 rounded-lg p-3 mb-4 text-left">
+              <p class="text-amber-300 text-xs font-medium mb-1">{locale.t("setup.remote_upload_warning_title")}</p>
+              <p class="text-amber-200 text-[11px] break-all">{remoteUploadWarning}</p>
+            </div>
+          {/if}
 
           <div class="flex gap-4 justify-center mb-6">
             <!-- App Mode -->

@@ -560,6 +560,8 @@ pub fn run() {
             commands::interrogator::interrogate_clipboard,
             commands::interrogator::list_interrogator_models,
             commands::interrogator::delete_interrogator_model,
+            commands::interrogator::add_custom_interrogator_model,
+            commands::interrogator::remove_custom_interrogator_model,
             commands::prompt_assistant::detect_llm_hardware,
             commands::prompt_assistant::list_llm_catalog,
             commands::prompt_assistant::llm_status,
@@ -598,6 +600,7 @@ pub fn run() {
             commands::video_export::copy_file_to_clipboard,
             commands::video_export::copy_file_to,
             commands::video_interpolate::interpolate_video,
+            commands::api::save_video_to_gallery_manual,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

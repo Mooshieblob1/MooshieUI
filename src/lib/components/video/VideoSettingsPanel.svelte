@@ -44,6 +44,7 @@
     suggestH3Megapixels,
   } from "../../utils/videoParams.js";
   import {
+    H3_CUSTOM_TIER_LABEL_KEY,
     H3_DEFAULT_TIER,
     H3_TIERS,
     H3_TURBO_LORA,
@@ -237,8 +238,25 @@
   );
 
   const turboLoraName = $derived(installedName(H3_TURBO_LORA));
-  /** Both halves have to be present before the workflow can reference them. */
-  const turboReady = $derived(turboInstalled === true && turboLoraName !== null);
+  /** Whether a LoRA filename (any basename) is present in the LoRA list. */
+  function loraInstalled(filename: string): boolean {
+    const wanted = filename.toLowerCase();
+    return models.loras.some((entry) => {
+      const base = entry.replace(/\\/g, "/").split("/").pop() ?? entry;
+      return base.toLowerCase() === wanted;
+    });
+  }
+  /**
+   * Both the node pack and the LoRA file have to be present. For custom tier the
+   * user picks their own LoRA, so check `generation.videoTurboLora` instead of
+   * the hard-coded standard file.
+   */
+  const turboReady = $derived(
+    turboInstalled === true &&
+      (selectedTier === "custom"
+        ? loraInstalled(generation.videoTurboLora)
+        : turboLoraName !== null),
+  );
   /** No adapter file for TeaCache - the node pack alone gates the toggle. */
   const teacacheReady = $derived(teacacheInstalled === true);
 
@@ -444,14 +462,21 @@
       selectedTier = resolveTier();
       tierResolved = true;
     }
-    applyStack();
+    // Custom tier: the user manages all four model fields directly from the
+    // selects below — applyStack would overwrite them with null (no fixed files).
+    if (selectedTier !== "custom") {
+      applyStack();
+    }
   });
 
   /**
-   * Best tier for this machine: whatever the store already points at, else
-   * whatever is installed, else NVFP4 on Blackwell and the int8 default below.
+   * Best tier for this machine: persisted "custom" wins immediately; else
+   * whatever the store's diffusion model filename implies; else whatever is
+   * installed; else NVFP4 on Blackwell and the int8 default below.
    */
   function resolveTier(): H3TierId {
+    // If the user explicitly chose custom last session, restore it.
+    if (generation.videoModelTier === "custom") return "custom";
     const fromStore = h3TierForDiffusionModel(generation.videoDiffusionModel);
     if (fromStore) return fromStore;
     for (const tier of H3_TIERS) {
@@ -466,9 +491,13 @@
 
   function selectTier(event: Event) {
     selectedTier = (event.currentTarget as HTMLSelectElement).value as H3TierId;
+    generation.videoModelTier = selectedTier;
+    generation.saveSettings();
     tierResolved = true;
     stackError = null;
-    applyStack();
+    if (selectedTier !== "custom") {
+      applyStack();
+    }
   }
 
   /**
@@ -760,6 +789,22 @@
     return slots.find((slot) => slot.key === key);
   }
 
+  /**
+   * Classify a raw upload error string. When the error has the
+   * `upload_rejected_non_multipart:` prefix set by the Rust client, return
+   * a translated, actionable message. All other errors are returned as-is.
+   */
+  function classifyUploadError(raw: string): string {
+    const PREFIX = "upload_rejected_non_multipart:";
+    if (raw.startsWith(PREFIX)) {
+      const parts = raw.slice(PREFIX.length).split("|");
+      const host = parts[0] ?? "";
+      const status = parts[1] ?? "415";
+      return locale.t("errors.upload_proxy_rejection_inline", { host, status });
+    }
+    return raw;
+  }
+
   async function uploadToSlot(key: string, file: File) {
     if (!file.type.startsWith("image/")) return;
     const slot = findSlot(key);
@@ -780,7 +825,7 @@
       generation.saveSettings();
     } catch (e) {
       console.error("Failed to upload video frame:", e);
-      uploadError = String(e);
+      uploadError = classifyUploadError(String(e));
       setPreview(key, null);
       slot.assign(null);
       slot.assignAspect?.(null);
@@ -814,7 +859,7 @@
       generation.saveSettings();
     } catch (e) {
       console.error("Failed to assign gallery image to video frame:", e);
-      uploadError = String(e);
+      uploadError = classifyUploadError(String(e));
     } finally {
       uploadingSlot = null;
     }
@@ -836,7 +881,7 @@
         );
       } catch (e) {
         console.error("Failed to assign gallery image to video reference:", e);
-        uploadError = String(e);
+        uploadError = classifyUploadError(String(e));
         break;
       } finally {
         uploadingSlot = null;
@@ -1628,6 +1673,7 @@
       {#each H3_TIERS as tier (tier.id)}
         <option value={tier.id}>{locale.t(tier.labelKey)}</option>
       {/each}
+      <option value="custom">{locale.t(H3_CUSTOM_TIER_LABEL_KEY)}</option>
     </select>
 
     {#if tierUnderpowered}
@@ -1636,87 +1682,242 @@
       </p>
     {/if}
 
-    <div class="space-y-1">
-      {#each tierFiles as entry (entry.file.filename)}
-        {@const installed = installedName(entry.file) !== null}
-        <div class="flex items-center gap-2 text-[11px]">
-          <div class="min-w-0 flex-1">
-            <p class="text-neutral-300 truncate">
-              {locale.t(entry.labelKey)}
-              {#if entry.role === generation.videoVariant}
-                <span class="text-indigo-400">({locale.t("generation.video.role_in_use")})</span>
-              {/if}
-            </p>
-            <p class="text-neutral-500 truncate" title={entry.file.filename}>
-              {entry.file.filename}
-            </p>
-          </div>
-          <span class="shrink-0 font-mono text-neutral-500">
-            {locale.formatBytes(entry.file.sizeBytes)}
-          </span>
-          {#if installed}
-            <svg
-              class="w-3.5 h-3.5 shrink-0 text-emerald-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-label={locale.t("generation.video.stack_file_installed")}
-              role="img"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="3"
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-          {:else}
-            <button
-              type="button"
-              onclick={() => downloadOne(entry.file)}
-              disabled={downloadingStack || downloadingFile !== null || turboInstalling}
-              class="shrink-0 px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50 disabled:hover:border-neutral-700 disabled:hover:text-neutral-300 transition-colors"
-            >
-              {locale.t("generation.video.stack_download_one")}
-            </button>
-          {/if}
+    {#if selectedTier === "custom"}
+      <!-- Custom tier: the user picks all four model files from the model store. -->
+      <div class="space-y-2">
+        <p class="text-[11px] text-neutral-400">
+          {locale.t("generation.video.custom_tip")}
+        </p>
+
+        <!-- Diffusion model -->
+        <div>
+          <label for="custom-diffusion-model" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_diffusion_model")}
+          </label>
+          <select
+            id="custom-diffusion-model"
+            value={generation.videoDiffusionModel ?? ""}
+            onchange={(e) => {
+              generation.videoDiffusionModel = (e.currentTarget as HTMLSelectElement).value || null;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option value="">{locale.t('common.none')}</option>
+            {#each models.diffusionModels as m (m)}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
         </div>
-      {/each}
-    </div>
 
-    {#if missingTierFiles.length === 0}
-      <p class="text-[11px] text-neutral-500">{locale.t("generation.video.stack_ready")}</p>
+        <!-- Text encoder -->
+        <div>
+          <label for="custom-clip-model" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_clip_model")}
+          </label>
+          <select
+            id="custom-clip-model"
+            value={generation.videoClipModel ?? ""}
+            onchange={(e) => {
+              generation.videoClipModel = (e.currentTarget as HTMLSelectElement).value || null;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option value="">{locale.t('common.none')}</option>
+            {#each models.textEncoders as m (m)}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Video VAE -->
+        <div>
+          <label for="custom-vae-model" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_vae_model")}
+          </label>
+          <select
+            id="custom-vae-model"
+            value={generation.videoVaeModel ?? ""}
+            onchange={(e) => {
+              generation.videoVaeModel = (e.currentTarget as HTMLSelectElement).value || null;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option value="">{locale.t('common.none')}</option>
+            {#each models.vaes as m (m)}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Audio VAE -->
+        <div>
+          <label for="custom-audio-vae-model" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_audio_vae_model")}
+          </label>
+          <select
+            id="custom-audio-vae-model"
+            value={generation.videoAudioVaeModel ?? ""}
+            onchange={(e) => {
+              generation.videoAudioVaeModel = (e.currentTarget as HTMLSelectElement).value || null;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option value="">{locale.t('common.none')}</option>
+            {#each models.vaes as m (m)}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Turbo LoRA -->
+        <div>
+          <label for="custom-turbo-lora" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_turbo_lora")}
+          </label>
+          <select
+            id="custom-turbo-lora"
+            value={generation.videoTurboLora}
+            onchange={(e) => {
+              generation.videoTurboLora = (e.currentTarget as HTMLSelectElement).value;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            {#each models.loras as m (m)}
+              <option value={m}>{m}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Sampler -->
+        <div>
+          <label for="custom-sampler" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_sampler")}
+          </label>
+          <select
+            id="custom-sampler"
+            value={generation.videoSampler ?? ""}
+            onchange={(e) => {
+              generation.videoSampler = (e.currentTarget as HTMLSelectElement).value || null;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option value="">{locale.t("generation.video.custom_sampler_default")}</option>
+            {#each [...new Set([...models.samplers, "euler", "res_multistep"])] as s (s)}
+              <option value={s}>{s}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Scheduler -->
+        <div>
+          <label for="custom-scheduler" class="block text-[11px] text-neutral-400 mb-1">
+            {locale.t("generation.video.custom_scheduler")}
+          </label>
+          <select
+            id="custom-scheduler"
+            value={generation.videoScheduler ?? ""}
+            onchange={(e) => {
+              generation.videoScheduler = (e.currentTarget as HTMLSelectElement).value || null;
+              generation.saveSettings();
+            }}
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          >
+            <option value="">{locale.t("generation.video.custom_scheduler_default")}</option>
+            {#each [...new Set([...models.schedulers, "simple", "beta", "normal"])] as s (s)}
+              <option value={s}>{s}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
     {:else}
-      <p class="text-[11px] text-amber-300">
-        {locale.t("generation.video.stack_missing", {
-          count: missingTierFiles.length,
-          total: tierFiles.length,
-          size: locale.formatBytes(tierDownloadBytes),
-        })}
-      </p>
-      <button
-        type="button"
-        onclick={downloadStack}
-        disabled={downloadingStack || downloadingFile !== null || turboInstalling}
-        class="w-full px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-sm text-white transition-colors"
-      >
-        {downloadingStack
-          ? locale.t("generation.video.stack_downloading")
-          : locale.t("generation.video.stack_download", {
-              count: missingTierFiles.length,
-              size: locale.formatBytes(tierDownloadBytes),
-            })}
-      </button>
-    {/if}
+      <div class="space-y-1">
+        {#each tierFiles as entry (entry.file.filename)}
+          {@const installed = installedName(entry.file) !== null}
+          <div class="flex items-center gap-2 text-[11px]">
+            <div class="min-w-0 flex-1">
+              <p class="text-neutral-300 truncate">
+                {locale.t(entry.labelKey)}
+                {#if entry.role === generation.videoVariant}
+                  <span class="text-indigo-400">({locale.t("generation.video.role_in_use")})</span>
+                {/if}
+              </p>
+              <p class="text-neutral-500 truncate" title={entry.file.filename}>
+                {entry.file.filename}
+              </p>
+            </div>
+            <span class="shrink-0 font-mono text-neutral-500">
+              {locale.formatBytes(entry.file.sizeBytes)}
+            </span>
+            {#if installed}
+              <svg
+                class="w-3.5 h-3.5 shrink-0 text-emerald-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-label={locale.t("generation.video.stack_file_installed")}
+                role="img"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="3"
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+            {:else}
+              <button
+                type="button"
+                onclick={() => downloadOne(entry.file)}
+                disabled={downloadingStack || downloadingFile !== null || turboInstalling}
+                class="shrink-0 px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50 disabled:hover:border-neutral-700 disabled:hover:text-neutral-300 transition-colors"
+              >
+                {locale.t("generation.video.stack_download_one")}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
 
-    {#if (downloadingStack || downloadingFile !== null) && dlOrder.length > 0}
-      {@render downloadRows()}
-    {/if}
+      {#if missingTierFiles.length === 0}
+        <p class="text-[11px] text-neutral-500">{locale.t("generation.video.stack_ready")}</p>
+      {:else}
+        <p class="text-[11px] text-amber-300">
+          {locale.t("generation.video.stack_missing", {
+            count: missingTierFiles.length,
+            total: tierFiles.length,
+            size: locale.formatBytes(tierDownloadBytes),
+          })}
+        </p>
+        <button
+          type="button"
+          onclick={downloadStack}
+          disabled={downloadingStack || downloadingFile !== null || turboInstalling}
+          class="w-full px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-sm text-white transition-colors"
+        >
+          {downloadingStack
+            ? locale.t("generation.video.stack_downloading")
+            : locale.t("generation.video.stack_download", {
+                count: missingTierFiles.length,
+                size: locale.formatBytes(tierDownloadBytes),
+              })}
+        </button>
+      {/if}
 
-    {#if stackError}
-      <p class="text-[11px] text-red-400">
-        {locale.t("generation.video.stack_download_failed", { error: stackError })}
-      </p>
+      {#if (downloadingStack || downloadingFile !== null) && dlOrder.length > 0}
+        {@render downloadRows()}
+      {/if}
+
+      {#if stackError}
+        <p class="text-[11px] text-red-400">
+          {locale.t("generation.video.stack_download_failed", { error: stackError })}
+        </p>
+      {/if}
     {/if}
   </div>
 </div>

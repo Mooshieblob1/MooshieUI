@@ -21,6 +21,18 @@ fn default_true() -> bool {
     true
 }
 
+/// A user-supplied ONNX tagger folder registered as a custom model.
+/// MooshieUI never downloads or deletes these files; the user manages them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomInterrogatorModel {
+    /// Stable id derived from the folder name (e.g. "custom-my-tagger").
+    pub id: String,
+    /// Human-readable display name shown in the dropdown.
+    pub label: String,
+    /// Absolute path to the folder containing model.onnx and selected_tags.csv.
+    pub path: String,
+}
+
 fn default_llm_idle_timeout() -> u64 {
     30
 }
@@ -97,8 +109,12 @@ pub struct AppConfig {
     /// Interrogator: character tag confidence threshold (0.0–1.0)
     pub interrogator_character_threshold: f32,
     /// Interrogator: id of the selected tagger from `interrogator::INTERROGATOR_MODELS`.
-    /// Unknown ids fall back to the default model at load time.
+    /// Unknown ids produce a clear error at run time.
     pub interrogator_model: String,
+    /// User-supplied ONNX tagger folders registered as custom models.
+    /// MooshieUI never downloads or deletes files from these paths.
+    #[serde(default)]
+    pub interrogator_custom_models: Vec<CustomInterrogatorModel>,
     /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
     pub prompt_assistant_model_id: Option<String>,
     /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
@@ -220,6 +236,12 @@ pub struct AppConfig {
     /// where there's no untrusted guest to protect against.
     #[serde(default)]
     pub gallery_never_expire: bool,
+    /// When true, video outputs (ComfyUI generations, RIFE interpolations) are
+    /// NOT automatically moved into the gallery. The frontend receives the raw
+    /// output path and must explicitly call `save_video_to_gallery_manual` to
+    /// persist the clip. Mirrors the image-side `manualSaveMode` toggle.
+    #[serde(default)]
+    pub manual_save_mode: bool,
 }
 
 /// Default report proxy endpoint. In-app error reports post here unless the
@@ -271,6 +293,7 @@ impl Default for AppConfig {
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
             interrogator_model: crate::interrogator::DEFAULT_INTERROGATOR_MODEL.to_string(),
+            interrogator_custom_models: vec![],
             prompt_assistant_model_id: None,
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,
@@ -306,6 +329,7 @@ impl Default for AppConfig {
             llm_xai_scope: String::new(),
             report_endpoint: default_report_endpoint(),
             gallery_never_expire: false,
+            manual_save_mode: false,
         }
     }
 }

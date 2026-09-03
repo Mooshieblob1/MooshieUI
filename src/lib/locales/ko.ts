@@ -198,6 +198,8 @@ const ko: Record<string, string> = {
   "setup.remote_missing_nodes_install": "Deploy or update the MooshieUI server build (Docker) on your cloud GPU. It includes ComfyUI and all required custom nodes.",
   "setup.remote_missing_nodes_restart": "Fully restart the remote ComfyUI or python process so the new nodes load.",
   "setup.remote_missing_nodes_retry": "Return here and retry validation after the remote server comes back up.",
+  "setup.remote_upload_warning_title": "프록시에 의해 이미지 업로드 차단됨",
+  "setup.remote_upload_warning_detail": "{host} 서버가 테스트 이미지 업로드(HTTP {status})를 거부했습니다. ComfyUI 앞에 있는 무언가가 JSON 요청만 허용하므로 /upload/image로의 멀티파트 업로드가 ComfyUI에 도달하지 못합니다. 이 문제가 해결될 때까지 동영상 프레임 및 참조 이미지 업로드가 실패합니다. 원격 서버 URL을 확인하고 프록시 또는 서버리스 게이트웨이가 요청을 가로채지 않는지 확인하세요.",
 
   // ── 설정 페이지 ─────────────────────────────────────────
   "settings.title": "설정",
@@ -778,6 +780,17 @@ const ko: Record<string, string> = {
   "generation.video.stack.int8": "int8 - 21 GB, 권장",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, 전체 정밀도",
+  "generation.video.stack.custom": "사용자 지정 - 직접 파일 사용",
+  "generation.video.custom_tip": "로컬 모델 저장소에서 각 모델 파일을 선택하세요. GGUF 파일은 GGUF 로더로 자동 로드됩니다.",
+  "generation.video.custom_diffusion_model": "확산 모델",
+  "generation.video.custom_clip_model": "텍스트 인코더",
+  "generation.video.custom_vae_model": "비디오 VAE",
+  "generation.video.custom_audio_vae_model": "오디오 VAE",
+  "generation.video.custom_turbo_lora": "터보 LoRA",
+  "generation.video.custom_sampler": "샘플러",
+  "generation.video.custom_sampler_default": "기본값 (res_multistep)",
+  "generation.video.custom_scheduler": "스케줄러",
+  "generation.video.custom_scheduler_default": "기본값 (simple)",
   "generation.video.stack_ready": "모든 모델 파일이 설치되어 있습니다.",
   "generation.video.stack_missing": "모델 파일 {total}개 중 {count}개가 없습니다. 내려받을 용량은 {size}입니다.",
   "generation.video.stack_download": "없는 파일 모두 내려받기 ({count}개, {size})",
@@ -1638,6 +1651,15 @@ const ko: Record<string, string> = {
   "settings.interrogator.thresholds_desc": "이미지 인터로게이터의 신뢰도 임계값을 제어합니다. 낮은 값은 더 많은 태그를 반환하고, 높은 값은 더 선택적입니다.",
   "settings.interrogator.more_tags": "태그 늘리기",
   "settings.interrogator.fewer_tags": "태그 줄이기",
+  "settings.interrogator.custom_tag": "(사용자 정의)",
+  "settings.interrogator.custom_models_title": "사용자 정의 모델",
+  "settings.interrogator.remove": "제거",
+  "settings.interrogator.removing": "제거 중...",
+  "settings.interrogator.add_custom": "사용자 정의 태거 폴더 추가",
+  "settings.interrogator.add_custom_dialog_title": "태거 폴더 선택",
+  "settings.interrogator.add_custom_desc": "WD v3 계열 태거의 model.onnx와 selected_tags.csv가 포함된 로컬 폴더를 추가합니다.",
+  "settings.interrogator.adding": "추가 중...",
+  "settings.interrogator.custom_path_placeholder": "폴더 경로...",
 
   "generation.controlnet.browse_or_drop": "찾아보기 또는 이미지 드롭",
   "generation.controlnet.paste": "붙여넣기",
@@ -2376,6 +2398,8 @@ const ko: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_unsaved_label": "동영상 준비 완료 - 갤러리에 저장되지 않음",
+  "preview.save_video_to_gallery": "갤러리에 저장",
   "preview.video_alt": "동영상 미리보기",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
@@ -2475,6 +2499,7 @@ const ko: Record<string, string> = {
   "generation.error.missing_node": "이 워크플로에는 설치되지 않은 커스텀 노드가 필요합니다: {node}. ComfyUI에 설치하고 다시 시작하세요.",
   "generation.error.component_mismatch": "이 모델 구성 요소들이 서로 맞지 않습니다. 체크포인트, VAE, LoRA, CLIP이 모두 같은 모델 계열(예: 모두 SDXL)인지 확인하세요.",
   "generation.error.quant_format_unsupported": "이 모델은 '{format}' 양자화 형식을 사용하지만 설치된 ComfyUI가 지원하지 않습니다. 설정 > 성능에서 ComfyUI를 업데이트하거나 양자화되지 않은 버전의 모델을 선택하세요.",
+  "generation.error.int8_fast_required": "이 모델은 표준 로더가 처리할 수 없는 INT8/ConvRot 양자화를 사용합니다. 모델 설정에서 'INT8-Fast 로더' 토글을 활성화하세요(ComfyUI-INT8-Fast가 자동으로 설치됩니다). NVIDIA GPU가 필요합니다.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",
@@ -3007,6 +3032,10 @@ const ko: Record<string, string> = {
   "errors.generation_interrupted.why": "취소되었거나 ComfyUI가 도중에 중단되었습니다.",
 
   "errors.generation_interrupted.fixes": "생성을 다시 시작하세요. || ComfyUI가 계속 실행 중인지 확인하세요. || 직접 취소하지 않았다면 로그를 확인하세요.",
+  "errors.upload_proxy_rejection.title": "프록시에 의해 이미지 업로드 차단됨",
+  "errors.upload_proxy_rejection.what": "ComfyUI로 이미지를 업로드하려는 요청이 중간 프록시에 의해 거부되었습니다.",
+  "errors.upload_proxy_rejection.why": "ComfyUI 앞에 있는 무언가(서버리스 게이트웨이, 리버스 프록시 또는 로드 밸런서)가 JSON 요청만 허용하여 multipart/form-data 업로드를 거부했습니다.",
+  "errors.upload_proxy_rejection.fixes": "원격 서버 URL을 확인하고 프록시 또는 서버리스 게이트웨이가 /upload/image를 가로채지 않는지 확인하세요. || 멀티파트 요청이 ComfyUI에 직접 도달할 수 있을 때까지 동영상 프레임 및 참조 이미지 업로드가 실패합니다.",
 
   "errors.io_permission.title": "파일 접근이 거부되었습니다",
 
@@ -3023,6 +3052,7 @@ const ko: Record<string, string> = {
   "errors.serialization.why": "응답이 잘못된 형식이거나 파일이 손상되었습니다.",
 
   "errors.serialization.fixes": "작업을 다시 시도하세요. || 앱을 재시작하세요. || 계속 발생하면 보고하세요.",
+  "errors.upload_proxy_rejection_inline": "{host} 서버가 이미지 업로드(HTTP {status})를 거부했습니다. ComfyUI 앞에 있는 무언가가 JSON 요청만 허용하므로 /upload/image로의 멀티파트 업로드가 ComfyUI에 도달하지 못합니다. 원격 서버 URL을 확인하고 프록시 또는 서버리스 게이트웨이가 요청을 가로채지 않는지 확인하세요.",
 
   "errors.card.details": "기술적 세부 정보",
 
@@ -3098,6 +3128,17 @@ const ko: Record<string, string> = {
   "generation.video.pick_refs_title": "참조 이미지 선택",
 
   "generation.model.architecture_auto": "Auto",
+  "generation.model.int8_fast_label": "INT8-Fast 로더",
+  "generation.model.int8_fast_tip": "사전 양자화된 INT8/ConvRot 확산 모델에 표준 UNETLoader 대신 OTUNetLoaderW8A8 노드(ComfyUI-INT8-Fast)를 사용합니다. NVIDIA GPU가 필요합니다. .gguf 모델에는 영향이 없습니다.",
+  "generation.model.int8_fast_convrot_label": "ConvRot 활성화",
+  "generation.model.int8_fast_convrot_tip": "OTUNetLoaderW8A8에 enable_convrot=true를 전달합니다. INT8-ConvRot 파일에는 활성화 상태를 유지하고, ConvRot 최적화가 없는 일반 INT8 파일에는 비활성화하세요.",
+  "generation.model.int8_fast_hint": "이 모델의 파일 이름이 INT8-ConvRot 파일처럼 보입니다. 올바르게 로드하려면 위의 INT8-Fast 로더 토글을 활성화하세요.",
+  "generation.model.int8_fast_not_installed": "ComfyUI-INT8-Fast가 설치되어 있지 않습니다.",
+  "generation.model.int8_fast_install": "ComfyUI-INT8-Fast 설치",
+  "generation.model.int8_fast_installing": "설치 중...",
+  "generation.model.int8_fast_install_error": "설치 실패: {error}",
+  "generation.model.int8_fast_nvidia_only": "NVIDIA GPU 전용 -- INT8-Fast는 AMD 및 Apple Silicon을 지원하지 않습니다.",
+  "generation.model.int8_fast_unavailable": "ComfyUI-INT8-Fast 노드를 사용할 수 없습니다. 팩을 설치한 후 ComfyUI를 재시작하세요.",
   "generation.lora.enable": "Enable",
   "generation.lora.disable": "Disable",
   "gallery.date.unknown": "Unknown",

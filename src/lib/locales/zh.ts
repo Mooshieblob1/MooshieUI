@@ -198,6 +198,8 @@ const zh: Record<string, string> = {
   "setup.remote_missing_nodes_install": "Deploy or update the MooshieUI server build (Docker) on your cloud GPU. It includes ComfyUI and all required custom nodes.",
   "setup.remote_missing_nodes_restart": "Fully restart the remote ComfyUI or python process so the new nodes load.",
   "setup.remote_missing_nodes_retry": "Return here and retry validation after the remote server comes back up.",
+  "setup.remote_upload_warning_title": "图片上传被代理拦截",
+  "setup.remote_upload_warning_detail": "{host} 服务器拒绝了测试图片上传（HTTP {status}）。ComfyUI 前方的某些组件只接受 JSON 请求，导致发送到 /upload/image 的 multipart 上传无法到达 ComfyUI。在此问题解决之前，视频帧和参考图片上传将会失败。请检查远程服务器 URL，确保没有代理或无服务器网关拦截请求。",
 
   // ── 设置页面 ────────────────────────────────────────────
   "settings.title": "设置",
@@ -778,6 +780,17 @@ const zh: Record<string, string> = {
   "generation.video.stack.int8": "int8 - 21 GB，推荐",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB，完整精度",
+  "generation.video.stack.custom": "自定义 - 使用你自己的文件",
+  "generation.video.custom_tip": "从本地模型库中选择每个模型文件。GGUF 文件会自动使用 GGUF 加载器加载。",
+  "generation.video.custom_diffusion_model": "扩散模型",
+  "generation.video.custom_clip_model": "文本编码器",
+  "generation.video.custom_vae_model": "视频 VAE",
+  "generation.video.custom_audio_vae_model": "音频 VAE",
+  "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_sampler": "采样器",
+  "generation.video.custom_sampler_default": "默认 (res_multistep)",
+  "generation.video.custom_scheduler": "调度器",
+  "generation.video.custom_scheduler_default": "默认 (simple)",
   "generation.video.stack_ready": "所有模型文件均已安装。",
   "generation.video.stack_missing": "{total} 个模型文件中缺少 {count} 个，需下载 {size}。",
   "generation.video.stack_download": "下载全部缺少的文件（{count} 个文件，{size}）",
@@ -1638,6 +1651,15 @@ const zh: Record<string, string> = {
   "settings.interrogator.thresholds_desc": "控制图像询问器的置信度阈值。较低的值返回更多标签，较高的值更具选择性。",
   "settings.interrogator.more_tags": "更多标签",
   "settings.interrogator.fewer_tags": "更少标签",
+  "settings.interrogator.custom_tag": "（自定义）",
+  "settings.interrogator.custom_models_title": "自定义模型",
+  "settings.interrogator.remove": "移除",
+  "settings.interrogator.removing": "移除中...",
+  "settings.interrogator.add_custom": "添加自定义标注器文件夹",
+  "settings.interrogator.add_custom_dialog_title": "选择标注器文件夹",
+  "settings.interrogator.add_custom_desc": "添加包含 WD v3 系列标注器的 model.onnx 和 selected_tags.csv 的本地文件夹。",
+  "settings.interrogator.adding": "添加中...",
+  "settings.interrogator.custom_path_placeholder": "文件夹路径...",
 
   "generation.controlnet.browse_or_drop": "浏览或拖放图像",
   "generation.controlnet.paste": "粘贴",
@@ -2417,6 +2439,8 @@ const zh: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_unsaved_label": "视频已就绪 - 未保存到图库",
+  "preview.save_video_to_gallery": "保存到图库",
   "preview.video_alt": "视频预览",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
@@ -2517,6 +2541,7 @@ const zh: Record<string, string> = {
   "generation.error.missing_node": "此工作流需要一个尚未安装的自定义节点：{node}。请在 ComfyUI 中安装并重启。",
   "generation.error.component_mismatch": "这些模型组件互不匹配。请确保检查点、VAE、LoRA 和 CLIP 都属于同一模型系列（例如都是 SDXL）。",
   "generation.error.quant_format_unsupported": "该模型使用了 '{format}' 量化格式，你安装的 ComfyUI 不支持。请在 设置 > 效能 中更新 ComfyUI，或改用未量化的模型版本。",
+  "generation.error.int8_fast_required": "该模型使用标准加载器无法处理的INT8/ConvRot量化。请在模型设置中启用「INT8-Fast加载器」开关（会自动安装ComfyUI-INT8-Fast）。需要NVIDIA显卡。",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",
@@ -3008,6 +3033,10 @@ const zh: Record<string, string> = {
   "errors.generation_interrupted.why": "生成被取消，或 ComfyUI 中途停止。",
 
   "errors.generation_interrupted.fixes": "重新开始生成。 || 确认 ComfyUI 仍在运行。 || 如果不是您取消的，请查看日志。",
+  "errors.upload_proxy_rejection.title": "图片上传被代理拦截",
+  "errors.upload_proxy_rejection.what": "向 ComfyUI 上传图片的请求被中间代理拒绝。",
+  "errors.upload_proxy_rejection.why": "ComfyUI 前方的某些组件（无服务器网关、反向代理或负载均衡器）只接受 JSON 请求，拒绝了 multipart/form-data 上传。",
+  "errors.upload_proxy_rejection.fixes": "请检查远程服务器 URL，确保没有代理或无服务器网关拦截 /upload/image。 || 在 multipart 请求能够直接到达 ComfyUI 之前，视频帧和参考图片上传将会失败。",
 
   "errors.io_permission.title": "文件访问被拒绝",
 
@@ -3024,6 +3053,7 @@ const zh: Record<string, string> = {
   "errors.serialization.why": "响应格式有误或文件已损坏。",
 
   "errors.serialization.fixes": "重试此操作。 || 重启应用。 || 如果问题持续，请报告此问题。",
+  "errors.upload_proxy_rejection_inline": "{host} 服务器拒绝了图片上传（HTTP {status}）。ComfyUI 前方的某些组件只接受 JSON 请求，导致发送到 /upload/image 的 multipart 上传无法到达 ComfyUI。请检查远程服务器 URL，确保没有代理或无服务器网关拦截请求。",
 
   "errors.card.details": "技术详情",
 
@@ -3099,6 +3129,17 @@ const zh: Record<string, string> = {
   "generation.video.pick_refs_title": "选择参考图像",
 
   "generation.model.architecture_auto": "Auto",
+  "generation.model.int8_fast_label": "INT8-Fast加载器",
+  "generation.model.int8_fast_tip": "对预量化的INT8/ConvRot扩散模型使用OTUNetLoaderW8A8节点（ComfyUI-INT8-Fast）而非标准UNETLoader。需要NVIDIA显卡。对.gguf模型无效。",
+  "generation.model.int8_fast_convrot_label": "启用ConvRot",
+  "generation.model.int8_fast_convrot_tip": "向OTUNetLoaderW8A8传递enable_convrot=true。对INT8-ConvRot文件保持启用；对不含ConvRot优化的普通INT8文件请禁用。",
+  "generation.model.int8_fast_hint": "此模型文件名看起来像INT8-ConvRot文件。请启用上方的INT8-Fast加载器开关以正确加载。",
+  "generation.model.int8_fast_not_installed": "ComfyUI-INT8-Fast未安装。",
+  "generation.model.int8_fast_install": "安装ComfyUI-INT8-Fast",
+  "generation.model.int8_fast_installing": "安装中...",
+  "generation.model.int8_fast_install_error": "安装失败：{error}",
+  "generation.model.int8_fast_nvidia_only": "仅限NVIDIA显卡 -- INT8-Fast不支持AMD或Apple Silicon。",
+  "generation.model.int8_fast_unavailable": "ComfyUI-INT8-Fast节点不可用。安装该包后重启ComfyUI。",
   "generation.lora.enable": "Enable",
   "generation.lora.disable": "Disable",
   "gallery.date.unknown": "Unknown",

@@ -33,6 +33,61 @@ fn is_civitai_url(url: &str) -> bool {
         .is_some_and(|host| host == "civitai.com" || host.ends_with(".civitai.com"))
 }
 
+/// Returns true when a non-2xx upload response looks like a JSON-only gateway
+/// rejecting the multipart request rather than a ComfyUI error.
+fn is_proxy_upload_rejection(status: u16, body: &str) -> bool {
+    let body_lc = body.to_lowercase();
+    status == 415
+        || body_lc.contains("application/json")
+        || body_lc.contains("unsupported media type")
+}
+
+/// Extract the host (and port if non-default) from a URL string,
+/// falling back to the raw URL if parsing fails.
+fn host_from_url(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .map(|parsed| {
+            let host = parsed.host_str().unwrap_or(url).to_string();
+            match parsed.port() {
+                Some(port) => format!("{}:{}", host, port),
+                None => host,
+            }
+        })
+        .unwrap_or_else(|| url.to_string())
+}
+
+/// Classify a failed upload response. Returns a dedicated
+/// `upload_rejected_non_multipart:` error for proxy/gateway rejections so the
+/// frontend can render an actionable message, and a standard `ApiError` for
+/// all other non-2xx responses.
+fn classify_upload_error(url: &str, status: u16, body: &str) -> AppError {
+    if is_proxy_upload_rejection(status, body) {
+        let host = host_from_url(url);
+        // Keep the raw body available but cap it so it doesn't flood logs.
+        let truncated = if body.len() > 300 {
+            format!("{}... (truncated)", &body[..300])
+        } else {
+            body.to_string()
+        };
+        log::warn!(
+            "Upload rejected by proxy at {}: HTTP {} -- {}",
+            host,
+            status,
+            truncated
+        );
+        AppError::Other(format!(
+            "upload_rejected_non_multipart:{}|{}|{}",
+            host, status, truncated
+        ))
+    } else {
+        AppError::ApiError {
+            status,
+            message: body.to_string(),
+        }
+    }
+}
+
 pub fn huggingface_token_for_url(url: &str) -> Option<String> {
     if !is_huggingface_url(url) {
         return None;
@@ -511,10 +566,9 @@ impl AppState {
 
         let resp = self.http_client.post(&url).multipart(form).send().await?;
         if !resp.status().is_success() {
-            return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(classify_upload_error(&url, status, &body));
         }
         let upload_resp: UploadResponse = resp.json().await?;
         Ok(upload_resp)
@@ -539,10 +593,9 @@ impl AppState {
 
         let resp = self.http_client.post(&url).multipart(form).send().await?;
         if !resp.status().is_success() {
-            return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(classify_upload_error(&url, status, &body));
         }
         let upload_resp: UploadResponse = resp.json().await?;
         Ok(upload_resp)

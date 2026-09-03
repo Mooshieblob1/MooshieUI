@@ -17,7 +17,7 @@
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { UPSCALE_ACTION } from "./lib/utils/novelaiEnhance.js";
@@ -2603,6 +2603,22 @@
 
   let autoStartEnabled = $state(true); // will be read from config
 
+  /**
+   * Manual save mode is owned by the frontend store. Rust only keeps a mirror
+   * in AppConfig so the video output path (written server-side) can honour it,
+   * so push the restored value whenever the two disagree.
+   */
+  async function syncManualSaveModeToConfig() {
+    try {
+      const cfg = await getConfig();
+      if ((cfg.manual_save_mode ?? false) !== generation.manualSaveMode) {
+        await updateConfig({ ...cfg, manual_save_mode: generation.manualSaveMode });
+      }
+    } catch {
+      // Config not ready; the settings toggle re-syncs on the next change.
+    }
+  }
+
   async function initApp() {
     // Block interaction until ComfyUI is reachable. Settings load asynchronously,
     // and a save triggered mid-load would persist in-memory defaults over the
@@ -2625,12 +2641,13 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    await syncManualSaveModeToConfig();
 
     // Browser/LAN mode: pull the server-side preference snapshot (or seed it
     // from current local state) once local settings have loaded and the auth
     // token is available. No-op in Tauri desktop mode.
     if (isBrowserMode) {
-      void prefsSync.loadAndApply();
+      void prefsSync.loadAndApply().then(syncManualSaveModeToConfig);
     }
 
     // Prompt assistant: detect hardware + pre-select recommended model at launch.
@@ -2975,8 +2992,6 @@
         // what makes the video appear without a manual refresh; late clients
         // fall back to the normal loadFromDisk() listing.
         const data = event.payload;
-        const videoFilename = data?.video_filename;
-        if (typeof videoFilename !== "string" || !videoFilename) return;
 
         // Filter by prompt_id, matching the output_image listener: reject
         // events belonging to another user's prompt in browser mode.
@@ -2986,6 +3001,25 @@
           typeof data.duration_seconds === "number" ? data.duration_seconds : undefined;
         const videoFps = typeof data.fps === "number" && data.fps > 0 ? data.fps : undefined;
         const generationTimeMs = data.prompt_id ? progress.peekDurationMs(data.prompt_id) : undefined;
+
+        // When manual_save_mode is active, Rust skips the gallery write and
+        // emits persisted:false + video_path instead of video_filename.
+        if (data.persisted === false) {
+          const rawPath = typeof data.video_path === "string" ? data.video_path : null;
+          if (!rawPath) return;
+          progress.lastUnsavedVideoPath = rawPath;
+          progress.lastUnsavedVideoMeta = {
+            fps: videoFps ?? null,
+            frameCount: typeof data.frame_count === "number" ? data.frame_count : 0,
+            width: typeof data.width === "number" ? data.width : 0,
+            height: typeof data.height === "number" ? data.height : 0,
+            promptId: typeof data.prompt_id === "string" ? data.prompt_id : "",
+          };
+          return;
+        }
+
+        const videoFilename = data?.video_filename;
+        if (typeof videoFilename !== "string" || !videoFilename) return;
 
         await gallery.addPersistedImage(
           videoFilename,

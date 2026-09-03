@@ -198,6 +198,8 @@ const ja: Record<string, string> = {
   "setup.remote_missing_nodes_install": "Deploy or update the MooshieUI server build (Docker) on your cloud GPU. It includes ComfyUI and all required custom nodes.",
   "setup.remote_missing_nodes_restart": "Fully restart the remote ComfyUI or python process so the new nodes load.",
   "setup.remote_missing_nodes_retry": "Return here and retry validation after the remote server comes back up.",
+  "setup.remote_upload_warning_title": "プロキシによる画像アップロードのブロック",
+  "setup.remote_upload_warning_detail": "{host} のサーバーがテスト画像のアップロード（HTTP {status}）を拒否しました。ComfyUI の前にあるものが JSON リクエストのみを受け付けるため、/upload/image へのマルチパートアップロードが ComfyUI に届きません。この問題が解決されるまで、動画フレームや参照画像のアップロードは失敗します。リモートサーバーの URL を確認し、プロキシやサーバーレスゲートウェイがリクエストを傍受していないことを確認してください。",
 
   // ── 設定ページ ──────────────────────────────────────────
   "settings.title": "設定",
@@ -793,6 +795,17 @@ const ja: Record<string, string> = {
   "generation.video.stack.int8": "int8 - 21 GB、推奨",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB、フル精度",
+  "generation.video.stack.custom": "カスタム - 独自のファイルを使用",
+  "generation.video.custom_tip": "ローカルのモデルストアから各モデルファイルを選択してください。GGUFファイルはGGUFローダーで自動的に読み込まれます。",
+  "generation.video.custom_diffusion_model": "拡散モデル",
+  "generation.video.custom_clip_model": "テキストエンコーダー",
+  "generation.video.custom_vae_model": "映像VAE",
+  "generation.video.custom_audio_vae_model": "音声VAE",
+  "generation.video.custom_turbo_lora": "ターボLoRA",
+  "generation.video.custom_sampler": "サンプラー",
+  "generation.video.custom_sampler_default": "デフォルト (res_multistep)",
+  "generation.video.custom_scheduler": "スケジューラー",
+  "generation.video.custom_scheduler_default": "デフォルト (simple)",
   "generation.video.stack_ready": "すべてのモデルファイルがインストール済みです。",
   "generation.video.stack_missing": "{total} 個のモデルファイルのうち {count} 個が不足しています。ダウンロード量は {size} です。",
   "generation.video.stack_download": "不足しているすべてをダウンロード ({count} 個のファイル、{size})",
@@ -1663,6 +1676,15 @@ const ja: Record<string, string> = {
   "settings.interrogator.thresholds_desc": "画像インテロゲーターの信頼度しきい値を制御します。低い値はより多くのタグを返し、高い値はより選択的です。",
   "settings.interrogator.more_tags": "タグを増やす",
   "settings.interrogator.fewer_tags": "タグを減らす",
+  "settings.interrogator.custom_tag": "（カスタム）",
+  "settings.interrogator.custom_models_title": "カスタムモデル",
+  "settings.interrogator.remove": "削除",
+  "settings.interrogator.removing": "削除中...",
+  "settings.interrogator.add_custom": "カスタムタガーフォルダを追加",
+  "settings.interrogator.add_custom_dialog_title": "タガーフォルダを選択",
+  "settings.interrogator.add_custom_desc": "WD v3 ファミリータガーの model.onnx と selected_tags.csv を含むローカルフォルダを追加します。",
+  "settings.interrogator.adding": "追加中...",
+  "settings.interrogator.custom_path_placeholder": "フォルダへのパス...",
 
   "generation.controlnet.browse_or_drop": "参照またはドロップ",
   "generation.controlnet.paste": "貼り付け",
@@ -2401,6 +2423,8 @@ const ja: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_unsaved_label": "動画の準備完了 - ギャラリーに未保存",
+  "preview.save_video_to_gallery": "ギャラリーに保存",
   "preview.video_alt": "動画プレビュー",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
@@ -2500,6 +2524,7 @@ const ja: Record<string, string> = {
   "generation.error.missing_node": "このワークフローには未インストールのカスタムノードが必要です: {node}。ComfyUIにインストールして再起動してください。",
   "generation.error.component_mismatch": "これらのモデルコンポーネントは組み合わせできません。チェックポイント、VAE、LoRA、CLIPがすべて同じモデルファミリー(例: すべてSDXL)であることを確認してください。",
   "generation.error.quant_format_unsupported": "このモデルは量子化形式「{format}」を使用していますが、インストール済みのComfyUIは対応していません。設定 > パフォーマンスでComfyUIを更新するか、量子化されていないバージョンのモデルを選んでください。",
+  "generation.error.int8_fast_required": "このモデルは標準ローダーでは扱えないINT8/ConvRot量子化を使用しています。モデル設定の「INT8-Fastローダー」トグルを有効にしてください（ComfyUI-INT8-Fastが自動インストールされます）。NVIDIAのGPUが必要です。",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",
@@ -3032,6 +3057,10 @@ const ja: Record<string, string> = {
   "errors.generation_interrupted.why": "キャンセルされたか、ComfyUI が途中で停止しました。",
 
   "errors.generation_interrupted.fixes": "生成を再開してください。 || ComfyUI がまだ起動していることを確認してください。 || キャンセルしていない場合はログを確認してください。",
+  "errors.upload_proxy_rejection.title": "プロキシによる画像アップロードのブロック",
+  "errors.upload_proxy_rejection.what": "ComfyUI への画像アップロードリクエストが中間プロキシによって拒否されました。",
+  "errors.upload_proxy_rejection.why": "ComfyUI の前にあるもの（サーバーレスゲートウェイ、リバースプロキシ、またはロードバランサー）が JSON リクエストのみを受け付け、multipart/form-data アップロードを拒否しました。",
+  "errors.upload_proxy_rejection.fixes": "リモートサーバーの URL を確認し、プロキシやサーバーレスゲートウェイが /upload/image を傍受していないことを確認してください。 || マルチパートリクエストが ComfyUI に直接届くまで、動画フレームや参照画像のアップロードは失敗します。",
 
   "errors.io_permission.title": "ファイルへのアクセスが拒否されました",
 
@@ -3048,6 +3077,7 @@ const ja: Record<string, string> = {
   "errors.serialization.why": "レスポンスが不正な形式か、ファイルが破損しています。",
 
   "errors.serialization.fixes": "操作を再試行してください。 || アプリを再起動してください。 || 繰り返し発生する場合は報告してください。",
+  "errors.upload_proxy_rejection_inline": "{host} のサーバーが画像アップロード（HTTP {status}）を拒否しました。ComfyUI の前にあるものが JSON リクエストのみを受け付けるため、/upload/image へのマルチパートアップロードが ComfyUI に届きません。リモートサーバーの URL を確認し、プロキシやサーバーレスゲートウェイがリクエストを傍受していないことを確認してください。",
 
   "errors.card.details": "技術的な詳細",
 
@@ -3123,6 +3153,17 @@ const ja: Record<string, string> = {
   "generation.video.pick_refs_title": "参照画像を選択",
 
   "generation.model.architecture_auto": "Auto",
+  "generation.model.int8_fast_label": "INT8-Fastローダー",
+  "generation.model.int8_fast_tip": "プリ量子化INT8/ConvRot拡散モデルに、標準UNETLoaderの代わりにOTUNetLoaderW8A8ノード（ComfyUI-INT8-Fast）を使用します。NVIDIAのGPUが必要です。.ggufモデルには影響しません。",
+  "generation.model.int8_fast_convrot_label": "ConvRotを有効化",
+  "generation.model.int8_fast_convrot_tip": "OTUNetLoaderW8A8にenable_convrot=trueを渡します。INT8-ConvRotファイルには有効のままにしてください。ConvRot最適化なしの通常INT8ファイルは無効にしてください。",
+  "generation.model.int8_fast_hint": "このモデルのファイル名はINT8-ConvRotファイルのようです。上のINT8-Fastローダートグルを有効にして正しく読み込んでください。",
+  "generation.model.int8_fast_not_installed": "ComfyUI-INT8-Fastがインストールされていません。",
+  "generation.model.int8_fast_install": "ComfyUI-INT8-Fastをインストール",
+  "generation.model.int8_fast_installing": "インストール中...",
+  "generation.model.int8_fast_install_error": "インストール失敗: {error}",
+  "generation.model.int8_fast_nvidia_only": "NVIDIAのGPUのみ対応 -- INT8-FastはAMDとApple Siliconをサポートしていません。",
+  "generation.model.int8_fast_unavailable": "ComfyUI-INT8-FastノードはComfyUIにありません。パックをインストールしてComfyUIを再起動してください。",
   "generation.lora.enable": "Enable",
   "generation.lora.disable": "Disable",
   "gallery.date.unknown": "Unknown",

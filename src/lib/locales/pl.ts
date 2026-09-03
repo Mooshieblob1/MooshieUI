@@ -78,6 +78,7 @@ const pl: Record<string, string> = {
   "generation.error.missing_node": "Ten przepływ pracy wymaga niestandardowego węzła, który nie jest zainstalowany: {node}. Zainstaluj go w ComfyUI i uruchom ponownie.",
   "generation.error.component_mismatch": "Te komponenty modelu nie pasują do siebie. Upewnij się, że checkpoint, VAE, LoRA i CLIP są przeznaczone dla tej samej rodziny modeli (np. wszystkie SDXL).",
   "generation.error.quant_format_unsupported": "Ten model używa formatu kwantyzacji '{format}', którego zainstalowane ComfyUI nie obsługuje. Zaktualizuj ComfyUI w Ustawienia > Wydajność albo wybierz nieskwantyzowaną wersję modelu.",
+  "generation.error.int8_fast_required": "Ten model używa kwantyzacji INT8/ConvRot, której standardowy ładownik nie obsługuje. Włącz przełącznik 'Ładownik INT8-Fast' w ustawieniach modelu (automatycznie instaluje ComfyUI-INT8-Fast). Wymagany GPU NVIDIA.",
 
   // ── App Status ─────────────────────────────────────────
   "app.status.starting": "Uruchamianie...",
@@ -199,6 +200,8 @@ const pl: Record<string, string> = {
   "setup.remote_missing_nodes_install": "Wdróż lub zaktualizuj kompilację serwera MooshieUI (Docker) na swoim chmurowym GPU. Zawiera ComfyUI i wszystkie wymagane niestandardowe węzły.",
   "setup.remote_missing_nodes_restart": "Całkowicie uruchom ponownie zdalny ComfyUI lub proces Python, aby nowe węzły zostały załadowane.",
   "setup.remote_missing_nodes_retry": "Wróć tutaj i ponów weryfikację po ponownym uruchomieniu zdalnego serwera.",
+  "setup.remote_upload_warning_title": "Przesyłanie obrazu zablokowane przez proxy",
+  "setup.remote_upload_warning_detail": "Serwer pod adresem {host} odrzucił testowe przesyłanie obrazu (HTTP {status}). Coś przed ComfyUI akceptuje tylko żądania JSON, więc przesyłanie multipart na /upload/image nigdy nie dociera do ComfyUI. Przesyłanie klatek wideo i obrazów referencyjnych będzie się nie udawać, dopóki problem nie zostanie naprawiony. Sprawdź adres URL zdalnego serwera i upewnij się, że żaden proxy ani bezserwerowa brama nie przechwytuje żądania.",
 
   // ── Settings Page ───────────────────────────────────────
   "settings.title": "Ustawienia",
@@ -872,6 +875,17 @@ const pl: Record<string, string> = {
   "generation.video.stack.int8": "int8 - 21 GB, zalecane",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, pełna precyzja",
+  "generation.video.stack.custom": "Wlasne - uzyj swoich plikow",
+  "generation.video.custom_tip": "Wybierz kazdy plik modelu z lokalnego magazynu modeli. Pliki GGUF sa automatycznie ladowane za pomoca loadera GGUF.",
+  "generation.video.custom_diffusion_model": "Model dyfuzji",
+  "generation.video.custom_clip_model": "Koder tekstu",
+  "generation.video.custom_vae_model": "VAE wideo",
+  "generation.video.custom_audio_vae_model": "VAE audio",
+  "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_sampler": "Probnikator",
+  "generation.video.custom_sampler_default": "Domyslny (res_multistep)",
+  "generation.video.custom_scheduler": "Harmonogram",
+  "generation.video.custom_scheduler_default": "Domyslny (simple)",
   "generation.video.stack_ready": "Wszystkie pliki modeli są zainstalowane.",
   "generation.video.stack_missing": "Brakuje {count} z {total} plików modeli, {size} do pobrania.",
   "generation.video.stack_download": "Pobierz wszystkie brakujące ({count} plików, {size})",
@@ -1907,6 +1921,15 @@ const pl: Record<string, string> = {
   "settings.interrogator.thresholds_desc": "Kontroluje progi ufności dla interrogatora obrazów. Niższe wartości zwracają więcej tagów, wyższe są bardziej selektywne.",
   "settings.interrogator.more_tags": "Więcej tagów",
   "settings.interrogator.fewer_tags": "Mniej tagów",
+  "settings.interrogator.custom_tag": "(niestandardowy)",
+  "settings.interrogator.custom_models_title": "Modele niestandardowe",
+  "settings.interrogator.remove": "Usuń",
+  "settings.interrogator.removing": "Usuwanie...",
+  "settings.interrogator.add_custom": "Dodaj niestandardowy folder taggera",
+  "settings.interrogator.add_custom_dialog_title": "Wybierz folder taggera",
+  "settings.interrogator.add_custom_desc": "Dodaj lokalny folder zawierający model.onnx i selected_tags.csv z taggera rodziny WD v3.",
+  "settings.interrogator.adding": "Dodawanie...",
+  "settings.interrogator.custom_path_placeholder": "Ścieżka do folderu...",
 
   // Queue
   "settings.queue.title": "Kolejka",
@@ -2585,6 +2608,8 @@ const pl: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Podgląd preprocesora",
   "preview.alt": "Podgląd",
+  "preview.video_unsaved_label": "Wideo gotowe - nie zapisano w galerii",
+  "preview.save_video_to_gallery": "Zapisz w galerii",
   "preview.video_alt": "Podgląd wideo",
   "canvas.inpaint_preview_alt": "Podgląd generacji inpaintingu",
   "canvas.staged_alt": "Staged",
@@ -3046,6 +3071,10 @@ const pl: Record<string, string> = {
   "errors.generation_interrupted.why": "Zostało anulowane lub ComfyUI zatrzymał się w trakcie.",
 
   "errors.generation_interrupted.fixes": "Rozpocznij generowanie ponownie. || Upewnij się, że ComfyUI nadal działa. || Sprawdź dzienniki, jeśli tego nie anulowałeś.",
+  "errors.upload_proxy_rejection.title": "Przesyłanie obrazu zablokowane przez proxy",
+  "errors.upload_proxy_rejection.what": "Żądanie przesłania obrazu do ComfyUI zostało odrzucone przez pośredni proxy.",
+  "errors.upload_proxy_rejection.why": "Coś przed ComfyUI -- bezserwerowa brama, odwrotny proxy lub moduł równoważenia obciążenia -- akceptuje tylko żądania JSON i odrzuciło przesyłanie multipart/form-data.",
+  "errors.upload_proxy_rejection.fixes": "Sprawdź adres URL zdalnego serwera i upewnij się, że żaden proxy ani bezserwerowa brama nie przechwytuje /upload/image. || Przesyłanie klatek wideo i obrazów referencyjnych będzie się nie udawać, dopóki żądania multipart nie będą mogły dotrzeć bezpośrednio do ComfyUI.",
 
   "errors.io_permission.title": "Odmowa dostępu do pliku",
 
@@ -3062,6 +3091,7 @@ const pl: Record<string, string> = {
   "errors.serialization.why": "Odpowiedź była zniekształcona lub plik był uszkodzony.",
 
   "errors.serialization.fixes": "Spróbuj ponownie. || Uruchom ponownie aplikację. || Zgłoś problem, jeśli się powtarza.",
+  "errors.upload_proxy_rejection_inline": "Serwer pod adresem {host} odrzucił przesyłanie obrazu (HTTP {status}). Coś przed ComfyUI akceptuje tylko żądania JSON, więc przesyłanie multipart na /upload/image nigdy nie dociera do ComfyUI. Sprawdź adres URL zdalnego serwera i upewnij się, że żaden proxy ani bezserwerowa brama nie przechwytuje żądania.",
 
   "errors.card.details": "Szczegóły techniczne",
 
@@ -3137,6 +3167,17 @@ const pl: Record<string, string> = {
   "generation.video.pick_refs_title": "Wybierz obrazy referencyjne",
 
   "generation.model.architecture_auto": "Auto",
+  "generation.model.int8_fast_label": "Ladownik INT8-Fast",
+  "generation.model.int8_fast_tip": "Uzywa wezla OTUNetLoaderW8A8 (ComfyUI-INT8-Fast) zamiast standardowego UNETLoader dla wstepnie skwantyzowanych modeli dyfuzji INT8/ConvRot. Wymagany GPU NVIDIA. Brak efektu na modele .gguf.",
+  "generation.model.int8_fast_convrot_label": "Wlacz ConvRot",
+  "generation.model.int8_fast_convrot_tip": "Przekazuje enable_convrot=true do OTUNetLoaderW8A8. Pozostaw wlaczone dla plikow INT8-ConvRot; wylacz dla zwyklych plikow INT8 bez ConvRot.",
+  "generation.model.int8_fast_hint": "Nazwa pliku modelu wyglada jak plik INT8-ConvRot. Wlacz przelacznik ladownika INT8-Fast powyzej, aby zaladowac go poprawnie.",
+  "generation.model.int8_fast_not_installed": "ComfyUI-INT8-Fast nie jest zainstalowany.",
+  "generation.model.int8_fast_install": "Zainstaluj ComfyUI-INT8-Fast",
+  "generation.model.int8_fast_installing": "Instalowanie...",
+  "generation.model.int8_fast_install_error": "Instalacja nie powiodla sie: {error}",
+  "generation.model.int8_fast_nvidia_only": "Tylko GPU NVIDIA -- INT8-Fast nie obsługuje AMD ani Apple Silicon.",
+  "generation.model.int8_fast_unavailable": "Wezel ComfyUI-INT8-Fast nie jest dostepny. Zainstaluj paczke i uruchom ponownie ComfyUI.",
   "generation.lora.enable": "Enable",
   "generation.lora.disable": "Disable",
   "gallery.date.unknown": "Unknown",
