@@ -39,8 +39,8 @@ importers:
         specifier: ^3.4.14
         version: 3.4.14
       konva:
-        specifier: ^10.3.1
-        version: 10.3.1
+        specifier: ^10.3.2
+        version: 10.3.2
       marked:
         specifier: ^18.0.10
         version: 18.0.10
@@ -52,7 +52,7 @@ importers:
         version: 1.15.7
       svelte-konva:
         specifier: ^1.0.1
-        version: 1.0.1(konva@10.3.1)(svelte@5.56.10)
+        version: 1.0.1(konva@10.3.2)(svelte@5.56.10)
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^6.2.4
@@ -713,8 +713,8 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  konva@10.3.1:
-    resolution: {integrity: sha512-7fT/jSkL2bZZOHRBk2QVMKAUbgHoKG72W+KJtpP5YMJUZRmjgoafROgxTADsrxKOY2ZM5eKyN/x6CM9PrlFfOg==}
+  konva@10.3.2:
+    resolution: {integrity: sha512-A9GLx+Vj0PNnybjNq/St/S8utrksuSKOR8EzO2RTjA0SlmR9JipahcCXWW0vXz/9wjZCwAEtBtJFCUGe5mD/4g==}
     peerDependencies:
       canvas: ^3.0.0
       skia-canvas: ^3.0.0
@@ -1381,7 +1381,7 @@ snapshots:
 
   jiti@2.7.0: {}
 
-  konva@10.3.1: {}
+  konva@10.3.2: {}
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -1512,9 +1512,9 @@ snapshots:
     transitivePeerDependencies:
       - picomatch
 
-  svelte-konva@1.0.1(konva@10.3.1)(svelte@5.56.10):
+  svelte-konva@1.0.1(konva@10.3.2)(svelte@5.56.10):
     dependencies:
-      konva: 10.3.1
+      konva: 10.3.2
       svelte: 5.56.10
 
   svelte@5.56.10:
