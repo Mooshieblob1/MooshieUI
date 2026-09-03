@@ -2538,6 +2538,7 @@ const en: Record<string, string> = {
   "settings.gpu.busy": "(busy)",
   "settings.gpu.auto_refresh": "Auto-refreshes every 5 seconds",
 
+  "setup.not_available_in_browser": "Setup wizard is not available in browser mode.",
   "setup.progress_preparing": "Preparing...",
   "setup.progress_starting": "Starting installation...",
   "setup.step.attention": "Install attention backend",

@@ -1887,18 +1887,6 @@ pub async fn detect_gpu() -> Result<String, AppError> {
     Ok(detect_gpu_type().await)
 }
 
-/// Save a custom install location. Called before `run_setup` so the setup
-/// installs into the chosen directory instead of the platform default.
-#[tauri::command]
-pub async fn set_install_path(path: String) -> Result<(), AppError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err("Install path cannot be empty".into());
-    }
-    config::save_custom_data_dir(trimmed)?;
-    Ok(())
-}
-
 /// Return the current resolved data directory path so the frontend can show it.
 #[tauri::command]
 pub async fn get_install_path(app: AppHandle) -> Result<String, AppError> {
@@ -1920,6 +1908,11 @@ pub struct DetectedModelDir {
     pub has_checkpoints: bool,
     pub has_loras: bool,
     pub has_vae: bool,
+}
+
+/// Public alias so webserver.rs can call this without the `desktop` feature gate.
+pub fn scan_model_directories_pub() -> Vec<DetectedModelDir> {
+    scan_model_directories()
 }
 
 fn scan_model_directories() -> Vec<DetectedModelDir> {
@@ -2376,95 +2369,6 @@ fn copy_dir_recursive_inner(
             std::fs::copy(&src_path, &dst_path)?;
         }
     }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn reinstall_pytorch(
-    app: AppHandle,
-    state: tauri::State<'_, Arc<AppState>>,
-    index_url: Option<String>,
-) -> Result<(), AppError> {
-    let base = data_dir(&app)?;
-    let gpu = detect_gpu_type().await;
-    let net = {
-        let config = state.config.read().await;
-        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
-    };
-
-    // The ROCm-on-Windows preview ships cp312-only wheels, so it's only usable
-    // here when the existing venv was already created with Python 3.12 (i.e.
-    // setup detected an eligible AMD GPU originally). A 3.11 venv can't be
-    // upgraded in place — re-run setup to get a 3.12 one. Also skip it when
-    // the caller passed an explicit index_url, since that signals they want
-    // that specific index, not the wheel-based preview install.
-    #[cfg(target_os = "windows")]
-    let amd_windows_rocm = index_url.is_none()
-        && gpu == "amd"
-        && venv_python_version(&base.join("venv")).as_deref() == Some("3.12")
-        && detect_amd_windows_rocm_supported().await;
-    #[cfg(not(target_os = "windows"))]
-    let amd_windows_rocm = false;
-
-    // Heartbeat so the user sees activity during the long silent download
-    let app_hb = app.clone();
-    let heartbeat = tokio::spawn(async move {
-        let mut elapsed = 0u64;
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            elapsed += 30;
-            let mins = elapsed / 60;
-            let secs = elapsed % 60;
-            let msg = if elapsed < 60 {
-                format!(
-                    "[{}s] Still working \u{2014} downloading PyTorch packages...",
-                    secs
-                )
-            } else {
-                format!(
-                    "[{}m {}s] Still working \u{2014} large GPU packages are downloading...",
-                    mins, secs
-                )
-            };
-            emit_log(&app_hb, &msg);
-        }
-    });
-
-    let install_result = if amd_windows_rocm {
-        emit(
-            &app,
-            "pytorch",
-            "Reinstalling PyTorch (AMD ROCm 7.2.1 Windows preview)...",
-            50,
-        );
-        install_amd_windows_rocm_pytorch(&app, &base, &net).await
-    } else {
-        let url = match index_url {
-            Some(ref url) => url.as_str(),
-            None => match gpu.as_str() {
-                "nvidia" => nvidia_pytorch_index_url().await,
-                "amd" => amd_pytorch_index_url().await,
-                "intel" => "https://download.pytorch.org/whl/xpu",
-                "mps" => "",
-                _ => "https://download.pytorch.org/whl/cpu",
-            },
-        };
-
-        emit(&app, "pytorch", "Reinstalling PyTorch...", 50);
-
-        let mut args = vec!["torch", "torchvision", "torchaudio", "--force-reinstall"];
-        if !url.is_empty() {
-            args.push("--index-url");
-            args.push(url);
-            args.push("--extra-index-url");
-            args.push("https://pypi.org/simple/");
-        }
-        uv_pip(&app, &base, &args, &net, false).await
-    };
-
-    heartbeat.abort();
-    install_result?;
-    emit(&app, "done", "PyTorch reinstalled successfully.", 100);
     Ok(())
 }
 

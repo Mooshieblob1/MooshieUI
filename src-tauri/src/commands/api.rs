@@ -4337,11 +4337,9 @@ async fn lookup_civitai_base_model_by_hash(
         .map(str::to_string))
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-// TODO: refactor src-tauri/src/commands/api.rs and src-tauri/src/webserver.rs
-pub async fn civitai_search_models(
-    state: State<'_, Arc<AppState>>,
+/// Search CivitAI models. Shared by the Tauri command and the LAN web server route.
+pub async fn civitai_search_models_internal(
+    state: &Arc<AppState>,
     params: CivitaiSearchParams,
 ) -> Result<Value, AppError> {
     // Build query string manually because reqwest percent-encodes brackets in
@@ -4420,6 +4418,15 @@ pub async fn civitai_search_models(
 
     let data: Value = serde_json::from_str(&body)?;
     Ok(data)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_search_models(
+    state: State<'_, Arc<AppState>>,
+    params: CivitaiSearchParams,
+) -> Result<Value, AppError> {
+    civitai_search_models_internal(&state, params).await
 }
 
 /// Fetch a single CivitAI model (all versions and files) by numeric ID.
@@ -7164,16 +7171,6 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     }
 
     output
-}
-
-/// Append a batch of frontend console log lines to the in-memory diagnostics
-/// ring buffer. Called opportunistically by the UI so that exported logs
-/// include frontend state even when a crash prevents exporting normally.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn append_frontend_logs(lines: Vec<String>) -> Result<(), AppError> {
-    crate::log_buffer::push_frontend_lines(lines);
-    Ok(())
 }
 
 /// Detect the MIME type of image bytes from magic bytes.
