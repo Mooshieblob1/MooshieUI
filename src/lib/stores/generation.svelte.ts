@@ -766,6 +766,10 @@ class GenerationStore {
   customNanosaurPositiveQuality = $state(DEFAULT_NANOSAUR_POSITIVE_QUALITY);
   customNanosaurNegativeQuality = $state(DEFAULT_NANOSAUR_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
+  /** When true, OS (system) notifications fire for generation completion and errors. */
+  osNotificationsEnabled = $state(false);
+  /** When true, OS notifications only fire when the app window is not focused. */
+  osNotifyOnlyWhenUnfocused = $state(true);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
@@ -2627,6 +2631,8 @@ class GenerationStore {
             ),
           ) as Record<string, ModelFamily>;
         }
+        if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
+        if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
         if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
         if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
@@ -2784,6 +2790,8 @@ class GenerationStore {
         customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
         customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
         modelFamilyOverrides: this.modelFamilyOverrides,
+        osNotificationsEnabled: this.osNotificationsEnabled,
+        osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
         resolutionLocked: this.resolutionLocked,
@@ -2930,6 +2938,8 @@ class GenerationStore {
       customPonyNegativeQuality: this.customPonyNegativeQuality,
       customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
+      osNotificationsEnabled: this.osNotificationsEnabled,
+      osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
       resolutionLocked: this.resolutionLocked,

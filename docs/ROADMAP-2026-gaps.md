@@ -27,7 +27,7 @@ days, L is one to two weeks, XL is multi-week.
 | # | Feature | Effort | Charter fit and notes |
 |---|---------|--------|-----------------------|
 | 1 | Image Edit mode (Qwen Image Edit / Edit Plus, Flux.1 Kontext) | L | Instruction-driven editing of one or more reference images. Model families are already detected, and this is squarely "a polished UI over generation workflows." Implemented first (see below). |
-| 2 | Completion notification (OS notification plus optional chime when a generation finishes while the window is unfocused) | S | Tauri notification plugin on desktop, Web Notifications API in browser mode. Pure quality of life, no new backend surface. |
+| 2 | Completion notification (OS notification plus optional chime when a generation finishes while the window is unfocused) | S | Tauri notification plugin on desktop, Web Notifications API in browser mode. Pure quality of life, no new backend surface. Implemented (see below). |
 | 3 | Random prompt syntax (`{a\|b\|c}`, `{2$$a\|b\|c}`, weights, nesting) | S-M | **Implemented.** See `docs/RANDOM_PROMPTS.md`. Expander lives in `src/lib/utils/randomPrompt.ts` and runs in `toParams()` before the workflow is built. |
 | 4 | LoRA trigger words (pulled from CivitAI metadata, shown on LoRA cards, one-click or automatic insert) | M | Reuses the existing SHA256 to CivitAI lookup that already backs architecture detection. Model-hub tooling, in scope. |
 | 5 | Bulk CivitAI metadata scan (hash-scan local models to fetch previews, metadata, and trigger words in one batch) | M | Same CivitAI plumbing as #4, run as a batch job with a progress UI. Best built together with #4. |
@@ -44,6 +44,17 @@ are recorded here to avoid re-litigating them: axis-driven XY plot grids
 (node-graph territory, and deselected during planning), audio generation, 3D
 generation, multi-backend or multi-GPU orchestration, webhooks, closed-model
 API nodes, and an App Builder or extension marketplace.
+
+## Completion notifications (implemented)
+
+Item #2 is now shipped. The app shows OS-level (system tray) notifications when
+a generation or video finishes, using `tauri-plugin-notification` on desktop and
+the Web Notifications API in browser mode. A new Notifications section in
+Settings lets users enable the feature and optionally restrict it to fire only
+when the app window is not focused. The setting defaults to off; turning it on
+triggers the platform permission request inline. OS notifications fire for:
+image batches done, video done, and generation errors. The implementation lives
+in `src/lib/utils/osNotify.ts` with hook points in `src/App.svelte`.
 
 ## Image Edit mode (implemented)
 
