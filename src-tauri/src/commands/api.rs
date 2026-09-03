@@ -229,6 +229,108 @@ pub async fn delete_queue_item(
     state.delete_queue_items(vec![prompt_id]).await
 }
 
+/// Reorder a pending queue item to a new position within the caller's own
+/// pending items (0 = next to run, increasing = later).
+///
+/// Two cases:
+/// 1. The prompt is still in the local held list (not yet submitted to ComfyUI).
+///    Handled by reordering in memory — no new prompt_id issued.
+/// 2. The prompt was already submitted to ComfyUI but is still pending (not
+///    running). The workflow is fetched from ComfyUI's queue, the item is
+///    deleted, and a fresh HeldPrompt is created at the target position so the
+///    drain reactor resubmits it in the new order. The placeholder_id stays the
+///    same so the frontend's progress tracking is unaffected.
+///
+/// Returns `AppError` if the item has already started running, or if the
+/// workflow cannot be retrieved from ComfyUI's queue.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn reorder_queue_item(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: String,
+    new_position: usize,
+) -> Result<(), AppError> {
+    let username = state.prompt_queue.owner_of(&prompt_id);
+
+    // Case 1: prompt is still held locally — simple in-memory reorder.
+    if state
+        .prompt_queue
+        .reorder_held_prompt(&prompt_id, new_position, &username)
+    {
+        state.broadcast_queue_positions();
+        return Ok(());
+    }
+
+    // Case 2: already submitted to ComfyUI.
+    // Find the ComfyUI real_id bound to this placeholder.
+    let real_id = state
+        .prompt_queue
+        .real_id_for_placeholder(&prompt_id)
+        .unwrap_or_else(|| prompt_id.clone());
+
+    // Fetch the current ComfyUI queue to locate the workflow.
+    let queue_info = state.get_queue_info().await?;
+
+    // Check that the item is pending (not running).
+    let is_running = queue_info.queue_running.iter().any(|entry| {
+        entry
+            .as_array()
+            .and_then(|a| a.get(1))
+            .and_then(|v| v.as_str())
+            .map(|id| id == real_id)
+            .unwrap_or(false)
+    });
+    if is_running {
+        return Err(AppError::Other("queue_item_already_running".to_string()));
+    }
+
+    // Extract the workflow JSON from ComfyUI's pending list.
+    // Pending entries are arrays: [number, prompt_id, workflow, extra_data, outputs].
+    let workflow = queue_info
+        .queue_pending
+        .iter()
+        .find(|entry| {
+            entry
+                .as_array()
+                .and_then(|a| a.get(1))
+                .and_then(|v| v.as_str())
+                .map(|id| id == real_id)
+                .unwrap_or(false)
+        })
+        .and_then(|entry| entry.as_array())
+        .and_then(|a| a.get(2))
+        .cloned();
+
+    let workflow = match workflow {
+        Some(w) => w,
+        None => {
+            // Not in ComfyUI pending — may have just started; let the frontend retry.
+            return Err(AppError::Other(
+                "queue_item_not_found_in_comfyui".to_string(),
+            ));
+        }
+    };
+
+    // Delete the old submission from ComfyUI's queue.
+    for worker in &state.gpu_manager.workers {
+        let _ = state
+            .http_client
+            .post(format!("{}/queue", worker.base_url))
+            .json(&serde_json::json!({ "delete": [real_id] }))
+            .send()
+            .await;
+    }
+
+    // Re-hold the prompt: insert a fresh HeldPrompt at the target position.
+    // The drain reactor will resubmit it and bind a new ComfyUI alias.
+    state
+        .prompt_queue
+        .re_hold_for_reorder(&prompt_id, &real_id, workflow, new_position, username);
+    state.prompt_queue.drain_notify.notify_one();
+    state.broadcast_queue_positions();
+    Ok(())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn upload_image(
@@ -8241,4 +8343,150 @@ pub async fn civitai_bulk_scan_cancel(state: State<'_, Arc<AppState>>) -> Result
         .civitai_scan_cancel
         .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+// --------------------------------------------------------------------------
+// Tests for queue reorder computation (pure logic, no async)
+// --------------------------------------------------------------------------
+#[cfg(test)]
+mod queue_reorder_tests {
+    use crate::state::{HeldPrompt, PromptQueue};
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, Notify};
+
+    /// Push a HeldPrompt into both the `held` Vec and `queue` Vec so that
+    /// `reorder_held_prompt` can find it in both places.
+    fn push_held(pq: &PromptQueue, id: &str, username: Option<String>) {
+        let hp = HeldPrompt {
+            workflow: serde_json::Value::Null,
+            username: username.clone(),
+            placeholder_id: id.to_string(),
+            submitted: Arc::new(Notify::new()),
+            result: Arc::new(Mutex::new(None)),
+        };
+        pq.held.lock().unwrap().push(hp);
+        pq.queue.write().unwrap().push((id.to_string(), username));
+    }
+
+    /// Build a PromptQueue pre-populated with the given IDs for a single user
+    /// ("alice"). Returns the queue and the username Option.
+    fn build_queue(ids: &[&str]) -> (PromptQueue, Option<String>) {
+        let pq = PromptQueue::new();
+        let user = Some("alice".to_string());
+        for id in ids {
+            push_held(&pq, id, user.clone());
+        }
+        (pq, user)
+    }
+
+    /// Extract the current order of all user prompts from the display queue Vec.
+    fn user_queue_order(pq: &PromptQueue, username: &Option<String>) -> Vec<String> {
+        let queue = pq.queue.read().unwrap();
+        queue
+            .iter()
+            .filter(|(_, owner)| owner == username)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Extract the current order of all user prompts from the held Vec.
+    fn user_held_order(pq: &PromptQueue, username: &Option<String>) -> Vec<String> {
+        let held = pq.held.lock().unwrap();
+        held.iter()
+            .filter(|hp| hp.username == *username)
+            .map(|hp| hp.placeholder_id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn reorder_held_move_to_front() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p3", 0, &user);
+        assert!(moved, "should find p3 in held");
+        assert_eq!(user_held_order(&pq, &user), vec!["p3", "p1", "p2"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p3", "p1", "p2"]);
+    }
+
+    #[test]
+    fn reorder_held_move_up() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p3", 1, &user);
+        assert!(moved);
+        assert_eq!(user_held_order(&pq, &user), vec!["p1", "p3", "p2"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p1", "p3", "p2"]);
+    }
+
+    #[test]
+    fn reorder_held_move_down() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p1", 1, &user);
+        assert!(moved);
+        assert_eq!(user_held_order(&pq, &user), vec!["p2", "p1", "p3"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p2", "p1", "p3"]);
+    }
+
+    #[test]
+    fn reorder_held_move_to_back() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p1", 99, &user);
+        assert!(moved);
+        assert_eq!(user_held_order(&pq, &user), vec!["p2", "p3", "p1"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p2", "p3", "p1"]);
+    }
+
+    #[test]
+    fn reorder_held_no_op_same_position() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p2", 1, &user);
+        assert!(moved);
+        assert_eq!(
+            user_held_order(&pq, &user),
+            vec!["p1", "p2", "p3"],
+            "no-op should leave order unchanged"
+        );
+    }
+
+    #[test]
+    fn reorder_held_unknown_id_returns_false() {
+        let (pq, user) = build_queue(&["p1", "p2"]);
+        let moved = pq.reorder_held_prompt("p99", 0, &user);
+        assert!(!moved, "unknown id must return false");
+    }
+
+    #[test]
+    fn reorder_held_multi_user_only_moves_own_items() {
+        let pq = PromptQueue::new();
+        let alice = Some("alice".to_string());
+        let bob = Some("bob".to_string());
+        push_held(&pq, "a1", alice.clone());
+        push_held(&pq, "b1", bob.clone());
+        push_held(&pq, "a2", alice.clone());
+        push_held(&pq, "b2", bob.clone());
+        push_held(&pq, "a3", alice.clone());
+
+        // Move alice's a3 to front — must not disturb bob's items.
+        let moved = pq.reorder_held_prompt("a3", 0, &alice);
+        assert!(moved);
+
+        assert_eq!(user_held_order(&pq, &alice), vec!["a3", "a1", "a2"]);
+        assert_eq!(user_queue_order(&pq, &alice), vec!["a3", "a1", "a2"]);
+        assert_eq!(user_held_order(&pq, &bob), vec!["b1", "b2"]);
+        assert_eq!(user_queue_order(&pq, &bob), vec!["b1", "b2"]);
+    }
+
+    #[test]
+    fn real_id_for_placeholder_returns_correct_real_id() {
+        let pq = PromptQueue::new();
+        push_held(&pq, "placeholder-1", Some("alice".to_string()));
+        pq.bind_alias("placeholder-1", "comfy-real-123");
+        let found = pq.real_id_for_placeholder("placeholder-1");
+        assert_eq!(found, Some("comfy-real-123".to_string()));
+    }
+
+    #[test]
+    fn real_id_for_placeholder_returns_none_when_unbound() {
+        let pq = PromptQueue::new();
+        push_held(&pq, "placeholder-1", Some("alice".to_string()));
+        let found = pq.real_id_for_placeholder("placeholder-1");
+        assert_eq!(found, None);
+    }
 }

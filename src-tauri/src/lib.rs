@@ -477,6 +477,7 @@ pub fn run() {
             commands::api::interrupt_generation,
             commands::api::clear_all_queues,
             commands::api::delete_queue_item,
+            commands::api::reorder_queue_item,
             commands::api::upload_image,
             commands::api::upload_image_bytes,
             commands::api::get_output_image,

@@ -473,7 +473,23 @@ class ProgressStore {
     }
   }
 
-  /** Cancel everything — interrupt + clear queue. */
+  /**
+   * Remap a prompt id after a reorder operation re-holds a submitted prompt.
+   * The placeholder id stays the same, so this is only needed if the calling
+   * layer ever uses a different id for tracking. Currently a no-op guard kept
+   * here so the queue panel can call it unconditionally after a reorder.
+   */
+  remapPromptId(oldId: string, newId: string) {
+    if (oldId === newId) return;
+    this.pendingPrompts = this.pendingPrompts.map((p) =>
+      p.promptId === oldId ? { ...p, promptId: newId } : p
+    );
+    if (this.activePromptId === oldId) {
+      this.activePromptId = newId;
+    }
+  }
+
+  /** Cancel everything -- interrupt + clear queue. */
   cancelAll() {
     this.pendingPrompts = [];
     this.activePromptId = null;
