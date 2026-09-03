@@ -15,6 +15,7 @@
   import NovelAiSettings from "./NovelAiSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
+  import StyleReferenceSection from "./StyleReferenceSection.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
   import VideoSettingsPanel from "../video/VideoSettingsPanel.svelte";
   import H3PromptGuidePanel from "../video/H3PromptGuidePanel.svelte";
@@ -78,6 +79,7 @@
     | "novelai"
     | "controlnet"
     | "styleTransfer"
+    | "styleRef"
     | "facefix"
     | "upscaleHistory";
 
@@ -128,6 +130,7 @@
     novelai: "right",
     controlnet: "right",
     styleTransfer: "right",
+    styleRef: "right",
     facefix: "right",
     upscaleHistory: "right",
   });
@@ -158,6 +161,7 @@
     "novelai",
     "controlnet",
     "styleTransfer",
+    "styleRef",
     "facefix",
     "upscaleHistory",
   ];
@@ -306,6 +310,7 @@
     if (section === "novelai") return locale.t('generation.novelai.title');
     if (section === "facefix") return locale.t('generation.facefix.title');
     if (section === "styleTransfer") return locale.t('generation.style_transfer.title');
+    if (section === "styleRef") return locale.t('generation.style_ref.title');
     return locale.t('generation.upscale.title');
   }
 
@@ -331,6 +336,7 @@
     if (section === "upscaleHistory") return generation.mode !== "inpainting";
     if (section === "facefix") return generation.mode !== "inpainting";
     if (section === "styleTransfer") return generation.isAnima && generation.mode === "txt2img";
+    if (section === "styleRef") return !generation.isNovelAi && (generation.mode === "txt2img" || generation.mode === "img2img" || generation.mode === "inpainting");
     return true;
   }
 
@@ -371,6 +377,7 @@
   let novelaiSectionOpen = $state(savedCollapse.novelai !== false);
   let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
   let styleTransferSectionOpen = $state(savedCollapse.styleTransfer !== false);
+  let styleRefSectionOpen = $state(savedCollapse.styleRef !== false);
   let facefixSectionOpen = $state(savedCollapse.facefix !== false);
   let postSectionOpen = $state(savedCollapse.upscaleHistory !== false);
 
@@ -388,6 +395,7 @@
       novelai: novelaiSectionOpen,
       controlnet: controlnetSectionOpen,
       styleTransfer: styleTransferSectionOpen,
+      styleRef: styleRefSectionOpen,
       facefix: facefixSectionOpen,
       upscaleHistory: postSectionOpen,
     };
@@ -2034,6 +2042,27 @@
     </div>
   {/snippet}
 
+  {#snippet styleRefSection()}
+    <div bind:this={sectionRefs['styleRef']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'styleRef' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("styleRef")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (styleRefSectionOpen = !styleRefSectionOpen)}
+          title={styleRefSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.style_ref.title') }) : locale.t('common.expand', { section: locale.t('generation.style_ref.title') })}
+        >
+          <span class="font-medium">{locale.t('generation.style_ref.title')}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {styleRefSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if styleRefSectionOpen}
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
+          <StyleReferenceSection />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet imageEditSection()}
     <div bind:this={sectionRefs['imageEdit']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'imageEdit' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
@@ -2167,6 +2196,8 @@
       {@render controlnetSection()}
     {:else if section === "styleTransfer"}
       {@render styleTransferSection()}
+    {:else if section === "styleRef"}
+      {@render styleRefSection()}
     {:else if section === "facefix"}
       {@render facefixSection()}
     {:else if section === "upscaleHistory"}

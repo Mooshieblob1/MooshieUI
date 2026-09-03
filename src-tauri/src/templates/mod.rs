@@ -5,6 +5,7 @@ pub mod img2img;
 pub mod inpainting;
 pub mod rife;
 pub mod segment_detail;
+pub mod style_ref;
 pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
@@ -216,6 +217,30 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         if !params.detail_segments.is_empty() {
             return Err(
                 "Style transfer cannot be used with <segment> refinement in this version — remove segment tags from the prompt.".into(),
+            );
+        }
+    }
+
+    if params.style_ref_enabled && params.mode != "video" && params.mode != "image_edit" {
+        if !style_ref::family_supports_style_ref(&params.model_architecture) {
+            return Err(format!(
+                "Style reference is only available for SD1.5, SDXL, and Flux.1 models. \
+                 The selected model family ('{}') is not supported. \
+                 Disable style reference or switch to a supported model.",
+                params.model_architecture
+            ));
+        }
+        if params
+            .style_ref_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            return Err(
+                "Style reference is enabled but no reference image was provided. \
+                 Please upload a style reference image."
+                    .into(),
             );
         }
     }
@@ -644,6 +669,13 @@ pub fn build_workflow(
                     }
                 }
             }
+        }
+    }
+
+    // Inject style reference if enabled (IP-Adapter for SD1.5/SDXL, Flux Redux for Flux.1)
+    if params.style_ref_enabled && params.mode != "video" && params.mode != "image_edit" {
+        if style_ref::family_supports_style_ref(&params.model_architecture) {
+            style_ref::inject_style_ref(&mut result, params);
         }
     }
 

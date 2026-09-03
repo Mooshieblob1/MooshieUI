@@ -374,6 +374,14 @@ export interface GenerationParams {
   style_transfer_pmi_alpha?: number;
   style_transfer_megapixels?: number;
   style_transfer_blocks?: string;
+  style_ref_enabled?: boolean;
+  style_ref_image?: string | null;
+  style_ref_strength?: number;
+  style_ref_weight_type?: string;
+  style_ref_start?: number;
+  style_ref_end?: number;
+  style_ref_redux_model?: string | null;
+  style_ref_clip_vision?: string | null;
   /** Anima TeaCache: reuses the previous step's DiT output when little changed. */
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */

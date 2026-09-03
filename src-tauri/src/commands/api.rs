@@ -349,6 +349,9 @@ fn known_model_subdirs() -> Vec<&'static str> {
         "text_encoders",
         "ultralytics",
         "model_patches",
+        "style_models",
+        "ipadapter",
+        "clip_vision",
     ]
     .iter()
     .flat_map(|category| category_subdirs(category).iter().copied())
@@ -5698,6 +5701,25 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "ModelPatches",
             "models/model_patches",
             "Models/model_patches",
+        ],
+        "style_models" => &[
+            "style_models",
+            "StyleModels",
+            "models/style_models",
+            "Models/style_models",
+        ],
+        "ipadapter" => &[
+            "ipadapter",
+            "IPAdapter",
+            "ip_adapter",
+            "models/ipadapter",
+            "Models/ipadapter",
+        ],
+        "clip_vision" => &[
+            "clip_vision",
+            "CLIPVision",
+            "models/clip_vision",
+            "Models/clip_vision",
         ],
         _ => &[],
     }
