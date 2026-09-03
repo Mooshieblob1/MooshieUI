@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ipcInvoke, ipcListen, isTauri } from "../../utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import logo from "../../assets/logo.png";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
@@ -168,6 +168,12 @@
     // Detect system language if no saved preference
     locale.detectSystemLocale();
 
+    if (isBrowserMode) {
+      phase = "error";
+      errorMessage = locale.t("setup.not_available_in_browser");
+      return;
+    }
+
     // Detect GPU and get default install path in parallel
     const [detectedGpuResult, installPathResult, configResult] = await Promise.allSettled([
       ipcInvoke<string>("detect_gpu"),
@@ -305,6 +311,7 @@
   }
 
   async function startInstall() {
+    if (isBrowserMode) return;
     phase = "installing";
     progressPercent = 0;
     progressMessage = locale.t("setup.progress_starting");

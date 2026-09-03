@@ -1,7 +1,7 @@
 <script lang="ts">
   import { locale } from "../stores/locale.svelte.js";
   import { killPortProcess, updateComfyui } from "../utils/api.js";
-  import { ipcInvoke, ipcListen } from "../utils/ipc.js";
+  import { ipcInvoke, ipcListen, isBrowserMode } from "../utils/ipc.js";
   import {
     isCrashPayload,
     isNodeLoadFailurePayload,
@@ -82,6 +82,7 @@
    * the checkout is currently on, so it repairs as well as upgrades.
    */
   async function repairAndRestart() {
+    if (isBrowserMode) return;
     busy = true;
     localError = "";
     try {

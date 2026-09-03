@@ -552,22 +552,6 @@ class ProgressStore {
     }
   }
 
-  // --- Backward-compat aliases ---
-
-  /** @deprecated Use enqueue() instead. */
-  startGeneration(
-    promptId: string,
-    upscaled: boolean = false,
-    mode: GenerationMode = "txt2img",
-    params: GenerationParams | null = null,
-  ) {
-    this.enqueue(promptId, upscaled, mode, params);
-  }
-
-  /** @deprecated Use cancelAll() instead. */
-  reset() {
-    this.cancelAll();
-  }
 }
 
 export const progress = new ProgressStore();

@@ -151,6 +151,7 @@ class ComfyuiUpdateStore {
     auto: boolean,
     onProgress?: (message: string) => void,
   ): Promise<boolean> {
+    if (isBrowserMode) return false;
     if (this.updating) return false;
     this.updating = true;
     this.error = null;

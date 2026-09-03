@@ -2233,6 +2233,23 @@ async fn dispatch_command(
             let cfg = state.config.read().await;
             Ok(serde_json::json!(cfg.setup_complete))
         }
+        "get_install_path" => {
+            // Read-only: return the host's resolved data directory.
+            let dir = config::app_data_dir()
+                .ok_or_else(|| "Cannot determine install path".to_string())?;
+            Ok(serde_json::json!(dir.to_string_lossy()))
+        }
+        "detect_model_directories" => {
+            // Read-only: scan the host filesystem for existing AI model dirs.
+            #[cfg(feature = "desktop")]
+            {
+                let dirs = crate::setup::scan_model_directories_pub();
+                return serde_json::to_value(dirs).map_err(|e| e.to_string());
+            }
+            #[cfg(not(feature = "desktop"))]
+            // Server-only build: setup scanning is a desktop facility; return empty.
+            Ok(serde_json::json!([]))
+        }
         "check_server_health" => {
             let stats = state
                 .get_system_stats_info()
@@ -3970,70 +3987,13 @@ async fn dispatch_command(
         }
 
         // --- CivitAI ---
-        // TODO: refactor src-tauri/src/commands/api.rs and src-tauri/src/webserver.rs
         "civitai_search_models" => {
             let params: crate::commands::api::CivitaiSearchParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
-
-            let encode_val = |v: &str| -> String {
-                url::form_urlencoded::byte_serialize(v.as_bytes()).collect()
-            };
-
-            let mut parts: Vec<String> = vec![
-                format!(
-                    "sort={}",
-                    encode_val(&params.sort.unwrap_or_else(|| "Most Downloaded".to_string()))
-                ),
-                format!(
-                    "period={}",
-                    encode_val(&params.period.unwrap_or_else(|| "AllTime".to_string()))
-                ),
-                format!("nsfw={}", params.nsfw.unwrap_or(false)),
-                format!("limit={}", params.limit.unwrap_or(20)),
-            ];
-
-            let has_query = params
-                .query
-                .as_ref()
-                .filter(|v| !v.trim().is_empty())
-                .is_some();
-            if !has_query {
-                parts.push(format!("page={}", params.page.unwrap_or(1)));
-            }
-            if let Some(cursor) = params.cursor.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("cursor={}", encode_val(&cursor)));
-            }
-            if let Some(q) = params.query.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("query={}", encode_val(&q)));
-            }
-            if let Some(t) = params.model_type.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("types[]={}", encode_val(&t)));
-            }
-            if let Some(base_model) = params.base_model.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("baseModels[]={}", encode_val(&base_model)));
-            }
-            if let Some(file_format) = params.file_format.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("fileFormats[]={}", encode_val(&file_format)));
-            }
-
-            let url = format!("https://civitai.com/api/v1/models?{}", parts.join("&"));
-            let mut req = state
-                .http_client
-                .get(&url)
-                .header("Accept", "application/json")
-                .header("User-Agent", "MooshieUI/0.3.9");
-            if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
-                req = req.bearer_auth(key);
-            }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(format!("CivitAI API error {}: {}", status, body));
-            }
-            let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-            Ok(data)
+            crate::commands::api::civitai_search_models_internal(&state, params)
+                .await
+                .map_err(|e| e.to_string())
         }
         "civitai_get_model" => {
             let model_id = args
