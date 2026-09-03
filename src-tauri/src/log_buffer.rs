@@ -3,8 +3,8 @@
 //! Two buffers are maintained:
 //! - `rust`: fed by a custom `log::Log` implementation that also writes to
 //!   stderr, so every `log::info!`/`warn!`/`error!` ends up in the buffer.
-//! - `frontend`: fed explicitly by the `append_frontend_logs` command, which
-//!   the UI calls when exporting diagnostics.
+//! - `frontend`: fed by the frontend log lines the UI submits alongside an
+//!   `export_logs` request (see `build_diagnostic_log`).
 //!
 //! Both buffers are capped and discard oldest entries first so they can't
 //! grow unboundedly during long sessions.
