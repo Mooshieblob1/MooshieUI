@@ -126,7 +126,7 @@ pub mod seed_string {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GenerationParams {
     pub mode: String,
     pub positive_prompt: String,
@@ -413,6 +413,21 @@ pub struct GenerationParams {
     /// Blocks range for UntwistingRoPE node (e.g. "0-999").
     #[serde(default = "default_style_transfer_blocks")]
     pub style_transfer_blocks: String,
+    #[serde(default)]
+    pub style_ref_enabled: bool,
+    pub style_ref_image: Option<String>,
+    #[serde(default = "default_style_ref_strength")]
+    pub style_ref_strength: f32,
+    #[serde(default = "default_style_ref_weight_type")]
+    pub style_ref_weight_type: String,
+    #[serde(default)]
+    pub style_ref_start: f32,
+    #[serde(default = "default_style_ref_end")]
+    pub style_ref_end: f32,
+    /// Flux Redux: style model filename in models/style_models/
+    pub style_ref_redux_model: Option<String>,
+    /// Redux/IPAdapter: clip_vision model filename in models/clip_vision/
+    pub style_ref_clip_vision: Option<String>,
     /// Anima TeaCache — reuses the previous step's DiT output while the
     /// accumulated input delta stays under threshold, skipping the forward
     /// pass. MooshieUI-authored node, always deployed (no lazy install).
@@ -503,6 +518,16 @@ fn default_style_transfer_megapixels() -> f64 {
 
 fn default_style_transfer_blocks() -> String {
     "0-999".to_string()
+}
+
+fn default_style_ref_strength() -> f32 {
+    0.6
+}
+fn default_style_ref_weight_type() -> String {
+    "linear".to_string()
+}
+fn default_style_ref_end() -> f32 {
+    1.0
 }
 
 fn default_region_strength() -> f64 {

@@ -34,7 +34,7 @@ days, L is one to two weeks, XL is multi-week.
 | 6 | TeaCache / EasyCache and torch.compile toggles | M | Sits next to the existing SageAttention and FlashAttention settings, gated per family (TeaCache for Flux-class, EasyCache for Qwen). The custom-node auto-install pattern already exists (ComfyUI-GGUF is the precedent). |
 | 7 | Generation queue panel (queue jobs with different settings, view and cancel pending items) | M-L | The ComfyUI backend queue already supports this. Needs a per-job settings snapshot (the Compare store's snapshot logic is the precedent) plus a queue UI. |
 | 8 | Outpainting (extend the canvas and generate into the new space) | M-L | The canvas and mask editor and the inpaint pipeline already exist. Needs a canvas-extend UX and a pad/feather workflow (ComfyUI `ImagePadForOutpaint`). Stays inside the existing in-app editing features. |
-| 9 | Reference-image prompting (IP-Adapter or Flux Redux style transfer for non-edit models) | L | Redux is a core node for Flux; IP-Adapter for SDXL-class needs a custom node. Best done after Image Edit mode since it shares the reference-image UI. |
+| 9 | Reference-image prompting (IP-Adapter or Flux Redux style transfer for non-edit models) | L | **Implemented.** Redux is a core node for Flux; IP-Adapter for SDXL-class needs a custom node. See Style Reference section in GenerationPage, `src-tauri/src/templates/style_ref.rs`, and `docs/STYLE_REFERENCE.md`. |
 | 10 | Video generation (Wan 2.2 T2V and I2V first, LTX-V later) | XL | The Wan family is already detected. Needs video workflow templates, frame/FPS/length params, video output handling outside the JXL pipeline, gallery playback, and previews. The biggest lift, best split into phases and scheduled last. |
 
 ## Explicitly out of scope
@@ -74,4 +74,15 @@ models and warns when a non-edit model is selected. See the family-specific
 workflow templates in `src-tauri/src/templates/image_edit.rs` and the settings
 UI in `src/lib/components/generation/ImageEditSettings.svelte`.
 
-Everything past item #1 in the table is still a proposal, not committed work.
+Items #1 and #9 in the table are implemented. Everything else is still a proposal, not committed work.
+
+## Style reference (item #9, implemented)
+
+Style reference lets users guide the style of any generation by supplying a reference image. The implementation adapts to the active model family automatically:
+
+- Flux.1 (flux1d, flux1s, flux1krea): uses Flux Redux, a core ComfyUI workflow with no custom nodes required. Needs `flux1-redux-dev.safetensors` in `models/style_models/` and `sigclip_vision_patch14_384.safetensors` in `models/clip_vision/`.
+- SD1.5 (sd15): uses IP-Adapter Plus (ComfyUI_IPAdapter_plus custom node pack, installed lazily from the panel). Needs `ip-adapter-plus_sd15.safetensors` in `models/ipadapter/` and `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors` in `models/clip_vision/`.
+- SDXL-class (sdxl, illustrious, pony): uses IP-Adapter Plus with `ip-adapter-plus_sdxl_vit-h.safetensors` in `models/ipadapter/`.
+- All other families (Wan, Qwen, SD3, Chroma, etc.): not supported; the panel shows an explanatory hint and generation is blocked with a clear error.
+
+The Style Reference panel appears on the right column of the Generation page. It can be shown, hidden, and dragged like all other generation sections. See `docs/STYLE_REFERENCE.md` for model download instructions.

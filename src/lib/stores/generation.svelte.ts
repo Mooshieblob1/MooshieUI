@@ -743,6 +743,15 @@ class GenerationStore {
    *  accumulated input delta stays under threshold. MooshieUI-authored node,
    *  always available (no lazy install, unlike video's H3 TeaCache). */
   animaTeacacheEnabled = $state(false);
+  // --- Style Reference (IP-Adapter / Flux Redux) ---
+  styleRefEnabled = $state(false);
+  styleRefImage = $state<string | null>(null);
+  styleRefStrength = $state(0.6);
+  styleRefWeightType = $state("linear");
+  styleRefStart = $state(0.0);
+  styleRefEnd = $state(1.0);
+  styleRefReduxModel = $state<string | null>(null);
+  styleRefClipVision = $state<string | null>(null);
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -1122,6 +1131,23 @@ class GenerationStore {
   /** True when the selected model is Flux.1 Kontext (image edit). Kept out of isFlux. */
   get isFluxKontext(): boolean {
     return this.modelFamily === "flux1kontext";
+  }
+
+  /** True when the model family supports style reference (IP-Adapter or Flux Redux). */
+  get supportsStyleRef(): boolean {
+    return ["flux1d", "flux1s", "flux1krea", "sd15", "sdxl", "illustrious", "pony"].includes(
+      this.modelFamily,
+    );
+  }
+
+  /** True when the active style ref is Flux Redux (Flux.1 family). */
+  get styleRefIsRedux(): boolean {
+    return ["flux1d", "flux1s", "flux1krea"].includes(this.modelFamily);
+  }
+
+  /** True when the active style ref is IP-Adapter (SD1.5 or SDXL family). */
+  get styleRefIsIPAdapter(): boolean {
+    return ["sd15", "sdxl", "illustrious", "pony"].includes(this.modelFamily);
   }
 
   /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
@@ -2594,6 +2620,14 @@ class GenerationStore {
         if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
         if (saved.animaTeacacheEnabled !== undefined)
           this.animaTeacacheEnabled = saved.animaTeacacheEnabled;
+        if (saved.styleRefEnabled !== undefined) this.styleRefEnabled = saved.styleRefEnabled;
+        if (saved.styleRefImage !== undefined) this.styleRefImage = saved.styleRefImage;
+        if (saved.styleRefStrength !== undefined) this.styleRefStrength = saved.styleRefStrength;
+        if (saved.styleRefWeightType) this.styleRefWeightType = saved.styleRefWeightType;
+        if (saved.styleRefStart !== undefined) this.styleRefStart = saved.styleRefStart;
+        if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
+        if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
+        if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
         if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
         if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
         if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -2769,6 +2803,14 @@ class GenerationStore {
         styleTransferMegapixels: this.styleTransferMegapixels,
         styleTransferBlocks: this.styleTransferBlocks,
         animaTeacacheEnabled: this.animaTeacacheEnabled,
+        styleRefEnabled: this.styleRefEnabled,
+        styleRefImage: this.styleRefImage,
+        styleRefStrength: this.styleRefStrength,
+        styleRefWeightType: this.styleRefWeightType,
+        styleRefStart: this.styleRefStart,
+        styleRefEnd: this.styleRefEnd,
+        styleRefReduxModel: this.styleRefReduxModel,
+        styleRefClipVision: this.styleRefClipVision,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -2918,6 +2960,14 @@ class GenerationStore {
       styleTransferMegapixels: this.styleTransferMegapixels,
       styleTransferBlocks: this.styleTransferBlocks,
       animaTeacacheEnabled: this.animaTeacacheEnabled,
+      styleRefEnabled: this.styleRefEnabled,
+      styleRefImage: this.styleRefImage,
+      styleRefStrength: this.styleRefStrength,
+      styleRefWeightType: this.styleRefWeightType,
+      styleRefStart: this.styleRefStart,
+      styleRefEnd: this.styleRefEnd,
+      styleRefReduxModel: this.styleRefReduxModel,
+      styleRefClipVision: this.styleRefClipVision,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -3469,6 +3519,14 @@ class GenerationStore {
       style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
       style_transfer_megapixels: this.styleTransferMegapixels,
       style_transfer_blocks: this.styleTransferBlocks,
+      style_ref_enabled: this.styleRefEnabled,
+      style_ref_image: this.styleRefImage,
+      style_ref_strength: this.styleRefStrength,
+      style_ref_weight_type: this.styleRefWeightType,
+      style_ref_start: this.styleRefStart,
+      style_ref_end: this.styleRefEnd,
+      style_ref_redux_model: this.styleRefReduxModel,
+      style_ref_clip_vision: this.styleRefClipVision,
       anima_teacache_enabled: this.animaTeacacheEnabled,
       edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
       edit_reference_strength: this.editReferenceStrength,
