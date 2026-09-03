@@ -827,6 +827,32 @@ export async function getCheckpointCivitaiInfo(
   return ipcInvoke("get_checkpoint_civitai_info", { filename });
 }
 
+export interface CivitaiBulkScanSummary {
+  total: number;
+  found: number;
+  not_found: number;
+  skipped: number;
+  errors: number;
+  cancelled: boolean;
+}
+
+/**
+ * Start a bulk CivitAI hash scan across all local model categories.
+ * Emits `comfyui:civitai_scan` events with progress; returns the final
+ * summary when done (desktop only -- browser mode returns null immediately
+ * and delivers progress via SSE).
+ */
+export async function civitaiBulkScan(
+  force: boolean
+): Promise<CivitaiBulkScanSummary | null> {
+  return ipcInvoke("civitai_bulk_scan", { force });
+}
+
+/** Cancel an in-progress civitaiBulkScan. Safe to call at any time. */
+export async function civitaiBulkScanCancel(): Promise<void> {
+  return ipcInvoke("civitai_bulk_scan_cancel", {});
+}
+
 /**
  * Fetch a remote image through the Rust backend so CivitAI auth headers
  * are applied and the result is cached to disk per-user.

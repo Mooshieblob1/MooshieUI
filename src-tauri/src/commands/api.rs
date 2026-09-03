@@ -7843,3 +7843,369 @@ pub async fn install_attention_backend_core(
     log::info!("Attention backend set to: {}", backend);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Bulk CivitAI scan
+// ---------------------------------------------------------------------------
+
+/// Categories walked by the bulk CivitAI scan.
+const BULK_SCAN_CATEGORIES: &[&str] = &["loras", "checkpoints", "diffusion_models", "embeddings"];
+
+/// Final summary returned (and broadcast) when the bulk scan completes.
+#[derive(Debug, Serialize, Clone)]
+pub struct CivitaiBulkScanSummary {
+    pub total: usize,
+    pub found: usize,
+    pub not_found: usize,
+    pub skipped: usize,
+    pub errors: usize,
+    pub cancelled: bool,
+}
+
+/// Internal core for `civitai_bulk_scan` -- compiles in both desktop and server
+/// builds.  `emit` is called with each progress payload; the caller is
+/// responsible for routing it to the Tauri AppHandle or the SSE broadcast
+/// channel.
+pub(crate) async fn civitai_bulk_scan_core<F>(
+    state: &Arc<AppState>,
+    force: bool,
+    emit: F,
+) -> CivitaiBulkScanSummary
+where
+    F: Fn(serde_json::Value) + Send + Sync,
+{
+    // Reset any leftover cancel flag from a previous run.
+    state
+        .civitai_scan_cancel
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+
+    let (comfyui_path, extra_model_paths, civitai_api_key) = {
+        let config = state.config.read().await;
+        (
+            config.comfyui_path.clone(),
+            config.extra_model_paths.clone(),
+            config.civitai_api_key.clone(),
+        )
+    };
+
+    if comfyui_path.is_empty() {
+        emit(serde_json::json!({
+            "current": 0,
+            "total": 0,
+            "name": "",
+            "status": "done",
+            "done": true,
+            "found": 0,
+            "not_found": 0,
+            "skipped": 0,
+            "errors": 0,
+            "cancelled": false,
+        }));
+        return CivitaiBulkScanSummary {
+            total: 0,
+            found: 0,
+            not_found: 0,
+            skipped: 0,
+            errors: 0,
+            cancelled: false,
+        };
+    }
+
+    // Collect all model files across the supported categories.
+    let mut all_models: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for &category in BULK_SCAN_CATEGORIES {
+        let files = match list_model_files_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            category,
+        ) {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!(
+                    "civitai_bulk_scan: could not list {} files: {}",
+                    category,
+                    e
+                );
+                continue;
+            }
+        };
+        for f in files {
+            // CivitAI hash lookup is only meaningful for file types that carry
+            // a recoverable SHA-256 (safetensors, gguf, ckpt).
+            let lower = f.filename.to_ascii_lowercase();
+            if !lower.ends_with(".safetensors")
+                && !lower.ends_with(".gguf")
+                && !lower.ends_with(".ckpt")
+            {
+                continue;
+            }
+            let Some(path) = resolve_model_path(
+                &comfyui_path,
+                extra_model_paths.as_deref(),
+                category,
+                &f.filename,
+            ) else {
+                continue;
+            };
+            all_models.push((f.filename, path));
+        }
+    }
+
+    let total = all_models.len();
+    let mut found = 0usize;
+    let mut not_found = 0usize;
+    let mut skipped = 0usize;
+    let mut errors = 0usize;
+    let mut cancelled = false;
+
+    for (idx, (filename, path)) in all_models.iter().enumerate() {
+        if state
+            .civitai_scan_cancel
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            cancelled = true;
+            break;
+        }
+
+        let current = idx + 1;
+
+        // Skip models that already have a cached .civitai.info sidecar,
+        // unless `force` was requested.
+        if !force {
+            let has_cache = sidecar_metadata_path(&path, ".civitai.info")
+                .map(|p| p.is_file())
+                .unwrap_or(false);
+            if has_cache {
+                skipped += 1;
+                // Emit a batched progress update every 20 files so the UI
+                // shows movement without flooding the event channel.
+                if current % 20 == 0 || current == total {
+                    emit(serde_json::json!({
+                        "current": current,
+                        "total": total,
+                        "name": filename,
+                        "status": "skipped",
+                        "done": false,
+                    }));
+                }
+                continue;
+            }
+        }
+
+        emit(serde_json::json!({
+            "current": current,
+            "total": total,
+            "name": filename,
+            "status": "hashing",
+            "done": false,
+        }));
+
+        // Hash the file on a blocking thread -- checkpoints can be 10+ GB.
+        let path_clone = path.clone();
+        let sha256 = match tokio::task::spawn_blocking(move || full_sha256(&path_clone)).await {
+            Ok(Ok(h)) => h,
+            Ok(Err(e)) => {
+                log::warn!("civitai_bulk_scan: hash failed for {}: {}", filename, e);
+                errors += 1;
+                emit(serde_json::json!({
+                    "current": current,
+                    "total": total,
+                    "name": filename,
+                    "status": "error",
+                    "done": false,
+                }));
+                continue;
+            }
+            Err(e) => {
+                log::warn!(
+                    "civitai_bulk_scan: hash task panicked for {}: {}",
+                    filename,
+                    e
+                );
+                errors += 1;
+                emit(serde_json::json!({
+                    "current": current,
+                    "total": total,
+                    "name": filename,
+                    "status": "error",
+                    "done": false,
+                }));
+                continue;
+            }
+        };
+        let autov2 = autov2_hash(&sha256);
+
+        // CivitAI API lookup with exponential back-off on 429.
+        let api_url = format!(
+            "https://civitai.com/api/v1/model-versions/by-hash/{}",
+            autov2
+        );
+        let mut civitai_data: Option<serde_json::Value> = None;
+        let mut backoff_secs = 1u64;
+
+        'retry: for _attempt in 0..5u32 {
+            if state
+                .civitai_scan_cancel
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                cancelled = true;
+                break 'retry;
+            }
+
+            let mut req = state
+                .http_client
+                .get(&api_url)
+                .header("User-Agent", "MooshieUI/2.0");
+            if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+                req = req.bearer_auth(key);
+            }
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("civitai_bulk_scan: request error for {}: {}", filename, e);
+                    break 'retry;
+                }
+            };
+
+            let status = resp.status();
+            if status.as_u16() == 429 {
+                log::info!(
+                    "civitai_bulk_scan: 429 rate-limit for {}, backing off {}s",
+                    filename,
+                    backoff_secs
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                backoff_secs = (backoff_secs * 2).min(30);
+                continue 'retry;
+            }
+            if status.as_u16() == 404 {
+                // Not indexed on CivitAI -- normal, not an error.
+                break 'retry;
+            }
+            if !status.is_success() {
+                log::warn!(
+                    "civitai_bulk_scan: CivitAI returned {} for {}",
+                    status,
+                    filename
+                );
+                break 'retry;
+            }
+
+            match resp.json::<serde_json::Value>().await {
+                Ok(data) => civitai_data = Some(data),
+                Err(e) => {
+                    log::warn!(
+                        "civitai_bulk_scan: JSON parse error for {}: {}",
+                        filename,
+                        e
+                    );
+                }
+            }
+            break 'retry;
+        }
+
+        if cancelled {
+            break;
+        }
+
+        if let Some(data) = civitai_data {
+            found += 1;
+            // Write the raw CivitAI API response to a .civitai.info sidecar so
+            // `read_forge_metadata` (the Forge/A1111 CivitAI Helper reader
+            // already in the codebase) picks it up automatically.
+            if let Some(sidecar_path) = sidecar_metadata_path(&path, ".civitai.info") {
+                match serde_json::to_string_pretty(&data) {
+                    Ok(json_str) => {
+                        if let Err(e) = std::fs::write(&sidecar_path, json_str) {
+                            log::warn!(
+                                "civitai_bulk_scan: failed to write sidecar for {}: {}",
+                                filename,
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("civitai_bulk_scan: serialize error for {}: {}", filename, e);
+                    }
+                }
+            }
+            emit(serde_json::json!({
+                "current": current,
+                "total": total,
+                "name": filename,
+                "status": "found",
+                "done": false,
+            }));
+        } else {
+            not_found += 1;
+            emit(serde_json::json!({
+                "current": current,
+                "total": total,
+                "name": filename,
+                "status": "not_found",
+                "done": false,
+            }));
+        }
+
+        // Brief pause between requests -- avoids hammering the CivitAI API.
+        tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
+    }
+
+    // Final summary event.
+    emit(serde_json::json!({
+        "current": total,
+        "total": total,
+        "name": "",
+        "status": if cancelled { "cancelled" } else { "done" },
+        "done": true,
+        "found": found,
+        "not_found": not_found,
+        "skipped": skipped,
+        "errors": errors,
+        "cancelled": cancelled,
+    }));
+
+    state
+        .civitai_scan_cancel
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+
+    CivitaiBulkScanSummary {
+        total,
+        found,
+        not_found,
+        skipped,
+        errors,
+        cancelled,
+    }
+}
+
+/// Hash-scan every local model file in the supported categories against the
+/// CivitAI API and cache the result in a `.civitai.info` sidecar file.
+/// Emits `comfyui:civitai_scan` events with shape
+/// `{ current, total, name, status, done }`.
+/// `status` is one of `"hashing"`, `"found"`, `"not_found"`, `"skipped"`,
+/// `"error"`, `"done"`, or `"cancelled"`.  The final event also carries
+/// `found`, `not_found`, `skipped`, `errors`, and `cancelled` summary counts.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_bulk_scan(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    force: bool,
+) -> Result<CivitaiBulkScanSummary, AppError> {
+    let emit = move |payload: serde_json::Value| {
+        let _ = app.emit("comfyui:civitai_scan", payload);
+    };
+    Ok(civitai_bulk_scan_core(&state, force, emit).await)
+}
+
+/// Cancel an in-progress `civitai_bulk_scan`.  Safe to call at any time.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_bulk_scan_cancel(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
+    state
+        .civitai_scan_cancel
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}

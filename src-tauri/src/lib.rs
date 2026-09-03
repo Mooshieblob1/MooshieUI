@@ -601,6 +601,8 @@ pub fn run() {
             commands::video_export::copy_file_to,
             commands::video_interpolate::interpolate_video,
             commands::api::save_video_to_gallery_manual,
+            commands::api::civitai_bulk_scan,
+            commands::api::civitai_bulk_scan_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

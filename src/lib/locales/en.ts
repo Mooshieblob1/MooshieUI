@@ -3273,5 +3273,21 @@ const en: Record<string, string> = {
   "novelai.enhance.variety": "Variety",
   "novelai.enhance.variety_hint": "How far each variation may stray from the source.",
   "novelai.enhance.variations_started": "Variations started.",
+
+  // CivitAI bulk scan
+  "lora.civitai_scan.button": "Scan all models on CivitAI",
+  "lora.civitai_scan.button_force": "Re-scan all models",
+  "lora.civitai_scan.cancel": "Cancel",
+  "lora.civitai_scan.cancelling": "Cancelling...",
+  "lora.civitai_scan.dismiss": "Dismiss",
+  "lora.civitai_scan.hashing": "Hashing {name}...",
+  "lora.civitai_scan.progress": "{current} / {total}",
+  "lora.civitai_scan.found": "found",
+  "lora.civitai_scan.not_found": "not found",
+  "lora.civitai_scan.skipped": "skipped",
+  "lora.civitai_scan.errors": "errors",
+  "lora.civitai_scan.done": "Scan complete",
+  "lora.civitai_scan.cancelled": "Scan cancelled",
+  "lora.civitai_scan.summary": "{found} found, {not_found} not found, {skipped} skipped",
 };
 export default en;
