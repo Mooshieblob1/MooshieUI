@@ -36,6 +36,20 @@ class ProgressStore {
   lastOutputVideoFps = $state<number | null>(null);
   /** Gallery filename of `lastOutputVideo`; enables export from the preview. */
   lastOutputVideoFilename = $state<string | null>(null);
+  /**
+   * Absolute path of a video output that was NOT saved to the gallery because
+   * manual_save_mode is active. Set by the comfyui:output_video handler when
+   * `persisted === false`; cleared once the user explicitly saves it.
+   */
+  lastUnsavedVideoPath = $state<string | null>(null);
+  /** Metadata accompanying `lastUnsavedVideoPath` for the manual-save call. */
+  lastUnsavedVideoMeta = $state<{
+    fps: number | null;
+    frameCount: number;
+    width: number;
+    height: number;
+    promptId: string;
+  } | null>(null);
   modeLastOutput = $state<Record<GenerationMode, string | null>>({
     txt2img: null,
     img2img: null,
@@ -320,6 +334,8 @@ class ProgressStore {
       this.lastOutputVideo = null;
       this.lastOutputVideoFps = null;
       this.lastOutputVideoFilename = null;
+      this.lastUnsavedVideoPath = null;
+      this.lastUnsavedVideoMeta = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
       const now = Date.now();
@@ -407,6 +423,8 @@ class ProgressStore {
       this.lastOutputVideo = null;
       this.lastOutputVideoFps = null;
       this.lastOutputVideoFilename = null;
+      this.lastUnsavedVideoPath = null;
+      this.lastUnsavedVideoMeta = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
       this.generationStartTime = null;
@@ -430,6 +448,8 @@ class ProgressStore {
     this.lastOutputVideo = null;
     this.lastOutputVideoFps = null;
     this.lastOutputVideoFilename = null;
+    this.lastUnsavedVideoPath = null;
+    this.lastUnsavedVideoMeta = null;
     this.samplingPass = 0;
     this._lastProgressNode = null;
     this.generationStartTime = null;

@@ -192,6 +192,22 @@ pub const MISSING_H3_DIRECTOR_NODES_MARKER: &str =
 /// Substring present in [`verify_required_h3_native_nodes`] error output.
 pub const MISSING_H3_NATIVE_NODES_MARKER: &str = "Required MiniMax H3 video node failed to load";
 
+/// Substring present in [`ensure_required_int8_fast_nodes`] error output.
+pub const MISSING_INT8_FAST_NODES_MARKER: &str = "Required INT8-Fast custom nodes failed to load";
+
+// INT8-Fast quantized diffusion model loader. Installed lazily from the model
+// settings panel rather than at setup: the pack is NVIDIA-only, so installing
+// it for everyone on AMD/Apple would be silent waste. Pre-quantized INT8/ConvRot
+// models (e.g. Flux2-Klein-9B-INT8-ConvRot from ComfyUI-INT8-Fast) cannot be
+// loaded by the stock UNETLoader; the OTUNetLoaderW8A8 node handles them.
+// Ships no requirements.txt — pure Python; the clone is the entire install.
+const INT8_FAST_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: "ComfyUI-INT8-Fast",
+    git_url: "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
+    verify_nodes: &["OTUNetLoaderW8A8"],
+    requirements_file: "requirements.txt",
+}];
+
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieSaveVideo",
@@ -749,6 +765,47 @@ pub async fn verify_required_rife_nodes(
         MISSING_RIFE_NODES_MARKER,
         missing.join(", ")
     ))
+}
+
+/// Clone the INT8-Fast loader pack into ComfyUI's custom_nodes directory.
+///
+/// Called lazily from the model settings install button rather than at setup:
+/// the pack is NVIDIA-only and useless on AMD/Apple hardware.
+/// Reports progress through `install:progress` events via `on_progress`.
+pub async fn ensure_required_int8_fast_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in INT8_FAST_PACKAGES {
+        ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "{}: {}: {}",
+                MISSING_INT8_FAST_NODES_MARKER, package.name, e
+            )
+        })?;
+    }
+
+    log::info!("Ensured INT8-Fast custom node package");
+    Ok(())
 }
 
 /// Install the RIFE frame-interpolation pack and its checkpoint.

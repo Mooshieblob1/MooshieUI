@@ -57,6 +57,7 @@
 - **Transparent background toggle for NovelAI V5**: generate images with a real alpha channel on V5. ([#622](https://github.com/Mooshieblob1/MooshieUI/pull/622))
 
 ### Fixes and maintenance
+- **Tagger model dropdown in Settings**: added a model picker in the Interrogator settings section so you can switch between WD v3-family taggers without editing config.json.
 - **V5 costs are correct once the Opus allowance runs out**: NovelAI V5 is not covered by Opus unlimited, it draws from a timed generation allowance, so an empty allowance means a V5 generation costs real Anlas. The generate button badge, the Enhance modal and the free tags on the aspect-ratio presets now account for this. V4 and V4.5 keep the unconditional Opus discount.
 - **V5 requests send `params_version: 4`**: V5 endpoints silently discard free-placement character centres from a version-3 request. The params version is now a per-model capability rather than hardcoded, and the prompt blocks carry the flag set the V5 reference implementations use (`legacy_uc` inside `v4_prompt`, explicit `use_coords` and `use_order` on the negative block). Requests carrying characters also log a one-line wire summary (model, params version, flags, centres, never prompt text) so placement behaviour is provable from the log export.
 - **V5 Curated inpainting uses V4.5 Curated's model**: V5 Curated's own inpainting model is still training upstream and NovelAI's client substitutes V4.5 Curated's, so MooshieUI now does the same instead of requesting a model that does not exist yet.

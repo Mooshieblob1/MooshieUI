@@ -247,6 +247,26 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
+    // INT8-Fast guard: when enabled for a split-model family, the family must
+    // have a known OTUNetLoaderW8A8 model_type mapping. Pre-quantized GGUF
+    // models bypass this because they already route through UnetLoaderGGUF.
+    if params.int8_fast_enabled && params.use_split_model {
+        let unet = params
+            .diffusion_model
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !unet.ends_with(".gguf") && int8_fast_model_type(&params.model_architecture).is_none() {
+            return Err(format!(
+                "INT8-Fast loader does not support the '{}' model family. \
+                 Supported families: Flux.2 (Klein/Dev), Z-Image, Chroma, Krea 2, \
+                 Qwen, Anima, Ideogram 4. Disable the INT8-Fast loader or pick a \
+                 supported model.",
+                params.model_architecture
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -301,6 +321,29 @@ fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
         .resolved_model_path
         .as_deref()
         .filter(|p| !p.is_empty())
+}
+
+/// Map a model-architecture family string to the `model_type` enum value
+/// expected by `OTUNetLoaderW8A8` (ComfyUI-INT8-Fast). Returns `None` for
+/// families the node does not support, which causes `validate_params` to
+/// reject the combination before workflow construction.
+fn int8_fast_model_type(family: &str) -> Option<&'static str> {
+    match family {
+        // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
+        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
+            Some("flux2")
+        }
+        // Z-Image variants (turbo and base)
+        "zit" | "zib" => Some("z-image"),
+        // Other mapped families
+        "chroma" => Some("chroma"),
+        "krea2" => Some("krea2"),
+        "qwen" | "qwen_edit" | "qwen_edit_plus" => Some("qwen"),
+        "anima" => Some("anima"),
+        "ideogram4" => Some("ideogram4"),
+        // Everything else is unsupported by the OTUNetLoaderW8A8 node
+        _ => None,
+    }
 }
 
 /// Load model nodes — either a single CheckpointLoaderSimple or split UNETLoader + CLIPLoader + VAELoader.
@@ -364,6 +407,22 @@ pub fn load_model_nodes(
                 "inputs": {
                     "unet_path": path,
                     "weight_dtype": "default"
+                }
+            })
+        } else if params.int8_fast_enabled {
+            // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
+            // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
+            // family has a known model_type mapping before we reach here.
+            let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
+            json!({
+                "class_type": "OTUNetLoaderW8A8",
+                "inputs": {
+                    "unet_name": unet_name,
+                    "weight_dtype": "default",
+                    "model_type": model_type,
+                    "on_the_fly_quantization": false,
+                    "enable_convrot": params.int8_fast_convrot,
+                    "lora_mode": "default"
                 }
             })
         } else {
@@ -1207,5 +1266,158 @@ fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) 
         if let Some(inputs) = sampler_node.get_mut("inputs") {
             inputs["positive"] = json!([result.positive_source.0, result.positive_source.1]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Minimal params for a split-model INT8-Fast generation targeting a
+    /// Flux2-Klein-9B file. `serde_json::from_value` gives us the `Default`
+    /// semantics of all the `#[serde(default)]` fields we don't care about.
+    fn klein_int8_params(family: &str, enabled: bool) -> GenerationParams {
+        let mut value = json!({
+            "mode": "txt2img",
+            "positive_prompt": "a red fox",
+            "negative_prompt": "",
+            "checkpoint": "",
+            "loras": [],
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "steps": 20,
+            "cfg": 1.0,
+            "seed": "42",
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1,
+            "denoise": 1.0,
+            "upscale_enabled": false,
+            "upscale_method": "latent",
+            "upscale_scale": 2.0,
+            "upscale_denoise": 0.5,
+            "upscale_steps": 10,
+            "upscale_tile_size": 512,
+            "upscale_tiling": false,
+            "use_split_model": true,
+            "diffusion_model": "flux2-klein-9b-int8-convrot.safetensors",
+            "model_architecture": family,
+            "int8_fast_enabled": enabled,
+            "int8_fast_convrot": true
+        });
+        // Krea 2 split-model validation requires clip_type = "krea2".
+        if family == "krea2" {
+            value["clip_type"] = json!("krea2");
+        }
+        serde_json::from_value(value).expect("test params must deserialize")
+    }
+
+    #[test]
+    fn int8_fast_emits_otunetloader_for_klein() {
+        let params = klein_int8_params("flux2klein9b", true);
+        let mut workflow = serde_json::Map::new();
+        let result = load_model_nodes(&mut workflow, 1, &params);
+        // The first node inserted must be OTUNetLoaderW8A8.
+        let node = workflow
+            .get(&result.model_source.0)
+            .expect("model source node must be present");
+        assert_eq!(
+            node["class_type"],
+            json!("OTUNetLoaderW8A8"),
+            "INT8-Fast mode must emit OTUNetLoaderW8A8, not UNETLoader"
+        );
+        assert_eq!(
+            node["inputs"]["model_type"],
+            json!("flux2"),
+            "Klein 9b family must map to 'flux2' model_type"
+        );
+        assert_eq!(
+            node["inputs"]["enable_convrot"],
+            json!(true),
+            "enable_convrot must follow int8_fast_convrot param"
+        );
+        assert_eq!(
+            node["inputs"]["on_the_fly_quantization"],
+            json!(false),
+            "on_the_fly_quantization must be false for pre-quantized files"
+        );
+    }
+
+    #[test]
+    fn int8_fast_disabled_emits_unetloader() {
+        let params = klein_int8_params("flux2klein9b", false);
+        let mut workflow = serde_json::Map::new();
+        let result = load_model_nodes(&mut workflow, 1, &params);
+        let node = workflow
+            .get(&result.model_source.0)
+            .expect("model source node must be present");
+        assert_eq!(
+            node["class_type"],
+            json!("UNETLoader"),
+            "When INT8-Fast is disabled, UNETLoader must be used"
+        );
+    }
+
+    #[test]
+    fn validate_params_rejects_unsupported_family_with_int8_fast() {
+        let params = klein_int8_params("illustrious", true);
+        let err = validate_generation_params(&params);
+        assert!(err.is_err(), "Unsupported family must be rejected");
+        let msg = err.unwrap_err();
+        assert!(
+            msg.contains("INT8-Fast loader does not support"),
+            "Error must mention INT8-Fast: {msg}"
+        );
+        assert!(
+            msg.contains("illustrious"),
+            "Error must name the offending family: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_params_accepts_supported_families() {
+        // krea2 is excluded here because it has a separate CLIP-encoder guard in
+        // validate_generation_params that rejects params without the Qwen3-VL 4B
+        // encoder set; it would fail that guard, not the INT8-Fast guard.
+        // The int8_fast_model_type mapping for krea2 is verified in
+        // int8_fast_model_type_maps_correctly below.
+        for family in &[
+            "flux2klein9b",
+            "flux2klein4b",
+            "flux2klein9bbase",
+            "flux2klein4bbase",
+            "flux2d",
+            "zit",
+            "zib",
+            "chroma",
+            "qwen",
+            "anima",
+            "ideogram4",
+        ] {
+            let params = klein_int8_params(family, true);
+            assert!(
+                validate_generation_params(&params).is_ok(),
+                "Family '{}' must be accepted by INT8-Fast validate_params",
+                family
+            );
+        }
+    }
+
+    #[test]
+    fn int8_fast_model_type_maps_correctly() {
+        assert_eq!(int8_fast_model_type("flux2klein9b"), Some("flux2"));
+        assert_eq!(int8_fast_model_type("flux2klein4bbase"), Some("flux2"));
+        assert_eq!(int8_fast_model_type("flux2d"), Some("flux2"));
+        assert_eq!(int8_fast_model_type("zit"), Some("z-image"));
+        assert_eq!(int8_fast_model_type("zib"), Some("z-image"));
+        assert_eq!(int8_fast_model_type("chroma"), Some("chroma"));
+        assert_eq!(int8_fast_model_type("krea2"), Some("krea2"));
+        assert_eq!(int8_fast_model_type("qwen_edit"), Some("qwen"));
+        assert_eq!(int8_fast_model_type("anima"), Some("anima"));
+        assert_eq!(int8_fast_model_type("ideogram4"), Some("ideogram4"));
+        assert_eq!(int8_fast_model_type("illustrious"), None);
+        assert_eq!(int8_fast_model_type("sd15"), None);
+        assert_eq!(int8_fast_model_type("unknown"), None);
     }
 }

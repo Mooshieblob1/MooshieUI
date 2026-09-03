@@ -341,10 +341,13 @@ pub(crate) fn cache_temp_event(
 ///
 /// The payload after the 4-byte big-endian event id is UTF-8 JSON:
 /// `{"video_path","poster_path","fps","frame_count","width","height"}` with
-/// absolute paths inside ComfyUI's output directory. Moves the mp4 and its
-/// poster into the owning user's gallery directory, indexes them, and returns
-/// the payload to emit as `comfyui:output_video`. Any failure logs and
-/// returns None -- video output must never crash the WS loop.
+/// absolute paths inside ComfyUI's output directory. When `manual_save_mode`
+/// is false (default), moves the mp4 and its poster into the owning user's
+/// gallery directory, indexes them, and returns the payload to emit as
+/// `comfyui:output_video` with `persisted: true`. When `manual_save_mode` is
+/// true, skips the gallery write and emits `persisted: false` with the raw
+/// ComfyUI output path so the frontend can offer a manual Save button.
+/// Any failure logs and returns None -- video output must never crash the WS loop.
 async fn handle_video_output(
     state: &std::sync::Arc<crate::state::AppState>,
     data: &[u8],
@@ -369,6 +372,35 @@ async fn handle_video_output(
         .unwrap_or(0);
     let width = payload.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let height = payload.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+    let duration_seconds = if fps > 0.0 {
+        frame_count as f64 / fps
+    } else {
+        0.0
+    };
+
+    // Read the flag before any await so the guard is dropped immediately.
+    let manual_save_mode = state.config.read().await.manual_save_mode;
+
+    if manual_save_mode {
+        // Manual save mode: emit the raw ComfyUI output path. The frontend
+        // must call save_video_to_gallery_manual to persist the clip.
+        log::debug!(
+            "[video] manual_save_mode: skipping gallery write for prompt {prompt_id}, path {}",
+            video_path.display()
+        );
+        return Some(serde_json::json!({
+            "type": "video",
+            "prompt_id": prompt_id,
+            "persisted": false,
+            "video_path": video_path.to_string_lossy(),
+            "duration_seconds": duration_seconds,
+            "fps": fps,
+            "frame_count": frame_count,
+            "width": width,
+            "height": height,
+        }));
+    }
 
     // bind_alias copies ownership onto the ComfyUI-side prompt id, so the
     // WS-side id resolves the owner directly. Desktop generations have no
@@ -405,14 +437,10 @@ async fn handle_video_output(
         }
     };
 
-    let duration_seconds = if fps > 0.0 {
-        frame_count as f64 / fps
-    } else {
-        0.0
-    };
     Some(serde_json::json!({
         "type": "video",
         "prompt_id": prompt_id,
+        "persisted": true,
         "video_filename": saved.video_filename,
         "poster_filename": saved.poster_filename,
         "duration_seconds": duration_seconds,

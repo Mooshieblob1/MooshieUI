@@ -198,6 +198,8 @@ const ru: Record<string, string> = {
   "setup.remote_missing_nodes_install": "Deploy or update the MooshieUI server build (Docker) on your cloud GPU. It includes ComfyUI and all required custom nodes.",
   "setup.remote_missing_nodes_restart": "Fully restart the remote ComfyUI or python process so the new nodes load.",
   "setup.remote_missing_nodes_retry": "Return here and retry validation after the remote server comes back up.",
+  "setup.remote_upload_warning_title": "Загрузка изображения заблокирована прокси",
+  "setup.remote_upload_warning_detail": "Сервер на {host} отклонил тестовую загрузку изображения (HTTP {status}). Что-то перед ComfyUI принимает только JSON-запросы, поэтому составные запросы (multipart) к /upload/image никогда не достигают ComfyUI. Загрузка кадров видео и опорных изображений будет завершаться ошибкой, пока проблема не будет устранена. Проверьте URL удалённого сервера и убедитесь, что ни прокси, ни бессерверный шлюз не перехватывают запрос.",
 
   // ── Страница настроек ───────────────────────────────────
   "settings.title": "Настройки",
@@ -778,6 +780,17 @@ const ru: Record<string, string> = {
   "generation.video.stack.int8": "int8 - 21 ГБ, рекомендуется",
   "generation.video.stack.fp8": "fp8 - 21 ГБ",
   "generation.video.stack.bf16": "bf16 - 40 ГБ, полная точность",
+  "generation.video.stack.custom": "Пользовательский - используйте свои файлы",
+  "generation.video.custom_tip": "Выберите каждый файл модели из локального хранилища моделей. Файлы GGUF загружаются автоматически с помощью загрузчика GGUF.",
+  "generation.video.custom_diffusion_model": "Модель диффузии",
+  "generation.video.custom_clip_model": "Текстовый энкодер",
+  "generation.video.custom_vae_model": "Видео VAE",
+  "generation.video.custom_audio_vae_model": "Аудио VAE",
+  "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_sampler": "Сэмплер",
+  "generation.video.custom_sampler_default": "По умолчанию (res_multistep)",
+  "generation.video.custom_scheduler": "Планировщик",
+  "generation.video.custom_scheduler_default": "По умолчанию (simple)",
   "generation.video.stack_ready": "Все файлы моделей установлены.",
   "generation.video.stack_missing": "Не хватает {count} из {total} файлов моделей, к загрузке {size}.",
   "generation.video.stack_download": "Загрузить все недостающие ({count} файла, {size})",
@@ -1638,6 +1651,15 @@ const ru: Record<string, string> = {
   "settings.interrogator.thresholds_desc": "Управляет порогами доверия для интеррогатора изображений. Низкие значения возвращают больше тегов, высокие — более избирательны.",
   "settings.interrogator.more_tags": "Больше тегов",
   "settings.interrogator.fewer_tags": "Меньше тегов",
+  "settings.interrogator.custom_tag": "(пользовательский)",
+  "settings.interrogator.custom_models_title": "Пользовательские модели",
+  "settings.interrogator.remove": "Удалить",
+  "settings.interrogator.removing": "Удаление...",
+  "settings.interrogator.add_custom": "Добавить пользовательскую папку теггера",
+  "settings.interrogator.add_custom_dialog_title": "Выбрать папку теггера",
+  "settings.interrogator.add_custom_desc": "Добавьте локальную папку, содержащую model.onnx и selected_tags.csv из теггера семейства WD v3.",
+  "settings.interrogator.adding": "Добавление...",
+  "settings.interrogator.custom_path_placeholder": "Путь к папке...",
 
   "generation.controlnet.browse_or_drop": "Обзор или перетащите изображение",
   "generation.controlnet.paste": "Вставить",
@@ -2376,6 +2398,8 @@ const ru: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_unsaved_label": "Видео готово - не сохранено в галерее",
+  "preview.save_video_to_gallery": "Сохранить в галерею",
   "preview.video_alt": "Предпросмотр видео",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
@@ -2475,6 +2499,7 @@ const ru: Record<string, string> = {
   "generation.error.missing_node": "Для этого рабочего процесса нужен пользовательский узел, который не установлен: {node}. Установите его в ComfyUI и перезапустите.",
   "generation.error.component_mismatch": "Эти компоненты модели несовместимы друг с другом. Убедитесь, что чекпойнт, VAE, LoRA и CLIP относятся к одному семейству моделей (например, все SDXL).",
   "generation.error.quant_format_unsupported": "Эта модель использует формат квантизации '{format}', который не поддерживается установленным ComfyUI. Обновите ComfyUI в разделе Настройки > Производительность или выберите неквантизованную версию модели.",
+  "generation.error.int8_fast_required": "Эта модель использует квантование INT8/ConvRot, которое стандартный загрузчик не поддерживает. Включите переключатель «INT8-Fast загрузчик» в настройках модели (автоматически установит ComfyUI-INT8-Fast). Требуется видеокарта NVIDIA.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",
@@ -3007,6 +3032,10 @@ const ru: Record<string, string> = {
   "errors.generation_interrupted.why": "Она была отменена или ComfyUI остановился в процессе работы.",
 
   "errors.generation_interrupted.fixes": "Запустите генерацию заново. || Убедитесь, что ComfyUI всё ещё запущен. || Проверьте журналы, если вы не отменяли генерацию.",
+  "errors.upload_proxy_rejection.title": "Загрузка изображения заблокирована прокси",
+  "errors.upload_proxy_rejection.what": "Запрос на загрузку изображения в ComfyUI был отклонён промежуточным прокси.",
+  "errors.upload_proxy_rejection.why": "Что-то перед ComfyUI -- бессерверный шлюз, обратный прокси или балансировщик нагрузки -- принимает только JSON-запросы и отклонило загрузку multipart/form-data.",
+  "errors.upload_proxy_rejection.fixes": "Проверьте URL удалённого сервера и убедитесь, что ни прокси, ни бессерверный шлюз не перехватывают /upload/image. || Загрузка кадров видео и опорных изображений будет завершаться ошибкой, пока составные запросы не смогут достигать ComfyUI напрямую.",
 
   "errors.io_permission.title": "Доступ к файлу запрещён",
 
@@ -3023,6 +3052,7 @@ const ru: Record<string, string> = {
   "errors.serialization.why": "Ответ сформирован некорректно или файл повреждён.",
 
   "errors.serialization.fixes": "Повторите действие. || Перезапустите приложение. || Сообщите об ошибке, если она повторяется.",
+  "errors.upload_proxy_rejection_inline": "Сервер на {host} отклонил загрузку изображения (HTTP {status}). Что-то перед ComfyUI принимает только JSON-запросы, поэтому составные запросы (multipart) к /upload/image никогда не достигают ComfyUI. Проверьте URL удалённого сервера и убедитесь, что ни прокси, ни бессерверный шлюз не перехватывают запрос.",
 
   "errors.card.details": "Технические подробности",
 
@@ -3098,6 +3128,17 @@ const ru: Record<string, string> = {
   "generation.video.pick_refs_title": "Выбрать референсные изображения",
 
   "generation.model.architecture_auto": "Auto",
+  "generation.model.int8_fast_label": "INT8-Fast загрузчик",
+  "generation.model.int8_fast_tip": "Использует узел OTUNetLoaderW8A8 (ComfyUI-INT8-Fast) вместо стандартного UNETLoader для предварительно квантованных диффузионных моделей INT8/ConvRot. Требуется видеокарта NVIDIA. Не влияет на модели .gguf.",
+  "generation.model.int8_fast_convrot_label": "Включить ConvRot",
+  "generation.model.int8_fast_convrot_tip": "Передаёт enable_convrot=true в OTUNetLoaderW8A8. Оставьте включённым для файлов INT8-ConvRot; отключите для обычных файлов INT8 без ConvRot.",
+  "generation.model.int8_fast_hint": "Имя файла этой модели похоже на файл INT8-ConvRot. Включите переключатель INT8-Fast загрузчика выше, чтобы загрузить его правильно.",
+  "generation.model.int8_fast_not_installed": "ComfyUI-INT8-Fast не установлен.",
+  "generation.model.int8_fast_install": "Установить ComfyUI-INT8-Fast",
+  "generation.model.int8_fast_installing": "Установка...",
+  "generation.model.int8_fast_install_error": "Ошибка установки: {error}",
+  "generation.model.int8_fast_nvidia_only": "Только видеокарты NVIDIA — INT8-Fast не поддерживает AMD и Apple Silicon.",
+  "generation.model.int8_fast_unavailable": "Узел ComfyUI-INT8-Fast недоступен. Установите пакет и перезапустите ComfyUI.",
   "generation.lora.enable": "Enable",
   "generation.lora.disable": "Disable",
   "gallery.date.unknown": "Unknown",

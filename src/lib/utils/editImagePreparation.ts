@@ -16,11 +16,20 @@ export interface PreparedEditImage {
   normalized: NormalizedInputImage | null;
 }
 
-const MAX_INPUT_PIXELS = 1024 * 1024;
+/** Cap for img2img inputs (~1 MP). */
+const MAX_INPUT_PIXELS_IMG2IMG = 1024 * 1024;
+/** Cap for inpaint inputs (~4 MP). Keeps common sources like 1920x1080 un-resized. */
+export const MAX_INPUT_PIXELS_INPAINT = 2048 * 2048;
+
+/** Snap a pixel dimension to the nearest multiple of 8 (minimum 8). */
+function snapToGrid(dim: number): number {
+  return Math.max(8, Math.floor(dim / 8) * 8);
+}
 
 export async function normalizeGenerationInputBytes(
   imageBytes: number[],
   fallbackFilename: string,
+  maxPixels: number = MAX_INPUT_PIXELS_IMG2IMG,
 ): Promise<NormalizedInputImage> {
   const sourceBlob = new Blob([new Uint8Array(imageBytes)], { type: "image/png" });
   const sourceUrl = URL.createObjectURL(sourceBlob);
@@ -33,7 +42,7 @@ export async function normalizeGenerationInputBytes(
   });
 
   const sourcePixels = dims.width * dims.height;
-  if (sourcePixels <= MAX_INPUT_PIXELS) {
+  if (sourcePixels <= maxPixels) {
     return {
       bytes: imageBytes,
       previewBlob: sourceBlob,
@@ -44,9 +53,9 @@ export async function normalizeGenerationInputBytes(
     };
   }
 
-  const scale = Math.sqrt(MAX_INPUT_PIXELS / sourcePixels);
-  const targetWidth = Math.max(8, Math.round(dims.width * scale));
-  const targetHeight = Math.max(8, Math.round(dims.height * scale));
+  const scale = Math.sqrt(maxPixels / sourcePixels);
+  const targetWidth = snapToGrid(dims.width * scale);
+  const targetHeight = snapToGrid(dims.height * scale);
 
   const resizedBlob = await new Promise<Blob>((resolve, reject) => {
     const img = new Image();
@@ -105,7 +114,7 @@ export async function prepareOutputImageForEditMode(
     };
   }
 
-  const normalized = await normalizeGenerationInputBytes(source.bytes, source.filename);
+  const normalized = await normalizeGenerationInputBytes(source.bytes, source.filename, MAX_INPUT_PIXELS_INPAINT);
   return {
     uploadBytes: normalized.bytes,
     uploadFilename: normalized.filename,

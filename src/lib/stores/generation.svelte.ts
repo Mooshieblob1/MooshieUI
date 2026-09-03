@@ -688,6 +688,11 @@ class GenerationStore {
    * Range: 0-10, sweet spot 2-4. Default matches ComfyUI's FluxGuidance node.
    */
   fluxGuidance = $state(3.5);
+  /** INT8-Fast (ComfyUI-INT8-Fast) loader: uses OTUNetLoaderW8A8 instead of
+   *  UNETLoader for pre-quantized INT8/ConvRot diffusion models. NVIDIA only. */
+  int8FastEnabled = $state(false);
+  /** Enable ConvRot within the INT8-Fast loader (default true). */
+  int8FastConvrot = $state(true);
   useSplitModel = $state(false);
   diffusionModel = $state<string | null>(null);
   /**
@@ -819,6 +824,17 @@ class GenerationStore {
    *  input delta stays under threshold. Only ever true once the lazy install
    *  has put the node pack on disk. */
   videoTeacacheEnabled = $state(false);
+  /** Active H3 tier id, including "custom" for user-supplied model files. */
+  videoModelTier = $state("int8");
+  /** Turbo LoRA filename inside `models/loras/`. Defaults to the recommended
+   *  checkpoint; the custom tier lets users swap in any installed LoRA. */
+  videoTurboLora = $state(H3_TURBO_LORA.filename);
+  /** KSamplerSelect override for the custom tier. Null means preset default
+   *  (res_multistep). Ignored when Turbo is on (Turbo ships its own sampler). */
+  videoSampler = $state<string | null>(null);
+  /** BasicScheduler override for the custom tier. Null means preset default
+   *  (simple). Ignored when Turbo is on. */
+  videoScheduler = $state<string | null>(null);
   videoDiffusionModel = $state<string | null>(null);
   videoClipModel = $state<string | null>(null);
   videoVaeModel = $state<string | null>(null);
@@ -2461,6 +2477,8 @@ class GenerationStore {
         if (saved.apgNormThreshold !== undefined) this.apgNormThreshold = saved.apgNormThreshold;
         if (saved.apgMomentum !== undefined) this.apgMomentum = saved.apgMomentum;
         if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
+        if (saved.int8FastEnabled !== undefined) this.int8FastEnabled = saved.int8FastEnabled;
+        if (saved.int8FastConvrot !== undefined) this.int8FastConvrot = saved.int8FastConvrot;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
         if (saved.modelSourceCategory !== undefined)
@@ -2531,6 +2549,10 @@ class GenerationStore {
             H3_TURBO_MAX_STEPS,
             Math.max(H3_TURBO_MIN_STEPS, Math.round(saved.videoTurboSteps)),
           );
+        if (saved.videoModelTier !== undefined) this.videoModelTier = saved.videoModelTier;
+        if (saved.videoTurboLora !== undefined) this.videoTurboLora = saved.videoTurboLora;
+        if (saved.videoSampler !== undefined) this.videoSampler = saved.videoSampler;
+        if (saved.videoScheduler !== undefined) this.videoScheduler = saved.videoScheduler;
         if (saved.videoDiffusionModel !== undefined)
           this.videoDiffusionModel = saved.videoDiffusionModel;
         if (saved.videoClipModel !== undefined) this.videoClipModel = saved.videoClipModel;
@@ -2706,6 +2728,8 @@ class GenerationStore {
         apgNormThreshold: this.apgNormThreshold,
         apgMomentum: this.apgMomentum,
         fluxGuidance: this.fluxGuidance,
+        int8FastEnabled: this.int8FastEnabled,
+        int8FastConvrot: this.int8FastConvrot,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
         modelSourceCategory: this.modelSourceCategory,
@@ -2851,6 +2875,8 @@ class GenerationStore {
       apgNormThreshold: this.apgNormThreshold,
       apgMomentum: this.apgMomentum,
       fluxGuidance: this.fluxGuidance,
+      int8FastEnabled: this.int8FastEnabled,
+      int8FastConvrot: this.int8FastConvrot,
       useSplitModel: this.useSplitModel,
       diffusionModel: this.diffusionModel,
       modelSourceCategory: this.modelSourceCategory,
@@ -2929,6 +2955,10 @@ class GenerationStore {
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
       videoTeacacheEnabled: this.videoTeacacheEnabled,
+      videoModelTier: this.videoModelTier,
+      videoTurboLora: this.videoTurboLora,
+      videoSampler: this.videoSampler,
+      videoScheduler: this.videoScheduler,
       videoDiffusionModel: this.videoDiffusionModel,
       videoClipModel: this.videoClipModel,
       videoVaeModel: this.videoVaeModel,
@@ -3363,6 +3393,8 @@ class GenerationStore {
       apg_norm_threshold: this.apgNormThreshold,
       apg_momentum: this.apgMomentum,
       flux_guidance: this.fluxGuidance,
+      int8_fast_enabled: this.int8FastEnabled,
+      int8_fast_convrot: this.int8FastConvrot,
       upscale_positive_prompt: upscalePositivePrompt,
       upscale_negative_prompt: upscaleNegativePrompt,
       use_split_model: this.useSplitModel,
@@ -3431,8 +3463,11 @@ class GenerationStore {
       video_interp_engine: this.videoInterpEngine,
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.videoTurboSteps,
-      video_turbo_lora: this.videoTurboEnabled ? H3_TURBO_LORA.filename : null,
+      video_turbo_lora: this.videoTurboEnabled ? this.videoTurboLora : null,
       video_teacache_enabled: this.videoTeacacheEnabled,
+      video_model_tier: this.videoModelTier,
+      video_sampler: this.videoSampler || null,
+      video_scheduler: this.videoScheduler || null,
       video_diffusion_model: this.videoDiffusionModel,
       video_clip_model: this.videoClipModel,
       video_vae_model: this.videoVaeModel,

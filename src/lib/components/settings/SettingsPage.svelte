@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -1166,6 +1166,9 @@
         }
       } catch { /* ignore */ }
     }
+    // The frontend store owns manual save mode; keep the cached config in step
+    // so the next autoSave() does not push a stale mirror back to Rust.
+    config.manual_save_mode = generation.manualSaveMode;
     snapshotRestartFields();
     try {
       applyTheme(config);
@@ -1280,9 +1283,13 @@
   }
 
   // Interrogator model picker. The list is the backend's curated registry plus
-  // a per-model "already on disk" flag, so it has to be re-read after a delete.
+  // custom models and a per-model "already on disk" flag, so it has to be
+  // re-read after any add/remove/delete.
   let interrogatorModels = $state<InterrogatorModelStatus[]>([]);
   let deletingInterrogatorModel = $state<string | null>(null);
+  let addingCustomModel = $state(false);
+  let customModelPathInput = $state("");
+  let addCustomModelError = $state<string | null>(null);
 
   async function loadInterrogatorModels() {
     try {
@@ -1302,6 +1309,49 @@
       // the next time the list reloads.
     } finally {
       deletingInterrogatorModel = null;
+    }
+  }
+
+  async function removeCustomModel(id: string) {
+    deletingInterrogatorModel = id;
+    try {
+      await removeCustomInterrogatorModel(id);
+      await loadInterrogatorModels();
+    } catch {
+      // leave as-is
+    } finally {
+      deletingInterrogatorModel = null;
+    }
+  }
+
+  async function addCustomModelFromDialog() {
+    const path = await openDirectoryDialog(locale.t('settings.interrogator.add_custom_dialog_title'));
+    if (!path) return;
+    addingCustomModel = true;
+    addCustomModelError = null;
+    try {
+      await addCustomInterrogatorModel(path);
+      await loadInterrogatorModels();
+    } catch (e) {
+      addCustomModelError = String(e);
+    } finally {
+      addingCustomModel = false;
+    }
+  }
+
+  async function addCustomModelFromPath() {
+    const path = customModelPathInput.trim();
+    if (!path) return;
+    addingCustomModel = true;
+    addCustomModelError = null;
+    try {
+      await addCustomInterrogatorModel(path);
+      customModelPathInput = "";
+      await loadInterrogatorModels();
+    } catch (e) {
+      addCustomModelError = String(e);
+    } finally {
+      addingCustomModel = false;
     }
   }
 
@@ -3339,8 +3389,13 @@
                   class="w-4 h-4 rounded accent-indigo-500"
                   checked={generation.manualSaveMode}
                   onchange={(e) => {
-                    generation.manualSaveMode = (e.target as HTMLInputElement).checked;
+                    const checked = (e.target as HTMLInputElement).checked;
+                    generation.manualSaveMode = checked;
                     generation.saveSettings();
+                    if (config) {
+                      config.manual_save_mode = checked;
+                      void autoSave();
+                    }
                   }}
                 />
                 <span class="text-sm text-neutral-200">{locale.t('settings.gallery.manual_save_label')}</span>
@@ -3701,17 +3756,19 @@
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
               >
                 {#each interrogatorModels as m (m.id)}
-                  <option value={m.id}>{m.label} ({locale.formatBytes(m.size_bytes)})</option>
+                  <option value={m.id}>
+                    {m.label}{m.is_custom ? ' ' + locale.t('settings.interrogator.custom_tag') : ' (' + locale.formatBytes(m.size_bytes) + ')'}
+                  </option>
                 {/each}
               </select>
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.interrogator.model_desc')}</p>
             </div>
             {/if}
 
-            {#if interrogatorModels.some((m) => m.downloaded)}
+            {#if interrogatorModels.some((m) => m.downloaded && !m.is_custom)}
             <div class="space-y-1.5">
               <p class="text-[10px] text-neutral-500">{locale.t('settings.interrogator.downloaded_title')}</p>
-              {#each interrogatorModels.filter((m) => m.downloaded) as m (m.id)}
+              {#each interrogatorModels.filter((m) => m.downloaded && !m.is_custom) as m (m.id)}
                 <div class="flex items-center justify-between gap-2 px-3 py-2 bg-neutral-800/50 border border-neutral-700/50 rounded-lg">
                   <span class="text-xs text-neutral-300 truncate">
                     {m.label}
@@ -3729,6 +3786,57 @@
               <p class="text-[10px] text-neutral-600">{locale.t('settings.interrogator.delete_hint')}</p>
             </div>
             {/if}
+
+            {#if interrogatorModels.some((m) => m.is_custom)}
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.interrogator.custom_models_title')}</p>
+              {#each interrogatorModels.filter((m) => m.is_custom) as m (m.id)}
+                <div class="flex items-center justify-between gap-2 px-3 py-2 bg-neutral-800/50 border border-neutral-700/50 rounded-lg">
+                  <span class="text-xs text-neutral-300 truncate">{m.label}</span>
+                  <button
+                    class="shrink-0 text-[10px] px-2 py-1 rounded border border-neutral-700 text-neutral-400 hover:bg-neutral-700/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    disabled={deletingInterrogatorModel === m.id}
+                    onclick={() => { void removeCustomModel(m.id); }}
+                  >
+                    {deletingInterrogatorModel === m.id ? locale.t('settings.interrogator.removing') : locale.t('settings.interrogator.remove')}
+                  </button>
+                </div>
+              {/each}
+            </div>
+            {/if}
+
+            <!-- Add custom tagger folder -->
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.interrogator.add_custom_desc')}</p>
+              {#if isTauri}
+                <button
+                  class="text-xs px-3 py-1.5 rounded-lg border border-neutral-700 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  disabled={addingCustomModel}
+                  onclick={() => { void addCustomModelFromDialog(); }}
+                >
+                  {addingCustomModel ? locale.t('settings.interrogator.adding') : locale.t('settings.interrogator.add_custom')}
+                </button>
+              {:else}
+                <div class="flex gap-2">
+                  <input
+                    type="text"
+                    bind:value={customModelPathInput}
+                    placeholder={locale.t('settings.interrogator.custom_path_placeholder')}
+                    class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  <button
+                    class="shrink-0 text-xs px-3 py-1.5 rounded-lg border border-neutral-700 text-neutral-300 hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    disabled={addingCustomModel || !customModelPathInput.trim()}
+                    onclick={() => { void addCustomModelFromPath(); }}
+                  >
+                    {addingCustomModel ? locale.t('settings.interrogator.adding') : locale.t('settings.interrogator.add_custom')}
+                  </button>
+                </div>
+              {/if}
+              {#if addCustomModelError}
+                <p class="text-[10px] text-red-400 break-words">{addCustomModelError}</p>
+              {/if}
+            </div>
 
             <p class="text-[10px] text-neutral-500">
               {locale.t('settings.interrogator.thresholds_desc')}

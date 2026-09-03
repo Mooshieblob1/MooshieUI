@@ -159,16 +159,27 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     let mut workflow = serde_json::Map::new();
     let mut next_id: u32 = 1;
 
+    // Choose UnetLoaderGGUF for GGUF-quantized DiTs (e.g. W4A8 mixed-quant);
+    // the standard UNETLoader cannot open them. The GGUF pack is auto-installed
+    // at ComfyUI setup (nodes.rs), so the node is always present.
+    let unet_name = params.video_diffusion_model.as_deref().unwrap_or("");
     let unet_id = next_id.to_string();
     workflow.insert(
         unet_id.clone(),
-        json!({
-            "class_type": "UNETLoader",
-            "inputs": {
-                "unet_name": params.video_diffusion_model.as_deref().unwrap_or(""),
-                "weight_dtype": "default"
-            }
-        }),
+        if unet_name.to_ascii_lowercase().ends_with(".gguf") {
+            json!({
+                "class_type": "UnetLoaderGGUF",
+                "inputs": { "unet_name": unet_name }
+            })
+        } else {
+            json!({
+                "class_type": "UNETLoader",
+                "inputs": {
+                    "unet_name": unet_name,
+                    "weight_dtype": "default"
+                }
+            })
+        },
     );
     next_id += 1;
 
@@ -204,16 +215,30 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         unet_id.clone()
     };
 
+    // CLIPLoaderGGUF for GGUF-quantized text encoders (e.g. Qwen3-VL in GGUF).
+    // The node accepts the same `type` input as CLIPLoader (ComfyUI-GGUF pack,
+    // auto-installed). Non-GGUF encoders continue to use the standard CLIPLoader.
+    let clip_name = params.video_clip_model.as_deref().unwrap_or("");
     let clip_id = next_id.to_string();
     workflow.insert(
         clip_id.clone(),
-        json!({
-            "class_type": "CLIPLoader",
-            "inputs": {
-                "clip_name": params.video_clip_model.as_deref().unwrap_or(""),
-                "type": "minimax"
-            }
-        }),
+        if clip_name.to_ascii_lowercase().ends_with(".gguf") {
+            json!({
+                "class_type": "CLIPLoaderGGUF",
+                "inputs": {
+                    "clip_name": clip_name,
+                    "type": "minimax"
+                }
+            })
+        } else {
+            json!({
+                "class_type": "CLIPLoader",
+                "inputs": {
+                    "clip_name": clip_name,
+                    "type": "minimax"
+                }
+            })
+        },
     );
     next_id += 1;
 
@@ -484,6 +509,14 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     // The Turbo pack ships its own SAMPLER: it applies the distilled model's
     // sigma shift (12.0 video / 3.0 audio) internally, so it replaces
     // `KSamplerSelect` outright rather than wrapping it.
+    // When Turbo is off the user may supply a custom sampler (e.g. "euler" for
+    // the custom tier); fall back to the H3 preset "res_multistep".
+    let sampler_name = params
+        .video_sampler
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("res_multistep");
     let sampler_select_id = next_id.to_string();
     workflow.insert(
         sampler_select_id.clone(),
@@ -492,7 +525,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         } else {
             json!({
                 "class_type": "KSamplerSelect",
-                "inputs": { "sampler_name": "res_multistep" }
+                "inputs": { "sampler_name": sampler_name }
             })
         },
     );
@@ -532,6 +565,18 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         model_link
     };
 
+    // Custom scheduler override (e.g. "beta" for the custom tier). Only active
+    // when Turbo is off; fall back to the H3 preset "simple".
+    let scheduler_name = if params.video_turbo_enabled {
+        "simple"
+    } else {
+        params
+            .video_scheduler
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("simple")
+    };
     let scheduler_id = next_id.to_string();
     workflow.insert(
         scheduler_id.clone(),
@@ -539,7 +584,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
             "class_type": "BasicScheduler",
             "inputs": {
                 "model": model_link.clone(),
-                "scheduler": "simple",
+                "scheduler": scheduler_name,
                 "steps": steps,
                 "denoise": 1.0
             }
@@ -1512,6 +1557,95 @@ mod tests {
             flat.get("steps").map(String::as_str),
             Some(&H3_DEFAULT_STEPS.to_string()[..])
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Custom-tier: GGUF loader branches and sampler/scheduler overrides
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn gguf_dit_uses_unet_loader_gguf() {
+        let mut params = video_params("fl2va");
+        params.video_diffusion_model = Some("minimax_h3_fl2va_w4a8.gguf".to_string());
+        let workflow = build(&params, 1, false);
+        assert_eq!(nodes_of_class(&workflow, "UnetLoaderGGUF").len(), 1);
+        assert!(nodes_of_class(&workflow, "UNETLoader").is_empty());
+        let loader = nodes_of_class(&workflow, "UnetLoaderGGUF")[0];
+        assert_eq!(
+            loader["inputs"]["unet_name"],
+            json!("minimax_h3_fl2va_w4a8.gguf")
+        );
+    }
+
+    #[test]
+    fn non_gguf_dit_uses_standard_unet_loader() {
+        let mut params = video_params("fl2va");
+        params.video_diffusion_model = Some("minimax_h3_fl2va_int8.safetensors".to_string());
+        let workflow = build(&params, 1, false);
+        assert_eq!(nodes_of_class(&workflow, "UNETLoader").len(), 1);
+        assert!(nodes_of_class(&workflow, "UnetLoaderGGUF").is_empty());
+    }
+
+    #[test]
+    fn gguf_text_encoder_uses_clip_loader_gguf() {
+        let mut params = video_params("fl2va");
+        params.video_clip_model = Some("qwen3vl_32b_minimax_h3_q4_k_m.gguf".to_string());
+        let workflow = build(&params, 1, false);
+        assert_eq!(nodes_of_class(&workflow, "CLIPLoaderGGUF").len(), 1);
+        assert!(nodes_of_class(&workflow, "CLIPLoader").is_empty());
+        let loader = nodes_of_class(&workflow, "CLIPLoaderGGUF")[0];
+        assert_eq!(loader["inputs"]["type"], json!("minimax"));
+        assert_eq!(
+            loader["inputs"]["clip_name"],
+            json!("qwen3vl_32b_minimax_h3_q4_k_m.gguf")
+        );
+    }
+
+    #[test]
+    fn non_gguf_text_encoder_uses_standard_clip_loader() {
+        let workflow = build(&video_params("fl2va"), 1, false);
+        assert_eq!(nodes_of_class(&workflow, "CLIPLoader").len(), 1);
+        assert!(nodes_of_class(&workflow, "CLIPLoaderGGUF").is_empty());
+    }
+
+    #[test]
+    fn custom_sampler_is_forwarded_to_ksampler_select() {
+        let mut params = video_params("fl2va");
+        params.video_sampler = Some("euler".to_string());
+        let workflow = build(&params, 1, false);
+        let sampler_select = nodes_of_class(&workflow, "KSamplerSelect")[0];
+        assert_eq!(sampler_select["inputs"]["sampler_name"], json!("euler"));
+    }
+
+    #[test]
+    fn custom_scheduler_is_forwarded_to_basic_scheduler() {
+        let mut params = video_params("fl2va");
+        params.video_scheduler = Some("beta".to_string());
+        let workflow = build(&params, 1, false);
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        assert_eq!(scheduler["inputs"]["scheduler"], json!("beta"));
+    }
+
+    #[test]
+    fn turbo_overrides_sampler_even_with_custom_sampler_set() {
+        let mut params = video_params("fl2va");
+        params.video_turbo_enabled = true;
+        params.video_sampler = Some("euler".to_string());
+        let workflow = build(&params, 1, false);
+        // Turbo replaces KSamplerSelect outright; the custom sampler is ignored.
+        assert!(nodes_of_class(&workflow, "KSamplerSelect").is_empty());
+        assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").len(), 1);
+    }
+
+    #[test]
+    fn turbo_uses_simple_scheduler_even_with_custom_scheduler_set() {
+        let mut params = video_params("fl2va");
+        params.video_turbo_enabled = true;
+        params.video_scheduler = Some("beta".to_string());
+        let workflow = build(&params, 1, false);
+        // Turbo always uses "simple" regardless of the custom scheduler field.
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        assert_eq!(scheduler["inputs"]["scheduler"], json!("simple"));
     }
 
     /// Dev utility for the manual structural probe (not part of the suite).

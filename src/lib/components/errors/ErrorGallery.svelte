@@ -24,6 +24,7 @@
     missing_node: "Unknown node: ImpactWildcardProcessor",
     invalid_workflow: "Invalid workflow: malformed graph",
     generation_interrupted: "Generation was interrupted",
+    upload_proxy_rejection: "upload_rejected_non_multipart:example.com:8188|415|Unsupported Media Type",
     io_permission: "IO error: permission denied",
     serialization: "Serialization error: expected value at line 1",
   };

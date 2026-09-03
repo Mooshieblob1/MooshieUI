@@ -39,6 +39,9 @@ export const CATALOG: CatalogEntry[] = [
   { id: "invalid_workflow", match: re(/invalid workflow|malformed workflow|workflow.*invalid/i) },
   { id: "generation_interrupted", match: re(/interrupted|cancell?ed|aborted/i) },
 
+  // Upload / proxy
+  { id: "upload_proxy_rejection", match: (raw) => raw.startsWith("upload_rejected_non_multipart:") },
+
   // IO / misc
   { id: "io_permission", match: re(/permission denied|access is denied|io error/i) },
   { id: "serialization", match: has("serialization error") },

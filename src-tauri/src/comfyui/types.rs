@@ -279,6 +279,18 @@ pub struct GenerationParams {
     pub video_vae_model: Option<String>,
     #[serde(default)]
     pub video_audio_vae_model: Option<String>,
+    /// Active H3 tier id (e.g. "int8", "custom"). Informational; the template
+    /// uses the model filenames directly and does not branch on the tier string.
+    #[serde(default)]
+    pub video_model_tier: Option<String>,
+    /// `KSamplerSelect` override for the non-turbo path. `None` means the
+    /// preset default ("res_multistep"). Ignored when `video_turbo_enabled`.
+    #[serde(default)]
+    pub video_sampler: Option<String>,
+    /// `BasicScheduler` override for the non-turbo path. `None` means the
+    /// preset default ("simple"). Ignored when `video_turbo_enabled`.
+    #[serde(default)]
+    pub video_scheduler: Option<String>,
     /// Compiled H3 Director `timeline_data` JSON. `None` (or an empty string)
     /// selects the plain native H3 graph; anything else routes the video build
     /// through `MooshieH3Director`. Kept as an opaque string because the node
@@ -421,10 +433,24 @@ pub struct GenerationParams {
     /// prompt hack, then crop the right half and scale it to the target size.
     #[serde(default)]
     pub edit_split_screen: bool,
+    /// INT8-Fast (ComfyUI-INT8-Fast) loader. When true and the model is not
+    /// .gguf, emits `OTUNetLoaderW8A8` instead of `UNETLoader` for pre-quantized
+    /// INT8/ConvRot diffusion models. NVIDIA only; requires the
+    /// BobJohnson24/ComfyUI-INT8-Fast custom node pack.
+    #[serde(default)]
+    pub int8_fast_enabled: bool,
+    /// Enable the ConvRot optimization within OTUNetLoaderW8A8.
+    /// Defaults true (the typical setting for ConvRot files).
+    #[serde(default = "default_int8_fast_convrot")]
+    pub int8_fast_convrot: bool,
     /// NovelAI-specific parameters. Present only when `checkpoint` names a
     /// NovelAI model.
     #[serde(default)]
     pub novelai: Option<crate::novelai::params::NovelAiParams>,
+}
+
+fn default_int8_fast_convrot() -> bool {
+    true
 }
 
 fn default_output_bit_depth() -> String {

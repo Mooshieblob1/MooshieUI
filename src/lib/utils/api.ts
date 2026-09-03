@@ -1091,6 +1091,28 @@ export async function probeVideoExport(): Promise<ExportCapability> {
   return ipcInvoke("probe_video_export", {});
 }
 
+/**
+ * Manually save a video output to the gallery (used when manualSaveMode is
+ * active and the video was not auto-persisted). Returns the gallery filename.
+ */
+export async function saveVideoToGalleryManual(args: {
+  videoPath: string;
+  promptId: string;
+  fps: number;
+  frameCount: number;
+  width: number;
+  height: number;
+}): Promise<string> {
+  return ipcInvoke("save_video_to_gallery_manual", {
+    videoPath: args.videoPath,
+    promptId: args.promptId,
+    fps: args.fps,
+    frameCount: args.frameCount,
+    width: args.width,
+    height: args.height,
+  });
+}
+
 export async function copyFileToClipboard(path: string): Promise<void> {
   return ipcInvoke("copy_file_to_clipboard", { path });
 }
@@ -1129,6 +1151,17 @@ export async function listInterrogatorModels(): Promise<InterrogatorModelStatus[
 
 export async function deleteInterrogatorModel(modelId: string): Promise<void> {
   return ipcInvoke("delete_interrogator_model", { modelId });
+}
+
+/** Register a local folder as a custom tagger model. The folder must contain
+ *  model.onnx and selected_tags.csv from a WD v3-family model. */
+export async function addCustomInterrogatorModel(path: string): Promise<void> {
+  return ipcInvoke("add_custom_interrogator_model", { path });
+}
+
+/** Remove a custom model registration from config without touching files. */
+export async function removeCustomInterrogatorModel(id: string): Promise<void> {
+  return ipcInvoke("remove_custom_interrogator_model", { id });
 }
 
 export async function detectLlmHardware(): Promise<LlmHardware> {

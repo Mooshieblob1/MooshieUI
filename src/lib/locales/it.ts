@@ -198,6 +198,8 @@ const it: Record<string, string> = {
   "setup.remote_missing_nodes_install": "Deploy or update the MooshieUI server build (Docker) on your cloud GPU. It includes ComfyUI and all required custom nodes.",
   "setup.remote_missing_nodes_restart": "Fully restart the remote ComfyUI or python process so the new nodes load.",
   "setup.remote_missing_nodes_retry": "Return here and retry validation after the remote server comes back up.",
+  "setup.remote_upload_warning_title": "Caricamento immagine bloccato dal proxy",
+  "setup.remote_upload_warning_detail": "Il server a {host} ha rifiutato un caricamento di prova dell'immagine (HTTP {status}). Qualcosa davanti a ComfyUI accetta solo richieste JSON, quindi i caricamenti multipart su /upload/image non raggiungono mai ComfyUI. I caricamenti di fotogrammi video e immagini di riferimento falliranno finché il problema non sarà risolto. Controlla l'URL del server remoto e assicurati che nessun proxy o gateway serverless stia intercettando la richiesta.",
 
   // ── Pagina impostazioni ─────────────────────────────────
   "settings.title": "Impostazioni",
@@ -778,6 +780,17 @@ const it: Record<string, string> = {
   "generation.video.stack.int8": "int8 - 21 GB, consigliato",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, precisione piena",
+  "generation.video.stack.custom": "Personalizzato - usa i tuoi file",
+  "generation.video.custom_tip": "Seleziona ogni file del modello dall'archivio modelli locale. I file GGUF vengono caricati automaticamente con il caricatore GGUF.",
+  "generation.video.custom_diffusion_model": "Modello di diffusione",
+  "generation.video.custom_clip_model": "Codificatore di testo",
+  "generation.video.custom_vae_model": "VAE video",
+  "generation.video.custom_audio_vae_model": "VAE audio",
+  "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_sampler": "Campionatore",
+  "generation.video.custom_sampler_default": "Predefinito (res_multistep)",
+  "generation.video.custom_scheduler": "Schedulatore",
+  "generation.video.custom_scheduler_default": "Predefinito (simple)",
   "generation.video.stack_ready": "Tutti i file di modello sono installati.",
   "generation.video.stack_missing": "Mancano {count} di {total} file di modello, {size} da scaricare.",
   "generation.video.stack_download": "Scarica tutti i mancanti ({count} file, {size})",
@@ -1638,6 +1651,15 @@ const it: Record<string, string> = {
   "settings.interrogator.thresholds_desc": "Controlla le soglie di confidenza dell'interrogatore di immagini. Valori più bassi restituiscono più tag, valori più alti sono più selettivi.",
   "settings.interrogator.more_tags": "Più tag",
   "settings.interrogator.fewer_tags": "Meno tag",
+  "settings.interrogator.custom_tag": "(personalizzato)",
+  "settings.interrogator.custom_models_title": "Modelli personalizzati",
+  "settings.interrogator.remove": "Rimuovi",
+  "settings.interrogator.removing": "Rimozione in corso...",
+  "settings.interrogator.add_custom": "Aggiungi cartella tagger personalizzata",
+  "settings.interrogator.add_custom_dialog_title": "Seleziona cartella tagger",
+  "settings.interrogator.add_custom_desc": "Aggiungi una cartella locale contenente model.onnx e selected_tags.csv da un tagger della famiglia WD v3.",
+  "settings.interrogator.adding": "Aggiunta in corso...",
+  "settings.interrogator.custom_path_placeholder": "Percorso alla cartella...",
 
   "generation.controlnet.browse_or_drop": "Sfoglia o trascina immagine",
   "generation.controlnet.paste": "Incolla",
@@ -2376,6 +2398,8 @@ const it: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_unsaved_label": "Video pronto - non salvato nella galleria",
+  "preview.save_video_to_gallery": "Salva nella galleria",
   "preview.video_alt": "Anteprima video",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
@@ -2475,6 +2499,7 @@ const it: Record<string, string> = {
   "generation.error.missing_node": "Questo workflow richiede un nodo personalizzato non installato: {node}. Installalo in ComfyUI e riavvia.",
   "generation.error.component_mismatch": "Questi componenti del modello non sono compatibili tra loro. Assicurati che checkpoint, VAE, LoRA e CLIP appartengano tutti alla stessa famiglia di modelli (ad esempio tutti SDXL).",
   "generation.error.quant_format_unsupported": "Questo modello usa il formato di quantizzazione '{format}', che il ComfyUI installato non supporta. Aggiorna ComfyUI in Impostazioni > Prestazioni, oppure scegli una versione non quantizzata del modello.",
+  "generation.error.int8_fast_required": "Questo modello usa la quantizzazione INT8/ConvRot che il caricatore standard non gestisce. Attiva l'opzione 'Caricatore INT8-Fast' nelle impostazioni del modello (installa ComfyUI-INT8-Fast automaticamente). GPU NVIDIA richiesta.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",
@@ -3007,6 +3032,10 @@ const it: Record<string, string> = {
   "errors.generation_interrupted.why": "È stata annullata o ComfyUI si è fermato a metà.",
 
   "errors.generation_interrupted.fixes": "Avvia di nuovo la generazione. || Verifica che ComfyUI sia ancora in esecuzione. || Controlla i log se non l'hai annullata tu.",
+  "errors.upload_proxy_rejection.title": "Caricamento immagine bloccato dal proxy",
+  "errors.upload_proxy_rejection.what": "Una richiesta di caricamento di un'immagine su ComfyUI è stata rifiutata da un proxy intermedio.",
+  "errors.upload_proxy_rejection.why": "Qualcosa davanti a ComfyUI -- un gateway serverless, proxy inverso o load balancer -- accetta solo richieste JSON e ha rifiutato il caricamento multipart/form-data.",
+  "errors.upload_proxy_rejection.fixes": "Controlla l'URL del server remoto e assicurati che nessun proxy o gateway serverless stia intercettando /upload/image. || I caricamenti di fotogrammi video e immagini di riferimento falliranno finché le richieste multipart non possono raggiungere ComfyUI direttamente.",
 
   "errors.io_permission.title": "Accesso al file negato",
 
@@ -3023,6 +3052,7 @@ const it: Record<string, string> = {
   "errors.serialization.why": "Una risposta era malformata o un file era corrotto.",
 
   "errors.serialization.fixes": "Riprova l'azione. || Riavvia l'app. || Segnalalo se il problema persiste.",
+  "errors.upload_proxy_rejection_inline": "Il server a {host} ha rifiutato il caricamento dell'immagine (HTTP {status}). Qualcosa davanti a ComfyUI accetta solo richieste JSON, quindi i caricamenti multipart su /upload/image non raggiungono mai ComfyUI. Controlla l'URL del server remoto e assicurati che nessun proxy o gateway serverless stia intercettando la richiesta.",
 
   "errors.card.details": "Dettagli tecnici",
 
@@ -3098,6 +3128,17 @@ const it: Record<string, string> = {
   "generation.video.pick_refs_title": "Scegli le immagini di riferimento",
 
   "generation.model.architecture_auto": "Auto",
+  "generation.model.int8_fast_label": "Caricatore INT8-Fast",
+  "generation.model.int8_fast_tip": "Usa il nodo OTUNetLoaderW8A8 (ComfyUI-INT8-Fast) invece dell'UNETLoader standard per modelli di diffusione pre-quantizzati INT8/ConvRot. GPU NVIDIA richiesta. Nessun effetto sui modelli .gguf.",
+  "generation.model.int8_fast_convrot_label": "Abilita ConvRot",
+  "generation.model.int8_fast_convrot_tip": "Passa enable_convrot=true a OTUNetLoaderW8A8. Tieni abilitato per file INT8-ConvRot; disabilita per file INT8 semplici senza ConvRot.",
+  "generation.model.int8_fast_hint": "Il nome di questo file modello sembra un file INT8-ConvRot. Abilita l'opzione del caricatore INT8-Fast sopra per caricarlo correttamente.",
+  "generation.model.int8_fast_not_installed": "ComfyUI-INT8-Fast non e installato.",
+  "generation.model.int8_fast_install": "Installa ComfyUI-INT8-Fast",
+  "generation.model.int8_fast_installing": "Installazione...",
+  "generation.model.int8_fast_install_error": "Installazione fallita: {error}",
+  "generation.model.int8_fast_nvidia_only": "Solo GPU NVIDIA -- INT8-Fast non supporta AMD o Apple Silicon.",
+  "generation.model.int8_fast_unavailable": "Il nodo ComfyUI-INT8-Fast non e disponibile. Installa il pacchetto, poi riavvia ComfyUI.",
   "generation.lora.enable": "Enable",
   "generation.lora.disable": "Disable",
   "gallery.date.unknown": "Unknown",

@@ -411,6 +411,12 @@ export interface GenerationParams {
   video_turbo_lora?: string | null;
   /** MiniMax-H3 TeaCache: reuses the previous step's model output when little changed. */
   video_teacache_enabled?: boolean;
+  /** Active H3 tier id, including "custom" for user-supplied model files. */
+  video_model_tier?: string;
+  /** Custom sampler name for KSamplerSelect; null/absent means preset default (res_multistep). */
+  video_sampler?: string | null;
+  /** Custom scheduler name for BasicScheduler; null/absent means preset default (simple). */
+  video_scheduler?: string | null;
   video_diffusion_model?: string | null;
   video_clip_model?: string | null;
   video_vae_model?: string | null;
@@ -424,6 +430,11 @@ export interface GenerationParams {
   video_timeline_custom_motion?: boolean;
   /** Director `use_custom_audio` widget: the timeline has audio cues. */
   video_timeline_custom_audio?: boolean;
+  /** INT8-Fast (ConvRot) loader: uses OTUNetLoaderW8A8 (ComfyUI-INT8-Fast) for
+   *  pre-quantized INT8/ConvRot diffusion models. NVIDIA only. */
+  int8_fast_enabled?: boolean;
+  /** Enable ConvRot within the INT8-Fast loader (default true). */
+  int8_fast_convrot?: boolean;
   /** Present only for NovelAI generations; its presence is not the backend
    *  switch, `checkpoint` naming a NovelAI model is. */
   novelai?: NovelAiParams | null;
@@ -579,6 +590,13 @@ export interface AppConfig {
   llm_xai_scope: string;
   /** Disable the 7-day gallery image auto-expiry entirely (default: false). */
   gallery_never_expire: boolean;
+  /**
+   * When true, video outputs are NOT automatically saved to the gallery.
+   * The frontend receives the raw output path and must explicitly call
+   * `save_video_to_gallery_manual` to persist the clip. Mirrors the
+   * image-side `manualSaveMode` toggle.
+   */
+  manual_save_mode: boolean;
 }
 
 export interface ThemeTone {
@@ -639,10 +657,11 @@ export interface InterrogationResult {
 export interface InterrogatorModelStatus {
   id: string;
   label: string;
-  repo: string;
+  repo: string | null;
   size_bytes: number;
   input_size: number;
   downloaded: boolean;
+  is_custom: boolean;
 }
 
 export interface GpuWorkerInfo {

@@ -135,8 +135,15 @@ export function computeH3Dimensions(
 export function estimateH3ModelGb(filename: string | null | undefined): number {
   const name = (filename ?? "").toLowerCase();
   if (name.includes("nvfp4")) return 12.5;
+  // W4A8 mixed-quant: 4-bit weights with 8-bit activations at runtime. Weights
+  // alone are a quarter of bf16; scales, zero points and the layers left in
+  // higher precision push the resident footprint to roughly 0.3 x bf16 (32 GB),
+  // so about 10 GB. Approximate: the exact cost depends on the quant recipe.
+  if (name.includes("w4a8")) return 10;
   if (name.includes("fp8")) return 22;
   if (name.includes("bf16") || name.includes("fp16")) return 32;
+  // For unrecognised names (including custom-tier picks), keep the int8 estimate
+  // as a safe fallback. The VRAM warning is advisory, not a hard block.
   return 21;
 }
 

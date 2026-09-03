@@ -4879,22 +4879,88 @@ async fn dispatch_command(
             "interrogate_clipboard not available in browser mode (no clipboard access)".to_string(),
         ),
         "list_interrogator_models" => {
-            let root_dir = { state.interrogator.read().await.root_dir() };
-            serde_json::to_value(crate::interrogator::model_statuses_at(&root_dir))
-                .map_err(|e| e.to_string())
+            let (root_dir, custom_models) = {
+                let interrogator = state.interrogator.read().await;
+                let config = state.config.read().await;
+                (
+                    interrogator.root_dir(),
+                    config.interrogator_custom_models.clone(),
+                )
+            };
+            serde_json::to_value(crate::interrogator::model_statuses_with_custom(
+                &root_dir,
+                &custom_models,
+            ))
+            .map_err(|e| e.to_string())
         }
         "delete_interrogator_model" => {
             let model_id = args["modelId"]
                 .as_str()
                 .ok_or("Missing modelId")?
                 .to_string();
-            let root_dir = { state.interrogator.read().await.root_dir() };
-            crate::interrogator::delete_model_files_at(&root_dir, &model_id)
+            let (root_dir, custom_models) = {
+                let interrogator = state.interrogator.read().await;
+                let config = state.config.read().await;
+                (
+                    interrogator.root_dir(),
+                    config.interrogator_custom_models.clone(),
+                )
+            };
+            crate::interrogator::delete_model_files_at(&root_dir, &model_id, &custom_models)
                 .map_err(|e| e.to_string())?;
             let mut guard = state.interrogator.write().await;
-            if guard.model_id() == crate::interrogator::find_model(&model_id).id {
+            if guard.model_id() == model_id {
                 guard.unload_session();
             }
+            Ok(serde_json::Value::Null)
+        }
+        "add_custom_interrogator_model" => {
+            let path = args["path"].as_str().ok_or("Missing path")?.to_string();
+            let dir = std::path::PathBuf::from(&path);
+            if !dir.join(crate::interrogator::MODEL_FILENAME).exists() {
+                return Err(format!(
+                    "Folder '{}' does not contain model.onnx.",
+                    dir.display()
+                ));
+            }
+            if !dir.join(crate::interrogator::TAGS_FILENAME).exists() {
+                return Err(format!(
+                    "Folder '{}' does not contain selected_tags.csv.",
+                    dir.display()
+                ));
+            }
+            let folder_name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "custom".to_string());
+            let id = format!("custom-{}", folder_name);
+            let label = folder_name.clone();
+            let mut config = state.config.write().await;
+            if config.interrogator_custom_models.iter().any(|m| m.id == id) {
+                return Err(format!(
+                    "A custom model with id '{}' is already registered.",
+                    id
+                ));
+            }
+            config
+                .interrogator_custom_models
+                .push(crate::config::CustomInterrogatorModel { id, label, path });
+            crate::config::save_config(&config).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "remove_custom_interrogator_model" => {
+            let id = args["id"].as_str().ok_or("Missing id")?.to_string();
+            let mut config = state.config.write().await;
+            let before = config.interrogator_custom_models.len();
+            config.interrogator_custom_models.retain(|m| m.id != id);
+            if config.interrogator_custom_models.len() == before {
+                return Err(format!("No custom model with id '{}' found in config.", id));
+            }
+            if config.interrogator_model == id {
+                config.interrogator_model =
+                    crate::interrogator::DEFAULT_INTERROGATOR_MODEL.to_string();
+            }
+            crate::config::save_config(&config).map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
 
@@ -5253,6 +5319,29 @@ async fn dispatch_command(
             let cap = crate::commands::video_export::probe_export_inner(&state).await;
             serde_json::to_value(cap).map_err(|e| e.to_string())
         }
+        "save_video_to_gallery_manual" => {
+            let video_path = args["videoPath"]
+                .as_str()
+                .ok_or("Missing videoPath")?
+                .to_string();
+            let prompt_id = args["promptId"].as_str().unwrap_or("").to_string();
+            let fps = args["fps"].as_f64().unwrap_or(0.0);
+            let frame_count = args["frameCount"].as_u64().unwrap_or(0);
+            let width = args["width"].as_u64().unwrap_or(0) as u32;
+            let height = args["height"].as_u64().unwrap_or(0) as u32;
+            let filename = crate::commands::api::save_video_to_gallery_manual_inner(
+                username,
+                video_path,
+                prompt_id,
+                fps,
+                frame_count,
+                width,
+                height,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(filename).map_err(|e| e.to_string())
+        }
         "copy_file_to_clipboard" => {
             // The server's clipboard is not the browser user's clipboard.
             // The frontend uses Download in browser mode and never calls this;
@@ -5394,12 +5483,11 @@ async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
-    let (model_id, general_threshold, character_threshold) = {
+    let (model_id, custom_models, general_threshold, character_threshold) = {
         let config = state.config.read().await;
         (
-            crate::interrogator::find_model(&config.interrogator_model)
-                .id
-                .to_string(),
+            config.interrogator_model.clone(),
+            config.interrogator_custom_models.clone(),
             config.interrogator_general_threshold,
             config.interrogator_character_threshold,
         )
@@ -5408,20 +5496,25 @@ async fn run_interrogation_headless(
     // Resolve the model root under a brief read lock, then run the
     // (multi-second, network) downloads WITHOUT holding the guard across await.
     let root_dir = { state.interrogator.read().await.root_dir() };
-    let model_dir = root_dir.join(&model_id);
-    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
-        crate::interrogator::ensure_model_downloaded_headless_at(
-            &state.http_client,
-            &model_dir,
-            &model_id,
-        )
-        .await
+    let model_dir = crate::interrogator::resolve_model_dir(&model_id, &root_dir, &custom_models)
         .map_err(|e| e.to_string())?;
-    }
-    if !crate::interrogator::is_ort_library_present_at(&root_dir) {
-        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &root_dir)
+
+    let is_custom = custom_models.iter().any(|m| m.id == model_id);
+    if !is_custom {
+        if !crate::interrogator::is_model_downloaded_at(&model_dir) {
+            crate::interrogator::ensure_model_downloaded_headless_at(
+                &state.http_client,
+                &model_dir,
+                &model_id,
+            )
             .await
             .map_err(|e| e.to_string())?;
+        }
+        if !crate::interrogator::is_ort_library_present_at(&root_dir) {
+            crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &root_dir)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     let event_tx = state.event_tx.clone();
@@ -5430,7 +5523,7 @@ async fn run_interrogation_headless(
         let mut guard = interrogator.blocking_write();
         // Switching models drops any cached session, so this must precede the
         // load check or a stale session would be reported as already loaded.
-        guard.set_model(&model_id);
+        guard.set_model(&model_id, model_dir);
         let is_first_load = guard.session_not_loaded();
         if is_first_load {
             let _ = event_tx.send(crate::state::BroadcastEvent {

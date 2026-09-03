@@ -21,8 +21,8 @@ const ORT_LIB_NAME: &str = "libonnxruntime.dylib";
 #[cfg(target_os = "windows")]
 const ORT_LIB_NAME: &str = "onnxruntime.dll";
 
-const MODEL_FILENAME: &str = "model.onnx";
-const TAGS_FILENAME: &str = "selected_tags.csv";
+pub const MODEL_FILENAME: &str = "model.onnx";
+pub const TAGS_FILENAME: &str = "selected_tags.csv";
 
 /// The tagger MooshieUI used before the model picker existed. Installs that
 /// predate the picker keep their files under this id (see `migrate_legacy_layout`).
@@ -85,32 +85,76 @@ pub const INTERROGATOR_MODELS: &[InterrogatorModelInfo] = &[
 
 /// A registry entry plus whether its files are already on disk. Settings uses
 /// the flag to label a model as downloaded and to offer the delete action.
+/// Custom models are included with `is_custom: true` and `repo: None`.
 #[derive(Debug, Clone, Serialize)]
 pub struct InterrogatorModelStatus {
-    #[serde(flatten)]
-    pub info: &'static InterrogatorModelInfo,
+    pub id: String,
+    pub label: String,
+    pub repo: Option<String>,
+    pub size_bytes: u64,
+    pub input_size: u32,
     pub downloaded: bool,
+    pub is_custom: bool,
 }
 
-/// Status of every selectable model, given the root that holds the per-model
-/// subdirectories.
-pub fn model_statuses_at(root_dir: &std::path::Path) -> Vec<InterrogatorModelStatus> {
-    INTERROGATOR_MODELS
+/// Status of every selectable model (built-in + custom), given the root that
+/// holds the per-model subdirectories.
+pub fn model_statuses_with_custom(
+    root_dir: &std::path::Path,
+    custom_models: &[config::CustomInterrogatorModel],
+) -> Vec<InterrogatorModelStatus> {
+    let mut statuses: Vec<InterrogatorModelStatus> = INTERROGATOR_MODELS
         .iter()
         .map(|info| InterrogatorModelStatus {
-            info,
+            id: info.id.to_string(),
+            label: info.label.to_string(),
+            repo: Some(info.repo.to_string()),
+            size_bytes: info.size_bytes,
+            input_size: info.input_size,
             downloaded: is_model_downloaded_at(&root_dir.join(info.id)),
+            is_custom: false,
         })
-        .collect()
+        .collect();
+    for custom in custom_models {
+        statuses.push(InterrogatorModelStatus {
+            id: custom.id.clone(),
+            label: custom.label.clone(),
+            repo: None,
+            size_bytes: 0,
+            input_size: 0,
+            downloaded: is_model_downloaded_at(&std::path::PathBuf::from(&custom.path)),
+            is_custom: true,
+        });
+    }
+    statuses
 }
 
-/// Look up a model by id, falling back to the default so a stale or hand-edited
-/// config id can never leave the interrogator without a model to load.
-pub fn find_model(id: &str) -> &'static InterrogatorModelInfo {
+/// Look up a built-in model by id. Returns an error for unknown ids so the
+/// caller gets a clear message instead of silently running the wrong model.
+pub fn find_model(id: &str) -> Result<&'static InterrogatorModelInfo, AppError> {
     INTERROGATOR_MODELS
         .iter()
         .find(|m| m.id == id)
-        .unwrap_or(&INTERROGATOR_MODELS[0])
+        .ok_or_else(|| {
+            AppError::InterrogatorError(format!(
+                "Unknown interrogator model id '{}'. Register it first with add_custom_interrogator_model or choose a built-in model.",
+                id
+            ))
+        })
+}
+
+/// Resolve the file-system directory for a model id.
+/// Custom models are checked first; built-in models resolve to root_dir/id.
+pub fn resolve_model_dir(
+    id: &str,
+    root_dir: &std::path::Path,
+    custom_models: &[config::CustomInterrogatorModel],
+) -> Result<PathBuf, AppError> {
+    if let Some(custom) = custom_models.iter().find(|m| m.id == id) {
+        return Ok(PathBuf::from(&custom.path));
+    }
+    let info = find_model(id)?;
+    Ok(root_dir.join(info.id))
 }
 
 fn file_url(info: &InterrogatorModelInfo, filename: &str) -> String {
@@ -147,6 +191,13 @@ pub struct InterrogatorState {
     /// Holds the shared ONNX Runtime library plus one subdirectory per model.
     root_dir: PathBuf,
     model_id: String,
+    /// The directory holding the active model's ONNX and tag files.
+    /// For custom models this is the user-supplied path; for built-in models it
+    /// is root_dir/model_id. Updated by `set_model`.
+    active_model_dir: PathBuf,
+    /// Spatial size detected from the ONNX graph at load time (pixels, square).
+    /// Defaults to 448 (the WD v3 standard) and is overwritten by `load_session`.
+    input_size: u32,
 }
 
 impl Default for InterrogatorState {
@@ -161,11 +212,14 @@ impl InterrogatorState {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("interrogator");
         migrate_legacy_layout(&root_dir);
+        let default_dir = root_dir.join(DEFAULT_INTERROGATOR_MODEL);
         Self {
             session: None,
             tag_list: Vec::new(),
             root_dir,
             model_id: DEFAULT_INTERROGATOR_MODEL.to_string(),
+            active_model_dir: default_dir,
+            input_size: 448,
         }
     }
 
@@ -178,22 +232,23 @@ impl InterrogatorState {
 
     /// The directory holding the selected model's ONNX and tag files.
     pub fn model_dir(&self) -> PathBuf {
-        self.root_dir.join(&self.model_id)
+        self.active_model_dir.clone()
     }
 
     pub fn model_id(&self) -> &str {
         &self.model_id
     }
 
-    /// Select the active tagger. Switching drops the cached session and tag list
-    /// so the next `load_session` picks up the new model. Unknown ids resolve to
-    /// the default rather than leaving the interrogator pointed at nothing.
-    pub fn set_model(&mut self, id: &str) {
-        let resolved = find_model(id).id;
-        if resolved != self.model_id {
+    /// Select the active tagger and its on-disk directory. Switching drops the
+    /// cached session and tag list so the next `load_session` picks up the new
+    /// model. Call `resolve_model_dir` to compute `dir` before calling this.
+    pub fn set_model(&mut self, id: &str, dir: PathBuf) {
+        if id != self.model_id || dir != self.active_model_dir {
             self.session = None;
             self.tag_list = Vec::new();
-            self.model_id = resolved.to_string();
+            self.input_size = 448;
+            self.model_id = id.to_string();
+            self.active_model_dir = dir;
         }
     }
 
@@ -283,6 +338,72 @@ impl InterrogatorState {
             })?;
 
         eprintln!("[interrogator] Model loaded in {:.1?}", t.elapsed());
+
+        // Validate input shape and detect spatial size from the ONNX graph.
+        // WD v3-family taggers use NHWC layout: [batch, H, W, channels].
+        let detected_input_size: u32 = {
+            let input_outlet = session.inputs().first().ok_or_else(|| {
+                AppError::InterrogatorError(format!(
+                    "Model '{}' has no inputs; not a valid WD v3-family tagger.",
+                    self.model_id
+                ))
+            })?;
+            match input_outlet.dtype() {
+                ort::value::ValueType::Tensor { shape, .. } => {
+                    if shape.len() != 4 {
+                        return Err(AppError::InterrogatorError(format!(
+                            "Model '{}' input has rank {} (expected 4 for NHWC); not a supported WD v3-family tagger.",
+                            self.model_id,
+                            shape.len()
+                        )));
+                    }
+                    let channels = shape[3];
+                    if channels != -1 && channels != 3 {
+                        return Err(AppError::InterrogatorError(format!(
+                            "Model '{}' expects {} channel(s) at input (expected 3 for BGR); not a supported WD v3-family tagger.",
+                            self.model_id, channels
+                        )));
+                    }
+                    let h = shape[1];
+                    let w = shape[2];
+                    if h > 0 && w > 0 && h == w {
+                        h as u32
+                    } else {
+                        // Dynamic or non-square spatial dims: fall back to registry value.
+                        INTERROGATOR_MODELS
+                            .iter()
+                            .find(|m| m.id == self.model_id)
+                            .map(|m| m.input_size)
+                            .unwrap_or(448)
+                    }
+                }
+                _ => {
+                    return Err(AppError::InterrogatorError(format!(
+                        "Model '{}' input is not a tensor; not a supported WD v3-family tagger.",
+                        self.model_id
+                    )))
+                }
+            }
+        };
+
+        // Validate that output class count matches the parsed tag list.
+        {
+            let tag_count = self.tag_list.len();
+            if let Some(output_outlet) = session.outputs().first() {
+                if let ort::value::ValueType::Tensor { shape, .. } = output_outlet.dtype() {
+                    if let Some(&dim) = shape.last() {
+                        if dim != -1 && dim as usize != tag_count {
+                            return Err(AppError::InterrogatorError(format!(
+                                "Model '{}': output has {} classes but selected_tags.csv has {} tags. Use matching model.onnx and selected_tags.csv from the same model release.",
+                                self.model_id, dim, tag_count
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        self.input_size = detected_input_size;
         self.session = Some(session);
         Ok(())
     }
@@ -308,7 +429,7 @@ impl InterrogatorState {
         general_threshold: f32,
         character_threshold: f32,
     ) -> Result<InterrogationResult, AppError> {
-        let input_size = find_model(&self.model_id).input_size;
+        let input_size = self.input_size;
 
         let session = self
             .session
@@ -421,6 +542,17 @@ impl InterrogatorState {
             );
         }
 
+        // Require an exact match between model output and tag list lengths.
+        // A mismatch means model.onnx and selected_tags.csv are from different releases.
+        if probs.len() != self.tag_list.len() {
+            return Err(AppError::InterrogatorError(format!(
+                "Model '{}' output has {} probabilities but selected_tags.csv has {} tags; the files do not match.",
+                self.model_id,
+                probs.len(),
+                self.tag_list.len(),
+            )));
+        }
+
         // Map probabilities to tags with category-specific thresholds
         let mut character_tags = Vec::new();
         let mut artist_tags = Vec::new();
@@ -429,9 +561,6 @@ impl InterrogatorState {
         let mut rating_tags = Vec::new();
 
         for (i, &prob) in probs.iter().enumerate() {
-            if i >= self.tag_list.len() {
-                break;
-            }
             let tag = &self.tag_list[i];
             let result = TagResult {
                 name: tag.name.clone(),
@@ -554,10 +683,24 @@ pub fn migrate_legacy_layout(root_dir: &std::path::Path) {
     );
 }
 
-/// Delete a downloaded model's files, freeing the 0.4-1.2 GB it occupies.
+/// Delete a downloaded built-in model's files, freeing the 0.4-1.2 GB it occupies.
 /// The shared ONNX Runtime library lives at the root and is left alone.
-pub fn delete_model_files_at(root_dir: &std::path::Path, model_id: &str) -> Result<(), AppError> {
-    let dir = root_dir.join(find_model(model_id).id);
+/// This function NEVER deletes files for custom models -- use
+/// `remove_custom_interrogator_model` to deregister a custom model without
+/// touching disk.
+pub fn delete_model_files_at(
+    root_dir: &std::path::Path,
+    model_id: &str,
+    custom_models: &[config::CustomInterrogatorModel],
+) -> Result<(), AppError> {
+    if custom_models.iter().any(|m| m.id == model_id) {
+        return Err(AppError::InterrogatorError(format!(
+            "Cannot delete files for custom model '{}'. Use remove_custom_interrogator_model to deregister it without touching disk.",
+            model_id
+        )));
+    }
+    let info = find_model(model_id)?;
+    let dir = root_dir.join(info.id);
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;
     }
@@ -572,7 +715,7 @@ pub async fn ensure_model_downloaded_at(
     model_dir: &std::path::Path,
     model_id: &str,
 ) -> Result<(), AppError> {
-    let info = find_model(model_id);
+    let info = find_model(model_id)?;
     std::fs::create_dir_all(model_dir)?;
     if !model_path_in(model_dir).exists() {
         let url = file_url(info, MODEL_FILENAME);
@@ -610,7 +753,7 @@ pub async fn ensure_model_downloaded_headless_at(
     model_dir: &std::path::Path,
     model_id: &str,
 ) -> Result<(), AppError> {
-    let info = find_model(model_id);
+    let info = find_model(model_id)?;
     std::fs::create_dir_all(model_dir)?;
     if !model_path_in(model_dir).exists() {
         let url = file_url(info, MODEL_FILENAME);
@@ -641,20 +784,52 @@ pub async fn ensure_ort_library_headless_at(
 }
 
 /// Parse the selected_tags.csv file to extract tag names and categories.
+/// Fails with a clear error if required columns (tag_id, name, category, count)
+/// are missing or if the category value cannot be parsed as an integer.
 fn parse_tags_csv(path: &std::path::Path) -> Result<Vec<TagDef>, AppError> {
     let mut reader = csv::Reader::from_path(path)
         .map_err(|e| AppError::InterrogatorError(format!("Failed to read tags CSV: {}", e)))?;
+
+    let (name_idx, category_idx) = {
+        let headers = reader.headers().map_err(|e| {
+            AppError::InterrogatorError(format!("Failed to read CSV headers: {}", e))
+        })?;
+        for col in &["tag_id", "name", "category", "count"] {
+            if !headers.iter().any(|h| h == *col) {
+                return Err(AppError::InterrogatorError(format!(
+                    "selected_tags.csv is missing required column '{}'. Use a WD v3-family tagger's selected_tags.csv (path: {}).",
+                    col,
+                    path.display()
+                )));
+            }
+        }
+        let name_idx = headers.iter().position(|h| h == "name").unwrap();
+        let category_idx = headers.iter().position(|h| h == "category").unwrap();
+        (name_idx, category_idx)
+    };
 
     let mut tags = Vec::new();
     for result in reader.records() {
         let record =
             result.map_err(|e| AppError::InterrogatorError(format!("CSV parse error: {}", e)))?;
-        // CSV format: tag_id, name, category, count
-        let name = record.get(1).unwrap_or("").to_string();
-        let category: u8 = record.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        if !name.is_empty() {
-            tags.push(TagDef { name, category });
+        let name = record.get(name_idx).unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
         }
+        let category_str = record.get(category_idx).unwrap_or("");
+        if category_str.is_empty() {
+            return Err(AppError::InterrogatorError(format!(
+                "selected_tags.csv: 'category' field is empty for tag '{}'. Expected an integer (0=general, 1=artist, 3=copyright, 4=character, 9=rating).",
+                name
+            )));
+        }
+        let category: u8 = category_str.parse().map_err(|_| {
+            AppError::InterrogatorError(format!(
+                "selected_tags.csv: category '{}' for tag '{}' is not a valid integer. Use a WD v3-family tagger's selected_tags.csv.",
+                category_str, name
+            ))
+        })?;
+        tags.push(TagDef { name, category });
     }
     Ok(tags)
 }
@@ -942,22 +1117,19 @@ mod tests {
     #[test]
     fn find_model_resolves_known_ids() {
         for m in INTERROGATOR_MODELS {
-            assert_eq!(find_model(m.id).id, m.id);
+            assert_eq!(find_model(m.id).unwrap().id, m.id);
         }
     }
 
     #[test]
-    fn find_model_falls_back_to_default_for_unknown_id() {
-        assert_eq!(find_model("").id, DEFAULT_INTERROGATOR_MODEL);
-        assert_eq!(
-            find_model("not-a-real-tagger").id,
-            DEFAULT_INTERROGATOR_MODEL
-        );
+    fn find_model_errors_for_unknown_id() {
+        assert!(find_model("").is_err());
+        assert!(find_model("not-a-real-tagger").is_err());
     }
 
     #[test]
     fn file_url_points_at_the_repo_resolve_path() {
-        let info = find_model("wd-vit-tagger-v3");
+        let info = find_model("wd-vit-tagger-v3").unwrap();
         assert_eq!(
             file_url(info, MODEL_FILENAME),
             "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx"
@@ -1027,7 +1199,7 @@ mod tests {
         }
         std::fs::write(ort_library_path_in(&root), b"lib").unwrap();
 
-        delete_model_files_at(&root, "wd-vit-tagger-v3").unwrap();
+        delete_model_files_at(&root, "wd-vit-tagger-v3", &[]).unwrap();
 
         assert!(!root.join("wd-vit-tagger-v3").exists());
         assert!(is_model_downloaded_at(&root.join("wd-swinv2-tagger-v3")));
@@ -1039,7 +1211,23 @@ mod tests {
     #[test]
     fn deleting_a_model_that_was_never_downloaded_succeeds() {
         let root = scratch_dir("delete-missing");
-        assert!(delete_model_files_at(&root, "wd-convnext-tagger-v3").is_ok());
+        assert!(delete_model_files_at(&root, "wd-convnext-tagger-v3", &[]).is_ok());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn deleting_a_custom_model_is_refused() {
+        let root = scratch_dir("delete-custom");
+        let custom = vec![config::CustomInterrogatorModel {
+            id: "custom-my-tagger".to_string(),
+            label: "My Tagger".to_string(),
+            path: root.to_string_lossy().to_string(),
+        }];
+        let err = delete_model_files_at(&root, "custom-my-tagger", &custom).unwrap_err();
+        assert!(
+            err.to_string().contains("Cannot delete"),
+            "expected refusal message, got: {err}"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

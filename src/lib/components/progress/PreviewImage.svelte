@@ -7,8 +7,9 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "../../stores/naiImageEnhance.svelte.js";
-  import { generate, uploadImageBytes, downloadModel } from "../../utils/api.js";
-  import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput } from "../../utils/galleryActions.js";
+  import { generate, uploadImageBytes, downloadModel, saveVideoToGalleryManual } from "../../utils/api.js";
+  import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput, imageUrlToPngBytes } from "../../utils/galleryActions.js";
+  import { normalizeGenerationInputBytes, MAX_INPUT_PIXELS_INPAINT } from "../../utils/editImagePreparation.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import {
     DEFAULT_REFINE_UPSCALER,
@@ -31,6 +32,42 @@
   let ctxMenuX = $state(0);
   let ctxMenuY = $state(0);
   let ctxMenuVisible = $state(false);
+
+  let savingUnsavedVideo = $state(false);
+  let saveVideoError = $state<string | null>(null);
+
+  async function handleSaveVideoToGallery() {
+    const path = progress.lastUnsavedVideoPath;
+    const meta = progress.lastUnsavedVideoMeta;
+    if (!path || !meta) return;
+    savingUnsavedVideo = true;
+    saveVideoError = null;
+    try {
+      const filename = await saveVideoToGalleryManual({
+        videoPath: path,
+        promptId: meta.promptId,
+        fps: meta.fps ?? 0,
+        frameCount: meta.frameCount,
+        width: meta.width,
+        height: meta.height,
+      });
+      // Persist into gallery and promote to the preview player.
+      await gallery.addPersistedImage(
+        filename,
+        { fps: meta.fps ?? undefined },
+        true,
+      );
+      progress.lastOutputVideo = await gallery.loadFullImage(filename);
+      progress.lastOutputVideoFps = meta.fps;
+      progress.lastOutputVideoFilename = filename;
+      progress.lastUnsavedVideoPath = null;
+      progress.lastUnsavedVideoMeta = null;
+    } catch (e: any) {
+      saveVideoError = e instanceof Error ? e.message : String(e);
+    } finally {
+      savingUnsavedVideo = false;
+    }
+  }
 
   const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
   const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
@@ -172,18 +209,52 @@
     }
   }
 
-  /** Load the current preview into inpainting mode (with canvas) without generating (#391). */
+  /** Load the current preview into inpainting mode (with canvas) without generating (#391).
+   *  Mirrors the gallery send-to-inpaint path: fetches raw bytes, normalizes them
+   *  (4 MP cap, snapped to multiples of 8), uploads, and re-initialises the canvas
+   *  at the source image's true dimensions so the Rust ImageScale node is not needed. */
   async function sendToInpaint() {
     try {
-      const uploadName = await resolvePreviewUploadName("inpaint");
-      if (!uploadName) return;
-      generation.inputImage = uploadName;
+      // Fetch raw bytes from the active preview (saved gallery image or blob URL).
+      let rawBytes: number[];
+      let fallbackFilename = `inpaint_${Date.now()}.png`;
+      const savedImage = getActiveSavedImage();
+      if (savedImage) {
+        const source = await loadOutputImageForGenerationInput(savedImage, fallbackFilename);
+        rawBytes = source.bytes;
+        fallbackFilename = source.filename;
+      } else {
+        const sourceUrl = previewSrc ?? progress.lastOutputImage;
+        if (!sourceUrl) {
+          gallery.showToast(locale.t("preview.not_available"), "info");
+          return;
+        }
+        rawBytes = await imageUrlToPngBytes(sourceUrl);
+      }
+
+      // Normalise: resize only if above the 4 MP inpaint cap, snap dims to multiple of 8.
+      const normalized = await normalizeGenerationInputBytes(rawBytes, fallbackFilename, MAX_INPUT_PIXELS_INPAINT);
+
+      // Upload normalised bytes and wire everything up.
+      const upload = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = upload.name;
+      generation.width = normalized.width;
+      generation.height = normalized.height;
       generation.mode = "inpainting";
       canvas.clearMask();
       canvas.isCanvasMode = true;
-      const refUrl = previewSrc ?? progress.lastOutputImage;
-      if (refUrl) canvas.setReferenceImage(refUrl);
-      if (canvas.layers.length === 0) canvas.initCanvas(generation.width, generation.height);
+      canvas.clearStaging();
+      canvas.setInpaintDrawMode("mask");
+      progress.setLastOutputForMode("inpainting", null);
+      canvas.setInpaintOriginalSource({
+        previewUrl: normalized.previewUrl,
+        width: normalized.width,
+        height: normalized.height,
+        uploadedInputName: upload.name,
+      });
+      if (canvas.layers.length === 0 || canvas.canvasWidth !== normalized.width || canvas.canvasHeight !== normalized.height) {
+        canvas.initCanvas(normalized.width, normalized.height);
+      }
       gallery.showToast(locale.t("generation.toast.loaded_inpaint"), "success");
     } catch (e) {
       console.error("Send to inpaint failed:", e);
@@ -417,6 +488,24 @@
       density="compact"
       filename={progress.lastOutputVideoFilename ?? undefined}
     />
+  {:else if progress.lastUnsavedVideoPath}
+    <!-- Manual save mode: video was generated but not saved to the gallery. -->
+    <div class="flex flex-col items-center justify-center gap-3 px-4 text-center">
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-neutral-500" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M15 8v8H5V8h10m1-2H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4V7a1 1 0 00-1-1z"/>
+      </svg>
+      <p class="text-sm text-neutral-300">{locale.t('preview.video_unsaved_label')}</p>
+      {#if saveVideoError}
+        <p class="text-xs text-red-400">{saveVideoError}</p>
+      {/if}
+      <button
+        class="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
+        onclick={handleSaveVideoToGallery}
+        disabled={savingUnsavedVideo}
+      >
+        {savingUnsavedVideo ? locale.t('common.saving') : locale.t('preview.save_video_to_gallery')}
+      </button>
+    </div>
   {:else if progress.displayImage}
     <button
       class="w-full h-full cursor-pointer"

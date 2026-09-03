@@ -204,7 +204,7 @@ Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 
 ### Models & model creators
 
-- **[WD Taggers v3](https://huggingface.co/SmilingWolf)** (SmilingWolf) - image interrogation/tagging. EVA02 Large is the default; ViT Large, SwinV2, ConvNeXt, and ViT are selectable in Settings.
+- **[WD Taggers v3](https://huggingface.co/SmilingWolf)** (SmilingWolf) - image interrogation/tagging. EVA02 Large is the default; ViT Large, SwinV2, ConvNeXt, and ViT are selectable in Settings. You can also register a custom tagger folder in Settings by pointing MooshieUI at any local folder that contains a WD v3-compatible model.onnx and matching selected_tags.csv; the folder is never modified by the app.
 - **[CLIPSeg](https://huggingface.co/CIDAS/clipseg-rd64-refined)** (CIDAS) - text-prompted region detection for `<segment:...>` refinement.
 - **Face detection models** - [Anzhc's YOLOs](https://huggingface.co/Anzhc/Anzhcs_YOLOs) (default face segmentation) and [ADetailer models](https://huggingface.co/Bingsu/adetailer) (Bingsu) for Face Fix.
 - **Upscalers** - OmniSR, SPAN, and DAT (IllustrationJaNai) model weights hosted by [Acly](https://huggingface.co/Acly/Omni-SR) and [AshtakaOOf](https://huggingface.co/AshtakaOOf/safetensored-upscalers).

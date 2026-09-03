@@ -1530,6 +1530,71 @@ pub fn save_video_to_gallery(
     })
 }
 
+/// Move a video that was held back by `manual_save_mode` into the gallery.
+///
+/// Accepts the absolute path that `comfyui:output_video` emitted as
+/// `video_path` (when `persisted: false`), re-uses the standard
+/// `save_video_to_gallery` logic, and returns the resulting gallery filename.
+/// Available in both the desktop and server builds; the desktop command is
+/// gated with `#[cfg(feature = "desktop")]`.
+pub async fn save_video_to_gallery_manual_inner(
+    username: Option<&str>,
+    video_path: String,
+    prompt_id: String,
+    fps: f64,
+    frame_count: u64,
+    width: u32,
+    height: u32,
+) -> Result<String, AppError> {
+    let path = std::path::PathBuf::from(&video_path);
+    if !path.is_file() {
+        return Err(AppError::Other(format!(
+            "Video not found at {}",
+            path.display()
+        )));
+    }
+    if path
+        .extension()
+        .is_none_or(|e| !e.eq_ignore_ascii_case("mp4"))
+    {
+        return Err(AppError::Other(
+            "Only .mp4 files can be saved to the gallery via this command".into(),
+        ));
+    }
+    let gallery_dir = crate::webserver::user_gallery_dir(username)
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let saved = tokio::task::spawn_blocking(move || {
+        save_video_to_gallery(
+            &path,
+            None,
+            &gallery_dir,
+            &prompt_id,
+            fps,
+            frame_count,
+            width,
+            height,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))??;
+    Ok(saved.video_filename)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_video_to_gallery_manual(
+    video_path: String,
+    prompt_id: String,
+    fps: f64,
+    frame_count: u64,
+    width: u32,
+    height: u32,
+) -> Result<String, AppError> {
+    // Desktop: no owner — videos go to the root gallery directory.
+    save_video_to_gallery_manual_inner(None, video_path, prompt_id, fps, frame_count, width, height)
+        .await
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn read_image_metadata(
