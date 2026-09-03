@@ -575,6 +575,8 @@ const en: Record<string, string> = {
   "generation.prompts.extra_box_saved": "Saved '{name}' to chunks",
   "generation.prompts.extra_box_empty": "Nothing to save, this block is empty",
   "generation.prompts.extra_box_default_name": "Prompt block {index}",
+  "generation.prompts.random_indicator": "random",
+  "generation.prompts.random_preview_title": "Prompt contains random alternation syntax. Example roll: {preview}. Click to reroll the preview.",
   "generation.prompt.category_all": "All",
   "generation.prompt.category_general": "General",
   "generation.prompt.category_artist": "Artist",

@@ -13,6 +13,7 @@
   import NovelAiCharacters from "./NovelAiCharacters.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
+  import { hasRandomSyntax, previewRandomPrompt } from "../../utils/randomPrompt.js";
   import { joinPromptBoxes } from "../../utils/promptSanitize.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
@@ -81,6 +82,16 @@
   const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
   const negativeSegments = $derived(hasNegativeSchedule ? parseScheduledPrompt(generation.negativePrompt).segments : []);
   let schedulePanelOpen = $state(true);
+
+  // Random alternation syntax indicator
+  const hasPositiveRandom = $derived(hasRandomSyntax(generation.positivePrompt));
+  const hasNegativeRandom = $derived(hasRandomSyntax(generation.negativePrompt));
+  let positivePreviewSeed = $state(Date.now() | 0);
+  let negativePreviewSeed = $state((Date.now() | 0) + 1);
+  const positivePreview = $derived(hasPositiveRandom ? previewRandomPrompt(generation.positivePrompt, positivePreviewSeed) : "");
+  const negativePreview = $derived(hasNegativeRandom ? previewRandomPrompt(generation.negativePrompt, negativePreviewSeed) : "");
+  function rerollPositivePreview() { positivePreviewSeed = (Math.random() * 0x100000000) >>> 0; }
+  function rerollNegativePreview() { negativePreviewSeed = (Math.random() * 0x100000000) >>> 0; }
 
   /** Artist tags detected in the current positive prompt. */
   const detectedArtists = $derived.by(() => {
@@ -298,6 +309,24 @@
       {#if qualityTagsSupported}
         <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">{locale.t('generation.prompts.quality_applied')}</span>
       {/if}
+      {#if hasPositiveRandom}
+        <button
+          type="button"
+          onclick={rerollPositivePreview}
+          class="shrink-0 inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 px-2 py-0.5 text-[10px] transition-colors"
+          title={locale.t('generation.prompts.random_preview_title', { preview: positivePreview })}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="2" width="20" height="20" rx="3"/>
+            <circle cx="8.5" cy="8.5" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="15.5" cy="8.5" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="8.5" cy="15.5" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="15.5" cy="15.5" r="1.3" fill="currentColor" stroke="none"/>
+          </svg>
+          {locale.t('generation.prompts.random_indicator')}
+        </button>
+      {/if}
       {#each styles.activeStyles as activeStyle (activeStyle.id)}
         <button
           type="button"
@@ -501,12 +530,32 @@
 
   {#snippet negativeFields()}
   <div class="transition-opacity {generation.disablesNegativePrompt ? 'opacity-40 pointer-events-none' : ''}">
-    <label class="block text-xs text-neutral-400 mb-1">
-      {locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} />
-      {#if generation.disablesNegativePrompt}
-        <span class="ml-1 text-[10px] text-amber-400">({locale.t('generation.prompts.negative_disabled_for_model')})</span>
+    <div class="flex items-center justify-between mb-1">
+      <label class="text-xs text-neutral-400">
+        {locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} />
+        {#if generation.disablesNegativePrompt}
+          <span class="ml-1 text-[10px] text-amber-400">({locale.t('generation.prompts.negative_disabled_for_model')})</span>
+        {/if}
+      </label>
+      {#if hasNegativeRandom}
+        <button
+          type="button"
+          onclick={rerollNegativePreview}
+          class="shrink-0 inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 px-2 py-0.5 text-[10px] transition-colors"
+          title={locale.t('generation.prompts.random_preview_title', { preview: negativePreview })}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="2" width="20" height="20" rx="3"/>
+            <circle cx="8.5" cy="8.5" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="15.5" cy="8.5" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="8.5" cy="15.5" r="1.3" fill="currentColor" stroke="none"/>
+            <circle cx="15.5" cy="15.5" r="1.3" fill="currentColor" stroke="none"/>
+          </svg>
+          {locale.t('generation.prompts.random_indicator')}
+        </button>
       {/if}
-    </label>
+    </div>
     <PromptTextarea
       bind:value={generation.negativePrompt}
       placeholder={locale.t('generation.prompts.negative_placeholder')}
