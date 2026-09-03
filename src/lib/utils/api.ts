@@ -992,7 +992,7 @@ export async function getConfig(options?: { force?: boolean }): Promise<AppConfi
     return cloneConfig(configCache);
   }
 
-  await configUpdateChain.catch(() => {});
+  await configUpdateChain.catch((e) => { console.warn("Pending config write failed before read:", e); });
 
   if (!force && configLoadPromise) {
     return configLoadPromise.then((c) => cloneConfig(c));
@@ -1019,7 +1019,7 @@ export async function updateConfig(config: AppConfig): Promise<void> {
   configCache = plain;
   pendingConfigWrite = plain;
   configUpdateChain = configUpdateChain
-    .catch(() => {})
+    .catch((e) => { console.warn("Config write chain error (previous write failed):", e); })
     .then(() => flushPendingConfigWrite());
   return configUpdateChain;
 }

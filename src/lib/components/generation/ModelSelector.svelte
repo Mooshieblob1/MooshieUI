@@ -568,15 +568,30 @@
   let int8FastInstalling = $state(false);
   let int8FastInstallError = $state<string | null>(null);
 
+  // GGUF diffusion models route through UnetLoaderGGUF and are already
+  // optimized — INT8-Fast has no effect on them and must be disabled.
+  const isGgufDiffusionModel = $derived(
+    generation.useSplitModel && /\.gguf$/i.test(generation.diffusionModel ?? "")
+  );
+
   // Auto-suggest hint: shown when the diffusion model filename looks like an
   // INT8-ConvRot file but the toggle is off. We only suggest — never silently
   // enable — to avoid surprising users who picked the file for another reason.
   const showInt8FastHint = $derived(
     generation.useSplitModel &&
       !generation.int8FastEnabled &&
+      !isGgufDiffusionModel &&
       /int8/i.test(generation.diffusionModel ?? "") &&
       /convrot/i.test(generation.diffusionModel ?? "")
   );
+
+  // Force INT8-Fast off whenever a .gguf diffusion model is selected.
+  $effect(() => {
+    if (isGgufDiffusionModel && generation.int8FastEnabled) {
+      generation.int8FastEnabled = false;
+      generation.saveSettings();
+    }
+  });
 
   $effect(() => {
     if (!connection.connected) return;
@@ -1630,7 +1645,7 @@
           <input
             type="checkbox"
             class="accent-indigo-500"
-            disabled={int8FastAvailable === false}
+            disabled={int8FastAvailable === false || isGgufDiffusionModel}
             checked={generation.int8FastEnabled}
             onchange={(e) => {
               generation.int8FastEnabled = (e.target as HTMLInputElement).checked;
@@ -1640,7 +1655,9 @@
           {locale.t('generation.model.int8_fast_label')}
           <InfoTip text={locale.t('generation.model.int8_fast_tip')} />
         </label>
-        {#if int8FastAvailable === false}
+        {#if isGgufDiffusionModel}
+          <span class="text-[10px] text-neutral-500">{locale.t('generation.model.int8_fast_gguf_hint')}</span>
+        {:else if int8FastAvailable === false}
           <span class="text-[10px] text-amber-400">{locale.t('generation.model.int8_fast_not_installed')}</span>
         {/if}
       </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { CompareMode, CompareOrientation } from "../../types/index.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     urlA: string;
@@ -24,7 +25,7 @@
     urlB,
     labelA = "A",
     labelB = "B",
-    ariaLabel = "Comparison divider",
+    ariaLabel = locale.t('gallery.compare.divider'),
     mode = "slider",
     orientation = "horizontal",
     position = $bindable(50),

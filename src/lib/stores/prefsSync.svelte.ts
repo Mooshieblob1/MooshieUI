@@ -71,7 +71,7 @@ class PrefsSyncStore {
   /** Distribute a server snapshot to every participating store. */
   async applyAll(prefs: UserPrefsData): Promise<void> {
     if (prefs.generation) {
-      await generation.applyServerPrefs(prefs.generation as Record<string, any>).catch(() => {});
+      await generation.applyServerPrefs(prefs.generation as Record<string, any>).catch((e) => { console.warn("Failed to apply server prefs (generation):", e); });
     }
     if (Array.isArray(prefs.prompt_history)) {
       generation.applyPromptHistory(prefs.prompt_history as any[]);
@@ -92,7 +92,7 @@ class PrefsSyncStore {
       gallery.applyServerPrefs(prefs.gallery_boards);
     }
     if (prefs.autocomplete) {
-      await autocomplete.applyServerPrefs(prefs.autocomplete as Record<string, any>).catch(() => {});
+      await autocomplete.applyServerPrefs(prefs.autocomplete as Record<string, any>).catch((e) => { console.warn("Failed to apply server prefs (autocomplete):", e); });
     }
     if (prefs.accessibility) {
       accessibility.applyServerPrefs(prefs.accessibility);
@@ -121,8 +121,8 @@ class PrefsSyncStore {
         // No snapshot on server yet — push current local state to seed it.
         await pushServerPrefs(this.collectAll());
       }
-    } catch {
-      // Non-fatal — offline or server unavailable.
+    } catch (e) {
+      console.warn("Failed to load/apply server prefs (offline or server unavailable):", e);
     }
   }
 
@@ -131,7 +131,7 @@ class PrefsSyncStore {
     if (this._syncTimer !== null) clearTimeout(this._syncTimer);
     this._syncTimer = setTimeout(() => {
       this._syncTimer = null;
-      this._doSync().catch(() => {});
+      this._doSync().catch((e) => { console.warn("Prefs sync failed:", e); });
     }, 2000);
   }
 
@@ -143,7 +143,7 @@ class PrefsSyncStore {
     if (this._syncTimer === null) return;
     clearTimeout(this._syncTimer);
     this._syncTimer = null;
-    this._doSync({ keepalive: true }).catch(() => {});
+    this._doSync({ keepalive: true }).catch((e) => { console.warn("Prefs sync (flush) failed:", e); });
   }
 
   private async _doSync(options: { keepalive?: boolean } = {}): Promise<void> {
@@ -163,7 +163,7 @@ class PrefsSyncStore {
     if (this._pending) {
       this._pending = false;
       // Re-run once to flush the state that changed during the last push.
-      this._doSync().catch(() => {});
+      this._doSync().catch((e) => { console.warn("Prefs sync (re-flush) failed:", e); });
     }
   }
 }

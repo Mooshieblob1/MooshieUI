@@ -879,6 +879,7 @@
   let scanningModelDirs = $state(false);
 
   async function scanForModelDirs() {
+    if (!isTauri) return;
     scanningModelDirs = true;
     try {
       const dirs = await ipcInvoke<DetectedModelDir[]>("detect_model_directories");
@@ -887,7 +888,8 @@
         (config?.extra_model_paths ?? "").split("\n").map((p: string) => p.trim()).filter(Boolean)
       );
       detectedModelDirs = dirs.filter((d) => !existing.has(d.path));
-    } catch {
+    } catch (e) {
+      console.warn("Failed to scan for model directories:", e);
       detectedModelDirs = [];
     } finally {
       scanningModelDirs = false;
@@ -903,9 +905,11 @@
   let moveSuccess = $state(false);
 
   async function loadInstallPath() {
+    if (!isTauri) return;
     try {
       currentInstallPath = await ipcInvoke<string>("get_install_path");
-    } catch {
+    } catch (e) {
+      console.warn("Failed to load install path:", e);
       currentInstallPath = "";
     }
   }
@@ -1848,7 +1852,7 @@
   async function restartServer() {
     // Save first so restart picks up latest config
     if (config) {
-      try { await updateConfig(config); } catch {}
+      try { await updateConfig(config); } catch (e) { console.warn("Failed to save config before restart:", e); }
     }
     restarting = true;
     error = null;
@@ -3125,7 +3129,8 @@
           <!-- Open Model Folders -->
           <OpenModelFolders />
 
-          <!-- Move Installation -->
+          <!-- Move Installation (desktop only: requires get_install_path and move_installation IPC) -->
+          {#if isTauri}
           <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
             <div class="flex items-center justify-between">
               <p class="text-xs text-neutral-400">{locale.t('settings.paths.data_location')}</p>
@@ -3175,6 +3180,7 @@
               <div class="rounded border border-red-800/50 bg-red-900/20 px-2 py-1.5 text-[11px] text-red-300">{moveError}</div>
             {/if}
           </div>
+          {/if}
 
           <!-- Rerun Setup Wizard (desktop host only; setup installs locally) -->
           {#if isTauri}
@@ -3226,6 +3232,7 @@
             <div class="flex items-center justify-between mb-1">
               <label class="block text-xs text-neutral-400">{locale.t('settings.paths.shared_model_dirs')}<span class="text-amber-400">*</span></label>
               <div class="flex gap-1.5">
+                {#if isTauri}
                 <button
                   class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                   onclick={scanForModelDirs}
@@ -3233,6 +3240,7 @@
                 >
                   {scanningModelDirs ? locale.t('settings.paths.scanning') : locale.t('settings.paths.auto_detect')}
                 </button>
+                {/if}
                 <button
                   class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                   onclick={() => {
@@ -4308,7 +4316,7 @@
             <button
               class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50"
               onclick={async () => {
-                try { await fetch("/internal-api/_auth/logout", { method: "POST", headers: authHeaders() }); } catch {}
+                try { await fetch("/internal-api/_auth/logout", { method: "POST", headers: authHeaders() }); } catch (e) { console.warn("Logout request failed:", e); }
                 clearAuthToken();
                 window.location.reload();
               }}
@@ -4444,7 +4452,7 @@
                 <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
                   <p class="text-sm text-emerald-200 mb-2">{locale.t('settings.about.update_ready').replace('{version}', updateVersion)}</p>
                   <button
-                    onclick={async () => { try { await stopComfyui(); } catch {} if (isTauri) { const { relaunch } = await import("@tauri-apps/plugin-process"); await relaunch(); } else { window.location.reload(); } }}
+                    onclick={async () => { try { await stopComfyui(); } catch (e) { console.warn("Failed to stop ComfyUI before relaunch:", e); } if (isTauri) { const { relaunch } = await import("@tauri-apps/plugin-process"); await relaunch(); } else { window.location.reload(); } }}
                     class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                   >
                     {locale.t('updater.restart_now')}

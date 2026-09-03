@@ -60,13 +60,18 @@
       progress.lastOutputVideo = await gallery.loadFullImage(filename);
       progress.lastOutputVideoFps = meta.fps;
       progress.lastOutputVideoFilename = filename;
-      progress.lastUnsavedVideoPath = null;
-      progress.lastUnsavedVideoMeta = null;
+      progress.removePendingVideo(path);
     } catch (e: any) {
       saveVideoError = e instanceof Error ? e.message : String(e);
     } finally {
       savingUnsavedVideo = false;
     }
+  }
+
+  function handleDiscardVideo() {
+    const path = progress.lastUnsavedVideoPath;
+    if (path) progress.removePendingVideo(path);
+    saveVideoError = null;
   }
 
   const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
@@ -495,16 +500,28 @@
         <path d="M15 8v8H5V8h10m1-2H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4V7a1 1 0 00-1-1z"/>
       </svg>
       <p class="text-sm text-neutral-300">{locale.t('preview.video_unsaved_label')}</p>
+      {#if progress.pendingVideos.length > 1}
+        <p class="text-xs text-neutral-500">{locale.t('preview.video_pending_more', { count: String(progress.pendingVideos.length - 1) })}</p>
+      {/if}
       {#if saveVideoError}
         <p class="text-xs text-red-400">{saveVideoError}</p>
       {/if}
-      <button
-        class="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
-        onclick={handleSaveVideoToGallery}
-        disabled={savingUnsavedVideo}
-      >
-        {savingUnsavedVideo ? locale.t('common.saving') : locale.t('preview.save_video_to_gallery')}
-      </button>
+      <div class="flex gap-2">
+        <button
+          class="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors disabled:opacity-50"
+          onclick={handleSaveVideoToGallery}
+          disabled={savingUnsavedVideo}
+        >
+          {savingUnsavedVideo ? locale.t('common.saving') : locale.t('preview.save_video_to_gallery')}
+        </button>
+        <button
+          class="px-3 py-1.5 rounded border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-500 text-sm font-medium transition-colors disabled:opacity-50"
+          onclick={handleDiscardVideo}
+          disabled={savingUnsavedVideo}
+        >
+          {locale.t('preview.discard_video')}
+        </button>
+      </div>
     </div>
   {:else if progress.displayImage}
     <button

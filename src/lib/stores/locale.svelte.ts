@@ -167,7 +167,7 @@ class LocaleStore {
       if (localeValue && translations[localeValue as Locale]) {
         this.current = localeValue as Locale;
         this.hasStoredPreference = true;
-        this.saveSettings().catch(() => {});
+        this.saveSettings().catch((e) => { console.warn("Failed to persist locale preference:", e); });
       }
     } catch (e) {
       console.error("Failed to apply server prefs (locale):", e);
