@@ -195,6 +195,10 @@ pub const MISSING_H3_NATIVE_NODES_MARKER: &str = "Required MiniMax H3 video node
 /// Substring present in [`ensure_required_int8_fast_nodes`] error output.
 pub const MISSING_INT8_FAST_NODES_MARKER: &str = "Required INT8-Fast custom nodes failed to load";
 
+/// Substring present in `verify_required_ipadapter_nodes` error output.
+pub const MISSING_IPADAPTER_PLUS_NODES_MARKER: &str =
+    "Required IP-Adapter Plus custom nodes failed to load";
+
 // INT8-Fast quantized diffusion model loader. Installed lazily from the model
 // settings panel rather than at setup: the pack is NVIDIA-only, so installing
 // it for everyone on AMD/Apple would be silent waste. Pre-quantized INT8/ConvRot
@@ -205,6 +209,20 @@ const INT8_FAST_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePac
     name: "ComfyUI-INT8-Fast",
     git_url: "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
     verify_nodes: &["OTUNetLoaderW8A8"],
+    requirements_file: "requirements.txt",
+}];
+
+// IP-Adapter Plus for SD1.5 and SDXL style reference. Installed lazily from the
+// style reference panel: the pack is SDXL/SD1.5-only, so installing it for everyone
+// on Flux-only setups would be silent waste. The IPAdapterUnifiedLoader auto-selects
+// adapter + clip_vision from the preset; the user must place the model files manually
+// (or via the style reference panel's download links).
+const IPADAPTER_PLUS_PACKAGE_DIR: &str = "ComfyUI_IPAdapter_plus";
+
+const IPADAPTER_PLUS_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: IPADAPTER_PLUS_PACKAGE_DIR,
+    git_url: "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
+    verify_nodes: &["IPAdapterUnifiedLoader", "IPAdapterAdvanced"],
     requirements_file: "requirements.txt",
 }];
 
@@ -808,6 +826,62 @@ pub async fn ensure_required_int8_fast_nodes(
     Ok(())
 }
 
+/// Ensure the ComfyUI_IPAdapter_plus custom-node package is cloned and its
+/// pip deps are installed. Called lazily from the style reference panel.
+pub async fn ensure_required_ipadapter_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = std::path::Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in IPADAPTER_PLUS_PACKAGES {
+        ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "{}: {}: {}",
+                MISSING_IPADAPTER_PLUS_NODES_MARKER, package.name, e
+            )
+        })?;
+    }
+
+    log::info!("Ensured required IP-Adapter Plus custom node packages");
+    Ok(())
+}
+
+/// Verify that IPAdapterUnifiedLoader and IPAdapterAdvanced are available in ComfyUI.
+pub async fn verify_required_ipadapter_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let missing = missing_packages_nodes(http_client, base_url, IPADAPTER_PLUS_PACKAGES).await?;
+    if missing.is_empty() {
+        log::info!("Verified required IP-Adapter Plus custom node classes");
+        Ok(())
+    } else {
+        Err(format!(
+            "{}: missing classes: {}",
+            MISSING_IPADAPTER_PLUS_NODES_MARKER,
+            missing.join(", ")
+        ))
+    }
+}
+
 /// Install the RIFE frame-interpolation pack and its checkpoint.
 ///
 /// `on_progress(step, message, done)` is invoked for each stage so the desktop
@@ -1364,6 +1438,8 @@ pub fn server_error_payload(error: &str, port: u16) -> serde_json::Value {
         "missing_controlnet_nodes"
     } else if error.contains(MISSING_STYLE_TRANSFER_NODES_MARKER) {
         "missing_style_transfer_nodes"
+    } else if error.contains(MISSING_IPADAPTER_PLUS_NODES_MARKER) {
+        "missing_ipadapter_nodes"
     } else if error.contains("exited with") || error.contains("process exited") {
         "crashed"
     } else {

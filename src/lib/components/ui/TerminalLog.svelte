@@ -74,7 +74,7 @@
   }
 
   function copyAll() {
-    navigator.clipboard.writeText(lines.join("\n")).catch(() => {});
+    navigator.clipboard.writeText(lines.join("\n")).catch((e) => { console.warn("Clipboard write failed:", e); });
   }
 
   function clearDisplay() {

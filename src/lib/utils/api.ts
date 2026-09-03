@@ -166,6 +166,13 @@ export async function clearAllQueues(): Promise<void> {
   return ipcInvoke("clear_all_queues");
 }
 
+export async function reorderQueueItem(
+  promptId: string,
+  newPosition: number
+): Promise<void> {
+  return ipcInvoke("reorder_queue_item", { promptId, newPosition });
+}
+
 export async function uploadImage(imagePath: string): Promise<{
   name: string;
   subfolder: string;
@@ -827,6 +834,32 @@ export async function getCheckpointCivitaiInfo(
   return ipcInvoke("get_checkpoint_civitai_info", { filename });
 }
 
+export interface CivitaiBulkScanSummary {
+  total: number;
+  found: number;
+  not_found: number;
+  skipped: number;
+  errors: number;
+  cancelled: boolean;
+}
+
+/**
+ * Start a bulk CivitAI hash scan across all local model categories.
+ * Emits `comfyui:civitai_scan` events with progress; returns the final
+ * summary when done (desktop only -- browser mode returns null immediately
+ * and delivers progress via SSE).
+ */
+export async function civitaiBulkScan(
+  force: boolean
+): Promise<CivitaiBulkScanSummary | null> {
+  return ipcInvoke("civitai_bulk_scan", { force });
+}
+
+/** Cancel an in-progress civitaiBulkScan. Safe to call at any time. */
+export async function civitaiBulkScanCancel(): Promise<void> {
+  return ipcInvoke("civitai_bulk_scan_cancel", {});
+}
+
 /**
  * Fetch a remote image through the Rust backend so CivitAI auth headers
  * are applied and the result is cached to disk per-user.
@@ -992,7 +1025,7 @@ export async function getConfig(options?: { force?: boolean }): Promise<AppConfi
     return cloneConfig(configCache);
   }
 
-  await configUpdateChain.catch(() => {});
+  await configUpdateChain.catch((e) => { console.warn("Pending config write failed before read:", e); });
 
   if (!force && configLoadPromise) {
     return configLoadPromise.then((c) => cloneConfig(c));
@@ -1019,7 +1052,7 @@ export async function updateConfig(config: AppConfig): Promise<void> {
   configCache = plain;
   pendingConfigWrite = plain;
   configUpdateChain = configUpdateChain
-    .catch(() => {})
+    .catch((e) => { console.warn("Config write chain error (previous write failed):", e); })
     .then(() => flushPendingConfigWrite());
   return configUpdateChain;
 }
@@ -1421,6 +1454,13 @@ export async function exportLogsContent(): Promise<string> {
     frontendLogs: getLogSnapshot(),
   });
   return res.content;
+}
+
+// Recent log lines for the developer-mode terminal panel. `source` is "comfyui"
+// (ComfyUI stderr tail) or "app" (Rust ring buffer). Desktop only: the panel is
+// gated behind `isTauri`, and browser mode has no equivalent local log file.
+export async function getLogs(source: "comfyui" | "app", lines?: number): Promise<string[]> {
+  return await ipcInvoke<string[]>("get_logs", { source, lines });
 }
 
 export async function getGpuStats(): Promise<GpuStats[]> {

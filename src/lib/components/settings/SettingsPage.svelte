@@ -19,6 +19,7 @@
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
@@ -150,6 +151,26 @@
   let logoCropPanX = $state(0);
   let logoCropPanY = $state(0);
   let logoCropTarget = $state<"draft" | "active">("draft");
+
+  // OS notification permission state
+  let osNotifPermissionDenied = $state(false);
+
+  async function handleOsNotificationsToggle(enabled: boolean) {
+    generation.osNotificationsEnabled = enabled;
+    generation.saveSettings();
+    if (!enabled) {
+      osNotifPermissionDenied = false;
+      return;
+    }
+    const perm = await requestOsNotificationPermission();
+    if (perm === "denied") {
+      osNotifPermissionDenied = true;
+      generation.osNotificationsEnabled = false;
+      generation.saveSettings();
+    } else {
+      osNotifPermissionDenied = false;
+    }
+  }
 
   // Gallery import state
   let importBusy = $state(false);
@@ -858,6 +879,7 @@
   let scanningModelDirs = $state(false);
 
   async function scanForModelDirs() {
+    if (!isTauri) return;
     scanningModelDirs = true;
     try {
       const dirs = await ipcInvoke<DetectedModelDir[]>("detect_model_directories");
@@ -866,7 +888,8 @@
         (config?.extra_model_paths ?? "").split("\n").map((p: string) => p.trim()).filter(Boolean)
       );
       detectedModelDirs = dirs.filter((d) => !existing.has(d.path));
-    } catch {
+    } catch (e) {
+      console.warn("Failed to scan for model directories:", e);
       detectedModelDirs = [];
     } finally {
       scanningModelDirs = false;
@@ -882,9 +905,11 @@
   let moveSuccess = $state(false);
 
   async function loadInstallPath() {
+    if (!isTauri) return;
     try {
       currentInstallPath = await ipcInvoke<string>("get_install_path");
-    } catch {
+    } catch (e) {
+      console.warn("Failed to load install path:", e);
       currentInstallPath = "";
     }
   }
@@ -1119,6 +1144,7 @@
     { key: "models", labelKey: "settings.sections.models", keywords: "models manage delete move lora checkpoint vae upscaler controlnet" },
     { key: "modelRequests", labelKey: "settings.sections.model_requests", keywords: "model requests approve deny pending download civitai hub" },
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
+    { key: "notifications", labelKey: "settings.sections.notifications", keywords: "notification desktop os system toast alert sound unfocused background window focus" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space" },
@@ -1826,7 +1852,7 @@
   async function restartServer() {
     // Save first so restart picks up latest config
     if (config) {
-      try { await updateConfig(config); } catch {}
+      try { await updateConfig(config); } catch (e) { console.warn("Failed to save config before restart:", e); }
     }
     restarting = true;
     error = null;
@@ -3103,7 +3129,8 @@
           <!-- Open Model Folders -->
           <OpenModelFolders />
 
-          <!-- Move Installation -->
+          <!-- Move Installation (desktop only: requires get_install_path and move_installation IPC) -->
+          {#if isTauri}
           <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
             <div class="flex items-center justify-between">
               <p class="text-xs text-neutral-400">{locale.t('settings.paths.data_location')}</p>
@@ -3153,6 +3180,7 @@
               <div class="rounded border border-red-800/50 bg-red-900/20 px-2 py-1.5 text-[11px] text-red-300">{moveError}</div>
             {/if}
           </div>
+          {/if}
 
           <!-- Rerun Setup Wizard (desktop host only; setup installs locally) -->
           {#if isTauri}
@@ -3204,6 +3232,7 @@
             <div class="flex items-center justify-between mb-1">
               <label class="block text-xs text-neutral-400">{locale.t('settings.paths.shared_model_dirs')}<span class="text-amber-400">*</span></label>
               <div class="flex gap-1.5">
+                {#if isTauri}
                 <button
                   class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                   onclick={scanForModelDirs}
@@ -3211,6 +3240,7 @@
                 >
                   {scanningModelDirs ? locale.t('settings.paths.scanning') : locale.t('settings.paths.auto_detect')}
                 </button>
+                {/if}
                 <button
                   class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                   onclick={() => {
@@ -3310,6 +3340,63 @@
             />
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.paths.extra_args_desc')}</p>
           </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Notifications -->
+        {#if sectionVisible("notifications")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.notifications = !collapsed.notifications)}
+          >
+            {locale.t('settings.notifications.title')}
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.notifications ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.notifications}
+          <div class="px-5 pb-5 space-y-4">
+
+            <!-- OS desktop notifications -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.osNotificationsEnabled}
+                  onchange={(e) => {
+                    handleOsNotificationsToggle((e.target as HTMLInputElement).checked);
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.os_enabled_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.notifications.os_enabled_desc')}</p>
+              {#if osNotifPermissionDenied}
+                <p class="text-[10px] text-red-400 mt-1 ml-6">{locale.t('settings.notifications.permission_denied')}</p>
+              {/if}
+            </div>
+
+            <!-- Only when unfocused -->
+            {#if generation.osNotificationsEnabled}
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.osNotifyOnlyWhenUnfocused}
+                  onchange={(e) => {
+                    generation.osNotifyOnlyWhenUnfocused = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.os_unfocused_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.notifications.os_unfocused_desc')}</p>
+            </div>
+            {/if}
+
           </div>
           {/if}
         </section>
@@ -4229,7 +4316,7 @@
             <button
               class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50"
               onclick={async () => {
-                try { await fetch("/internal-api/_auth/logout", { method: "POST", headers: authHeaders() }); } catch {}
+                try { await fetch("/internal-api/_auth/logout", { method: "POST", headers: authHeaders() }); } catch (e) { console.warn("Logout request failed:", e); }
                 clearAuthToken();
                 window.location.reload();
               }}
@@ -4365,7 +4452,7 @@
                 <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
                   <p class="text-sm text-emerald-200 mb-2">{locale.t('settings.about.update_ready').replace('{version}', updateVersion)}</p>
                   <button
-                    onclick={async () => { try { await stopComfyui(); } catch {} if (isTauri) { const { relaunch } = await import("@tauri-apps/plugin-process"); await relaunch(); } else { window.location.reload(); } }}
+                    onclick={async () => { try { await stopComfyui(); } catch (e) { console.warn("Failed to stop ComfyUI before relaunch:", e); } if (isTauri) { const { relaunch } = await import("@tauri-apps/plugin-process"); await relaunch(); } else { window.location.reload(); } }}
                     class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                   >
                     {locale.t('updater.restart_now')}

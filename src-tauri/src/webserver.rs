@@ -218,6 +218,7 @@ fn is_staff_only_event(event: &str) -> bool {
         || event.starts_with("download:")
         || event.starts_with("install:")
         || event.starts_with("attention:")
+        || event.starts_with("comfyui:civitai_scan")
         || event == "custom_node:installed"
 }
 
@@ -274,6 +275,8 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "delete_model_file",
     "move_model_file",
     "create_model_folder",
+    "civitai_bulk_scan",
+    "civitai_bulk_scan_cancel",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -2233,6 +2236,23 @@ async fn dispatch_command(
             let cfg = state.config.read().await;
             Ok(serde_json::json!(cfg.setup_complete))
         }
+        "get_install_path" => {
+            // Read-only: return the host's resolved data directory.
+            let dir = config::app_data_dir()
+                .ok_or_else(|| "Cannot determine install path".to_string())?;
+            Ok(serde_json::json!(dir.to_string_lossy()))
+        }
+        "detect_model_directories" => {
+            // Read-only: scan the host filesystem for existing AI model dirs.
+            #[cfg(feature = "desktop")]
+            {
+                let dirs = crate::setup::scan_model_directories_pub();
+                return serde_json::to_value(dirs).map_err(|e| e.to_string());
+            }
+            #[cfg(not(feature = "desktop"))]
+            // Server-only build: setup scanning is a desktop facility; return empty.
+            Ok(serde_json::json!([]))
+        }
         "check_server_health" => {
             let stats = state
                 .get_system_stats_info()
@@ -2724,7 +2744,7 @@ async fn dispatch_command(
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
             Ok(serde_json::json!(bytes))
         }
         "load_gallery_image_display" => {
@@ -2739,7 +2759,7 @@ async fn dispatch_command(
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
             let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
                 tokio::task::spawn_blocking(move || commands::api::transcode_jxl_to_webp(&bytes))
                     .await
@@ -2762,7 +2782,7 @@ async fn dispatch_command(
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
             let lower = filename.to_ascii_lowercase();
             let out = if lower.ends_with(".jxl") || lower.ends_with(".webp") {
                 tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -3203,6 +3223,79 @@ async fn dispatch_command(
                 .delete_queue_items(vec![prompt_id.to_string()])
                 .await
                 .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "reorder_queue_item" => {
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            ensure_prompt_owned(&state, prompt_id, username)?;
+            let new_position = args["newPosition"]
+                .as_u64()
+                .ok_or("Missing or invalid newPosition")? as usize;
+            let user_opt: Option<String> = username.map(str::to_string);
+
+            // Case 1: still held locally.
+            if state
+                .prompt_queue
+                .reorder_held_prompt(prompt_id, new_position, &user_opt)
+            {
+                state.broadcast_queue_positions();
+                return Ok(serde_json::json!(null));
+            }
+
+            // Case 2: already submitted to ComfyUI.
+            let real_id = state
+                .prompt_queue
+                .real_id_for_placeholder(prompt_id)
+                .unwrap_or_else(|| prompt_id.to_string());
+
+            let queue_info = state.get_queue_info().await.map_err(|e| e.to_string())?;
+
+            let is_running = queue_info.queue_running.iter().any(|entry| {
+                entry
+                    .as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_str())
+                    .map(|id| id == real_id)
+                    .unwrap_or(false)
+            });
+            if is_running {
+                return Err("queue_item_already_running".to_string());
+            }
+
+            let workflow = queue_info
+                .queue_pending
+                .iter()
+                .find(|entry| {
+                    entry
+                        .as_array()
+                        .and_then(|a| a.get(1))
+                        .and_then(|v| v.as_str())
+                        .map(|id| id == real_id)
+                        .unwrap_or(false)
+                })
+                .and_then(|entry| entry.as_array())
+                .and_then(|a| a.get(2))
+                .cloned()
+                .ok_or("queue_item_not_found_in_comfyui")?;
+
+            for worker in &state.gpu_manager.workers {
+                let _ = state
+                    .http_client
+                    .post(format!("{}/queue", worker.base_url))
+                    .json(&serde_json::json!({ "delete": [real_id] }))
+                    .send()
+                    .await;
+            }
+
+            state.prompt_queue.re_hold_for_reorder(
+                prompt_id,
+                &real_id,
+                workflow,
+                new_position,
+                user_opt,
+            );
+            state.prompt_queue.drain_notify.notify_one();
+            state.broadcast_queue_positions();
             Ok(serde_json::json!(null))
         }
         "upload_image_bytes" => {
@@ -3970,70 +4063,13 @@ async fn dispatch_command(
         }
 
         // --- CivitAI ---
-        // TODO: refactor src-tauri/src/commands/api.rs and src-tauri/src/webserver.rs
         "civitai_search_models" => {
             let params: crate::commands::api::CivitaiSearchParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
-
-            let encode_val = |v: &str| -> String {
-                url::form_urlencoded::byte_serialize(v.as_bytes()).collect()
-            };
-
-            let mut parts: Vec<String> = vec![
-                format!(
-                    "sort={}",
-                    encode_val(&params.sort.unwrap_or_else(|| "Most Downloaded".to_string()))
-                ),
-                format!(
-                    "period={}",
-                    encode_val(&params.period.unwrap_or_else(|| "AllTime".to_string()))
-                ),
-                format!("nsfw={}", params.nsfw.unwrap_or(false)),
-                format!("limit={}", params.limit.unwrap_or(20)),
-            ];
-
-            let has_query = params
-                .query
-                .as_ref()
-                .filter(|v| !v.trim().is_empty())
-                .is_some();
-            if !has_query {
-                parts.push(format!("page={}", params.page.unwrap_or(1)));
-            }
-            if let Some(cursor) = params.cursor.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("cursor={}", encode_val(&cursor)));
-            }
-            if let Some(q) = params.query.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("query={}", encode_val(&q)));
-            }
-            if let Some(t) = params.model_type.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("types[]={}", encode_val(&t)));
-            }
-            if let Some(base_model) = params.base_model.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("baseModels[]={}", encode_val(&base_model)));
-            }
-            if let Some(file_format) = params.file_format.filter(|v| !v.trim().is_empty()) {
-                parts.push(format!("fileFormats[]={}", encode_val(&file_format)));
-            }
-
-            let url = format!("https://civitai.com/api/v1/models?{}", parts.join("&"));
-            let mut req = state
-                .http_client
-                .get(&url)
-                .header("Accept", "application/json")
-                .header("User-Agent", "MooshieUI/0.3.9");
-            if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
-                req = req.bearer_auth(key);
-            }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(format!("CivitAI API error {}: {}", status, body));
-            }
-            let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-            Ok(data)
+            crate::commands::api::civitai_search_models_internal(&state, params)
+                .await
+                .map_err(|e| e.to_string())
         }
         "civitai_get_model" => {
             let model_id = args
@@ -4917,6 +4953,26 @@ async fn dispatch_command(
         "add_custom_interrogator_model" => {
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             let dir = std::path::PathBuf::from(&path);
+            // Resolve symlinks and remove `..` traversal before any I/O.
+            let dir = dir
+                .canonicalize()
+                .map_err(|e| format!("Cannot access '{}': {}", path, e))?;
+            // In server mode, restrict the path to the interrogator-managed models root
+            // to prevent a remote caller from registering arbitrary filesystem paths.
+            {
+                let interrogator = state.interrogator.read().await;
+                let root = interrogator.root_dir();
+                if let Ok(allowed) = root.canonicalize() {
+                    if !dir.starts_with(&allowed) {
+                        return Err(format!(
+                            "Custom tagger model path must be inside the interrogator \
+                             models directory ('{}').",
+                            allowed.display()
+                        ));
+                    }
+                }
+            }
+            let path = dir.to_string_lossy().to_string();
             if !dir.join(crate::interrogator::MODEL_FILENAME).exists() {
                 return Err(format!(
                     "Folder '{}' does not contain model.onnx.",
@@ -5259,7 +5315,9 @@ async fn dispatch_command(
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
-            std::fs::write(&path, &image_bytes).map_err(|e| e.to_string())?;
+            tokio::fs::write(&path, &image_bytes)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "export_video_animation" => {
@@ -5462,6 +5520,28 @@ async fn dispatch_command(
             let encoded: Vec<serde_json::Value> =
                 bytes.iter().map(|b| serde_json::json!(*b)).collect();
             Ok(serde_json::Value::Array(encoded))
+        }
+
+        "civitai_bulk_scan" => {
+            let force = args["force"].as_bool().unwrap_or(false);
+            let state_for_emit = state.clone();
+            let state_for_scan = state.clone();
+            // Spawn in the background -- the scan can take many minutes.
+            // Progress is delivered via comfyui:civitai_scan SSE events.
+            tokio::spawn(async move {
+                let emit = move |payload: serde_json::Value| {
+                    state_for_emit.broadcast("comfyui:civitai_scan", payload);
+                };
+                crate::commands::api::civitai_bulk_scan_core(&state_for_scan, force, emit).await;
+            });
+            Ok(serde_json::json!(null))
+        }
+
+        "civitai_bulk_scan_cancel" => {
+            state
+                .civitai_scan_cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(serde_json::json!(null))
         }
 
         // For commands not yet mapped, return an error

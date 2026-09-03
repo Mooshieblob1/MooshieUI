@@ -26,6 +26,7 @@ desktop = [
     "dep:tauri-plugin-clipboard-manager",
     "dep:tauri-plugin-updater",
     "dep:tauri-plugin-process",
+    "dep:tauri-plugin-notification",
     "dep:webkit2gtk",
     "dep:ort",
     "dep:csv",
@@ -63,6 +64,7 @@ argon2 = { version = "0.5", features = ["std"] }
 tauri-plugin-clipboard-manager = { version = "2", optional = true }
 tauri-plugin-updater = { version = "2", optional = true }
 tauri-plugin-process = { version = "2", optional = true }
+tauri-plugin-notification = { version = "2", optional = true }
 png = "0.18"
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }

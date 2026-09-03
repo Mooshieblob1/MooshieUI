@@ -374,6 +374,14 @@ export interface GenerationParams {
   style_transfer_pmi_alpha?: number;
   style_transfer_megapixels?: number;
   style_transfer_blocks?: string;
+  style_ref_enabled?: boolean;
+  style_ref_image?: string | null;
+  style_ref_strength?: number;
+  style_ref_weight_type?: string;
+  style_ref_start?: number;
+  style_ref_end?: number;
+  style_ref_redux_model?: string | null;
+  style_ref_clip_vision?: string | null;
   /** Anima TeaCache: reuses the previous step's DiT output when little changed. */
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
@@ -629,6 +637,25 @@ export interface QueueInfo {
     /** Only present for admin/moderator callers. */
     username?: string | null;
   }>;
+}
+
+/** A single row in the queue panel, covering both running and pending items. */
+export interface QueuePanelItem {
+  promptId: string;
+  /** 1-based position among the current user's pending items (0 = running). */
+  userPosition: number;
+  /** Short summary derived from the prompt text. */
+  summary: string;
+  /** Model name used for this generation. */
+  modelName: string;
+  /** Image dimensions, e.g. "1024x768". */
+  dimensions: string;
+  /** Batch size, e.g. "x4". Empty string when batch = 1. */
+  batchLabel: string;
+  /** Elapsed seconds for the currently-running item; undefined for pending. */
+  elapsedSecs?: number;
+  /** True when this item is currently running in ComfyUI. */
+  running: boolean;
 }
 
 export interface QueueDisplayItem {

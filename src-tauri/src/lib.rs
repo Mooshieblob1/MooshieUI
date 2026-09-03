@@ -134,6 +134,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(app_state)
         .setup(move |_app| {
             // Last session's export temp files are dead weight.
@@ -476,6 +477,7 @@ pub fn run() {
             commands::api::interrupt_generation,
             commands::api::clear_all_queues,
             commands::api::delete_queue_item,
+            commands::api::reorder_queue_item,
             commands::api::upload_image,
             commands::api::upload_image_bytes,
             commands::api::get_output_image,
@@ -529,7 +531,7 @@ pub fn run() {
             commands::api::fetch_release_notes,
             commands::api::import_image_directory,
             commands::api::export_logs,
-            commands::api::append_frontend_logs,
+            commands::api::get_logs,
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,
@@ -588,11 +590,9 @@ pub fn run() {
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,
-            setup::set_install_path,
             setup::get_install_path,
             setup::detect_model_directories,
             setup::move_installation,
-            setup::reinstall_pytorch,
             setup::get_comfyui_version,
             setup::update_comfyui,
             commands::video_export::export_video_animation,
@@ -601,6 +601,8 @@ pub fn run() {
             commands::video_export::copy_file_to,
             commands::video_interpolate::interpolate_video,
             commands::api::save_video_to_gallery_manual,
+            commands::api::civitai_bulk_scan,
+            commands::api::civitai_bulk_scan_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

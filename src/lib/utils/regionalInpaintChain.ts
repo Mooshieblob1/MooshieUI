@@ -79,7 +79,6 @@ export async function runRegionalInpaintChain(
 
   const regionalContext = buildRegionalContextPrompt(
     baseParams.positive_prompt,
-    baseParams.positive_segments,
     generation.loras.filter((l) => l.enabled && l.name),
   );
 

@@ -112,8 +112,8 @@ def extract_audio_from_video(video_path):
                         peaks = read_wav_peaks(output_wav)
                         rel = os.path.relpath(output_wav, folder_paths.get_input_directory())
                         return rel.replace("\\", "/"), peaks
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[MiniMaxDirector] Cached wav validation failed: %s", e)
 
         with av.open(video_path) as container:
             if not container.streams.audio:
@@ -139,8 +139,8 @@ def get_audio_peaks(audio_path):
     if os.path.splitext(audio_path)[1].lower() == ".wav":
         try:
             return read_wav_peaks(audio_path)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("[MiniMaxDirector] Failed to read wav peaks: %s", e)
     try:
         with av.open(audio_path) as container:
             if not container.streams.audio:
@@ -883,8 +883,8 @@ def build_combined_audio(timeline_data_str: str, start_frame: int, duration_fram
                 if "," in b64:
                     b64 = b64.split(",", 1)[1]
                 buffer = _io.BytesIO(base64.b64decode(b64))
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[MiniMaxDirector] Failed to decode segment audioB64: %s", e)
         if buffer is None:
             continue
 

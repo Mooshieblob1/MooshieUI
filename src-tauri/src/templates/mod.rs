@@ -5,6 +5,7 @@ pub mod img2img;
 pub mod inpainting;
 pub mod rife;
 pub mod segment_detail;
+pub mod style_ref;
 pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
@@ -220,6 +221,30 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
+    if params.style_ref_enabled && params.mode != "video" && params.mode != "image_edit" {
+        if !style_ref::family_supports_style_ref(&params.model_architecture) {
+            return Err(format!(
+                "Style reference is only available for SD1.5, SDXL, and Flux.1 models. \
+                 The selected model family ('{}') is not supported. \
+                 Disable style reference or switch to a supported model.",
+                params.model_architecture
+            ));
+        }
+        if params
+            .style_ref_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            return Err(
+                "Style reference is enabled but no reference image was provided. \
+                 Please upload a style reference image."
+                    .into(),
+            );
+        }
+    }
+
     // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
     // conditioning). With any other encoder, ComfyUI fails deep inside sampling
     // with a cryptic feature-count error, so fail fast here instead.
@@ -248,15 +273,24 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     }
 
     // INT8-Fast guard: when enabled for a split-model family, the family must
-    // have a known OTUNetLoaderW8A8 model_type mapping. Pre-quantized GGUF
-    // models bypass this because they already route through UnetLoaderGGUF.
+    // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
+    // are incompatible with the INT8-Fast loader (they route through
+    // UnetLoaderGGUF, not OTUNetLoaderW8A8) so that combination is rejected
+    // here as a hard error rather than silently ignored.
     if params.int8_fast_enabled && params.use_split_model {
         let unet = params
             .diffusion_model
             .as_deref()
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !unet.ends_with(".gguf") && int8_fast_model_type(&params.model_architecture).is_none() {
+        if unet.ends_with(".gguf") {
+            return Err(
+                "INT8-Fast loader is not compatible with GGUF diffusion models. \
+                 Disable the INT8-Fast loader in Settings before using a GGUF checkpoint."
+                    .to_string(),
+            );
+        }
+        if int8_fast_model_type(&params.model_architecture).is_none() {
             return Err(format!(
                 "INT8-Fast loader does not support the '{}' model family. \
                  Supported families: Flux.2 (Klein/Dev), Z-Image, Chroma, Krea 2, \
@@ -644,6 +678,13 @@ pub fn build_workflow(
                     }
                 }
             }
+        }
+    }
+
+    // Inject style reference if enabled (IP-Adapter for SD1.5/SDXL, Flux Redux for Flux.1)
+    if params.style_ref_enabled && params.mode != "video" && params.mode != "image_edit" {
+        if style_ref::family_supports_style_ref(&params.model_architecture) {
+            style_ref::inject_style_ref(&mut result, params);
         }
     }
 
@@ -1372,6 +1413,22 @@ mod tests {
         assert!(
             msg.contains("illustrious"),
             "Error must name the offending family: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_params_rejects_int8_fast_with_gguf_model() {
+        // INT8-Fast + GGUF diffusion model must be a hard error: the GGUF loader
+        // and the INT8-Fast loader are mutually exclusive code paths, so allowing
+        // this combination would silently ignore the INT8-Fast toggle.
+        let mut params = klein_int8_params("flux2d", true);
+        params.diffusion_model = Some("flux1-dev-Q4_K_M.gguf".to_string());
+        let err = validate_generation_params(&params);
+        assert!(err.is_err(), "INT8-Fast + GGUF must be rejected");
+        let msg = err.unwrap_err();
+        assert!(
+            msg.contains("INT8-Fast loader is not compatible with GGUF"),
+            "Error must explain the GGUF incompatibility: {msg}"
         );
     }
 

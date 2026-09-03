@@ -511,12 +511,15 @@ function promptContainsLoraTag(prompt: string, loraName: string): boolean {
 }
 
 /**
- * Shared positive context for regional CLIP encodes: main prompt, schedule segments,
- * and `<lora:name:strength>` tags for enabled LoRAs not already in the prompt.
+ * Shared positive context for regional CLIP encodes: main prompt and
+ * `<lora:name:strength>` tags for enabled LoRAs not already in the prompt.
+ *
+ * Scheduled segment texts are intentionally excluded here — they must only
+ * apply during their [start, end] timestep window via `positive_segments`,
+ * not globally through regional conditioning at every timestep.
  */
 export function buildRegionalContextPrompt(
   baseText: string,
-  segments: Array<{ text: string }>,
   loras: Array<{ name: string; enabled?: boolean; strength_clip?: number }>,
 ): string {
   const parts: string[] = [];
@@ -532,9 +535,6 @@ export function buildRegionalContextPrompt(
   };
 
   pushPart(baseText);
-  for (const segment of segments) {
-    pushPart(segment.text);
-  }
 
   let combined = parts.join(", ");
   for (const lora of loras) {

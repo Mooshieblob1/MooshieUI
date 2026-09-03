@@ -37,19 +37,55 @@ class ProgressStore {
   /** Gallery filename of `lastOutputVideo`; enables export from the preview. */
   lastOutputVideoFilename = $state<string | null>(null);
   /**
-   * Absolute path of a video output that was NOT saved to the gallery because
-   * manual_save_mode is active. Set by the comfyui:output_video handler when
-   * `persisted === false`; cleared once the user explicitly saves it.
+   * Queue of videos produced while manual_save_mode is active, waiting for the
+   * user to explicitly save or discard each one. A new generation arriving while
+   * one is still pending appends rather than replacing, so no output is silently
+   * dropped. Resets (setActivePrompt, removePrompt, cancelAll) no longer clear
+   * this list — only an explicit save or discard does.
    */
-  lastUnsavedVideoPath = $state<string | null>(null);
-  /** Metadata accompanying `lastUnsavedVideoPath` for the manual-save call. */
-  lastUnsavedVideoMeta = $state<{
-    fps: number | null;
-    frameCount: number;
-    width: number;
-    height: number;
-    promptId: string;
-  } | null>(null);
+  pendingVideos = $state<Array<{
+    path: string;
+    meta: {
+      fps: number | null;
+      frameCount: number;
+      width: number;
+      height: number;
+      promptId: string;
+    };
+  }>>([]);
+
+  // ---------------------------------------------------------------------------
+  // Backward-compat getters: code that still reads lastUnsavedVideoPath /
+  // lastUnsavedVideoMeta transparently reads the first pending entry.
+  // ---------------------------------------------------------------------------
+  get lastUnsavedVideoPath(): string | null {
+    return this.pendingVideos[0]?.path ?? null;
+  }
+  set lastUnsavedVideoPath(value: string | null) {
+    // Legacy write path: only used by old direct assignments (now replaced by
+    // addPendingVideo); a null write means "remove first entry".
+    if (value === null) {
+      if (this.pendingVideos.length > 0) {
+        this.pendingVideos = this.pendingVideos.slice(1);
+      }
+    }
+  }
+  get lastUnsavedVideoMeta(): { fps: number | null; frameCount: number; width: number; height: number; promptId: string; } | null {
+    return this.pendingVideos[0]?.meta ?? null;
+  }
+  set lastUnsavedVideoMeta(_value: { fps: number | null; frameCount: number; width: number; height: number; promptId: string; } | null) {
+    // No-op: meta is managed as part of the pendingVideos entry.
+  }
+
+  /** Add a new unsaved video to the pending queue. */
+  addPendingVideo(path: string, meta: { fps: number | null; frameCount: number; width: number; height: number; promptId: string; }): void {
+    this.pendingVideos = [...this.pendingVideos, { path, meta }];
+  }
+
+  /** Remove one pending video by its path (after save or discard). */
+  removePendingVideo(path: string): void {
+    this.pendingVideos = this.pendingVideos.filter((v) => v.path !== path);
+  }
   modeLastOutput = $state<Record<GenerationMode, string | null>>({
     txt2img: null,
     img2img: null,
@@ -334,8 +370,8 @@ class ProgressStore {
       this.lastOutputVideo = null;
       this.lastOutputVideoFps = null;
       this.lastOutputVideoFilename = null;
-      this.lastUnsavedVideoPath = null;
-      this.lastUnsavedVideoMeta = null;
+      // pendingVideos is NOT cleared here — unsaved videos must survive across
+      // new generations so the user can still save or discard them.
       this.samplingPass = 0;
       this._lastProgressNode = null;
       const now = Date.now();
@@ -423,8 +459,8 @@ class ProgressStore {
       this.lastOutputVideo = null;
       this.lastOutputVideoFps = null;
       this.lastOutputVideoFilename = null;
-      this.lastUnsavedVideoPath = null;
-      this.lastUnsavedVideoMeta = null;
+      // pendingVideos is NOT cleared here — unsaved videos must survive
+      // across resets so the user can save or discard them.
       this.samplingPass = 0;
       this._lastProgressNode = null;
       this.generationStartTime = null;
@@ -437,7 +473,23 @@ class ProgressStore {
     }
   }
 
-  /** Cancel everything — interrupt + clear queue. */
+  /**
+   * Remap a prompt id after a reorder operation re-holds a submitted prompt.
+   * The placeholder id stays the same, so this is only needed if the calling
+   * layer ever uses a different id for tracking. Currently a no-op guard kept
+   * here so the queue panel can call it unconditionally after a reorder.
+   */
+  remapPromptId(oldId: string, newId: string) {
+    if (oldId === newId) return;
+    this.pendingPrompts = this.pendingPrompts.map((p) =>
+      p.promptId === oldId ? { ...p, promptId: newId } : p
+    );
+    if (this.activePromptId === oldId) {
+      this.activePromptId = newId;
+    }
+  }
+
+  /** Cancel everything -- interrupt + clear queue. */
   cancelAll() {
     this.pendingPrompts = [];
     this.activePromptId = null;
@@ -448,8 +500,8 @@ class ProgressStore {
     this.lastOutputVideo = null;
     this.lastOutputVideoFps = null;
     this.lastOutputVideoFilename = null;
-    this.lastUnsavedVideoPath = null;
-    this.lastUnsavedVideoMeta = null;
+    // pendingVideos is NOT cleared here — unsaved videos must survive
+    // a cancel-all so the user can save or discard them.
     this.samplingPass = 0;
     this._lastProgressNode = null;
     this.generationStartTime = null;
@@ -552,22 +604,6 @@ class ProgressStore {
     }
   }
 
-  // --- Backward-compat aliases ---
-
-  /** @deprecated Use enqueue() instead. */
-  startGeneration(
-    promptId: string,
-    upscaled: boolean = false,
-    mode: GenerationMode = "txt2img",
-    params: GenerationParams | null = null,
-  ) {
-    this.enqueue(promptId, upscaled, mode, params);
-  }
-
-  /** @deprecated Use cancelAll() instead. */
-  reset() {
-    this.cancelAll();
-  }
 }
 
 export const progress = new ProgressStore();

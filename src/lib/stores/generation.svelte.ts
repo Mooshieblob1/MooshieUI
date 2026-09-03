@@ -9,6 +9,7 @@ import {
 } from "../utils/promptSchedule.js";
 import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
 import { joinPromptBoxes, sanitizePromptForSend } from "../utils/promptSanitize.js";
+import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
@@ -742,6 +743,15 @@ class GenerationStore {
    *  accumulated input delta stays under threshold. MooshieUI-authored node,
    *  always available (no lazy install, unlike video's H3 TeaCache). */
   animaTeacacheEnabled = $state(false);
+  // --- Style Reference (IP-Adapter / Flux Redux) ---
+  styleRefEnabled = $state(false);
+  styleRefImage = $state<string | null>(null);
+  styleRefStrength = $state(0.6);
+  styleRefWeightType = $state("linear");
+  styleRefStart = $state(0.0);
+  styleRefEnd = $state(1.0);
+  styleRefReduxModel = $state<string | null>(null);
+  styleRefClipVision = $state<string | null>(null);
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -765,6 +775,10 @@ class GenerationStore {
   customNanosaurPositiveQuality = $state(DEFAULT_NANOSAUR_POSITIVE_QUALITY);
   customNanosaurNegativeQuality = $state(DEFAULT_NANOSAUR_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
+  /** When true, OS (system) notifications fire for generation completion and errors. */
+  osNotificationsEnabled = $state(false);
+  /** When true, OS notifications only fire when the app window is not focused. */
+  osNotifyOnlyWhenUnfocused = $state(true);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
@@ -1117,6 +1131,23 @@ class GenerationStore {
   /** True when the selected model is Flux.1 Kontext (image edit). Kept out of isFlux. */
   get isFluxKontext(): boolean {
     return this.modelFamily === "flux1kontext";
+  }
+
+  /** True when the model family supports style reference (IP-Adapter or Flux Redux). */
+  get supportsStyleRef(): boolean {
+    return ["flux1d", "flux1s", "flux1krea", "sd15", "sdxl", "illustrious", "pony"].includes(
+      this.modelFamily,
+    );
+  }
+
+  /** True when the active style ref is Flux Redux (Flux.1 family). */
+  get styleRefIsRedux(): boolean {
+    return ["flux1d", "flux1s", "flux1krea"].includes(this.modelFamily);
+  }
+
+  /** True when the active style ref is IP-Adapter (SD1.5 or SDXL family). */
+  get styleRefIsIPAdapter(): boolean {
+    return ["sd15", "sdxl", "illustrious", "pony"].includes(this.modelFamily);
   }
 
   /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
@@ -2589,6 +2620,14 @@ class GenerationStore {
         if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
         if (saved.animaTeacacheEnabled !== undefined)
           this.animaTeacacheEnabled = saved.animaTeacacheEnabled;
+        if (saved.styleRefEnabled !== undefined) this.styleRefEnabled = saved.styleRefEnabled;
+        if (saved.styleRefImage !== undefined) this.styleRefImage = saved.styleRefImage;
+        if (saved.styleRefStrength !== undefined) this.styleRefStrength = saved.styleRefStrength;
+        if (saved.styleRefWeightType) this.styleRefWeightType = saved.styleRefWeightType;
+        if (saved.styleRefStart !== undefined) this.styleRefStart = saved.styleRefStart;
+        if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
+        if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
+        if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
         if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
         if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
         if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -2626,6 +2665,8 @@ class GenerationStore {
             ),
           ) as Record<string, ModelFamily>;
         }
+        if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
+        if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
         if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
         if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
@@ -2762,6 +2803,14 @@ class GenerationStore {
         styleTransferMegapixels: this.styleTransferMegapixels,
         styleTransferBlocks: this.styleTransferBlocks,
         animaTeacacheEnabled: this.animaTeacacheEnabled,
+        styleRefEnabled: this.styleRefEnabled,
+        styleRefImage: this.styleRefImage,
+        styleRefStrength: this.styleRefStrength,
+        styleRefWeightType: this.styleRefWeightType,
+        styleRefStart: this.styleRefStart,
+        styleRefEnd: this.styleRefEnd,
+        styleRefReduxModel: this.styleRefReduxModel,
+        styleRefClipVision: this.styleRefClipVision,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -2783,6 +2832,8 @@ class GenerationStore {
         customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
         customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
         modelFamilyOverrides: this.modelFamilyOverrides,
+        osNotificationsEnabled: this.osNotificationsEnabled,
+        osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
         resolutionLocked: this.resolutionLocked,
@@ -2909,6 +2960,14 @@ class GenerationStore {
       styleTransferMegapixels: this.styleTransferMegapixels,
       styleTransferBlocks: this.styleTransferBlocks,
       animaTeacacheEnabled: this.animaTeacacheEnabled,
+      styleRefEnabled: this.styleRefEnabled,
+      styleRefImage: this.styleRefImage,
+      styleRefStrength: this.styleRefStrength,
+      styleRefWeightType: this.styleRefWeightType,
+      styleRefStart: this.styleRefStart,
+      styleRefEnd: this.styleRefEnd,
+      styleRefReduxModel: this.styleRefReduxModel,
+      styleRefClipVision: this.styleRefClipVision,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -2929,6 +2988,8 @@ class GenerationStore {
       customPonyNegativeQuality: this.customPonyNegativeQuality,
       customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
+      osNotificationsEnabled: this.osNotificationsEnabled,
+      osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
       resolutionLocked: this.resolutionLocked,
@@ -3122,12 +3183,31 @@ class GenerationStore {
       ...inlineNegativeIds,
       ...novelAiCharacters.inlineIds,
     ]);
-    const inlinePositive = promptPresets.resolveInline(effectivePositive, {
+    const inlinePositiveRaw = promptPresets.resolveInline(effectivePositive, {
       fixedChoices: options.fixedPresetChoices,
     });
-    const inlineNegative = promptPresets.resolveInline(effectiveNegative, {
+    const inlineNegativeRaw = promptPresets.resolveInline(effectiveNegative, {
       fixedChoices: options.fixedPresetChoices,
     });
+
+    // Expand random alternation syntax ({a|b|c}, {2$$a|b|c}, etc.).
+    // Seeded from the user seed so the same seed always produces the same roll.
+    // When seed is -1 (let backend choose), we pick a fresh random integer so
+    // the expansion is still deterministic within this submission; the gallery
+    // stores the resolved (expanded) prompt so regenerating always reproduces.
+    const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
+    const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
+    const numericSeed = parseInt(this.seed, 10);
+    const rngSeed: number =
+      !isNaN(numericSeed) && numericSeed !== -1
+        ? numericSeed >>> 0
+        : (Math.random() * 0x100000000) >>> 0;
+    const inlinePositive = hasPositiveRandom
+      ? expandRandomPrompt(inlinePositiveRaw, rngSeed)
+      : inlinePositiveRaw;
+    const inlineNegative = hasNegativeRandom
+      ? expandRandomPrompt(inlineNegativeRaw, rngSeed + 1)
+      : inlineNegativeRaw;
 
     // Parse <segment:...> auto-refinement tags from the user-typed prompt before
     // system fragments (style presets, artist styles, preset appends, quality
@@ -3289,7 +3369,6 @@ class GenerationStore {
     const regionalContext = regionalPromptingSupported
       ? buildRegionalContextPrompt(
           translatedPositiveBase,
-          translatedPositiveSegments,
           this.loras.filter((l) => l.enabled && l.name),
         )
       : "";
@@ -3440,6 +3519,14 @@ class GenerationStore {
       style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
       style_transfer_megapixels: this.styleTransferMegapixels,
       style_transfer_blocks: this.styleTransferBlocks,
+      style_ref_enabled: this.styleRefEnabled,
+      style_ref_image: this.styleRefImage,
+      style_ref_strength: this.styleRefStrength,
+      style_ref_weight_type: this.styleRefWeightType,
+      style_ref_start: this.styleRefStart,
+      style_ref_end: this.styleRefEnd,
+      style_ref_redux_model: this.styleRefReduxModel,
+      style_ref_clip_vision: this.styleRefClipVision,
       anima_teacache_enabled: this.animaTeacacheEnabled,
       edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
       edit_reference_strength: this.editReferenceStrength,

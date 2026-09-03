@@ -229,6 +229,108 @@ pub async fn delete_queue_item(
     state.delete_queue_items(vec![prompt_id]).await
 }
 
+/// Reorder a pending queue item to a new position within the caller's own
+/// pending items (0 = next to run, increasing = later).
+///
+/// Two cases:
+/// 1. The prompt is still in the local held list (not yet submitted to ComfyUI).
+///    Handled by reordering in memory — no new prompt_id issued.
+/// 2. The prompt was already submitted to ComfyUI but is still pending (not
+///    running). The workflow is fetched from ComfyUI's queue, the item is
+///    deleted, and a fresh HeldPrompt is created at the target position so the
+///    drain reactor resubmits it in the new order. The placeholder_id stays the
+///    same so the frontend's progress tracking is unaffected.
+///
+/// Returns `AppError` if the item has already started running, or if the
+/// workflow cannot be retrieved from ComfyUI's queue.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn reorder_queue_item(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: String,
+    new_position: usize,
+) -> Result<(), AppError> {
+    let username = state.prompt_queue.owner_of(&prompt_id);
+
+    // Case 1: prompt is still held locally — simple in-memory reorder.
+    if state
+        .prompt_queue
+        .reorder_held_prompt(&prompt_id, new_position, &username)
+    {
+        state.broadcast_queue_positions();
+        return Ok(());
+    }
+
+    // Case 2: already submitted to ComfyUI.
+    // Find the ComfyUI real_id bound to this placeholder.
+    let real_id = state
+        .prompt_queue
+        .real_id_for_placeholder(&prompt_id)
+        .unwrap_or_else(|| prompt_id.clone());
+
+    // Fetch the current ComfyUI queue to locate the workflow.
+    let queue_info = state.get_queue_info().await?;
+
+    // Check that the item is pending (not running).
+    let is_running = queue_info.queue_running.iter().any(|entry| {
+        entry
+            .as_array()
+            .and_then(|a| a.get(1))
+            .and_then(|v| v.as_str())
+            .map(|id| id == real_id)
+            .unwrap_or(false)
+    });
+    if is_running {
+        return Err(AppError::Other("queue_item_already_running".to_string()));
+    }
+
+    // Extract the workflow JSON from ComfyUI's pending list.
+    // Pending entries are arrays: [number, prompt_id, workflow, extra_data, outputs].
+    let workflow = queue_info
+        .queue_pending
+        .iter()
+        .find(|entry| {
+            entry
+                .as_array()
+                .and_then(|a| a.get(1))
+                .and_then(|v| v.as_str())
+                .map(|id| id == real_id)
+                .unwrap_or(false)
+        })
+        .and_then(|entry| entry.as_array())
+        .and_then(|a| a.get(2))
+        .cloned();
+
+    let workflow = match workflow {
+        Some(w) => w,
+        None => {
+            // Not in ComfyUI pending — may have just started; let the frontend retry.
+            return Err(AppError::Other(
+                "queue_item_not_found_in_comfyui".to_string(),
+            ));
+        }
+    };
+
+    // Delete the old submission from ComfyUI's queue.
+    for worker in &state.gpu_manager.workers {
+        let _ = state
+            .http_client
+            .post(format!("{}/queue", worker.base_url))
+            .json(&serde_json::json!({ "delete": [real_id] }))
+            .send()
+            .await;
+    }
+
+    // Re-hold the prompt: insert a fresh HeldPrompt at the target position.
+    // The drain reactor will resubmit it and bind a new ComfyUI alias.
+    state
+        .prompt_queue
+        .re_hold_for_reorder(&prompt_id, &real_id, workflow, new_position, username);
+    state.prompt_queue.drain_notify.notify_one();
+    state.broadcast_queue_positions();
+    Ok(())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn upload_image(
@@ -349,6 +451,9 @@ fn known_model_subdirs() -> Vec<&'static str> {
         "text_encoders",
         "ultralytics",
         "model_patches",
+        "style_models",
+        "ipadapter",
+        "clip_vision",
     ]
     .iter()
     .flat_map(|category| category_subdirs(category).iter().copied())
@@ -1115,7 +1220,9 @@ pub async fn save_to_gallery(
         "metadata": metadata,
     });
     state.broadcast("mooshie:image_saved", payload.clone());
-    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    if let Err(e) = state.dispatch_webhook_event("image_saved", payload).await {
+        log::warn!("Webhook dispatch failed (image_saved): {}", e);
+    }
     Ok(saved)
 }
 
@@ -1147,7 +1254,9 @@ pub async fn save_to_gallery_bytes(
         "metadata": metadata,
     });
     state.broadcast("mooshie:image_saved", payload.clone());
-    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    if let Err(e) = state.dispatch_webhook_event("image_saved", payload).await {
+        log::warn!("Webhook dispatch failed (image_saved): {}", e);
+    }
     Ok(saved)
 }
 
@@ -1182,7 +1291,9 @@ pub async fn save_to_gallery_temp(
         "metadata": metadata,
     });
     state.broadcast("mooshie:image_saved", payload.clone());
-    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    if let Err(e) = state.dispatch_webhook_event("image_saved", payload).await {
+        log::warn!("Webhook dispatch failed (image_saved): {}", e);
+    }
     Ok(saved)
 }
 
@@ -4337,11 +4448,9 @@ async fn lookup_civitai_base_model_by_hash(
         .map(str::to_string))
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-// TODO: refactor src-tauri/src/commands/api.rs and src-tauri/src/webserver.rs
-pub async fn civitai_search_models(
-    state: State<'_, Arc<AppState>>,
+/// Search CivitAI models. Shared by the Tauri command and the LAN web server route.
+pub async fn civitai_search_models_internal(
+    state: &Arc<AppState>,
     params: CivitaiSearchParams,
 ) -> Result<Value, AppError> {
     // Build query string manually because reqwest percent-encodes brackets in
@@ -4420,6 +4529,15 @@ pub async fn civitai_search_models(
 
     let data: Value = serde_json::from_str(&body)?;
     Ok(data)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_search_models(
+    state: State<'_, Arc<AppState>>,
+    params: CivitaiSearchParams,
+) -> Result<Value, AppError> {
+    civitai_search_models_internal(&state, params).await
 }
 
 /// Fetch a single CivitAI model (all versions and files) by numeric ID.
@@ -5698,6 +5816,25 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "ModelPatches",
             "models/model_patches",
             "Models/model_patches",
+        ],
+        "style_models" => &[
+            "style_models",
+            "StyleModels",
+            "models/style_models",
+            "Models/style_models",
+        ],
+        "ipadapter" => &[
+            "ipadapter",
+            "IPAdapter",
+            "ip_adapter",
+            "models/ipadapter",
+            "Models/ipadapter",
+        ],
+        "clip_vision" => &[
+            "clip_vision",
+            "CLIPVision",
+            "models/clip_vision",
+            "Models/clip_vision",
         ],
         _ => &[],
     }
@@ -7166,16 +7303,6 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     output
 }
 
-/// Append a batch of frontend console log lines to the in-memory diagnostics
-/// ring buffer. Called opportunistically by the UI so that exported logs
-/// include frontend state even when a crash prevents exporting normally.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn append_frontend_logs(lines: Vec<String>) -> Result<(), AppError> {
-    crate::log_buffer::push_frontend_lines(lines);
-    Ok(())
-}
-
 /// Detect the MIME type of image bytes from magic bytes.
 pub(crate) fn detect_image_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG") {
@@ -7723,10 +7850,16 @@ pub async fn install_attention_backend_core(
         "sageattention",
         "flash-attn",
     ];
-    let _ = tokio_command_no_window(&uv)
+    if let Err(e) = tokio_command_no_window(&uv)
         .args(&uninstall_old)
         .output()
-        .await;
+        .await
+    {
+        log::warn!(
+            "Failed to remove old attention packages (continuing): {}",
+            e
+        );
+    }
 
     // Step 2: Install the requested backend
     if backend != "default" {
@@ -7822,7 +7955,9 @@ pub async fn install_attention_backend_core(
             emit("Verification failed — rolling back...");
             let mut rollback: Vec<&str> = vec!["pip", "uninstall", "--python", &python_str];
             rollback.extend(base_names.iter().copied());
-            let _ = tokio_command_no_window(&uv).args(&rollback).output().await;
+            if let Err(e) = tokio_command_no_window(&uv).args(&rollback).output().await {
+                log::warn!("Attention backend rollback command failed: {}", e);
+            }
             return Err(AppError::Other(format!(
                 "Installed {} but could not import it: {}. Rolled back; keeping the previous backend.",
                 backend,
@@ -7842,4 +7977,542 @@ pub async fn install_attention_backend_core(
     emit("Attention backend updated. Restart ComfyUI to apply.");
     log::info!("Attention backend set to: {}", backend);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Bulk CivitAI scan
+// ---------------------------------------------------------------------------
+
+/// Categories walked by the bulk CivitAI scan.
+const BULK_SCAN_CATEGORIES: &[&str] = &["loras", "checkpoints", "diffusion_models", "embeddings"];
+
+/// Final summary returned (and broadcast) when the bulk scan completes.
+#[derive(Debug, Serialize, Clone)]
+pub struct CivitaiBulkScanSummary {
+    pub total: usize,
+    pub found: usize,
+    pub not_found: usize,
+    pub skipped: usize,
+    pub errors: usize,
+    pub cancelled: bool,
+}
+
+/// Internal core for `civitai_bulk_scan` -- compiles in both desktop and server
+/// builds.  `emit` is called with each progress payload; the caller is
+/// responsible for routing it to the Tauri AppHandle or the SSE broadcast
+/// channel.
+pub(crate) async fn civitai_bulk_scan_core<F>(
+    state: &Arc<AppState>,
+    force: bool,
+    emit: F,
+) -> CivitaiBulkScanSummary
+where
+    F: Fn(serde_json::Value) + Send + Sync,
+{
+    // Reset any leftover cancel flag from a previous run.
+    state
+        .civitai_scan_cancel
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+
+    let (comfyui_path, extra_model_paths, civitai_api_key) = {
+        let config = state.config.read().await;
+        (
+            config.comfyui_path.clone(),
+            config.extra_model_paths.clone(),
+            config.civitai_api_key.clone(),
+        )
+    };
+
+    if comfyui_path.is_empty() {
+        emit(serde_json::json!({
+            "current": 0,
+            "total": 0,
+            "name": "",
+            "status": "done",
+            "done": true,
+            "found": 0,
+            "not_found": 0,
+            "skipped": 0,
+            "errors": 0,
+            "cancelled": false,
+        }));
+        return CivitaiBulkScanSummary {
+            total: 0,
+            found: 0,
+            not_found: 0,
+            skipped: 0,
+            errors: 0,
+            cancelled: false,
+        };
+    }
+
+    // Collect all model files across the supported categories.
+    let mut all_models: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for &category in BULK_SCAN_CATEGORIES {
+        let files = match list_model_files_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            category,
+        ) {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!(
+                    "civitai_bulk_scan: could not list {} files: {}",
+                    category,
+                    e
+                );
+                continue;
+            }
+        };
+        for f in files {
+            // CivitAI hash lookup is only meaningful for file types that carry
+            // a recoverable SHA-256 (safetensors, gguf, ckpt).
+            let lower = f.filename.to_ascii_lowercase();
+            if !lower.ends_with(".safetensors")
+                && !lower.ends_with(".gguf")
+                && !lower.ends_with(".ckpt")
+            {
+                continue;
+            }
+            let Some(path) = resolve_model_path(
+                &comfyui_path,
+                extra_model_paths.as_deref(),
+                category,
+                &f.filename,
+            ) else {
+                continue;
+            };
+            all_models.push((f.filename, path));
+        }
+    }
+
+    let total = all_models.len();
+    let mut found = 0usize;
+    let mut not_found = 0usize;
+    let mut skipped = 0usize;
+    let mut errors = 0usize;
+    let mut cancelled = false;
+
+    for (idx, (filename, path)) in all_models.iter().enumerate() {
+        if state
+            .civitai_scan_cancel
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            cancelled = true;
+            break;
+        }
+
+        let current = idx + 1;
+
+        // Skip models that already have a cached .civitai.info sidecar,
+        // unless `force` was requested.
+        if !force {
+            let has_cache = sidecar_metadata_path(&path, ".civitai.info")
+                .map(|p| p.is_file())
+                .unwrap_or(false);
+            if has_cache {
+                skipped += 1;
+                // Emit a batched progress update every 20 files so the UI
+                // shows movement without flooding the event channel.
+                if current % 20 == 0 || current == total {
+                    emit(serde_json::json!({
+                        "current": current,
+                        "total": total,
+                        "name": filename,
+                        "status": "skipped",
+                        "done": false,
+                    }));
+                }
+                continue;
+            }
+        }
+
+        emit(serde_json::json!({
+            "current": current,
+            "total": total,
+            "name": filename,
+            "status": "hashing",
+            "done": false,
+        }));
+
+        // Hash the file on a blocking thread -- checkpoints can be 10+ GB.
+        let path_clone = path.clone();
+        let sha256 = match tokio::task::spawn_blocking(move || full_sha256(&path_clone)).await {
+            Ok(Ok(h)) => h,
+            Ok(Err(e)) => {
+                log::warn!("civitai_bulk_scan: hash failed for {}: {}", filename, e);
+                errors += 1;
+                emit(serde_json::json!({
+                    "current": current,
+                    "total": total,
+                    "name": filename,
+                    "status": "error",
+                    "done": false,
+                }));
+                continue;
+            }
+            Err(e) => {
+                log::warn!(
+                    "civitai_bulk_scan: hash task panicked for {}: {}",
+                    filename,
+                    e
+                );
+                errors += 1;
+                emit(serde_json::json!({
+                    "current": current,
+                    "total": total,
+                    "name": filename,
+                    "status": "error",
+                    "done": false,
+                }));
+                continue;
+            }
+        };
+        let autov2 = autov2_hash(&sha256);
+
+        // CivitAI API lookup with exponential back-off on 429.
+        let api_url = format!(
+            "https://civitai.com/api/v1/model-versions/by-hash/{}",
+            autov2
+        );
+        let mut civitai_data: Option<serde_json::Value> = None;
+        let mut backoff_secs = 1u64;
+
+        'retry: for _attempt in 0..5u32 {
+            if state
+                .civitai_scan_cancel
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                cancelled = true;
+                break 'retry;
+            }
+
+            let mut req = state
+                .http_client
+                .get(&api_url)
+                .header("User-Agent", "MooshieUI/2.0");
+            if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+                req = req.bearer_auth(key);
+            }
+
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("civitai_bulk_scan: request error for {}: {}", filename, e);
+                    break 'retry;
+                }
+            };
+
+            let status = resp.status();
+            if status.as_u16() == 429 {
+                log::info!(
+                    "civitai_bulk_scan: 429 rate-limit for {}, backing off {}s",
+                    filename,
+                    backoff_secs
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                backoff_secs = (backoff_secs * 2).min(30);
+                continue 'retry;
+            }
+            if status.as_u16() == 404 {
+                // Not indexed on CivitAI -- normal, not an error.
+                break 'retry;
+            }
+            if !status.is_success() {
+                log::warn!(
+                    "civitai_bulk_scan: CivitAI returned {} for {}",
+                    status,
+                    filename
+                );
+                break 'retry;
+            }
+
+            match resp.json::<serde_json::Value>().await {
+                Ok(data) => civitai_data = Some(data),
+                Err(e) => {
+                    log::warn!(
+                        "civitai_bulk_scan: JSON parse error for {}: {}",
+                        filename,
+                        e
+                    );
+                }
+            }
+            break 'retry;
+        }
+
+        if cancelled {
+            break;
+        }
+
+        if let Some(data) = civitai_data {
+            found += 1;
+            // Write the raw CivitAI API response to a .civitai.info sidecar so
+            // `read_forge_metadata` (the Forge/A1111 CivitAI Helper reader
+            // already in the codebase) picks it up automatically.
+            if let Some(sidecar_path) = sidecar_metadata_path(&path, ".civitai.info") {
+                match serde_json::to_string_pretty(&data) {
+                    Ok(json_str) => {
+                        if let Err(e) = std::fs::write(&sidecar_path, json_str) {
+                            log::warn!(
+                                "civitai_bulk_scan: failed to write sidecar for {}: {}",
+                                filename,
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("civitai_bulk_scan: serialize error for {}: {}", filename, e);
+                    }
+                }
+            }
+            emit(serde_json::json!({
+                "current": current,
+                "total": total,
+                "name": filename,
+                "status": "found",
+                "done": false,
+            }));
+        } else {
+            not_found += 1;
+            emit(serde_json::json!({
+                "current": current,
+                "total": total,
+                "name": filename,
+                "status": "not_found",
+                "done": false,
+            }));
+        }
+
+        // Brief pause between requests -- avoids hammering the CivitAI API.
+        tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
+    }
+
+    // Final summary event.
+    emit(serde_json::json!({
+        "current": total,
+        "total": total,
+        "name": "",
+        "status": if cancelled { "cancelled" } else { "done" },
+        "done": true,
+        "found": found,
+        "not_found": not_found,
+        "skipped": skipped,
+        "errors": errors,
+        "cancelled": cancelled,
+    }));
+
+    state
+        .civitai_scan_cancel
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+
+    CivitaiBulkScanSummary {
+        total,
+        found,
+        not_found,
+        skipped,
+        errors,
+        cancelled,
+    }
+}
+
+/// Hash-scan every local model file in the supported categories against the
+/// CivitAI API and cache the result in a `.civitai.info` sidecar file.
+/// Emits `comfyui:civitai_scan` events with shape
+/// `{ current, total, name, status, done }`.
+/// `status` is one of `"hashing"`, `"found"`, `"not_found"`, `"skipped"`,
+/// `"error"`, `"done"`, or `"cancelled"`.  The final event also carries
+/// `found`, `not_found`, `skipped`, `errors`, and `cancelled` summary counts.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_bulk_scan(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    force: bool,
+) -> Result<CivitaiBulkScanSummary, AppError> {
+    let emit = move |payload: serde_json::Value| {
+        let _ = app.emit("comfyui:civitai_scan", payload);
+    };
+    Ok(civitai_bulk_scan_core(&state, force, emit).await)
+}
+
+/// Cancel an in-progress `civitai_bulk_scan`.  Safe to call at any time.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_bulk_scan_cancel(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
+    state
+        .civitai_scan_cancel
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+// --------------------------------------------------------------------------
+// Tests for queue reorder computation (pure logic, no async)
+// --------------------------------------------------------------------------
+#[cfg(test)]
+mod queue_reorder_tests {
+    use crate::state::{HeldPrompt, PromptQueue};
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, Notify};
+
+    /// Push a HeldPrompt into both the `held` Vec and `queue` Vec so that
+    /// `reorder_held_prompt` can find it in both places.
+    fn push_held(pq: &PromptQueue, id: &str, username: Option<String>) {
+        let hp = HeldPrompt {
+            workflow: serde_json::Value::Null,
+            username: username.clone(),
+            placeholder_id: id.to_string(),
+            submitted: Arc::new(Notify::new()),
+            result: Arc::new(Mutex::new(None)),
+        };
+        pq.held.lock().unwrap().push(hp);
+        pq.queue.write().unwrap().push((id.to_string(), username));
+    }
+
+    /// Build a PromptQueue pre-populated with the given IDs for a single user
+    /// ("alice"). Returns the queue and the username Option.
+    fn build_queue(ids: &[&str]) -> (PromptQueue, Option<String>) {
+        let pq = PromptQueue::new();
+        let user = Some("alice".to_string());
+        for id in ids {
+            push_held(&pq, id, user.clone());
+        }
+        (pq, user)
+    }
+
+    /// Extract the current order of all user prompts from the display queue Vec.
+    fn user_queue_order(pq: &PromptQueue, username: &Option<String>) -> Vec<String> {
+        let queue = pq.queue.read().unwrap();
+        queue
+            .iter()
+            .filter(|(_, owner)| owner == username)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Extract the current order of all user prompts from the held Vec.
+    fn user_held_order(pq: &PromptQueue, username: &Option<String>) -> Vec<String> {
+        let held = pq.held.lock().unwrap();
+        held.iter()
+            .filter(|hp| hp.username == *username)
+            .map(|hp| hp.placeholder_id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn reorder_held_move_to_front() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p3", 0, &user);
+        assert!(moved, "should find p3 in held");
+        assert_eq!(user_held_order(&pq, &user), vec!["p3", "p1", "p2"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p3", "p1", "p2"]);
+    }
+
+    #[test]
+    fn reorder_held_move_up() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p3", 1, &user);
+        assert!(moved);
+        assert_eq!(user_held_order(&pq, &user), vec!["p1", "p3", "p2"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p1", "p3", "p2"]);
+    }
+
+    #[test]
+    fn reorder_held_move_down() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p1", 1, &user);
+        assert!(moved);
+        assert_eq!(user_held_order(&pq, &user), vec!["p2", "p1", "p3"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p2", "p1", "p3"]);
+    }
+
+    #[test]
+    fn reorder_held_move_to_back() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p1", 99, &user);
+        assert!(moved);
+        assert_eq!(user_held_order(&pq, &user), vec!["p2", "p3", "p1"]);
+        assert_eq!(user_queue_order(&pq, &user), vec!["p2", "p3", "p1"]);
+    }
+
+    #[test]
+    fn reorder_held_no_op_same_position() {
+        let (pq, user) = build_queue(&["p1", "p2", "p3"]);
+        let moved = pq.reorder_held_prompt("p2", 1, &user);
+        assert!(moved);
+        assert_eq!(
+            user_held_order(&pq, &user),
+            vec!["p1", "p2", "p3"],
+            "no-op should leave order unchanged"
+        );
+    }
+
+    #[test]
+    fn reorder_held_unknown_id_returns_false() {
+        let (pq, user) = build_queue(&["p1", "p2"]);
+        let moved = pq.reorder_held_prompt("p99", 0, &user);
+        assert!(!moved, "unknown id must return false");
+    }
+
+    #[test]
+    fn reorder_held_multi_user_only_moves_own_items() {
+        let pq = PromptQueue::new();
+        let alice = Some("alice".to_string());
+        let bob = Some("bob".to_string());
+        push_held(&pq, "a1", alice.clone());
+        push_held(&pq, "b1", bob.clone());
+        push_held(&pq, "a2", alice.clone());
+        push_held(&pq, "b2", bob.clone());
+        push_held(&pq, "a3", alice.clone());
+
+        // Move alice's a3 to front — must not disturb bob's items.
+        let moved = pq.reorder_held_prompt("a3", 0, &alice);
+        assert!(moved);
+
+        assert_eq!(user_held_order(&pq, &alice), vec!["a3", "a1", "a2"]);
+        assert_eq!(user_queue_order(&pq, &alice), vec!["a3", "a1", "a2"]);
+        assert_eq!(user_held_order(&pq, &bob), vec!["b1", "b2"]);
+        assert_eq!(user_queue_order(&pq, &bob), vec!["b1", "b2"]);
+    }
+
+    #[test]
+    fn real_id_for_placeholder_returns_correct_real_id() {
+        let pq = PromptQueue::new();
+        push_held(&pq, "placeholder-1", Some("alice".to_string()));
+        pq.bind_alias("placeholder-1", "comfy-real-123");
+        let found = pq.real_id_for_placeholder("placeholder-1");
+        assert_eq!(found, Some("comfy-real-123".to_string()));
+    }
+
+    #[test]
+    fn real_id_for_placeholder_returns_none_when_unbound() {
+        let pq = PromptQueue::new();
+        push_held(&pq, "placeholder-1", Some("alice".to_string()));
+        let found = pq.real_id_for_placeholder("placeholder-1");
+        assert_eq!(found, None);
+    }
+}
+
+/// Recent log lines for the developer-mode terminal panel.
+///
+/// `source` selects the buffer: `"comfyui"` tails the ComfyUI stderr log file
+/// the child process writes to, `"app"` returns the Rust ring buffer that
+/// `log_buffer` fills (the same lines the diagnostics export embeds). Unknown
+/// sources yield an empty list rather than an error so a stale frontend cannot
+/// break the poll loop.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_logs(source: String, lines: Option<usize>) -> Result<Vec<String>, AppError> {
+    const DEFAULT_LINES: usize = 500;
+    let want = lines.unwrap_or(DEFAULT_LINES).clamp(1, 2000);
+    let out = match source.as_str() {
+        "comfyui" => crate::comfyui::process::read_comfyui_log_tail(want)
+            .map(|text| text.lines().map(str::to_string).collect())
+            .unwrap_or_default(),
+        "app" => {
+            let all = crate::log_buffer::snapshot_rust();
+            let start = all.len().saturating_sub(want);
+            all[start..].to_vec()
+        }
+        _ => Vec::new(),
+    };
+    Ok(out)
 }
