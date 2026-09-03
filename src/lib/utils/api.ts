@@ -1456,6 +1456,13 @@ export async function exportLogsContent(): Promise<string> {
   return res.content;
 }
 
+// Recent log lines for the developer-mode terminal panel. `source` is "comfyui"
+// (ComfyUI stderr tail) or "app" (Rust ring buffer). Desktop only: the panel is
+// gated behind `isTauri`, and browser mode has no equivalent local log file.
+export async function getLogs(source: "comfyui" | "app", lines?: number): Promise<string[]> {
+  return await ipcInvoke<string[]>("get_logs", { source, lines });
+}
+
 export async function getGpuStats(): Promise<GpuStats[]> {
   if (isTauri) {
     return ipcInvoke("get_gpu_stats");

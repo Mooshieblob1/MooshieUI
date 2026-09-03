@@ -17,15 +17,14 @@ export interface QueuePanelRow {
 }
 
 function summarise(params: QueuedPrompt["params"]): string {
-  const raw = (params as Record<string, unknown>)["prompt"];
-  const text = typeof raw === "string" ? raw : "";
+  const text = params.positive_prompt;
   if (!text) return "(no prompt)";
   return text.length > 60 ? text.slice(0, 57) + "..." : text;
 }
 
 function modelLabel(params: QueuedPrompt["params"]): string {
-  const raw = (params as Record<string, unknown>)["model_name"];
-  if (typeof raw !== "string" || !raw) return "";
+  const raw = params.checkpoint;
+  if (!raw) return "";
   const parts = raw.split(/[\\/]/);
   const filename = parts[parts.length - 1] ?? raw;
   // Strip common extensions.
@@ -33,18 +32,15 @@ function modelLabel(params: QueuedPrompt["params"]): string {
 }
 
 function dimensionsLabel(params: QueuedPrompt["params"]): string {
-  const p = params as Record<string, unknown>;
-  const w = p["width"];
-  const h = p["height"];
-  if (typeof w === "number" && typeof h === "number") {
-    return `${w}x${h}`;
+  const { width, height } = params;
+  if (typeof width === "number" && typeof height === "number") {
+    return `${width}x${height}`;
   }
   return "";
 }
 
 function batchLabel(params: QueuedPrompt["params"]): string {
-  const p = params as Record<string, unknown>;
-  const n = p["batch_size"];
+  const n = params.batch_size;
   if (typeof n === "number" && n > 1) return `x${n}`;
   return "";
 }

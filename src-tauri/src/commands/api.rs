@@ -8490,3 +8490,29 @@ mod queue_reorder_tests {
         assert_eq!(found, None);
     }
 }
+
+/// Recent log lines for the developer-mode terminal panel.
+///
+/// `source` selects the buffer: `"comfyui"` tails the ComfyUI stderr log file
+/// the child process writes to, `"app"` returns the Rust ring buffer that
+/// `log_buffer` fills (the same lines the diagnostics export embeds). Unknown
+/// sources yield an empty list rather than an error so a stale frontend cannot
+/// break the poll loop.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_logs(source: String, lines: Option<usize>) -> Result<Vec<String>, AppError> {
+    const DEFAULT_LINES: usize = 500;
+    let want = lines.unwrap_or(DEFAULT_LINES).clamp(1, 2000);
+    let out = match source.as_str() {
+        "comfyui" => crate::comfyui::process::read_comfyui_log_tail(want)
+            .map(|text| text.lines().map(str::to_string).collect())
+            .unwrap_or_default(),
+        "app" => {
+            let all = crate::log_buffer::snapshot_rust();
+            let start = all.len().saturating_sub(want);
+            all[start..].to_vec()
+        }
+        _ => Vec::new(),
+    };
+    Ok(out)
+}
