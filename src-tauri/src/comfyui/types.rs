@@ -474,6 +474,16 @@ pub struct GenerationParams {
     /// remaining steps on top of the last stage's latent.
     #[serde(default)]
     pub resume_stages: Vec<ResumeStage>,
+    /// ComfyUI input filename of the paused preview with the user's changes
+    /// painted on it. Encoded, noised back to the paused noise level and
+    /// blended into the paused latent under `resume_edit_mask` before the
+    /// remaining steps run. Ignored unless `resume_stages` is non-empty.
+    #[serde(default)]
+    pub resume_edit_image: Option<String>,
+    /// Mask (white = take the edit) for `resume_edit_image`. Without it the
+    /// whole latent is replaced by the edit.
+    #[serde(default)]
+    pub resume_edit_mask: Option<String>,
     /// Filled in by `templates::build_workflow` while assembling one stage of
     /// a paused run. Never sent by the frontend.
     #[serde(skip)]
@@ -519,6 +529,13 @@ pub struct StageContext {
     pub latent: Option<(String, u32)>,
     /// Loader outputs of the first stage, or `None` to emit loaders.
     pub base: Option<BaseSources>,
+    /// Scheduler and step count the run's schedule was built with (the first
+    /// stage's), which every stage's `start_step`/`end_step` index into.
+    pub schedule: Option<(String, u32)>,
+    /// This stage finishes the run on a different scheduler or step count
+    /// than `schedule`: it samples an explicit sigma tail with SamplerCustom
+    /// instead of indexing the original schedule with KSamplerAdvanced.
+    pub custom_tail: bool,
 }
 
 fn default_int8_fast_convrot() -> bool {

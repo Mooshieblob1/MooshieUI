@@ -2162,10 +2162,16 @@ const de: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "Stiltransfer ist beim Pausieren aus: er nutzt einen eigenen Sampler ohne Haltepunkt.",
   "generation.pause.continue": "Ab Schritt {step}/{total} fortsetzen",
   "generation.pause.banner": "Pausiert nach Schritt {step} von {total}. Prompt, CFG, Sampler oder LoRAs anpassen, dann Fortsetzen.",
-  "generation.pause.locked_hint": "Schritte, Scheduler, Größe, Batchgröße, Seed und Modell bleiben wie beim Pausieren.",
+  "generation.pause.locked_hint": "Größe, Batchgröße, Seed und Modell bleiben wie beim Pausieren. Schritte und Scheduler können auf der Stufe geändert werden, die den Lauf abschließt.",
   "generation.pause.retry_hint": "Der pausierte Lauf bleibt erhalten, bis du ihn verwirfst. So kannst du mit anderen Einstellungen erneut fortsetzen und ein anderes Ende vom selben Punkt aus probieren.",
   "generation.pause.discard": "Pausierten Lauf verwerfen",
   "generation.pause.discard_tip": "Das pausierte Latent vergessen. Der nächste Generieren-Klick startet ein neues Bild.",
+  "generation.pause.edit": "Korrektur malen",
+  "generation.pause.edit_tip": "Schickt das pausierte Bild auf die Inpaint-Leinwand. Übermale, was sich ändern soll, maskiere den bemalten Bereich und setze fort: Die Malerei wird beim Rauschpegel der Pause ins pausierte Latent eingeblendet, und die restlichen Schritte laufen darauf weiter.",
+  "generation.pause.edit_hint": "Malen ins pausierte Bild: Änderung zeichnen, maskieren, dann „Mit Änderung fortsetzen“ drücken.",
+  "generation.pause.edit_needs_mask": "Maskiere den bemalten Bereich, damit die Fortsetzung weiß, wo die Änderung eingeblendet wird.",
+  "generation.pause.edit_unavailable": "Das pausierte Bild ist nicht mehr zum Bearbeiten verfügbar.",
+  "generation.pause.continue_edit": "Mit Änderung ab Schritt {step}/{total} fortsetzen",
 
 
 

@@ -1274,10 +1274,16 @@ const pl: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "Transfer stylu jest wyłączony podczas pauzy: używa własnego samplera bez punktu zatrzymania.",
   "generation.pause.continue": "Kontynuuj od kroku {step}/{total}",
   "generation.pause.banner": "Wstrzymano po kroku {step} z {total}. Dostosuj prompt, CFG, sampler lub LoRA, potem Kontynuuj.",
-  "generation.pause.locked_hint": "Kroki, scheduler, rozmiar, wielkość partii, seed i model pozostają takie jak w chwili pauzy.",
+  "generation.pause.locked_hint": "Rozmiar, wielkość partii, seed i model pozostają jak w chwili pauzy. Kroki i scheduler można zmienić na etapie, który kończy generowanie.",
   "generation.pause.retry_hint": "Wstrzymane generowanie pozostaje, dopóki go nie odrzucisz, więc możesz ponownie Kontynuować z innymi ustawieniami, aby wypróbować inne zakończenie od tego samego miejsca.",
   "generation.pause.discard": "Odrzuć wstrzymane generowanie",
   "generation.pause.discard_tip": "Zapomina wstrzymany latent. Następne Generuj zaczyna nowy obraz.",
+  "generation.pause.edit": "Namaluj poprawkę",
+  "generation.pause.edit_tip": "Wysyła wstrzymany obraz na płótno inpaintingu. Zamaluj to, co ma się zmienić, zamaskuj zamalowany obszar i naciśnij Kontynuuj: malunek zostanie wtopiony we wstrzymany latent na jego poziomie szumu, a pozostałe kroki dokończą się na tej podstawie.",
+  "generation.pause.edit_hint": "Malowanie we wstrzymanym obrazie: narysuj zmianę, zamaskuj ją, potem naciśnij Kontynuuj z poprawką.",
+  "generation.pause.edit_needs_mask": "Zamaskuj zamalowany obszar, aby wznowienie wiedziało, gdzie wtopić poprawkę.",
+  "generation.pause.edit_unavailable": "Wstrzymany obraz nie jest już dostępny do edycji.",
+  "generation.pause.continue_edit": "Kontynuuj z poprawką od kroku {step}/{total}",
 
   // Refiner History
   "generation.upscale_history.title": "Historia dopracowywania",

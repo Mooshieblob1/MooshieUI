@@ -2166,10 +2166,16 @@ const fr: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "Le transfert de style est désactivé pendant une pause : il utilise son propre sampler sans point d'arrêt.",
   "generation.pause.continue": "Continuer depuis l'étape {step}/{total}",
   "generation.pause.banner": "En pause après l'étape {step} sur {total}. Ajustez le prompt, le CFG, le sampler ou les LoRAs, puis Continuer.",
-  "generation.pause.locked_hint": "Étapes, scheduler, taille, taille de lot, seed et modèle restent tels qu'au moment de la pause.",
+  "generation.pause.locked_hint": "Taille, taille de lot, seed et modèle restent tels qu'au moment de la pause. Les étapes et le scheduler peuvent changer sur l'étape qui termine la génération.",
   "generation.pause.retry_hint": "La génération en pause reste disponible jusqu'à ce que vous l'abandonniez : vous pouvez Continuer à nouveau avec d'autres réglages pour essayer une autre fin depuis le même point.",
   "generation.pause.discard": "Abandonner la génération en pause",
   "generation.pause.discard_tip": "Oublie le latent en pause. Le prochain Générer démarre une nouvelle image.",
+  "generation.pause.edit": "Peindre une correction",
+  "generation.pause.edit_tip": "Envoie l'image en pause sur la toile d'inpainting. Peignez ce qui doit changer, masquez la zone peinte, puis Continuer : la peinture est fondue dans le latent en pause à son niveau de bruit et les étapes restantes s'exécutent par-dessus.",
+  "generation.pause.edit_hint": "Peinture dans l'image en pause : dessinez le changement, masquez-le, puis appuyez sur Continuer avec la retouche.",
+  "generation.pause.edit_needs_mask": "Masquez la zone peinte pour que la reprise sache où fondre la retouche.",
+  "generation.pause.edit_unavailable": "L'image en pause n'est plus disponible pour la retouche.",
+  "generation.pause.continue_edit": "Continuer avec la retouche depuis l'étape {step}/{total}",
 
 
 

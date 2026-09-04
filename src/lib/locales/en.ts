@@ -1320,10 +1320,16 @@ const en: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "Style transfer is off while pausing: it uses its own sampler with no pause point.",
   "generation.pause.continue": "Continue from step {step}/{total}",
   "generation.pause.banner": "Paused after step {step} of {total}. Adjust the prompt, CFG, sampler or LoRAs, then Continue.",
-  "generation.pause.locked_hint": "Steps, scheduler, size, batch size, seed and model stay as they were when the run paused.",
+  "generation.pause.locked_hint": "Size, batch size, seed and model stay as they were when the run paused. Steps and scheduler can change on the stage that finishes the run.",
   "generation.pause.retry_hint": "The paused run stays until you discard it, so you can Continue again with different settings to try another ending from the same point.",
   "generation.pause.discard": "Discard paused run",
   "generation.pause.discard_tip": "Forget the paused latent. The next Generate starts a new image.",
+  "generation.pause.edit": "Paint a correction",
+  "generation.pause.edit_tip": "Send the paused image to the inpaint canvas. Paint over what should change, mask the painted area, then Continue: the paint is blended into the paused latent at its noise level and the remaining steps run on top of it.",
+  "generation.pause.edit_hint": "Painting into the paused image: draw the change, mask it, then press Continue with edit.",
+  "generation.pause.edit_needs_mask": "Mask the area you painted so the resume knows where to blend the edit.",
+  "generation.pause.edit_unavailable": "The paused image is no longer available to edit.",
+  "generation.pause.continue_edit": "Continue with edit from step {step}/{total}",
 
   // Refiner History
   "generation.upscale_history.title": "Refiner History",

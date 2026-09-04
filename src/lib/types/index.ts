@@ -452,6 +452,11 @@ export interface GenerationParams {
   /** Earlier stages of a paused run, oldest first. The backend rebuilds them
    *  with identical node IDs so ComfyUI serves their latents from cache. */
   resume_stages?: ResumeStage[];
+  /** ComfyUI input filename of the paused preview with corrections painted on
+   *  it; blended into the paused latent at the paused noise level on resume. */
+  resume_edit_image?: string | null;
+  /** Mask for `resume_edit_image` (white = take the edit). */
+  resume_edit_mask?: string | null;
 }
 
 /** One completed stage of a paused txt2img run, as sent back on resume. */

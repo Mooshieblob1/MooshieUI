@@ -2140,10 +2140,16 @@ const it: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "Il trasferimento di stile è disattivato durante la pausa: usa un proprio sampler senza punto di pausa.",
   "generation.pause.continue": "Continua dal passo {step}/{total}",
   "generation.pause.banner": "In pausa dopo il passo {step} di {total}. Regola prompt, CFG, sampler o LoRA, poi Continua.",
-  "generation.pause.locked_hint": "Passi, scheduler, dimensioni, batch, seed e modello restano come al momento della pausa.",
+  "generation.pause.locked_hint": "Dimensioni, batch, seed e modello restano come al momento della pausa. Passi e scheduler possono cambiare nella fase che completa la generazione.",
   "generation.pause.retry_hint": "La generazione in pausa resta finché non la scarti, così puoi premere Continua di nuovo con altre impostazioni per provare un finale diverso dallo stesso punto.",
   "generation.pause.discard": "Scarta la generazione in pausa",
   "generation.pause.discard_tip": "Dimentica il latente in pausa. Il prossimo Genera avvia una nuova immagine.",
+  "generation.pause.edit": "Dipingi una correzione",
+  "generation.pause.edit_tip": "Invia l'immagine in pausa alla tela di inpaint. Dipingi ciò che deve cambiare, maschera l'area dipinta, poi Continua: la pittura viene fusa nel latente in pausa al suo livello di rumore e i passi rimanenti proseguono sopra.",
+  "generation.pause.edit_hint": "Pittura nell'immagine in pausa: disegna la modifica, mascherala, poi premi Continua con modifica.",
+  "generation.pause.edit_needs_mask": "Maschera l'area dipinta perché la ripresa sappia dove fondere la modifica.",
+  "generation.pause.edit_unavailable": "L'immagine in pausa non è più disponibile per la modifica.",
+  "generation.pause.continue_edit": "Continua con modifica dal passo {step}/{total}",
 
 
 

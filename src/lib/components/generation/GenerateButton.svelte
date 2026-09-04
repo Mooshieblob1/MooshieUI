@@ -30,6 +30,7 @@
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
   import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
+  import { beginPausedEdit, uploadPausedEditImage } from "../../utils/pausedEdit.js";
   import { queue } from "../../stores/queue.svelte.js";
   import QueuePanel from "../ui/QueuePanel.svelte";
 
@@ -129,6 +130,18 @@
     return false;
   }
 
+  async function handleEditPausedImage() {
+    errorMsg = null;
+    try {
+      if (!(await beginPausedEdit())) {
+        gallery.showToast(locale.t("generation.pause.edit_unavailable"), "error");
+      }
+    } catch (e) {
+      console.error("Edit paused image failed:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
   async function handleGenerate() {
     const sequential = isSequentialGenerateRun();
     if (sequential && isSubmitting) return;
@@ -167,6 +180,45 @@
         generation.saveCurrentPromptToHistory();
         await submitGeneration(generation.toParams());
         generation.saveSettings();
+        return;
+      }
+
+      // Continuing a paused run with a painted correction: the inpaint canvas
+      // holds the paused preview, the user's paint and a mask. The paint is
+      // composited onto the preview and blended into the paused latent under
+      // the mask before the remaining steps run.
+      if (generation.isPaused && generation.pausedEditArmed && generation.mode === "inpainting") {
+        if (!canvasEditorRef) {
+          throw new Error(locale.t("canvas.editor_not_ready"));
+        }
+        await canvas.syncToGeneration(
+          () => canvasEditorRef.getRasterComposite(),
+          () => canvasEditorRef.getMaskCanvas()
+        );
+        if (!generation.maskImage) {
+          errorMsg = locale.t("generation.pause.edit_needs_mask");
+          return;
+        }
+        const editImage = await uploadPausedEditImage(canvasEditorRef.getRasterComposite());
+        if (!editImage) {
+          errorMsg = locale.t("generation.error_no_image");
+          return;
+        }
+        generation.saveCurrentPromptToHistory();
+        await submitGeneration(
+          generation.toParams({
+            overrides: {
+              mode: "txt2img",
+              resume_edit_image: editImage,
+              resume_edit_mask: generation.maskImage,
+            },
+          }),
+        );
+        generation.saveSettings();
+        // Back to the text-to-image view; the paused run stays until discarded.
+        generation.pausedEditArmed = false;
+        generation.mode = "txt2img";
+        canvas.isCanvasMode = false;
         return;
       }
 
@@ -622,6 +674,8 @@
       {locale.t('generation.generate_queue', { count: progress.queueCount })}
     {:else if generation.isPaused && generation.mode === "txt2img"}
       {locale.t('generation.pause.continue', { step: String(generation.pausedEndStep), total: String(generation.steps) })}
+    {:else if generation.isPaused && generation.pausedEditArmed && generation.mode === "inpainting"}
+      {locale.t('generation.pause.continue_edit', { step: String(generation.pausedEndStep), total: String(generation.steps) })}
     {:else if orderedWildcardRunCount > 1}
       {locale.t('generation.generate_ordered', { count: orderedWildcardRunCount })}
     {:else}
@@ -687,14 +741,29 @@
     </p>
     <p class="mt-0.5 text-amber-200/70">{locale.t('generation.pause.locked_hint')}</p>
     <p class="mt-0.5 text-amber-200/70">{locale.t('generation.pause.retry_hint')}</p>
-    <button
-      type="button"
-      onclick={() => generation.discardPausedRun()}
-      class="mt-1 underline underline-offset-2 hover:text-white transition-colors"
-      title={locale.t('generation.pause.discard_tip')}
-    >
-      {locale.t('generation.pause.discard')}
-    </button>
+    {#if generation.pausedEditArmed && generation.mode === "inpainting"}
+      <p class="mt-0.5 text-amber-100">{locale.t('generation.pause.edit_hint')}</p>
+    {/if}
+    <div class="mt-1 flex flex-wrap gap-3">
+      {#if !(generation.pausedEditArmed && generation.mode === "inpainting")}
+        <button
+          type="button"
+          onclick={handleEditPausedImage}
+          class="underline underline-offset-2 hover:text-white transition-colors"
+          title={locale.t('generation.pause.edit_tip')}
+        >
+          {locale.t('generation.pause.edit')}
+        </button>
+      {/if}
+      <button
+        type="button"
+        onclick={() => generation.discardPausedRun()}
+        class="underline underline-offset-2 hover:text-white transition-colors"
+        title={locale.t('generation.pause.discard_tip')}
+      >
+        {locale.t('generation.pause.discard')}
+      </button>
+    </div>
   </div>
 {/if}
 

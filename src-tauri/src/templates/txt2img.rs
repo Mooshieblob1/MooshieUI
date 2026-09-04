@@ -143,10 +143,46 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // Sampler. A plain KSampler runs the whole schedule; a paused or resumed
     // stage uses KSamplerAdvanced so it can stop early and hand the leftover
     // noise to the next stage, or pick up from a stage that did.
-    let sampler_id = next_id.to_string();
     let start_step = stage.map_or(0, |s| s.start_step);
     let end_step = stage.and_then(|s| s.end_step);
-    let sampler_node = if start_step == 0 && end_step.is_none() {
+    let custom_tail = stage.is_some_and(|s| s.custom_tail);
+
+    // A finishing stage on a different scheduler or step count samples an
+    // explicit sigma tail. `inject_resume_stage` builds the tail from the
+    // patched model and fills in `sigmas`; the placeholder never reaches
+    // ComfyUI.
+    let sampler_select_id = if custom_tail {
+        let id = next_id.to_string();
+        workflow.insert(
+            id.clone(),
+            json!({
+                "class_type": "KSamplerSelect",
+                "inputs": { "sampler_name": params.sampler_name }
+            }),
+        );
+        next_id += 1;
+        Some(id)
+    } else {
+        None
+    };
+
+    let sampler_id = next_id.to_string();
+    let sampler_node = if let Some(select_id) = sampler_select_id {
+        json!({
+            "class_type": "SamplerCustom",
+            "inputs": {
+                "model": [model_source.0.clone(), model_source.1],
+                "positive": [pos_source.0.clone(), pos_source.1],
+                "negative": [neg_source.0.clone(), neg_source.1],
+                "latent_image": [latent_source.0, latent_source.1],
+                "add_noise": false,
+                "noise_seed": seed,
+                "cfg": params.cfg,
+                "sampler": [select_id, 0],
+                "sigmas": ["0", 0]
+            }
+        })
+    } else if start_step == 0 && end_step.is_none() {
         json!({
             "class_type": "KSampler",
             "inputs": {

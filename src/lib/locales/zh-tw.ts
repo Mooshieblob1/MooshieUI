@@ -2140,10 +2140,16 @@ const zhTw: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "暫停時風格轉換會關閉：它使用沒有暫停點的專用取樣器。",
   "generation.pause.continue": "從第 {step}/{total} 步繼續",
   "generation.pause.banner": "已在第 {step}/{total} 步後暫停。調整提示詞、CFG、取樣器或 LoRA 後按「繼續」。",
-  "generation.pause.locked_hint": "步數、排程器、尺寸、批次大小、種子與模型維持暫停時的設定。",
+  "generation.pause.locked_hint": "尺寸、批次大小、種子與模型維持暫停時的設定。步數與排程器只能在完成生成的階段變更。",
   "generation.pause.retry_hint": "暫停的生成會保留到你捨棄為止，因此可以用不同設定再次「繼續」，從同一點嘗試另一種結果。",
   "generation.pause.discard": "捨棄暫停的生成",
   "generation.pause.discard_tip": "忘記暫停的潛變數。下次「生成」會從新影像開始。",
+  "generation.pause.edit": "繪製修正",
+  "generation.pause.edit_tip": "將暫停的影像送到修補畫布。塗抹要改變的部分，遮罩塗抹區域，然後按「繼續」：塗抹會以暫停時的雜訊程度混入暫停的潛變數，剩餘步驟在其上繼續執行。",
+  "generation.pause.edit_hint": "正在暫停影像上繪製：畫出變更、加上遮罩，然後按「帶修正繼續」。",
+  "generation.pause.edit_needs_mask": "請遮罩塗抹的區域，讓恢復時知道要在哪裡混入修正。",
+  "generation.pause.edit_unavailable": "暫停的影像已無法編輯。",
+  "generation.pause.continue_edit": "帶修正從第 {step}/{total} 步繼續",
 
 
 

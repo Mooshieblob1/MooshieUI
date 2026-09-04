@@ -2204,10 +2204,16 @@ const es: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "La transferencia de estilo está desactivada al pausar: usa su propio sampler sin punto de pausa.",
   "generation.pause.continue": "Continuar desde el paso {step}/{total}",
   "generation.pause.banner": "Pausado tras el paso {step} de {total}. Ajusta el prompt, CFG, sampler o LoRAs y pulsa Continuar.",
-  "generation.pause.locked_hint": "Pasos, scheduler, tamaño, tamaño de lote, semilla y modelo se mantienen como al pausar.",
+  "generation.pause.locked_hint": "Tamaño, tamaño de lote, semilla y modelo se mantienen como al pausar. Los pasos y el scheduler pueden cambiar en la etapa que termina la ejecución.",
   "generation.pause.retry_hint": "La ejecución pausada se conserva hasta que la descartes, así puedes Continuar de nuevo con otros ajustes para probar otro final desde el mismo punto.",
   "generation.pause.discard": "Descartar la ejecución pausada",
   "generation.pause.discard_tip": "Olvida el latente pausado. El próximo Generar empieza una imagen nueva.",
+  "generation.pause.edit": "Pintar una corrección",
+  "generation.pause.edit_tip": "Envía la imagen pausada al lienzo de inpaint. Pinta sobre lo que debe cambiar, enmascara la zona pintada y pulsa Continuar: la pintura se mezcla en el latente pausado a su nivel de ruido y los pasos restantes se ejecutan encima.",
+  "generation.pause.edit_hint": "Pintando en la imagen pausada: dibuja el cambio, enmascáralo y pulsa Continuar con edición.",
+  "generation.pause.edit_needs_mask": "Enmascara la zona pintada para que la continuación sepa dónde mezclar la edición.",
+  "generation.pause.edit_unavailable": "La imagen pausada ya no está disponible para editar.",
+  "generation.pause.continue_edit": "Continuar con edición desde el paso {step}/{total}",
 
 
 

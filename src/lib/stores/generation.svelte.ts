@@ -215,6 +215,8 @@ export interface GenerationToParamsOptions {
       | "positive_prompt"
       | "denoise"
       | "differential_diffusion"
+      | "resume_edit_image"
+      | "resume_edit_mask"
     >
   >;
 }
@@ -665,6 +667,12 @@ class GenerationStore {
    * the latents live in ComfyUI's execution cache, which a restart clears.
    */
   pausedStages = $state<PausedStage[]>([]);
+  /**
+   * The paused preview has been sent to the inpaint canvas so corrections
+   * can be painted into it. While set, Generate in inpainting mode continues
+   * the paused run with the painted image instead of starting an inpaint.
+   */
+  pausedEditArmed = $state(false);
   denoise = $state(0.7);
   inputImage = $state<string | null>(null);
   maskImage = $state<string | null>(null);
@@ -1023,6 +1031,9 @@ class GenerationStore {
 
     this._mode = mode;
     this.applyModeToggleState(this.modeToggles[mode] ?? defaultModeToggleState());
+    // Leaving the inpaint canvas abandons the painted edit; the paused run
+    // itself stays until discarded.
+    if (mode !== "inpainting") this.pausedEditArmed = false;
   }
 
   readPromptBucket(): PromptBucket {
@@ -3165,7 +3176,18 @@ class GenerationStore {
    * TeaCache are switched off for such runs (see `toParams`).
    */
   get pauseResumeActive(): boolean {
-    return this._mode === "txt2img" && (this.isPaused || this.effectivePauseAtStep > 0);
+    return this.resumeAppliesToMode && (this.isPaused || this.effectivePauseAtStep > 0);
+  }
+
+  /**
+   * Whether the current mode takes part in pause and resume: txt2img always,
+   * inpainting only while it is being used to paint a correction into the
+   * paused preview.
+   */
+  get resumeAppliesToMode(): boolean {
+    return (
+      this._mode === "txt2img" || (this._mode === "inpainting" && this.isPaused && this.pausedEditArmed)
+    );
   }
 
   /**
@@ -3200,6 +3222,7 @@ class GenerationStore {
   /** Forget the paused run; the next Generate starts a fresh image. */
   discardPausedRun() {
     this.pausedStages = [];
+    this.pausedEditArmed = false;
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
@@ -3644,10 +3667,10 @@ class GenerationStore {
       // Null for every local generation, so the backend's NovelAI branch is
       // never reachable from one.
       novelai: this.novelAiParams(novelAiCharacters.characters),
-      pause_at_step: this._mode === "txt2img" && this.effectivePauseAtStep > 0
+      pause_at_step: this.resumeAppliesToMode && this.effectivePauseAtStep > 0
         ? this.effectivePauseAtStep
         : null,
-      resume_stages: this._mode === "txt2img" && this.isPaused
+      resume_stages: this.resumeAppliesToMode && this.isPaused
         ? this.pausedStages.map(
             (stage): ResumeStage => ({
               params: stage.params,

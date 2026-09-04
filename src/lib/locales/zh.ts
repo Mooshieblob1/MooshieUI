@@ -2181,10 +2181,16 @@ const zh: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "暂停时风格迁移会关闭：它使用没有暂停点的专用采样器。",
   "generation.pause.continue": "从第 {step}/{total} 步继续",
   "generation.pause.banner": "已在第 {step}/{total} 步后暂停。调整提示词、CFG、采样器或 LoRA 后按“继续”。",
-  "generation.pause.locked_hint": "步数、调度器、尺寸、批次大小、种子和模型保持暂停时的设置。",
+  "generation.pause.locked_hint": "尺寸、批次大小、种子和模型保持暂停时的设置。步数和调度器只能在完成生成的阶段更改。",
   "generation.pause.retry_hint": "已暂停的生成会保留到你丢弃为止，因此可以用不同设置再次“继续”，从同一点尝试另一种结果。",
   "generation.pause.discard": "丢弃已暂停的生成",
   "generation.pause.discard_tip": "忘记已暂停的潜变量。下次“生成”将从新图像开始。",
+  "generation.pause.edit": "绘制修正",
+  "generation.pause.edit_tip": "将暂停的图像送到修补画布。涂抹要改变的部分，遮罩涂抹区域，然后按“继续”：涂抹会以暂停时的噪声水平混入暂停的潜变量，剩余步骤在其上继续运行。",
+  "generation.pause.edit_hint": "正在暂停图像上绘制：画出改动、加上遮罩，然后按“带修正继续”。",
+  "generation.pause.edit_needs_mask": "请遮罩涂抹的区域，让恢复时知道在哪里混入修正。",
+  "generation.pause.edit_unavailable": "暂停的图像已无法编辑。",
+  "generation.pause.continue_edit": "带修正从第 {step}/{total} 步继续",
 
 
 

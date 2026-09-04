@@ -2140,10 +2140,16 @@ const ko: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "일시정지 중에는 스타일 전송이 꺼집니다. 전용 샘플러에 일시정지 지점이 없습니다.",
   "generation.pause.continue": "스텝 {step}/{total}부터 계속",
   "generation.pause.banner": "스텝 {step}/{total} 후 일시정지됨. 프롬프트, CFG, 샘플러, LoRA를 조정한 뒤 계속을 누르세요.",
-  "generation.pause.locked_hint": "스텝, 스케줄러, 크기, 배치 크기, 시드, 모델은 일시정지 당시 그대로 유지됩니다.",
+  "generation.pause.locked_hint": "크기, 배치 크기, 시드, 모델은 일시정지 당시 그대로 유지됩니다. 스텝과 스케줄러는 생성을 마치는 단계에서만 바꿀 수 있습니다.",
   "generation.pause.retry_hint": "일시정지된 생성은 버리기 전까지 유지되므로, 다른 설정으로 다시 계속을 눌러 같은 지점에서 다른 결말을 시도할 수 있습니다.",
   "generation.pause.discard": "일시정지된 생성 버리기",
   "generation.pause.discard_tip": "일시정지된 잠재 표현을 잊습니다. 다음 생성은 새 이미지로 시작합니다.",
+  "generation.pause.edit": "수정 그려 넣기",
+  "generation.pause.edit_tip": "일시정지된 이미지를 인페인트 캔버스로 보냅니다. 바꿀 부분을 칠하고 칠한 영역을 마스크한 뒤 계속을 누르면, 그 그림이 일시정지 시점의 노이즈 수준으로 잠재 표현에 합성되고 남은 스텝이 그 위에서 진행됩니다.",
+  "generation.pause.edit_hint": "일시정지 이미지에 그리는 중: 변경을 그리고 마스크한 다음 수정과 함께 계속을 누르세요.",
+  "generation.pause.edit_needs_mask": "재개 시 어디에 합성할지 알 수 있도록 칠한 영역을 마스크하세요.",
+  "generation.pause.edit_unavailable": "일시정지된 이미지를 더 이상 편집할 수 없습니다.",
+  "generation.pause.continue_edit": "수정과 함께 스텝 {step}/{total}부터 계속",
 
 
 

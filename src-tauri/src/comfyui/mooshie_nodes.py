@@ -1020,6 +1020,141 @@ class MooshieLoadVideoPath:
             return float("nan")
 
 
+class MooshieSigmaTail:
+    """Schedule for the remaining steps of a paused run.
+
+    A paused run stopped at `sigmas[at_step]` of its original schedule. This
+    returns `steps + 1` sigmas that start exactly there and end at zero,
+    spaced the way `scheduler` would space them, so the resumed stage can use
+    a different scheduler or a different number of remaining steps without
+    the noise level it starts from being wrong.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "sigmas": ("SIGMAS",),
+                "at_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "steps": ("INT", {"default": 10, "min": 1, "max": 10000}),
+            }
+        }
+
+    RETURN_TYPES = ("SIGMAS",)
+    FUNCTION = "build"
+    CATEGORY = "mooshie/pause"
+
+    def build(self, model, sigmas, at_step, scheduler, steps):
+        sigmas = sigmas.detach().float().cpu()
+        at_step = max(0, min(int(at_step), sigmas.shape[0] - 1))
+        sigma_start = sigmas[at_step].item()
+        if sigma_start <= 0.0:
+            print("[MooshieSigmaTail] paused schedule is already at zero; nothing left to sample")
+            return (torch.zeros(2),)
+
+        # A fine schedule under the requested scheduler, cut where it first
+        # falls to the paused noise level, then resampled to the requested
+        # step count. Works for every scheduler ComfyUI knows, including
+        # timestep-spaced ones (normal, simple, sgm_uniform) that have no
+        # closed form between two arbitrary sigmas.
+        model_sampling = model.get_model_object("model_sampling")
+        fine = comfy.samplers.calculate_sigmas(model_sampling, scheduler, 1000).float().cpu()
+        below = (fine <= sigma_start).nonzero()
+        first = int(below[0].item()) if below.numel() > 0 else fine.shape[0] - 1
+        tail = fine[first:]
+        if tail.shape[0] < 2:
+            tail = torch.tensor([sigma_start, 0.0])
+
+        positions = torch.linspace(0.0, float(tail.shape[0] - 1), int(steps) + 1)
+        lower = positions.floor().long().clamp(0, tail.shape[0] - 1)
+        upper = (lower + 1).clamp(0, tail.shape[0] - 1)
+        frac = positions - lower.float()
+        out = tail[lower] * (1.0 - frac) + tail[upper] * frac
+        out[0] = sigma_start
+        out[-1] = 0.0
+        return (out,)
+
+
+class MooshieResumeEdit:
+    """Paint a correction into a paused latent at the paused noise level.
+
+    `edited_latent` is the VAE encoding of the paused preview with the user's
+    changes painted on it. It is noised to `sigmas[at_step]` with the model's
+    own noise schedule, then blended into `paused_latent` where `mask` is
+    white. The resumed sampler carries on from the blend as if the edit had
+    been there from the start. Without a mask the whole latent is replaced.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "sigmas": ("SIGMAS",),
+                "at_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
+                "edited_latent": ("LATENT",),
+                "paused_latent": ("LATENT",),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+            },
+            "optional": {
+                "mask": ("MASK",),
+            },
+        }
+
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "blend"
+    CATEGORY = "mooshie/pause"
+
+    def blend(self, model, sigmas, at_step, edited_latent, paused_latent, seed, mask=None):
+        sigmas = sigmas.detach().float().cpu()
+        at_step = max(0, min(int(at_step), sigmas.shape[0] - 1))
+        sigma = sigmas[at_step]
+
+        model_sampling = model.get_model_object("model_sampling")
+        process_in = model.model.process_latent_in
+        process_out = model.model.process_latent_out
+
+        edited = edited_latent["samples"].detach().float().cpu()
+        paused = paused_latent["samples"].detach().float().cpu()
+        if edited.ndim == 4 and edited.shape[-2:] != paused.shape[-2:]:
+            print(
+                "[MooshieResumeEdit] edited latent %s does not match paused latent %s; resizing"
+                % (tuple(edited.shape), tuple(paused.shape))
+            )
+            edited = torch.nn.functional.interpolate(
+                edited, size=paused.shape[-2:], mode="bilinear"
+            )
+        if edited.shape[0] != paused.shape[0]:
+            edited = edited[:1].expand(paused.shape[0], *edited.shape[1:]).contiguous()
+
+        # Noise the edit the same way the sampler noised the first stage, in
+        # the model's latent space, so eps, v-prediction and flow-matching
+        # models all land at the paused noise level.
+        z_edit = process_in(edited)
+        z_paused = process_in(paused)
+        noise = comfy.sample.prepare_noise(z_edit, seed).float().cpu()
+        z_noisy = model_sampling.noise_scaling(sigma.reshape([1] * z_edit.ndim), noise, z_edit)
+
+        if mask is None:
+            blended = z_noisy
+        else:
+            m = mask.detach().float().cpu()
+            m = m.reshape((-1, 1) + tuple(m.shape[-2:]))
+            m = torch.nn.functional.interpolate(m, size=z_paused.shape[-2:], mode="bilinear")
+            if m.shape[0] != z_paused.shape[0]:
+                m = m[:1].expand(z_paused.shape[0], *m.shape[1:])
+            if z_paused.ndim == 5:
+                m = m.unsqueeze(2)
+            blended = z_noisy * m + z_paused * (1.0 - m)
+
+        out = paused_latent.copy()
+        out["samples"] = process_out(blended)
+        out.pop("noise_mask", None)
+        return (out,)
+
+
 NODE_CLASS_MAPPINGS = {
     "MooshieFaceDetailer": MooshieFaceDetailer,
     "MooshieSegmentDetailer": MooshieSegmentDetailer,
@@ -1028,6 +1163,8 @@ NODE_CLASS_MAPPINGS = {
     "MooshieDiffusionLoaderPath": MooshieDiffusionLoaderPath,
     "MooshieSaveVideo": MooshieSaveVideo,
     "MooshieLoadVideoPath": MooshieLoadVideoPath,
+    "MooshieSigmaTail": MooshieSigmaTail,
+    "MooshieResumeEdit": MooshieResumeEdit,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1038,4 +1175,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieDiffusionLoaderPath": "Mooshie Diffusion Model Loader (path)",
     "MooshieSaveVideo": "Mooshie Save Video",
     "MooshieLoadVideoPath": "Mooshie Load Video (Path)",
+    "MooshieSigmaTail": "Mooshie Sigma Tail (resume)",
+    "MooshieResumeEdit": "Mooshie Resume Edit (paused latent)",
 }

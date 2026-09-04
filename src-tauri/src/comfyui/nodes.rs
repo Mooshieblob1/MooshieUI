@@ -239,6 +239,8 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "NanoSaurLoader",
     "ApplyTiledDiffusion",
     "MooshieAnimaTeaCache",
+    "MooshieSigmaTail",
+    "MooshieResumeEdit",
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");

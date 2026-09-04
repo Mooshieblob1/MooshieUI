@@ -2165,10 +2165,16 @@ const ja: Record<string, string> = {
   "generation.pause.style_transfer_disabled": "一時停止中はスタイル転送がオフになります。専用サンプラーに停止点がないためです。",
   "generation.pause.continue": "ステップ {step}/{total} から続行",
   "generation.pause.banner": "ステップ {step}/{total} の後で一時停止中。プロンプト、CFG、サンプラー、LoRA を調整して「続行」を押してください。",
-  "generation.pause.locked_hint": "ステップ数、スケジューラー、サイズ、バッチサイズ、シード、モデルは停止時のままです。",
+  "generation.pause.locked_hint": "サイズ、バッチサイズ、シード、モデルは停止時のままです。ステップ数とスケジューラーは生成を完了する段階でのみ変更できます。",
   "generation.pause.retry_hint": "一時停止中の生成は破棄するまで残るので、別の設定で再度「続行」して同じ地点から別の仕上がりを試せます。",
   "generation.pause.discard": "一時停止中の生成を破棄",
   "generation.pause.discard_tip": "停止中の潜在表現を破棄します。次の「生成」は新しい画像から始まります。",
+  "generation.pause.edit": "修正を描き込む",
+  "generation.pause.edit_tip": "一時停止中の画像をインペイントキャンバスに送ります。変えたい部分を塗り、塗った範囲をマスクして「続行」すると、その描画が停止時のノイズレベルで潜在表現に合成され、残りのステップがその上で進みます。",
+  "generation.pause.edit_hint": "一時停止画像への描き込み中：変更を描き、マスクしてから「修正して続行」を押してください。",
+  "generation.pause.edit_needs_mask": "再開時に合成する場所が分かるよう、描いた範囲をマスクしてください。",
+  "generation.pause.edit_unavailable": "一時停止中の画像はもう編集できません。",
+  "generation.pause.continue_edit": "修正してステップ {step}/{total} から続行",
 
 
 
