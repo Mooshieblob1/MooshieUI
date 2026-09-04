@@ -6293,6 +6293,13 @@ async fn auth_set_role_handler(
             return forbidden_response("Only admins can grant elevated roles.");
         }
     }
+    // A remote admin account must not demote itself: on a headless server it
+    // may be the only admin, and there is no localhost fallback to recover.
+    if let Some(caller) = extract_token(&headers).and_then(|t| state.auth.validate_token(&t)) {
+        if caller.eq_ignore_ascii_case(username) && new_role != "admin" {
+            return forbidden_response("You cannot change your own role.");
+        }
+    }
     match state.auth.set_account_role(username, new_role) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (

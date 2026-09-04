@@ -557,8 +557,8 @@
       // Normalise: backend now returns {username, role, online, created_at, last_online}
       lanAccounts = raw.map((a: any) =>
         typeof a === "string"
-          ? { username: a, role: "user", online: false, created_at: "", last_online: null, storage_limit_bytes: 1024 * 1024 * 1024 }
-          : { username: a.username, role: a.role ?? "user", online: !!a.online, created_at: a.created_at ?? "", last_online: a.last_online ?? null, storage_limit_bytes: a.storage_limit_bytes ?? 1024 * 1024 * 1024 }
+          ? { username: a, role: "user", online: false, created_at: "", last_online: null, storage_limit_bytes: 1024 * 1024 * 1024, can_use_modelhub: false }
+          : { username: a.username, role: a.role ?? "user", online: !!a.online, created_at: a.created_at ?? "", last_online: a.last_online ?? null, storage_limit_bytes: a.storage_limit_bytes ?? 1024 * 1024 * 1024, can_use_modelhub: !!a.can_use_modelhub }
       );
     } catch {
       lanAccounts = [];
@@ -626,7 +626,14 @@
   }
 
   async function toggleAccountRole(username: string, currentRole: string) {
-    const newRole = currentRole === "moderator" ? "user" : "moderator";
+    await setAccountRole(username, currentRole === "moderator" ? "user" : "moderator");
+  }
+
+  async function toggleAdminRole(username: string, currentRole: string) {
+    await setAccountRole(username, currentRole === "admin" ? "user" : "admin");
+  }
+
+  async function setAccountRole(username: string, newRole: string) {
     lanAuthBusy = true;
     lanAuthError = null;
     try {
@@ -2068,6 +2075,9 @@
                               <span class="text-sm text-neutral-200 truncate" title={account.username}>{account.username}</span>
                               {#if account.role === "moderator"}
                                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">{locale.t('common.role_mod')}</span>
+                              {/if}
+                              {#if account.role === "admin"}
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 font-medium shrink-0">{locale.t('common.role_admin')}</span>
                               {/if}
                               <span class="text-[10px] text-neutral-500 shrink-0">{locale.formatBytes(account.storage_limit_bytes)}</span>
                               <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? locale.t('settings.lan.joined_title', { date: new Date(account.created_at).toLocaleDateString() }) : ''}>
@@ -5152,14 +5162,25 @@
       {#if actionsTargetAccount.role === "moderator"}
         <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">{locale.t('common.role_mod')}</span>
       {/if}
+      {#if actionsTargetAccount.role === "admin"}
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 font-medium shrink-0">{locale.t('common.role_admin')}</span>
+      {/if}
     </div>
     <div class="flex flex-col gap-2">
       {#if isAdmin}
         <button
-          class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.role === 'moderator' ? 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+          class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.role === 'admin' ? 'bg-amber-600/20 text-amber-300 hover:bg-amber-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
           disabled={lanAuthBusy}
-          onclick={() => { toggleAccountRole(actionsTargetAccount!.username, actionsTargetAccount!.role); showAccountActionsModal = false; }}
-        >{actionsTargetAccount.role === "moderator" ? locale.t('settings.lan.revoke_moderator') : locale.t('settings.lan.make_moderator')}</button>
+          onclick={() => { toggleAdminRole(actionsTargetAccount!.username, actionsTargetAccount!.role); showAccountActionsModal = false; }}
+        >{actionsTargetAccount.role === "admin" ? locale.t('settings.lan.revoke_admin') : locale.t('settings.lan.make_admin')}</button>
+        <p class="text-[10px] text-neutral-500 leading-snug">{locale.t('settings.lan.admin_role_hint')}</p>
+        {#if actionsTargetAccount.role !== "admin"}
+          <button
+            class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.role === 'moderator' ? 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+            disabled={lanAuthBusy}
+            onclick={() => { toggleAccountRole(actionsTargetAccount!.username, actionsTargetAccount!.role); showAccountActionsModal = false; }}
+          >{actionsTargetAccount.role === "moderator" ? locale.t('settings.lan.revoke_moderator') : locale.t('settings.lan.make_moderator')}</button>
+        {/if}
       {/if}
       <button
         class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-cyan-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
