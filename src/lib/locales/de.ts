@@ -2154,6 +2154,18 @@ const de: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Beschleunigt die Anima-Generierung, indem die vorherige Ausgabe des Modells bei Schritten mit geringer Änderung wiederverwendet und der Forward-Pass übersprungen wird. Geringes Risiko weicherer Details; standardmäßig deaktiviert.",
+  "generation.pause.label": "Bei Schritt pausieren",
+  "generation.pause.tip": "Stoppt das Sampling nach dieser Anzahl Schritte und zeigt das halbfertige Bild. Danach Prompt, CFG, Sampler oder LoRAs ändern und auf Fortsetzen drücken, um die restlichen Schritte ab dem Haltepunkt zu rechnen. Frühe Pausen verändern die Komposition, späte nur Details. 0 rechnet bis zum Ende.",
+  "generation.pause.will_pause": "Pausiert nach Schritt {step} von {total}.",
+  "generation.pause.step_ignored": "Der Pausenschritt muss nach Schritt {min} und vor Schritt {max} liegen; der Lauf wird stattdessen abgeschlossen.",
+  "generation.pause.teacache_disabled": "TeaCache ist beim Pausieren aus: sein Schritt-Cache kann eine Pause nicht überdauern.",
+  "generation.pause.style_transfer_disabled": "Stiltransfer ist beim Pausieren aus: er nutzt einen eigenen Sampler ohne Haltepunkt.",
+  "generation.pause.continue": "Ab Schritt {step}/{total} fortsetzen",
+  "generation.pause.banner": "Pausiert nach Schritt {step} von {total}. Prompt, CFG, Sampler oder LoRAs anpassen, dann Fortsetzen.",
+  "generation.pause.locked_hint": "Schritte, Scheduler, Größe, Batchgröße, Seed und Modell bleiben wie beim Pausieren.",
+  "generation.pause.retry_hint": "Der pausierte Lauf bleibt erhalten, bis du ihn verwirfst. So kannst du mit anderen Einstellungen erneut fortsetzen und ein anderes Ende vom selben Punkt aus probieren.",
+  "generation.pause.discard": "Pausierten Lauf verwerfen",
+  "generation.pause.discard_tip": "Das pausierte Latent vergessen. Der nächste Generieren-Klick startet ein neues Bild.",
 
 
 

@@ -159,6 +159,17 @@
     }
 
     try {
+      // Continuing a paused run: the remaining steps sample from the paused
+      // latent with the current prompt, CFG, sampler and LoRAs. Grid, ordered
+      // wildcard and regional chains all start fresh images, so they do not
+      // apply here.
+      if (generation.isPaused && generation.mode === "txt2img") {
+        generation.saveCurrentPromptToHistory();
+        await submitGeneration(generation.toParams());
+        generation.saveSettings();
+        return;
+      }
+
       // If compare grid has multiple cells, generate all cells
       if (compare.active && compare.cellCount > 1) {
         await handleGridGenerate();
@@ -609,6 +620,8 @@
   >
     {#if progress.queueCount > 0}
       {locale.t('generation.generate_queue', { count: progress.queueCount })}
+    {:else if generation.isPaused && generation.mode === "txt2img"}
+      {locale.t('generation.pause.continue', { step: String(generation.pausedEndStep), total: String(generation.steps) })}
     {:else if orderedWildcardRunCount > 1}
       {locale.t('generation.generate_ordered', { count: orderedWildcardRunCount })}
     {:else}
@@ -666,6 +679,24 @@
     </button>
   {/if}
 </div>
+
+{#if generation.isPaused}
+  <div class="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+    <p class="font-medium">
+      {locale.t('generation.pause.banner', { step: String(generation.pausedEndStep), total: String(generation.steps) })}
+    </p>
+    <p class="mt-0.5 text-amber-200/70">{locale.t('generation.pause.locked_hint')}</p>
+    <p class="mt-0.5 text-amber-200/70">{locale.t('generation.pause.retry_hint')}</p>
+    <button
+      type="button"
+      onclick={() => generation.discardPausedRun()}
+      class="mt-1 underline underline-offset-2 hover:text-white transition-colors"
+      title={locale.t('generation.pause.discard_tip')}
+    >
+      {locale.t('generation.pause.discard')}
+    </button>
+  </div>
+{/if}
 
 {#if errorMsg}
   <p class="text-xs text-red-400 text-center mt-1">{errorMsg}</p>

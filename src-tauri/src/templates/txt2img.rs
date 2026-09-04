@@ -9,7 +9,9 @@ use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
-    let next_id: u32 = 1;
+    // A later stage of a paused run allocates its node IDs after the stages
+    // before it, whose nodes it shares the graph with.
+    let next_id: u32 = params.stage.as_ref().map_or(1, |s| s.first_id.max(1));
 
     // Load model (checkpoint or split UNETLoader + CLIPLoader + VAELoader)
     let ml = load_model_nodes(&mut workflow, next_id, params);
@@ -17,6 +19,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let model_source = ml.model_source;
     let clip_source = ml.clip_source;
     let vae_source = ml.vae_source;
+    let base_sources = ml.base;
 
     // Positive conditioning (with optional timestep scheduling)
     let (mut pos_source, nid) = build_scheduled_conditioning(
@@ -105,41 +108,52 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id = nid;
 
-    // Empty latent image — choose the architecture-specific latent node.
-    let latent_id = next_id.to_string();
-    let use_flux2_latent = needs_flux2_latent(params);
-    let use_sd3_latent = needs_sd3_latent(params);
-    workflow.insert(
-        latent_id.clone(),
-        json!({
-            "class_type":
-            if use_flux2_latent {
-                "EmptyFlux2LatentImage"
-            } else if use_sd3_latent {
-                "EmptySD3LatentImage"
-            } else {
-                "EmptyLatentImage"
-            },
-            "inputs": {
-                "width": params.width,
-                "height": params.height,
-                "batch_size": params.batch_size
-            }
-        }),
-    );
-    next_id += 1;
+    let stage = params.stage.as_ref();
 
-    // KSampler
+    // Latent: a resumed stage continues from the previous stage's sampler
+    // output; otherwise an empty latent of the architecture-specific kind.
+    let latent_source: (String, u32) = if let Some(latent) = stage.and_then(|s| s.latent.clone()) {
+        latent
+    } else {
+        let latent_id = next_id.to_string();
+        let use_flux2_latent = needs_flux2_latent(params);
+        let use_sd3_latent = needs_sd3_latent(params);
+        workflow.insert(
+            latent_id.clone(),
+            json!({
+                "class_type":
+                if use_flux2_latent {
+                    "EmptyFlux2LatentImage"
+                } else if use_sd3_latent {
+                    "EmptySD3LatentImage"
+                } else {
+                    "EmptyLatentImage"
+                },
+                "inputs": {
+                    "width": params.width,
+                    "height": params.height,
+                    "batch_size": params.batch_size
+                }
+            }),
+        );
+        next_id += 1;
+        (latent_id, 0)
+    };
+
+    // Sampler. A plain KSampler runs the whole schedule; a paused or resumed
+    // stage uses KSamplerAdvanced so it can stop early and hand the leftover
+    // noise to the next stage, or pick up from a stage that did.
     let sampler_id = next_id.to_string();
-    workflow.insert(
-        sampler_id.clone(),
+    let start_step = stage.map_or(0, |s| s.start_step);
+    let end_step = stage.and_then(|s| s.end_step);
+    let sampler_node = if start_step == 0 && end_step.is_none() {
         json!({
             "class_type": "KSampler",
             "inputs": {
                 "model": [model_source.0.clone(), model_source.1],
                 "positive": [pos_source.0.clone(), pos_source.1],
                 "negative": [neg_source.0.clone(), neg_source.1],
-                "latent_image": [latent_id, 0],
+                "latent_image": [latent_source.0, latent_source.1],
                 "seed": seed,
                 "steps": params.steps,
                 "cfg": params.cfg,
@@ -147,8 +161,32 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "scheduler": params.scheduler,
                 "denoise": 1.0
             }
-        }),
-    );
+        })
+    } else {
+        json!({
+            "class_type": "KSamplerAdvanced",
+            "inputs": {
+                "model": [model_source.0.clone(), model_source.1],
+                "positive": [pos_source.0.clone(), pos_source.1],
+                "negative": [neg_source.0.clone(), neg_source.1],
+                "latent_image": [latent_source.0, latent_source.1],
+                // Noise is added once, by the stage that starts the schedule.
+                "add_noise": if start_step == 0 { "enable" } else { "disable" },
+                "noise_seed": seed,
+                "steps": params.steps,
+                "cfg": params.cfg,
+                "sampler_name": params.sampler_name,
+                "scheduler": params.scheduler,
+                "start_at_step": start_step,
+                "end_at_step": end_step.unwrap_or(10000),
+                // A stage that stops early must keep the remaining noise in
+                // the latent, or the next stage would resume from a clean
+                // latent at the wrong noise level.
+                "return_with_leftover_noise": if end_step.is_some() { "enable" } else { "disable" }
+            }
+        })
+    };
+    workflow.insert(sampler_id.clone(), sampler_node);
     next_id += 1;
 
     // VAE Decode — VAEDecodeTiled for Mugen (Flux2VAE SDXL), VAEDecode otherwise
@@ -166,5 +204,6 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         vae_source,
         sampler_id,
         refiner_model_source: None,
+        base_sources: Some(base_sources),
     }
 }

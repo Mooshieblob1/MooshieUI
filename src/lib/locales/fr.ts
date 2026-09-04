@@ -2158,6 +2158,18 @@ const fr: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Accélère la génération Anima en réutilisant la sortie précédente du modèle aux étapes où peu de choses ont changé, en sautant le passage avant. Léger risque de détails plus doux ; désactivé par défaut.",
+  "generation.pause.label": "Pause à l'étape",
+  "generation.pause.tip": "Arrête l'échantillonnage après ce nombre d'étapes et affiche l'image à moitié terminée. Modifiez ensuite le prompt, le CFG, le sampler ou les LoRAs, puis appuyez sur Continuer pour échantillonner les étapes restantes depuis l'arrêt. Une pause précoce change la composition, une pause tardive seulement les détails. 0 va jusqu'au bout.",
+  "generation.pause.will_pause": "Pause après l'étape {step} sur {total}.",
+  "generation.pause.step_ignored": "L'étape de pause doit être après l'étape {min} et avant l'étape {max} ; la génération ira jusqu'au bout.",
+  "generation.pause.teacache_disabled": "TeaCache est désactivé pendant une pause : son cache d'étapes ne peut pas traverser une pause.",
+  "generation.pause.style_transfer_disabled": "Le transfert de style est désactivé pendant une pause : il utilise son propre sampler sans point d'arrêt.",
+  "generation.pause.continue": "Continuer depuis l'étape {step}/{total}",
+  "generation.pause.banner": "En pause après l'étape {step} sur {total}. Ajustez le prompt, le CFG, le sampler ou les LoRAs, puis Continuer.",
+  "generation.pause.locked_hint": "Étapes, scheduler, taille, taille de lot, seed et modèle restent tels qu'au moment de la pause.",
+  "generation.pause.retry_hint": "La génération en pause reste disponible jusqu'à ce que vous l'abandonniez : vous pouvez Continuer à nouveau avec d'autres réglages pour essayer une autre fin depuis le même point.",
+  "generation.pause.discard": "Abandonner la génération en pause",
+  "generation.pause.discard_tip": "Oublie le latent en pause. Le prochain Générer démarre une nouvelle image.",
 
 
 

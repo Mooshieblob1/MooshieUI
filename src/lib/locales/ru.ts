@@ -2132,6 +2132,18 @@ const ru: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Ускоряет генерацию в Anima за счёт повторного использования предыдущего результата модели на шагах с малыми изменениями, пропуская прямой проход. Небольшой риск более мягкой детализации; по умолчанию отключено.",
+  "generation.pause.label": "Пауза на шаге",
+  "generation.pause.tip": "Останавливает сэмплирование после этого числа шагов и показывает недоделанное изображение. Затем измените промпт, CFG, сэмплер или LoRA и нажмите «Продолжить», чтобы досчитать оставшиеся шаги с места остановки. Ранняя пауза меняет композицию, поздняя лишь детали. 0 выполняет до конца.",
+  "generation.pause.will_pause": "Пауза после шага {step} из {total}.",
+  "generation.pause.step_ignored": "Шаг паузы должен быть после шага {min} и до шага {max}; генерация будет доведена до конца.",
+  "generation.pause.teacache_disabled": "TeaCache отключён при паузе: его кэш шагов не переживает остановку.",
+  "generation.pause.style_transfer_disabled": "Перенос стиля отключён при паузе: у него свой сэмплер без точки остановки.",
+  "generation.pause.continue": "Продолжить с шага {step}/{total}",
+  "generation.pause.banner": "Пауза после шага {step} из {total}. Измените промпт, CFG, сэмплер или LoRA и нажмите «Продолжить».",
+  "generation.pause.locked_hint": "Шаги, планировщик, размер, размер пакета, сид и модель остаются такими, как при паузе.",
+  "generation.pause.retry_hint": "Приостановленная генерация сохраняется, пока вы её не отмените, поэтому можно снова нажать «Продолжить» с другими настройками и попробовать другой финал с той же точки.",
+  "generation.pause.discard": "Отменить приостановленную генерацию",
+  "generation.pause.discard_tip": "Забыть приостановленный латент. Следующая генерация начнёт новое изображение.",
 
 
 

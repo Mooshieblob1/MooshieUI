@@ -1312,6 +1312,18 @@ const en: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Speeds up Anima generation by reusing the model's previous output on steps where little changed, skipping the forward pass. Small risk of softer detail; off by default.",
+  "generation.pause.label": "Pause at step",
+  "generation.pause.tip": "Stop sampling after this many steps and show the half-finished image. Then change the prompt, CFG, sampler or LoRAs and press Continue to sample the remaining steps from where it stopped. Early pauses reshape the composition, late pauses only change detail. 0 runs to the end.",
+  "generation.pause.will_pause": "Will pause after step {step} of {total}.",
+  "generation.pause.step_ignored": "Pause step must be after step {min} and before step {max}; the run will complete instead.",
+  "generation.pause.teacache_disabled": "TeaCache is off while pausing: its step cache cannot carry across a pause.",
+  "generation.pause.style_transfer_disabled": "Style transfer is off while pausing: it uses its own sampler with no pause point.",
+  "generation.pause.continue": "Continue from step {step}/{total}",
+  "generation.pause.banner": "Paused after step {step} of {total}. Adjust the prompt, CFG, sampler or LoRAs, then Continue.",
+  "generation.pause.locked_hint": "Steps, scheduler, size, batch size, seed and model stay as they were when the run paused.",
+  "generation.pause.retry_hint": "The paused run stays until you discard it, so you can Continue again with different settings to try another ending from the same point.",
+  "generation.pause.discard": "Discard paused run",
+  "generation.pause.discard_tip": "Forget the paused latent. The next Generate starts a new image.",
 
   // Refiner History
   "generation.upscale_history.title": "Refiner History",

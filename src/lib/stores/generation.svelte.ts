@@ -63,6 +63,7 @@ import type {
   NovelAiVibeEncoding,
   RegionalPromptSelection,
   RegionalPromptStrategy,
+  ResumeStage,
   VideoAspectRatio,
   VideoVariant,
 } from "../types/index.js";
@@ -187,6 +188,18 @@ export function createNovelAiCharacter(): NovelAiCharacter {
     center: { x: 0.5, y: 0.5 },
     enabled: true,
   };
+}
+
+/** A completed stage of the run currently paused (see `GenerationStore.pausedStages`). */
+export interface PausedStage {
+  /** Params the stage was submitted with, minus its own resume history. */
+  params: GenerationParams;
+  /** Resolved seed the stage sampled with. */
+  seed: string;
+  /** Prompt that produced the stage, for reference. */
+  promptId: string;
+  /** GPU worker that ran it, when known. */
+  workerId?: number;
 }
 
 export interface GenerationToParamsOptions {
@@ -639,6 +652,19 @@ class GenerationStore {
   width = $state(512);
   height = $state(512);
   batchSize = $state(1);
+  /**
+   * Stop the next txt2img run after this many steps (0 = run to the end).
+   * Deliberately not persisted: a pause is a one-off action, and a pause step
+   * surviving a restart would silently truncate the next session's first image.
+   */
+  pauseAtStep = $state(0);
+  /**
+   * Completed stages of the run currently paused, oldest first. Non-empty
+   * means the next Generate continues that run from the last stage's latent
+   * with whatever prompt, CFG, sampler and LoRAs are set now. In memory only:
+   * the latents live in ComfyUI's execution cache, which a restart clears.
+   */
+  pausedStages = $state<PausedStage[]>([]);
   denoise = $state(0.7);
   inputImage = $state<string | null>(null);
   maskImage = $state<string | null>(null);
@@ -3124,6 +3150,58 @@ class GenerationStore {
     return { characters, inlineIds };
   }
 
+  /** Step the paused run stopped at, or 0 when nothing is paused. */
+  get pausedEndStep(): number {
+    const last = this.pausedStages[this.pausedStages.length - 1];
+    return last?.params.pause_at_step ?? 0;
+  }
+
+  get isPaused(): boolean {
+    return this.pausedStages.length > 0;
+  }
+
+  /**
+   * Whether the next generation pauses or resumes. Style transfer and Anima
+   * TeaCache are switched off for such runs (see `toParams`).
+   */
+  get pauseResumeActive(): boolean {
+    return this._mode === "txt2img" && (this.isPaused || this.effectivePauseAtStep > 0);
+  }
+
+  /**
+   * The pause step the next request will actually send: it has to fall after
+   * the step a paused run stopped at and before the schedule ends, otherwise
+   * it is dropped and the run completes.
+   */
+  get effectivePauseAtStep(): number {
+    const step = Math.floor(this.pauseAtStep);
+    if (step <= this.pausedEndStep || step >= this.steps) return 0;
+    return step;
+  }
+
+  /**
+   * Remember a stage that just finished sampling partway so the next Generate
+   * continues it. Called from the completion handler with the params the
+   * stage was submitted with (seed already resolved by the backend).
+   */
+  recordPausedStage(params: GenerationParams, promptId: string, workerId?: number) {
+    if (params.mode !== "txt2img" || !params.pause_at_step) return;
+    // The stage's own history is what `pausedStages` already holds.
+    const { resume_stages: _history, ...stageParams } = params;
+    this.pausedStages = [
+      ...this.pausedStages,
+      { params: stageParams, seed: params.seed, promptId, workerId },
+    ];
+    // A pause is a one-off: the resume runs to the end unless a new, later
+    // pause step is chosen.
+    this.pauseAtStep = 0;
+  }
+
+  /** Forget the paused run; the next Generate starts a fresh image. */
+  discardPausedRun() {
+    this.pausedStages = [];
+  }
+
   toParams(options: GenerationToParamsOptions = {}) {
     // Video mode loads its own UNet/CLIP/VAE trio from the `video_*` fields and
     // never touches `checkpoint`, so the image-pipeline model guards below would
@@ -3566,7 +3644,28 @@ class GenerationStore {
       // Null for every local generation, so the backend's NovelAI branch is
       // never reachable from one.
       novelai: this.novelAiParams(novelAiCharacters.characters),
+      pause_at_step: this._mode === "txt2img" && this.effectivePauseAtStep > 0
+        ? this.effectivePauseAtStep
+        : null,
+      resume_stages: this._mode === "txt2img" && this.isPaused
+        ? this.pausedStages.map(
+            (stage): ResumeStage => ({
+              params: stage.params,
+              seed: stage.seed,
+              worker_id: stage.workerId ?? null,
+            }),
+          )
+        : [],
     };
+
+    // Style transfer samples through its own graph with no start/end step,
+    // and Anima TeaCache carries a step counter across stages, so neither can
+    // take part in a paused run. The backend drops them too; clearing them
+    // here keeps the sent params honest about what will run.
+    if (params.pause_at_step != null || (params.resume_stages?.length ?? 0) > 0) {
+      params.style_transfer_enabled = false;
+      params.anima_teacache_enabled = false;
+    }
 
     if (options.overrides) {
       Object.assign(params, options.overrides);

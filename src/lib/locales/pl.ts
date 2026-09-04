@@ -1266,6 +1266,18 @@ const pl: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Zdestylowana skala prowadzenia używana przez Flux Dev / Flux 2 Klein. Zastępuje CFG (który te modele ignorują). Optymalna wartość to 2,5-4. Wyższe = silniejsze podążanie za promptem, ale mniej naturalne obrazy.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Przyspiesza generowanie w Anima, ponownie wykorzystując poprzedni wynik modelu w krokach z niewielką zmianą, pomijając przejście w przód. Niewielkie ryzyko delikatniejszych szczegółów; domyślnie wyłączone.",
+  "generation.pause.label": "Pauza na kroku",
+  "generation.pause.tip": "Zatrzymuje próbkowanie po tej liczbie kroków i pokazuje niedokończony obraz. Potem zmień prompt, CFG, sampler lub LoRA i naciśnij Kontynuuj, aby dokończyć pozostałe kroki od miejsca zatrzymania. Wczesna pauza zmienia kompozycję, późna tylko detale. 0 wykonuje do końca.",
+  "generation.pause.will_pause": "Zatrzyma się po kroku {step} z {total}.",
+  "generation.pause.step_ignored": "Krok pauzy musi być po kroku {min} i przed krokiem {max}; generowanie zostanie zamiast tego dokończone.",
+  "generation.pause.teacache_disabled": "TeaCache jest wyłączony podczas pauzy: jego pamięć kroków nie przetrwa zatrzymania.",
+  "generation.pause.style_transfer_disabled": "Transfer stylu jest wyłączony podczas pauzy: używa własnego samplera bez punktu zatrzymania.",
+  "generation.pause.continue": "Kontynuuj od kroku {step}/{total}",
+  "generation.pause.banner": "Wstrzymano po kroku {step} z {total}. Dostosuj prompt, CFG, sampler lub LoRA, potem Kontynuuj.",
+  "generation.pause.locked_hint": "Kroki, scheduler, rozmiar, wielkość partii, seed i model pozostają takie jak w chwili pauzy.",
+  "generation.pause.retry_hint": "Wstrzymane generowanie pozostaje, dopóki go nie odrzucisz, więc możesz ponownie Kontynuować z innymi ustawieniami, aby wypróbować inne zakończenie od tego samego miejsca.",
+  "generation.pause.discard": "Odrzuć wstrzymane generowanie",
+  "generation.pause.discard_tip": "Zapomina wstrzymany latent. Następne Generuj zaczyna nowy obraz.",
 
   // Refiner History
   "generation.upscale_history.title": "Historia dopracowywania",

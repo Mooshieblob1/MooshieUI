@@ -3100,6 +3100,14 @@
             }
             pendingOutputImages.delete(promptId);
 
+            // A run that stopped partway through its schedule waits for the
+            // user to adjust settings and continue it. The half-denoised image
+            // still lands in the preview and gallery below so there is
+            // something to judge the pause point by.
+            if (item.params?.pause_at_step && item.params.mode === "txt2img" && images.length > 0) {
+              generation.recordPausedStage(item.params, promptId, item.workerId);
+            }
+
             if (images.length === 0) {
               // The output_image event was dropped or its fetch failed — try
               // to recover from the server temp cache so the final image

@@ -241,6 +241,45 @@ impl GpuManager {
         client_id: &str,
         timeout: Duration,
     ) -> Result<(u32, crate::comfyui::types::PromptResponse), AppError> {
+        self.submit_prompt_preferring(None, workflow, client_id, timeout)
+            .await
+    }
+
+    /// Like `submit_prompt`, but tries `preferred` first when it names a
+    /// worker. A resumed generation wants the worker that sampled its earlier
+    /// stages, because that process holds their latents in its execution
+    /// cache; any other worker still produces the right image, it just
+    /// samples those stages again. The preferred worker is used whether idle
+    /// or already running (ComfyUI queues the prompt server-side); only a
+    /// missing or errored worker falls through to normal distribution.
+    pub async fn submit_prompt_preferring(
+        &self,
+        preferred: Option<u32>,
+        workflow: serde_json::Value,
+        client_id: &str,
+        timeout: Duration,
+    ) -> Result<(u32, crate::comfyui::types::PromptResponse), AppError> {
+        if let Some(worker) = preferred.and_then(|id| self.workers.iter().find(|w| w.id == id)) {
+            let status = *worker.status.read().await;
+            match status {
+                WorkerStatus::Running => {
+                    return self
+                        .do_submit_to_server_queue(worker, workflow, client_id)
+                        .await;
+                }
+                _ if worker.is_available().await && worker.try_reserve() => {
+                    return self.do_submit(worker, workflow, client_id).await;
+                }
+                _ => {
+                    log::info!(
+                        "Preferred worker {} is not accepting prompts ({:?}); resuming on any worker",
+                        worker.id,
+                        status
+                    );
+                }
+            }
+        }
+
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());

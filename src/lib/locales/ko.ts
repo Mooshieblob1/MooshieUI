@@ -2132,6 +2132,18 @@ const ko: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "변화가 거의 없는 단계에서 모델의 이전 출력을 재사용하여 순전파를 건너뛰어 Anima 생성 속도를 높입니다. 디테일이 약간 부드러워질 수 있는 작은 위험이 있음. 기본값은 꺼짐.",
+  "generation.pause.label": "일시정지 스텝",
+  "generation.pause.tip": "이 스텝 수 뒤에 샘플링을 멈추고 중간 이미지를 보여줍니다. 그다음 프롬프트, CFG, 샘플러, LoRA를 바꾸고 계속을 누르면 멈춘 곳부터 남은 스텝을 샘플링합니다. 이른 일시정지는 구도를, 늦은 일시정지는 세부만 바꿉니다. 0이면 끝까지 실행합니다.",
+  "generation.pause.will_pause": "스텝 {step}/{total} 후에 일시정지합니다.",
+  "generation.pause.step_ignored": "일시정지 스텝은 스텝 {min} 이후, 스텝 {max} 이전이어야 합니다. 대신 끝까지 실행합니다.",
+  "generation.pause.teacache_disabled": "일시정지 중에는 TeaCache가 꺼집니다. 스텝 캐시는 일시정지를 넘길 수 없습니다.",
+  "generation.pause.style_transfer_disabled": "일시정지 중에는 스타일 전송이 꺼집니다. 전용 샘플러에 일시정지 지점이 없습니다.",
+  "generation.pause.continue": "스텝 {step}/{total}부터 계속",
+  "generation.pause.banner": "스텝 {step}/{total} 후 일시정지됨. 프롬프트, CFG, 샘플러, LoRA를 조정한 뒤 계속을 누르세요.",
+  "generation.pause.locked_hint": "스텝, 스케줄러, 크기, 배치 크기, 시드, 모델은 일시정지 당시 그대로 유지됩니다.",
+  "generation.pause.retry_hint": "일시정지된 생성은 버리기 전까지 유지되므로, 다른 설정으로 다시 계속을 눌러 같은 지점에서 다른 결말을 시도할 수 있습니다.",
+  "generation.pause.discard": "일시정지된 생성 버리기",
+  "generation.pause.discard_tip": "일시정지된 잠재 표현을 잊습니다. 다음 생성은 새 이미지로 시작합니다.",
 
 
 

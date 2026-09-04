@@ -11,6 +11,8 @@ export interface QueuedPrompt {
   startedAt?: number;
   /** Total wall-clock generation time in ms (computed in completePrompt). */
   durationMs?: number;
+  /** GPU worker the prompt ran on, when the backend reported it. */
+  workerId?: number;
 }
 
 class ProgressStore {
@@ -330,6 +332,7 @@ class ProgressStore {
     wasUpscaled: boolean = false,
     mode: GenerationMode = "txt2img",
     params: GenerationParams | null = null,
+    workerId?: number,
   ) {
     const existingIdx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
     if (existingIdx >= 0) {
@@ -344,6 +347,7 @@ class ProgressStore {
         // or a prior enqueue). If unset, stamp it now so the reconciler's 30s
         // activity guard has a valid baseline.
         enqueuedAt: existing.enqueuedAt ?? Date.now(),
+        workerId: workerId ?? existing.workerId,
       };
       this.pendingPrompts = next;
       return;
@@ -356,6 +360,7 @@ class ProgressStore {
         wasUpscaled,
         params: params!,
         enqueuedAt: Date.now(),
+        workerId,
       },
     ];
   }

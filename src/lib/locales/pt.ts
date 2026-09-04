@@ -2133,6 +2133,18 @@ const pt: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Acelera a geração no Anima reutilizando a saída anterior do modelo em etapas com pouca alteração, pulando o passe direto. Pequeno risco de detalhes mais suaves; desativado por padrão.",
+  "generation.pause.label": "Pausar no passo",
+  "generation.pause.tip": "Para a amostragem após este número de passos e mostra a imagem pela metade. Depois altere o prompt, CFG, sampler ou LoRAs e pressione Continuar para amostrar os passos restantes de onde parou. Pausas cedo mudam a composição; pausas tardias, só o detalhe. 0 executa até o fim.",
+  "generation.pause.will_pause": "Vai pausar após o passo {step} de {total}.",
+  "generation.pause.step_ignored": "O passo de pausa deve ser depois do passo {min} e antes do passo {max}; a geração será concluída em vez disso.",
+  "generation.pause.teacache_disabled": "O TeaCache fica desligado ao pausar: seu cache de passos não sobrevive a uma pausa.",
+  "generation.pause.style_transfer_disabled": "A transferência de estilo fica desligada ao pausar: ela usa um sampler próprio sem ponto de pausa.",
+  "generation.pause.continue": "Continuar do passo {step}/{total}",
+  "generation.pause.banner": "Pausado após o passo {step} de {total}. Ajuste o prompt, CFG, sampler ou LoRAs e pressione Continuar.",
+  "generation.pause.locked_hint": "Passos, scheduler, tamanho, tamanho do lote, seed e modelo permanecem como estavam ao pausar.",
+  "generation.pause.retry_hint": "A geração pausada permanece até você descartá-la, então você pode Continuar de novo com outros ajustes para testar outro final a partir do mesmo ponto.",
+  "generation.pause.discard": "Descartar geração pausada",
+  "generation.pause.discard_tip": "Esquece o latente pausado. O próximo Gerar começa uma imagem nova.",
 
 
 

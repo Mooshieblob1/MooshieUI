@@ -344,6 +344,7 @@ mod tests {
             vae_source: ("vae".into(), 0),
             sampler_id: "1".into(),
             refiner_model_source: None,
+            base_sources: None,
         }
     }
 

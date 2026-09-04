@@ -199,7 +199,7 @@
       onclick={onToggleEnabled}
       role="switch"
       aria-checked={generation.styleTransferEnabled}
-      disabled={generation.mode !== "txt2img"}
+      disabled={generation.mode !== "txt2img" || generation.pauseResumeActive}
     >
       <span
         class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {generation.styleTransferEnabled
@@ -211,6 +211,8 @@
 
   {#if generation.mode !== "txt2img"}
     <p class="text-[11px] text-amber-400/90">{locale.t("generation.style_transfer.txt2img_only")}</p>
+  {:else if generation.pauseResumeActive}
+    <p class="text-[11px] text-amber-400/90">{locale.t("generation.pause.style_transfer_disabled")}</p>
   {/if}
 
   {#if generation.styleTransferEnabled && generation.mode === "txt2img"}

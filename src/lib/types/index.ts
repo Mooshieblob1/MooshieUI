@@ -446,6 +446,22 @@ export interface GenerationParams {
   /** Present only for NovelAI generations; its presence is not the backend
    *  switch, `checkpoint` naming a NovelAI model is. */
   novelai?: NovelAiParams | null;
+  /** Stop sampling after this many steps and keep the leftover noise so the
+   *  run can be resumed. Null runs the full schedule. txt2img only. */
+  pause_at_step?: number | null;
+  /** Earlier stages of a paused run, oldest first. The backend rebuilds them
+   *  with identical node IDs so ComfyUI serves their latents from cache. */
+  resume_stages?: ResumeStage[];
+}
+
+/** One completed stage of a paused txt2img run, as sent back on resume. */
+export interface ResumeStage {
+  /** The exact params that stage ran with; its own `pause_at_step` marks where it stopped. */
+  params: GenerationParams;
+  /** Resolved seed that stage sampled with (decimal string, like `GenerationParams.seed`). */
+  seed: string;
+  /** GPU worker that ran the stage, so the resume can target the same execution cache. */
+  worker_id?: number | null;
 }
 
 export interface OutputImage {

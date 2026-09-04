@@ -2173,6 +2173,18 @@ const zh: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "通过在几乎没有变化的步骤上复用模型的上一次输出、跳过前向计算来加速 Anima 生成。存在细节略微变软的小风险；默认关闭。",
+  "generation.pause.label": "在此步骤暂停",
+  "generation.pause.tip": "在这个步数后停止采样并显示半成品图像。然后修改提示词、CFG、采样器或 LoRA，按“继续”从停止处采样剩余步骤。早期暂停会改变构图，晚期暂停只改变细节。0 表示运行到底。",
+  "generation.pause.will_pause": "将在第 {step}/{total} 步后暂停。",
+  "generation.pause.step_ignored": "暂停步骤必须在第 {min} 步之后、第 {max} 步之前；本次将改为运行到底。",
+  "generation.pause.teacache_disabled": "暂停时 TeaCache 会关闭：其步骤缓存无法跨越暂停。",
+  "generation.pause.style_transfer_disabled": "暂停时风格迁移会关闭：它使用没有暂停点的专用采样器。",
+  "generation.pause.continue": "从第 {step}/{total} 步继续",
+  "generation.pause.banner": "已在第 {step}/{total} 步后暂停。调整提示词、CFG、采样器或 LoRA 后按“继续”。",
+  "generation.pause.locked_hint": "步数、调度器、尺寸、批次大小、种子和模型保持暂停时的设置。",
+  "generation.pause.retry_hint": "已暂停的生成会保留到你丢弃为止，因此可以用不同设置再次“继续”，从同一点尝试另一种结果。",
+  "generation.pause.discard": "丢弃已暂停的生成",
+  "generation.pause.discard_tip": "忘记已暂停的潜变量。下次“生成”将从新图像开始。",
 
 
 

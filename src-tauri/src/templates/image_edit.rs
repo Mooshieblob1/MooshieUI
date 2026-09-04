@@ -162,6 +162,7 @@ fn build_qwen(params: &GenerationParams, seed: i64) -> WorkflowResult {
         vae_source,
         sampler_id,
         refiner_model_source: None,
+        base_sources: None,
     }
 }
 
@@ -662,6 +663,7 @@ fn build_anima_restyler(params: &GenerationParams, seed: i64) -> WorkflowResult 
         // samplers (upscale/facefix/segment) run at other resolutions and
         // must use the plain Anima model instead.
         refiner_model_source: Some(ml.model_source.clone()),
+        base_sources: None,
     }
 }
 
@@ -805,6 +807,7 @@ fn build_kontext(params: &GenerationParams, seed: i64) -> WorkflowResult {
         vae_source,
         sampler_id,
         refiner_model_source: None,
+        base_sources: None,
     }
 }
 

@@ -2132,6 +2132,18 @@ const it: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "Accelera la generazione in Anima riutilizzando l'output precedente del modello nei passaggi con poche variazioni, saltando il passaggio in avanti. Piccolo rischio di dettagli più sfumati; disattivato per impostazione predefinita.",
+  "generation.pause.label": "Pausa al passo",
+  "generation.pause.tip": "Ferma il campionamento dopo questo numero di passi e mostra l'immagine a metà. Poi cambia prompt, CFG, sampler o LoRA e premi Continua per campionare i passi rimanenti da dove si è fermato. Una pausa precoce cambia la composizione, una tardiva solo i dettagli. 0 esegue fino alla fine.",
+  "generation.pause.will_pause": "Si fermerà dopo il passo {step} di {total}.",
+  "generation.pause.step_ignored": "Il passo di pausa deve essere dopo il passo {min} e prima del passo {max}; la generazione verrà completata.",
+  "generation.pause.teacache_disabled": "TeaCache è disattivato durante la pausa: la sua cache dei passi non può attraversare una pausa.",
+  "generation.pause.style_transfer_disabled": "Il trasferimento di stile è disattivato durante la pausa: usa un proprio sampler senza punto di pausa.",
+  "generation.pause.continue": "Continua dal passo {step}/{total}",
+  "generation.pause.banner": "In pausa dopo il passo {step} di {total}. Regola prompt, CFG, sampler o LoRA, poi Continua.",
+  "generation.pause.locked_hint": "Passi, scheduler, dimensioni, batch, seed e modello restano come al momento della pausa.",
+  "generation.pause.retry_hint": "La generazione in pausa resta finché non la scarti, così puoi premere Continua di nuovo con altre impostazioni per provare un finale diverso dallo stesso punto.",
+  "generation.pause.discard": "Scarta la generazione in pausa",
+  "generation.pause.discard_tip": "Dimentica il latente in pausa. Il prossimo Genera avvia una nuova immagine.",
 
 
 

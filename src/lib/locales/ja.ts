@@ -2157,6 +2157,18 @@ const ja: Record<string, string> = {
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
   "generation.sampler.anima_teacache_label": "TeaCache",
   "generation.sampler.anima_teacache_tip": "変化がほとんどないステップでモデルの前回の出力を再利用し、フォワードパスをスキップすることで Anima の生成を高速化します。ディテールがわずかに柔らかくなるリスクがあります。デフォルトではオフです。",
+  "generation.pause.label": "一時停止するステップ",
+  "generation.pause.tip": "このステップ数でサンプリングを止め、途中の画像を表示します。その後プロンプト、CFG、サンプラー、LoRA を変更して「続行」を押すと、止めた位置から残りのステップを計算します。早い停止は構図を、遅い停止は細部だけを変えます。0 で最後まで実行します。",
+  "generation.pause.will_pause": "ステップ {step}/{total} の後で一時停止します。",
+  "generation.pause.step_ignored": "一時停止ステップはステップ {min} より後、ステップ {max} より前である必要があります。代わりに最後まで実行します。",
+  "generation.pause.teacache_disabled": "一時停止中は TeaCache がオフになります。ステップキャッシュは停止をまたげません。",
+  "generation.pause.style_transfer_disabled": "一時停止中はスタイル転送がオフになります。専用サンプラーに停止点がないためです。",
+  "generation.pause.continue": "ステップ {step}/{total} から続行",
+  "generation.pause.banner": "ステップ {step}/{total} の後で一時停止中。プロンプト、CFG、サンプラー、LoRA を調整して「続行」を押してください。",
+  "generation.pause.locked_hint": "ステップ数、スケジューラー、サイズ、バッチサイズ、シード、モデルは停止時のままです。",
+  "generation.pause.retry_hint": "一時停止中の生成は破棄するまで残るので、別の設定で再度「続行」して同じ地点から別の仕上がりを試せます。",
+  "generation.pause.discard": "一時停止中の生成を破棄",
+  "generation.pause.discard_tip": "停止中の潜在表現を破棄します。次の「生成」は新しい画像から始まります。",
 
 
 
