@@ -28,19 +28,43 @@ export function joinPromptBoxes(contents: string[]): string {
   return contents.map(trimFragment).filter((frag) => frag.length > 0).join(", ");
 }
 
+export interface SanitizeOptions {
+  /**
+   * Keep line breaks instead of folding them into ", ". NovelAI reads the
+   * prompt line by line: a `Text:` line opens the lettering block, and a blank
+   * line inside it separates one rendered string from the next. Folding that
+   * layout into commas turns `Text:\nMumei` into `Text:, Mumei`, and NovelAI
+   * then renders the comma into the image.
+   */
+  keepNewlines?: boolean;
+}
+
 /**
  * Remove BREAK / <break> tokens and normalize newlines to ", " so the outgoing
  * prompt is a single clean comma-separated string regardless of how the user
  * laid it out in the textarea.
+ *
+ * With `keepNewlines` every line is cleaned on its own and the line structure
+ * survives, with runs of blank lines collapsed to a single blank line.
  */
-export function sanitizePromptForSend(prompt: string): string {
+export function sanitizePromptForSend(prompt: string, options: SanitizeOptions = {}): string {
   if (!prompt) return "";
+  const stripped = prompt
+    // A1111 chunk keyword — case-sensitive whole word so "BREAKFAST" survives.
+    .replace(/\bBREAK\b/g, " ")
+    // Angle-bracket form some tools emit; case-insensitive.
+    .replace(/<break>/gi, " ");
+  if (options.keepNewlines) {
+    return stripped
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => trimFragment(line).replace(/,\s*(?:,\s*)+/g, ", "))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
   return (
-    prompt
-      // A1111 chunk keyword — case-sensitive whole word so "BREAKFAST" survives.
-      .replace(/\bBREAK\b/g, " ")
-      // Angle-bracket form some tools emit; case-insensitive.
-      .replace(/<break>/gi, " ")
+    stripped
       // Newlines used for visual layout become tag separators.
       .split("\n")
       .map(trimFragment)

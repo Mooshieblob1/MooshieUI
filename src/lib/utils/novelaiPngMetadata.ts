@@ -147,6 +147,12 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
       ["cfg_rescale", "mooshie_novelai_cfg_rescale"],
       ["uncond_scale", "mooshie_novelai_uncond_scale"],
       ["dynamic_thresholding", "mooshie_novelai_dynamic_thresholding"],
+      // NovelAI records both toggles as it ran them. The quality tags and the
+      // preset text are folded into the captured prompt and UC as well; the
+      // import handles that on the prompt side (see `applyNovelAiSelection`)
+      // rather than by forcing the panel's toggles off.
+      ["qualityToggle", "mooshie_novelai_quality_toggle"],
+      ["ucPreset", "mooshie_novelai_uc_preset"],
       // Which endpoint made the image. An `Img2ImgRequest` was seeded by a
       // source image nothing in the metadata carries, so the settings here
       // cannot reproduce it and the import dialog says so.
@@ -174,11 +180,6 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
     const characters = parseCharacters(comment);
     if (characters !== undefined) params.mooshie_novelai_characters = characters;
   }
-
-  // The captured prompt and UC already have the quality tags and the preset
-  // text folded in, so re-enabling either toggle would append a second copy.
-  params.mooshie_novelai_quality_toggle = "false";
-  params.mooshie_novelai_uc_preset = "0";
 
   if (chunks.Source) {
     params.mooshie_novelai_source = chunks.Source;

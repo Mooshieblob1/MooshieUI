@@ -153,12 +153,18 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
         if let Some(characters) = parse_characters(comment) {
             params.insert("mooshie_novelai_characters".into(), characters);
         }
-    }
 
-    // The captured prompt and UC already have the quality tags and the preset
-    // text folded in, so re-enabling either toggle would append a second copy.
-    params.insert("mooshie_novelai_quality_toggle".into(), "false".into());
-    params.insert("mooshie_novelai_uc_preset".into(), "0".into());
+        // NovelAI records both toggles as it ran them. The quality tags and
+        // the preset text are folded into the captured prompt and UC as well;
+        // the frontend import deals with that on the prompt side rather than
+        // by forcing the panel's toggles off.
+        if let Some(quality) = comment.get("qualityToggle").and_then(string_of) {
+            params.insert("mooshie_novelai_quality_toggle".into(), quality);
+        }
+        if let Some(preset) = comment.get("ucPreset").and_then(string_of) {
+            params.insert("mooshie_novelai_uc_preset".into(), preset);
+        }
+    }
 
     if let Some(source) = chunks.get("Source") {
         params.insert("mooshie_novelai_source".into(), source.clone());
@@ -310,6 +316,8 @@ mod tests {
             "sampler": "k_euler_ancestral",
             "noise_schedule": "karras",
             "dynamic_thresholding": false,
+            "qualityToggle": true,
+            "ucPreset": 1,
             "skip_cfg_above_sigma": serde_json::Value::Null,
             "uc": "lowres, {bad anatomy}",
             "v4_prompt": {
@@ -383,14 +391,23 @@ mod tests {
     }
 
     #[test]
-    fn the_baked_in_quality_tags_are_not_re_enabled() {
+    fn the_recorded_toggles_are_read_back_as_the_image_ran_them() {
         let map = chunks(&[("Software", "NovelAI"), ("Comment", &v4_comment())]);
         let params = parse_chunks(&map).expect("novelai chunks");
         assert_eq!(
             params.get("mooshie_novelai_quality_toggle").unwrap(),
-            "false"
+            "true"
         );
-        assert_eq!(params.get("mooshie_novelai_uc_preset").unwrap(), "0");
+        assert_eq!(params.get("mooshie_novelai_uc_preset").unwrap(), "1");
+    }
+
+    #[test]
+    fn missing_toggles_leave_the_panel_alone() {
+        let comment = serde_json::json!({ "prompt": "1girl" }).to_string();
+        let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+        let params = parse_chunks(&map).expect("novelai chunks");
+        assert!(!params.contains_key("mooshie_novelai_quality_toggle"));
+        assert!(!params.contains_key("mooshie_novelai_uc_preset"));
     }
 
     #[test]
