@@ -15,5 +15,9 @@ export default defineConfig({
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+    // Cargo builds into src-tauri/target while Vite is walking the tree, and
+    // on Windows a watcher on a DLL the linker still holds throws EBUSY and
+    // kills the dev server. Nothing under src-tauri is frontend input.
+    watch: { ignored: ["**/src-tauri/**"] },
   },
 });

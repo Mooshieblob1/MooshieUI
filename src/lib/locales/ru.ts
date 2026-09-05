@@ -204,6 +204,7 @@ const ru: Record<string, string> = {
   // ── Страница настроек ───────────────────────────────────
   "settings.title": "Настройки",
   "settings.search_placeholder": "Поиск настроек...",
+  "settings.search_no_results": "Нет настроек, соответствующих запросу.",
   "settings.save": "Сохранить",
   "settings.saving": "Сохранение...",
   "settings.saved": "Сохранено!",

@@ -609,6 +609,117 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-09-05 - NovelAI img2img and inpainting returned a 500, and imports never change the resolution
+
+**Requested by:** the user: "Generation failed: API error (500): Error
+generating image, an internal error occurred ... when attempting i2i in NAI",
+then "don't touch resolution ever, if it's set to 1024, always keep it at
+1024, let the user change that, if an image is imported from metadata or i2i
+never touch resolution".
+
+**What was wrong.** The img2img and inpainting tabs upload their source to
+ComfyUI's `/upload/image` and keep the returned filename (`img2img_input.png`,
+`canvas_mask.png`) in the generation store. In NovelAI mode that filename
+travelled unchanged through `toParams()` into the payload's `parameters.image`
+(and `mask`), where NovelAI expects base64 PNG bytes. It could not decode a
+filename and answered 500. Only Enhance, Variations and the import modal
+converted to base64 in the browser, which is why those worked and the plain
+img2img tab did not. The log matched: the request got as far as the character
+summary and failed straight after, with no client-side validation error.
+
+Separately, loading an image into img2img wrote its pixel size into width and
+height, and a whole-image metadata import did the same from the `size` field.
+
+**What changed.**
+
+- Rust: `resolve_upload_images` in `novelai/mod.rs` runs right before the
+  payload is built. Any `input_image` / `mask_image` that looks like an upload
+  name (no `data:` prefix and contains a `.`, which base64 never does) is
+  fetched back from ComfyUI's `/view`, decoded, fitted to the request's
+  snapped width and height and sent as base64 PNG. The image is resized with
+  Lanczos; the mask with nearest neighbour so it stays hard white-on-black.
+  A missing or unreadable upload surfaces as an app error before any Anlas
+  are spent. Three unit tests cover the name detection, the fit and the mask.
+- The resolution belongs to the user. Loading an image into img2img (browse,
+  drop, paste), dropping a whole image for a metadata import, and the NovelAI
+  import modal's Settings pass no longer write width or height. Dropping an
+  image onto the Dimensions section itself still does, because that is the
+  user asking for exactly that. Inpainting still sizes the canvas to the
+  image, because the mask has to match it pixel for pixel.
+- Switching backends no longer recalculates the dimensions. The store snaps
+  them to the 64 grid when a NovelAI model is chosen (1024 stays 1024), and
+  the aspect readout and side length re-read whatever the dimensions are.
+- Both backends fit the source to the requested size (NovelAI in the client,
+  ComfyUI through the ImageScale node), so a 4:3 image generated at 3:2 is
+  stretched a little rather than the resolution moving. Pick the matching
+  preset first when that matters.
+
+**Testing required: yes.** 1 and 3 are the ones that returned 500.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, 1024x1024, img2img tab. Browse a PNG of any size, strength 0.7, generate | An image comes back, no 500. The log carries `NovelAI image: resolved upload 'img2img_input.png' into a 1024x1024 PNG` |
+| 2 | Same, but a 1920x1080 JPEG | Width and height never moved off 1024 when the image loaded, and the generation still returns at 1024x1024 |
+| 3 | NAI mode, inpainting tab. Load an image, paint a mask, generate | The canvas takes the image's size (expected: the mask must match). The masked area is repainted. The log shows both the `image` and the `mask` resolved |
+| 4 | NAI mode, 1024x1024. Drop a NovelAI PNG onto the page for a whole metadata import | Prompt, sampler and model apply. Width and height stay 1024x1024 |
+| 5 | Same file through the NovelAI import modal with Settings ticked | Model and sampler apply. Dimensions unchanged |
+| 6 | Drag an image onto the Dimensions section specifically | Width and height take the image's size. This is the one deliberate exception |
+| 7 | ComfyUI backend, 1024x1024. Browse a 1024x1536 image into img2img | Ratio reads 2 : 3, dimensions stay 1024x1024, generation returns 1024x1024 |
+| 8 | ComfyUI backend at 21:9, then switch to a NovelAI model | Dimensions only snap to the 64 grid, ratio reads 16 : 9, nothing recalculates |
+| 9 | Enhance and Variations on a NovelAI result | Still work (they already converted in the browser) |
+| 10 | NAI mode, img2img. Stop ComfyUI, then generate | A clear app error naming the upload that could not be loaded, no Anlas spent |
+
+**Do not skip:** 1, 3, 4.
+
+### 2026-09-05 - Imported images set the aspect ratio to their pixel size, and NovelAI mode only offers NovelAI's shapes
+
+**Requested by:** the user: "when importing an image from i2i it sets the
+aspect ratio as the resolution instead of the aspect ratio", then "strengthen
+this in NAI mode to only adhere to aspect ratios NAI can do".
+
+**What was wrong.** Loading an image into img2img handed its raw pixel size to
+the aspect ratio controls as the suggested ratio, and the controls copied it
+straight into the two inputs, so a 1024x1536 source read "1024 : 1536" instead
+of "2 : 3". The width/height sync does reduce ratios, but the suggestion runs
+after it in the same flush and overwrote the result.
+
+**What changed.**
+
+- The suggested ratio now goes through the same inference the width/height
+  sync uses, so it is reduced before it reaches the inputs.
+- On local backends the inference gained a nearest-preset pass with a small
+  tolerance (0.04 in log space, well under half the gap between 4:3 and 3:2),
+  because imported images sit on the pixel grid rather than an exact ratio.
+  1216x832 reads as 3:2 rather than 19:13; a ratio genuinely between two
+  presets still falls back to the reduced fraction.
+- In NovelAI mode the aspect ratio controls only ever show a shape novelai.net
+  itself offers: 1:1, 3:2, 16:9, 2:3, 9:16 (its Square, Landscape, Wallpaper
+  Landscape, Portrait and Wallpaper Portrait presets). The preset row shrinks
+  to those five, an imported image or restored dimensions snap to the nearest
+  of them, a typed ratio snaps when the field is committed (not per keystroke,
+  so "16" can pass through "1"), and switching a local model over to NovelAI
+  moves a 4:3 or 21:9 onto the nearest NovelAI shape. The list and the
+  nearest-shape helper live in `novelaiModels.ts`.
+- An import snaps only the displayed ratio. The dimensions are not touched
+  at all (see the entry above this one): the source is fitted to the
+  requested size when the request is built. Applying a preset or side length
+  afterwards recalculates as normal, because that is the user's own action.
+
+**Testing required: yes.** 1 and 3 are the ones that were broken.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Any backend. Drop, paste or browse a 1024x1536 image into the img2img input | Aspect ratio inputs read 2 : 3, not 1024 : 1536. A 1920x1080 image reads 16 : 9 |
+| 2 | ComfyUI backend. Load a 1216x832 image | Reads 3 : 2. A 1400x1000 image reads 7 : 5 (no preset within tolerance) |
+| 3 | NAI mode. Load a 1152x896 image (a 4:3 shape) | Reads 3 : 2. The dimensions stay exactly where they were before the import. Applying the 3:2 preset afterwards gives 1216x832 at side 1024 |
+| 4 | NAI mode. Look at the preset row | Five buttons: 1:1, 3:2, 16:9, 2:3, 9:16. No 4:3, 21:9 or 3:4 |
+| 5 | NAI mode. Type 4 into the width field and 3 into the height field, then tab out | On leaving the field the ratio snaps to 3 : 2 and the dimensions follow. While typing, "1" then "16" in the width field does not snap underneath the cursor |
+| 6 | ComfyUI backend, pick 21:9, then switch to a NovelAI model | Ratio reads 16 : 9. The dimensions only snap to the 64 grid (the store's NovelAI snap), they are not recalculated to the new ratio |
+| 7 | NAI mode, Opus account, side 1024, 28 steps | All five presets carry the green border and the generate button quotes ~0 Anlas |
+| 8 | Switch back to a local model | All eight presets return |
+
+**Do not skip:** 1, 3, 5.
+
 ### 2026-08-26 - V5 battery costs, 22 seats, free placement, Text: blocks
 
 **Requested by:** the user: "V5 do the costs calculated after opus allowance

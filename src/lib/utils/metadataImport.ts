@@ -337,6 +337,10 @@ function applySampler(
   return applied;
 }
 
+// Only reached by the explicit drop onto the Dimensions section. The whole-
+// image import and the NovelAI settings pass leave the resolution alone: it is
+// the user's setting, and an imported image is fitted to it rather than the
+// other way round.
 function applyDimensions(meta: Record<string, string>): boolean {
   if (!meta.size) return false;
   const match = meta.size.match(/^(\d+)x(\d+)$/);
@@ -428,7 +432,6 @@ export function applyAllMetadata(meta: Record<string, string>): string[] {
   const applied: string[] = [];
   if (applyPrompts(meta)) applied.push("prompts");
   if (applySampler(meta)) applied.push("sampler");
-  if (applyDimensions(meta)) applied.push("dimensions");
   if (applyModel(meta)) applied.push("model");
   if (applyUpscale(meta)) applied.push("upscale");
   return applied;
@@ -470,7 +473,6 @@ export function applyNovelAiSelection(
 
   if (selection.settings) {
     let settingsApplied = applyNovelAiModel(meta);
-    if (applyDimensions(meta)) settingsApplied = true;
     // Characters and the seed are their own checkboxes, so they are held back
     // from the settings pass whatever it would otherwise have written.
     if (applySampler(meta, { seed: false, characters: false })) settingsApplied = true;

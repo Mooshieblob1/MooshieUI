@@ -1,9 +1,15 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import type { ModelFamily } from "../../utils/modelFamily.js";
-  import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
+  import {
+    NOVELAI_ASPECT_RATIOS,
+    NOVELAI_DIMENSION_STEP,
+    naiV5Variant,
+    nearestNovelAiAspect,
+  } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
@@ -80,13 +86,34 @@
       : { w: wB, h: hB };
   }
 
+  /**
+   * How far (in log space) a pixel ratio may sit from a preset and still be
+   * shown as that preset. 0.04 comfortably covers grid snapping (NovelAI's
+   * 1216x832 is 2.6% off a true 3:2) while staying well inside half the gap
+   * between the closest presets, 4:3 and 3:2 (0.059).
+   */
+  const PRESET_RATIO_TOLERANCE = 0.04;
+
   function inferAspectFromDimensions(w: number, h: number) {
+    // NovelAI only ever gets one of its own shapes, whatever the pixels say.
+    if (generation.isNovelAi) return nearestNovelAiAspect(w, h);
     // Check presets first (exact match on resulting dimensions)
     for (const p of presets) {
       const dims = dimsForAspect(p.w, p.h, sideLength);
       if (dims.w === w && dims.h === h) {
         return { w: p.w, h: p.h };
       }
+    }
+    // Then the nearest preset by ratio. Imported images land on the pixel
+    // grid, not on an exact ratio, so 1216x832 should still read as 3:2.
+    const ratio = w / h;
+    let nearest: { w: number; h: number; err: number } | null = null;
+    for (const p of presets) {
+      const err = Math.abs(Math.log(ratio / (p.w / p.h)));
+      if (!nearest || err < nearest.err) nearest = { w: p.w, h: p.h, err };
+    }
+    if (nearest && nearest.err <= PRESET_RATIO_TOLERANCE) {
+      return { w: nearest.w, h: nearest.h };
     }
     // Fallback: reduce to simplest ratio via GCD
     const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
@@ -103,33 +130,42 @@
       if (key === lastSyncedDimensions) return;
       lastSyncedDimensions = key;
 
-      const inferred = inferAspectFromDimensions(w, h);
-      aspectW = inferred.w;
-      aspectH = inferred.h;
-      aspectWInput = String(inferred.w);
-      aspectHInput = String(inferred.h);
-
-      // Keep side-length control aligned with the current generated area.
-      sideLength = Math.max(quantum, Math.round(Math.sqrt(w * h) / quantum) * quantum);
+      syncControlsFromDimensions(w, h);
     }
   });
 
-  // When an input image is loaded, adopt its aspect ratio
+  // Point the aspect and side-length readouts at the given dimensions without
+  // writing anything back to the store.
+  function syncControlsFromDimensions(w: number, h: number) {
+    const inferred = inferAspectFromDimensions(w, h);
+    aspectW = inferred.w;
+    aspectH = inferred.h;
+    aspectWInput = String(inferred.w);
+    aspectHInput = String(inferred.h);
+
+    // Keep side-length control aligned with the current generated area.
+    sideLength = Math.max(quantum, Math.round(Math.sqrt(w * h) / quantum) * quantum);
+  }
+
+  // When an input image is loaded, adopt its aspect ratio. The suggestion
+  // arrives as raw pixel dimensions, so reduce it to a ratio first; otherwise
+  // the inputs would read "1024 : 1536" instead of "2 : 3".
   let lastAppliedKey = "";
   $effect(() => {
-    if (suggestedAspect) {
+    if (suggestedAspect && suggestedAspect.w > 0 && suggestedAspect.h > 0) {
       const key = `${suggestedAspect.w}:${suggestedAspect.h}`;
       if (key !== lastAppliedKey) {
         lastAppliedKey = key;
-        aspectW = suggestedAspect.w;
-        aspectH = suggestedAspect.h;
-        aspectWInput = String(suggestedAspect.w);
-        aspectHInput = String(suggestedAspect.h);
+        const inferred = inferAspectFromDimensions(suggestedAspect.w, suggestedAspect.h);
+        aspectW = inferred.w;
+        aspectH = inferred.h;
+        aspectWInput = String(inferred.w);
+        aspectHInput = String(inferred.h);
       }
     }
   });
 
-  const presets = [
+  const LOCAL_PRESETS: ReadonlyArray<{ label: string; w: number; h: number }> = [
     { label: "1:1", w: 1, h: 1 },
     { label: "4:3", w: 4, h: 3 },
     { label: "3:2", w: 3, h: 2 },
@@ -139,6 +175,9 @@
     { label: "2:3", w: 2, h: 3 },
     { label: "9:16", w: 9, h: 16 },
   ];
+
+  // NovelAI mode offers only the shapes novelai.net itself does.
+  const presets = $derived(generation.isNovelAi ? NOVELAI_ASPECT_RATIOS : LOCAL_PRESETS);
 
   function recalc() {
     const dims = dimsForAspect(
@@ -168,6 +207,18 @@
     aspectWInput = String(aspectW);
     aspectHInput = String(aspectH);
     recalc();
+  }
+
+  /**
+   * A typed ratio is free-form while it is being typed, so "16" can pass
+   * through "1" without the field snapping underneath the cursor. Once the
+   * field is committed, NovelAI mode pulls it onto the nearest NovelAI shape.
+   */
+  function onAspectCommit() {
+    if (!generation.isNovelAi) return;
+    const snapped = nearestNovelAiAspect(aspectW, aspectH);
+    if (snapped.w === aspectW && snapped.h === aspectH) return;
+    applyPreset(snapped.w, snapped.h);
   }
 
   function onAspectInput(kind: "w" | "h", value: string) {
@@ -229,6 +280,11 @@
   // the other one can be illegal. Re-run the aspect maths whenever it changes.
   // The equality guard is what stops the self-write on `sideLength` from
   // re-triggering this effect.
+  // Switching backends changes the legal grid, but never the resolution: the
+  // store already snaps width and height to 64 when a NovelAI model is
+  // selected (1024 stays 1024), and nothing here writes them. Only the
+  // readouts are re-derived, so a 4:3 arriving in NovelAI mode reads as its
+  // nearest NovelAI shape, 3:2, while the dimensions stay where they were.
   let lastQuantum = 0;
   $effect(() => {
     const q = quantum;
@@ -236,8 +292,11 @@
     const first = lastQuantum === 0;
     lastQuantum = q;
     if (first) return;
-    sideLength = Math.max(q, Math.round(sideLength / q) * q);
-    recalc();
+    untrack(() => {
+      const w = generation.width;
+      const h = generation.height;
+      if (w && h) syncControlsFromDimensions(w, h);
+    });
   });
 
   const FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
@@ -381,6 +440,7 @@
           inputmode="decimal"
           value={aspectWInput}
           oninput={(e) => onAspectInput("w", (e.target as HTMLInputElement).value)}
+          onchange={onAspectCommit}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm text-neutral-100 text-center focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>
@@ -392,6 +452,7 @@
           inputmode="decimal"
           value={aspectHInput}
           oninput={(e) => onAspectInput("h", (e.target as HTMLInputElement).value)}
+          onchange={onAspectCommit}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm text-neutral-100 text-center focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>

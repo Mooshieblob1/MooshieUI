@@ -221,6 +221,7 @@ const en: Record<string, string> = {
   "settings.title": "Settings",
   "settings.load_failed": "Could not load settings.",
   "settings.search_placeholder": "Search settings...",
+  "settings.search_no_results": "No settings match your search.",
   "settings.save": "Save",
   "settings.saving": "Saving...",
   "settings.saved": "Saved!",

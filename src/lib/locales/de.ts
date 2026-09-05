@@ -204,6 +204,7 @@ const de: Record<string, string> = {
   // ── Einstellungsseite ───────────────────────────────────
   "settings.title": "Einstellungen",
   "settings.search_placeholder": "Einstellungen durchsuchen...",
+  "settings.search_no_results": "Keine Einstellungen gefunden.",
   "settings.save": "Speichern",
   "settings.saving": "Speichern...",
   "settings.saved": "Gespeichert!",

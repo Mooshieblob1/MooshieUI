@@ -220,6 +220,7 @@ const pl: Record<string, string> = {
   "settings.title": "Ustawienia",
   "settings.load_failed": "Nie udało się załadować ustawień.",
   "settings.search_placeholder": "Szukaj ustawień...",
+  "settings.search_no_results": "Brak ustawień pasujących do wyszukiwania.",
   "settings.save": "Zapisz",
   "settings.saving": "Zapisywanie...",
   "settings.saved": "Zapisano!",

@@ -204,6 +204,7 @@ const ko: Record<string, string> = {
   // ── 설정 페이지 ─────────────────────────────────────────
   "settings.title": "설정",
   "settings.search_placeholder": "설정 검색...",
+  "settings.search_no_results": "검색과 일치하는 설정이 없습니다.",
   "settings.save": "저장",
   "settings.saving": "저장 중...",
   "settings.saved": "저장됨!",

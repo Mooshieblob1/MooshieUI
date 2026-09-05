@@ -204,6 +204,7 @@ const pt: Record<string, string> = {
   // ── Página de Configurações ─────────────────────────────
   "settings.title": "Configurações",
   "settings.search_placeholder": "Buscar configurações...",
+  "settings.search_no_results": "Nenhuma configuração corresponde à pesquisa.",
   "settings.save": "Salvar",
   "settings.saving": "Salvando...",
   "settings.saved": "Salvo!",

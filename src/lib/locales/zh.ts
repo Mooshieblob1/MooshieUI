@@ -204,6 +204,7 @@ const zh: Record<string, string> = {
   // ── 设置页面 ────────────────────────────────────────────
   "settings.title": "设置",
   "settings.search_placeholder": "搜索设置...",
+  "settings.search_no_results": "没有符合搜索的设置。",
   "settings.save": "保存",
   "settings.saving": "保存中...",
   "settings.saved": "已保存！",
