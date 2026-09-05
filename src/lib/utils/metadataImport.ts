@@ -9,6 +9,7 @@ import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import { novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
+import { NAI_QUALITY_FILLER } from "./naiPrompt.js";
 import type {
   NovelAiImportSelection,
   NovelAiImportSource,
@@ -112,8 +113,9 @@ function splitQualityTagCandidates(prompt: string): string[] {
 }
 
 /** Remove auto-applied quality tags and SwarmUI syntax from a prompt string. */
-function stripQualityTags(prompt: string): string {
+function stripQualityTags(prompt: string, extraTags: readonly string[] = []): string {
   const autoTags = buildAutoQualityTagSet();
+  for (const tag of extraTags) autoTags.add(tag.toLowerCase());
   const cleaned = stripSwarmUITags(prompt);
   const tags = splitQualityTagCandidates(cleaned);
   const filtered = tags.filter((t) => !autoTags.has(t.toLowerCase()));
@@ -129,13 +131,20 @@ function stripQualityTags(prompt: string): string {
  * here understands. Turning it off imports the prompt exactly as the image
  * carries it.
  */
-function promptForImport(text: string, clean: boolean): string {
-  return clean ? stripQualityTags(text) : text.trim();
+function promptForImport(
+  text: string,
+  clean: boolean,
+  extraTags: readonly string[] = [],
+): string {
+  return clean ? stripQualityTags(text, extraTags) : text.trim();
 }
 
 function applyPositivePrompt(meta: Record<string, string>, clean = true): boolean {
   if (meta.positive_prompt === undefined) return false;
-  generation.positivePrompt = promptForImport(meta.positive_prompt, clean);
+  // A NovelAI image carries its quality stack folded into the prompt; the
+  // panel's quality toggle puts it back at send time, so it comes out here.
+  const extraTags = isNovelAiMeta(meta) ? NAI_QUALITY_FILLER : [];
+  generation.positivePrompt = promptForImport(meta.positive_prompt, clean, extraTags);
   generation.extraPositiveBoxes = [];
   return true;
 }
@@ -490,6 +499,15 @@ export function applyNovelAiSelection(
   if (selection.prompt && applyPositivePrompt(meta, selection.clean)) applied.push("prompt");
   if (selection.undesired && applyNegativePrompt(meta, selection.clean)) {
     applied.push("undesired");
+  }
+  // An un-clean import keeps NovelAI's quality stack and preset text exactly
+  // as the image carries them, so the toggles that would append a second copy
+  // go off for it. Every other combination leaves the panel's own choice alone.
+  if (!selection.clean) {
+    const patch: Partial<NovelAiSettings> = {};
+    if (selection.prompt && meta.positive_prompt !== undefined) patch.quality_toggle = false;
+    if (selection.undesired && meta.negative_prompt !== undefined) patch.uc_preset = 3;
+    if (Object.keys(patch).length > 0) generation.updateNovelAiSettings(patch);
   }
   if (selection.seed && applySeed(meta)) applied.push("seed");
 

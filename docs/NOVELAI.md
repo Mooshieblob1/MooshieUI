@@ -201,8 +201,9 @@ resizable panel and a warning when two circles sit closer than NovelAI's own
 space, so saved positions load unchanged), Precise Reference, Vibe
 Transfer, the NovelAI-only sampling options (quality tags, undesired-content
 preset, Variety+, dynamic thresholding, guidance rescale, undesired-content
-strength), the img2img/inpainting strength and noise, and the local
-post-process toggle.
+strength) and the local post-process toggle. The img2img/inpainting strength
+and noise sit under the image upload instead, in the slot the ComfyUI denoise
+slider uses, so they stay next to the image they act on.
 
 Sampler, steps and guidance are deliberately **not** in it. Those are top-level
 generation params shared with ComfyUI, so they stay in the Sampler panel and do
@@ -2519,9 +2520,10 @@ Two things worth stating plainly, because neither matches the literal ask:
 Restored settings land in the right halves of the panel: NovelAI's sampler and
 noise schedule go into `novelaiSettings`, not the top-level `samplerName` and
 `scheduler`, which stay ComfyUI values for the local post-process pass. The
-quality toggle and UC preset are forced off on import, because the captured
+quality toggle and UC preset were forced off on import, because the captured
 prompt already has their text folded into it and re-enabling them would append
-a second copy.
+a second copy. (Superseded on 2026-09-06: the import now restores the toggles
+the image recorded, see that entry.)
 
 **Testing required: yes.** Steps 3 and 6 are the ones that cannot be inferred
 from the code.
@@ -2806,3 +2808,49 @@ from re-billing.
 **Do not skip:** 1, 7, 11, 17. Those cover the section wiring, the exclusivity
 rule, the cost estimate and the free local pass.
 **Low-risk, skip if short on time:** 6, 18, 19.
+
+### 2026-09-06 - Text: lettering, import toggles, img2img controls under the upload
+
+Three fixes from one bug report.
+
+- **A `Text:` block reached NovelAI as `Text:, Mumei`.** `toParams` ran every
+  backend's prompt through `sanitizePromptForSend`, which folds newlines into
+  `, `. NovelAI reads the prompt line by line: the `Text:` line opens the
+  lettering block and a blank line separates one rendered string from the next,
+  so the fold produced `..., Text:, Mumei` and NovelAI rendered the comma. The
+  sanitizer now takes `keepNewlines`, set on the NovelAI path only: `BREAK`
+  stripping and comma-run cleanup still run per line, but the line structure
+  survives and runs of blank lines collapse to one.
+- **Quality tags kept switching off and the UC preset kept landing on Heavy.**
+  Both NovelAI PNG readers (`novelaiPngMetadata.ts` and `novelai/metadata.rs`)
+  stamped `mooshie_novelai_quality_toggle=false` and `mooshie_novelai_uc_preset=0`
+  on every NovelAI image, and `0` is Heavy, not None. The import dialog opens for
+  any NovelAI PNG dropped or pasted, including the app's own gallery output
+  (saved byte-for-byte with its chunks), with Settings ticked by default, so each
+  import wrote those two values over the panel and persisted them. The readers
+  now report the `qualityToggle` and `ucPreset` the image actually ran with, and
+  leave both unset when the Comment lacks them. Clean imports strip NovelAI's
+  quality filler from the prompt; an un-clean prompt import is the only case
+  that still turns the quality toggle off (and an un-clean UC import sets the
+  preset to None), because that is the case where the folded-in stack would be
+  sent twice.
+- **Strength and noise moved out of the NovelAI panel.** They render in
+  `NovelAiImageSettings.svelte` directly under the image upload, in the slot the
+  ComfyUI denoise slider uses, along with the inpainting paste-back switch.
+
+**Testing required: yes.** Steps 1 and 3 are the ones that cannot be inferred
+from the code.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | In NovelAI mode, end the prompt with `Text:` on its own line and `Mumei` on the next, generate | The lettering reads `Mumei` with no leading comma |
+| 2 | Put two strings in the Text: block separated by a blank line | Both render as separate strings |
+| 3 | Tick Quality tags, set UC preset to Light, then paste one of your own NovelAI gallery PNGs and import with Settings ticked | Quality tags stays ticked and the preset stays Light (the image recorded them that way) |
+| 4 | Import a NovelAI PNG made with the preset on None | The preset lands on None, not Heavy |
+| 5 | Import with Clean off and Prompt ticked | Quality tags switches off; the prompt keeps its full quality stack |
+| 6 | Switch to img2img in NovelAI mode | Strength and Noise sit under the image upload; the NovelAI panel no longer shows them |
+| 7 | Switch to inpainting in NovelAI mode | "Keep the area outside the mask" appears under the upload too |
+| 8 | Switch to a local model in img2img | The denoise slider is back in the same slot |
+
+**Do not skip:** 1, 3.
+**Low-risk, skip if short on time:** 2, 7, 8.

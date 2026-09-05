@@ -1,3 +1,12 @@
+## What's New in v2.2.6
+
+### Fixes and maintenance
+- **NovelAI `Text:` lettering no longer picks up a stray comma**: a prompt laid out as `Text:` on its own line followed by the words to render used to reach NovelAI as `Text:, Mumei`, so the comma was drawn into the image. NovelAI prompts now keep their line breaks on the way out (blank lines still separate one rendered string from the next); ComfyUI prompts are folded into commas as before.
+- **Quality tags and the undesired content preset stop resetting themselves**: importing any NovelAI image (including the app's own gallery output) forced Quality tags off and the preset back to Heavy, and the import dialog defaults to importing settings, so the panel kept losing what you had set. The import now restores the Quality tags and preset the image was actually generated with, a clean import strips NovelAI's baked-in quality tags from the prompt, and an un-clean import turns the toggles off so the tags are not sent twice.
+- **NovelAI img2img controls sit under the image**: Strength, Noise and the inpainting "Keep the area outside the mask" switch moved out of the NovelAI panel to directly under the image upload, in the slot the Denoise slider occupies for local models.
+
+---
+
 ## What's New in v2.2.5
 
 ### New features

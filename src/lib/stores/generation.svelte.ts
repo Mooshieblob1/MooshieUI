@@ -3165,11 +3165,16 @@ class GenerationStore {
     // like chained ComfyUI string-concatenate nodes), then strip BREAK/<break>
     // and layout newlines. This runs before inline preset resolution so that
     // `@preset:` tokens inside extra boxes still flow through the pipeline.
+    // NovelAI reads the prompt line by line (a `Text:` line opens the lettering
+    // block), so its layout is preserved instead of folded into commas.
+    const sanitizeOptions = { keepNewlines: this.isNovelAi };
     const effectivePositive = sanitizePromptForSend(
-      joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)])
+      joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+      sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
-      joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)])
+      joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+      sanitizeOptions
     );
 
     // Expand inline `@preset:<slug>` directives in the user-typed prompts

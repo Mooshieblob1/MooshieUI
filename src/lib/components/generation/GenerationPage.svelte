@@ -13,6 +13,7 @@
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
   import NovelAiSettings from "./NovelAiSettings.svelte";
+  import NovelAiImageSettings from "./NovelAiImageSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import StyleReferenceSection from "./StyleReferenceSection.svelte";
@@ -1701,8 +1702,10 @@
             {/if}
           </div>
 
-          <!-- NovelAI has its own strength and noise controls in the NovelAI panel. -->
-          {#if !generation.isNovelAi}
+          <!-- NovelAI drives img2img with strength and noise instead of denoise. -->
+          {#if generation.isNovelAi}
+          <NovelAiImageSettings />
+          {:else}
           <div use:scrollCapture>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
               <span>{locale.t('generation.image.denoise')}<InfoTip text={locale.t('generation.image.denoise_tip')} /></span>
