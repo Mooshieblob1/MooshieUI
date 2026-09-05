@@ -4,12 +4,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import type { ModelFamily } from "../../utils/modelFamily.js";
-  import {
-    NOVELAI_ASPECT_RATIOS,
-    NOVELAI_DIMENSION_STEP,
-    naiV5Variant,
-    nearestNovelAiAspect,
-  } from "../../utils/novelaiModels.js";
+  import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
@@ -95,8 +90,6 @@
   const PRESET_RATIO_TOLERANCE = 0.04;
 
   function inferAspectFromDimensions(w: number, h: number) {
-    // NovelAI only ever gets one of its own shapes, whatever the pixels say.
-    if (generation.isNovelAi) return nearestNovelAiAspect(w, h);
     // Check presets first (exact match on resulting dimensions)
     for (const p of presets) {
       const dims = dimsForAspect(p.w, p.h, sideLength);
@@ -147,25 +140,33 @@
     sideLength = Math.max(quantum, Math.round(Math.sqrt(w * h) / quantum) * quantum);
   }
 
-  // When an input image is loaded, adopt its aspect ratio. The suggestion
-  // arrives as raw pixel dimensions, so reduce it to a ratio first; otherwise
-  // the inputs would read "1024 : 1536" instead of "2 : 3".
+  // When an input image is loaded, adopt its aspect ratio at the current side
+  // length. The suggestion arrives as raw pixel dimensions, so reduce it to a
+  // ratio first; otherwise the inputs would read "1024 : 1536" instead of
+  // "2 : 3". The image never sets the raw pixel size, but the highlighted
+  // preset has to be the shape actually requested, so width and height are
+  // recomputed from the ratio the same way clicking that preset would.
+  // Inpainting is skipped because the store already holds the image's exact
+  // size for the mask canvas, and a locked resolution is left alone entirely
+  // rather than showing a ratio that is not the one being generated.
   let lastAppliedKey = "";
   $effect(() => {
-    if (suggestedAspect && suggestedAspect.w > 0 && suggestedAspect.h > 0) {
-      const key = `${suggestedAspect.w}:${suggestedAspect.h}`;
-      if (key !== lastAppliedKey) {
-        lastAppliedKey = key;
-        const inferred = inferAspectFromDimensions(suggestedAspect.w, suggestedAspect.h);
-        aspectW = inferred.w;
-        aspectH = inferred.h;
-        aspectWInput = String(inferred.w);
-        aspectHInput = String(inferred.h);
-      }
-    }
+    if (!suggestedAspect || suggestedAspect.w <= 0 || suggestedAspect.h <= 0) return;
+    const key = `${suggestedAspect.w}:${suggestedAspect.h}`;
+    if (key === lastAppliedKey) return;
+    lastAppliedKey = key;
+    const { w, h } = suggestedAspect;
+    untrack(() => {
+      if (generation.resolutionLocked || generation.mode === "inpainting") return;
+      const inferred = inferAspectFromDimensions(w, h);
+      applyPreset(inferred.w, inferred.h);
+    });
   });
 
-  const LOCAL_PRESETS: ReadonlyArray<{ label: string; w: number; h: number }> = [
+  // The same eight shortcuts on every backend. NovelAI accepts any size on its
+  // 64px grid, so the ratio itself is unrestricted there too; only the grid
+  // (`quantum`) and the round-down area rule in `dimsUnderArea` differ.
+  const presets: ReadonlyArray<{ label: string; w: number; h: number }> = [
     { label: "1:1", w: 1, h: 1 },
     { label: "4:3", w: 4, h: 3 },
     { label: "3:2", w: 3, h: 2 },
@@ -175,9 +176,6 @@
     { label: "2:3", w: 2, h: 3 },
     { label: "9:16", w: 9, h: 16 },
   ];
-
-  // NovelAI mode offers only the shapes novelai.net itself does.
-  const presets = $derived(generation.isNovelAi ? NOVELAI_ASPECT_RATIOS : LOCAL_PRESETS);
 
   function recalc() {
     const dims = dimsForAspect(
@@ -207,18 +205,6 @@
     aspectWInput = String(aspectW);
     aspectHInput = String(aspectH);
     recalc();
-  }
-
-  /**
-   * A typed ratio is free-form while it is being typed, so "16" can pass
-   * through "1" without the field snapping underneath the cursor. Once the
-   * field is committed, NovelAI mode pulls it onto the nearest NovelAI shape.
-   */
-  function onAspectCommit() {
-    if (!generation.isNovelAi) return;
-    const snapped = nearestNovelAiAspect(aspectW, aspectH);
-    if (snapped.w === aspectW && snapped.h === aspectH) return;
-    applyPreset(snapped.w, snapped.h);
   }
 
   function onAspectInput(kind: "w" | "h", value: string) {
@@ -276,15 +262,10 @@
     recalc();
   }
 
-  // Switching backends changes the legal grid, so dimensions carried over from
-  // the other one can be illegal. Re-run the aspect maths whenever it changes.
-  // The equality guard is what stops the self-write on `sideLength` from
-  // re-triggering this effect.
   // Switching backends changes the legal grid, but never the resolution: the
   // store already snaps width and height to 64 when a NovelAI model is
   // selected (1024 stays 1024), and nothing here writes them. Only the
-  // readouts are re-derived, so a 4:3 arriving in NovelAI mode reads as its
-  // nearest NovelAI shape, 3:2, while the dimensions stay where they were.
+  // readouts (ratio and side length) are re-derived from the dimensions.
   let lastQuantum = 0;
   $effect(() => {
     const q = quantum;
@@ -440,7 +421,6 @@
           inputmode="decimal"
           value={aspectWInput}
           oninput={(e) => onAspectInput("w", (e.target as HTMLInputElement).value)}
-          onchange={onAspectCommit}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm text-neutral-100 text-center focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>
@@ -452,7 +432,6 @@
           inputmode="decimal"
           value={aspectHInput}
           oninput={(e) => onAspectInput("h", (e.target as HTMLInputElement).value)}
-          onchange={onAspectCommit}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm text-neutral-100 text-center focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>

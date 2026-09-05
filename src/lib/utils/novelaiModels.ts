@@ -146,44 +146,6 @@ export function snapNovelAiDimension(px: number): number {
   );
 }
 
-/**
- * The aspect ratios NovelAI's own UI offers.
- *
- * Every size preset on novelai.net (Small, Normal, Large, Wallpaper) is one of
- * these five shapes: square, 2:3 portrait, 3:2 landscape, and the 9:16 / 16:9
- * wallpapers. The API accepts any 64px-grid size, but the models are trained
- * and tuned on these, so in NovelAI mode the aspect ratio controls stay on
- * them: presets, inferred ratios and typed ratios all resolve to this list.
- */
-export const NOVELAI_ASPECT_RATIOS: ReadonlyArray<{ label: string; w: number; h: number }> = [
-  { label: "1:1", w: 1, h: 1 },
-  { label: "3:2", w: 3, h: 2 },
-  { label: "16:9", w: 16, h: 9 },
-  { label: "2:3", w: 2, h: 3 },
-  { label: "9:16", w: 9, h: 16 },
-];
-
-/**
- * The NovelAI aspect ratio closest to `w:h`.
- *
- * Compared in log space so being too wide and too tall by the same factor
- * count as equally far off. Any non-positive input falls back to square.
- */
-export function nearestNovelAiAspect(w: number, h: number): { w: number; h: number } {
-  if (!(w > 0) || !(h > 0)) return { w: 1, h: 1 };
-  const target = Math.log(w / h);
-  let best = NOVELAI_ASPECT_RATIOS[0];
-  let bestErr = Number.POSITIVE_INFINITY;
-  for (const r of NOVELAI_ASPECT_RATIOS) {
-    const err = Math.abs(target - Math.log(r.w / r.h));
-    if (err < bestErr) {
-      best = r;
-      bestErr = err;
-    }
-  }
-  return { w: best.w, h: best.h };
-}
-
 /** NovelAI's recommended sampling settings, applied when a NAI model is picked. */
 export const NOVELAI_DEFAULTS = {
   steps: 23,
