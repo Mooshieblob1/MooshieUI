@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
 
+use base64::Engine as _;
 use sha2::{Digest, Sha256};
 
 use crate::comfyui::types::GenerationParams;
@@ -477,6 +478,107 @@ fn snap_dimension(px: u32) -> u32 {
     snapped.max(DIMENSION_STEP)
 }
 
+/// Whether an image field holds a ComfyUI upload name rather than image data.
+///
+/// The img2img and inpainting tabs upload their source through ComfyUI's
+/// `/upload/image` and keep the returned filename, which is what reaches this
+/// module as `input_image` / `mask_image`. NovelAI takes the pixels, base64
+/// encoded, so a name has to be resolved before the payload is built. Base64
+/// never contains a `.` and a data URL announces itself, which keeps the two
+/// apart without parsing either.
+fn looks_like_upload_name(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && !value.starts_with("data:") && value.contains('.')
+}
+
+/// Decode an uploaded source and re-encode it as a base64 PNG at the
+/// request's exact size.
+///
+/// NovelAI's img2img and infill take the image at the canvas size, and the
+/// app's resolution is the user's choice rather than the image's, so the
+/// source is fitted to the request and never the other way round (NovelAI's
+/// own site does the same). A mask is scaled with nearest neighbour so it
+/// stays a hard white-on-black selection instead of gaining grey edges.
+///
+/// CPU-bound: call it from `spawn_blocking`.
+fn encode_upload_for_novelai(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    mask: bool,
+) -> Result<String, AppError> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?;
+    let filter = if mask {
+        image::imageops::FilterType::Nearest
+    } else {
+        image::imageops::FilterType::Lanczos3
+    };
+    let img = if img.width() != width || img.height() != height {
+        img.resize_exact(width, height, filter)
+    } else {
+        img
+    };
+    let mut buf = Vec::new();
+    let written = if mask {
+        img.to_rgb8()
+            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+    } else {
+        img.to_rgba8()
+            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+    };
+    written.map_err(|e| AppError::Other(format!("could not encode the image as PNG: {e}")))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+}
+
+/// Replace upload names in `input_image` / `mask_image` with the base64 PNGs
+/// NovelAI expects.
+///
+/// Returns `None` when neither field needed resolving, so the caller keeps
+/// borrowing the original params instead of cloning a payload that may carry
+/// several megabytes of vibe images.
+async fn resolve_upload_images(
+    state: &Arc<AppState>,
+    params: &GenerationParams,
+) -> Result<Option<GenerationParams>, AppError> {
+    let width = snap_dimension(params.width);
+    let height = snap_dimension(params.height);
+    let mut resolved: Option<GenerationParams> = None;
+    let fields = [
+        ("image", false, params.input_image.as_deref()),
+        ("mask", true, params.mask_image.as_deref()),
+    ];
+    for (kind, mask, field) in fields {
+        let Some(name) = field.filter(|value| looks_like_upload_name(value)) else {
+            continue;
+        };
+        let name = name.trim().to_string();
+        let bytes = state.get_input_image_bytes(&name, "").await.map_err(|e| {
+            AppError::Other(format!(
+                "NovelAI could not load the {kind} '{name}' from ComfyUI: {e}"
+            ))
+        })?;
+        let encoded = tokio::task::spawn_blocking(move || {
+            encode_upload_for_novelai(&bytes, width, height, mask)
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("image encoding task failed: {e}")))?
+        .map_err(|e| {
+            AppError::Other(format!(
+                "NovelAI could not prepare the {kind} '{name}': {e}"
+            ))
+        })?;
+        log::info!("NovelAI {kind}: resolved upload '{name}' into a {width}x{height} PNG");
+        let target = resolved.get_or_insert_with(|| params.clone());
+        if mask {
+            target.mask_image = Some(encoded);
+        } else {
+            target.input_image = Some(encoded);
+        }
+    }
+    Ok(resolved)
+}
+
 /// Copy the NovelAI block with every character prompt rewritten into NovelAI
 /// weight syntax.
 ///
@@ -556,7 +658,11 @@ async fn run_inner(
     if let Some(encoded) = encoded.as_ref() {
         emit_vibe_encodings(sink, prompt_id, encoded);
     }
-    let body = build_request(encoded.as_ref().unwrap_or(params))?;
+    // The img2img and inpainting tabs hand over ComfyUI upload names, not
+    // pixels. NovelAI cannot read those, so they become the base64 PNGs it
+    // takes before the payload exists, and before any Anlas are spent.
+    let with_uploads = resolve_upload_images(state, encoded.as_ref().unwrap_or(params)).await?;
+    let body = build_request(with_uploads.as_ref().or(encoded.as_ref()).unwrap_or(params))?;
     log_vibe_summary(&body);
     log_character_summary(&body);
     let steps = params.steps.max(1);
@@ -889,6 +995,67 @@ pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a ComfyUI upload name gets resolved; image data of either shape
+    /// passes through untouched.
+    #[test]
+    fn upload_names_are_told_apart_from_image_data() {
+        assert!(looks_like_upload_name("img2img_input.png"));
+        assert!(looks_like_upload_name(" canvas_mask.png "));
+        assert!(!looks_like_upload_name(
+            "data:image/png;base64,iVBORw0KGgo="
+        ));
+        assert!(!looks_like_upload_name("iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"));
+        assert!(!looks_like_upload_name(""));
+    }
+
+    fn png_bytes(img: &image::RgbaImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        bytes
+    }
+
+    fn decode_png(encoded: &str) -> image::DynamicImage {
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("base64");
+        assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+        image::load_from_memory(&png).unwrap()
+    }
+
+    /// The source is fitted to the requested canvas, not the canvas to the
+    /// source: the resolution belongs to the user.
+    #[test]
+    fn an_upload_is_fitted_to_the_request_as_a_png() {
+        let src = image::RgbaImage::from_pixel(300, 200, image::Rgba([255, 0, 0, 255]));
+        let encoded = encode_upload_for_novelai(&png_bytes(&src), 1216, 832, false).unwrap();
+        let out = decode_png(&encoded);
+        assert_eq!((out.width(), out.height()), (1216, 832));
+    }
+
+    /// A mask is scaled without interpolation, so every pixel stays fully
+    /// black or fully white and the infill edge does not pick up a grey halo.
+    #[test]
+    fn a_mask_stays_a_hard_white_on_black_selection() {
+        let mut src = image::RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 0, 255]));
+        for x in 32..64 {
+            for y in 0..64 {
+                src.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+            }
+        }
+        let encoded = encode_upload_for_novelai(&png_bytes(&src), 128, 128, true).unwrap();
+        let out = decode_png(&encoded).to_rgb8();
+        assert_eq!((out.width(), out.height()), (128, 128));
+        assert_eq!(out.get_pixel(0, 0).0, [0, 0, 0]);
+        assert_eq!(out.get_pixel(127, 127).0, [255, 255, 255]);
+        assert!(out
+            .pixels()
+            .all(|p| p.0.iter().all(|c| *c == 0 || *c == 255)));
+    }
 
     /// A vibe carrying a token minted for this exact model and extraction
     /// level is the only case that costs nothing.

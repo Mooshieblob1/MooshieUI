@@ -405,8 +405,14 @@
     }, 300);
   });
 
+  // The image never decides the resolution. Its shape reaches the aspect
+  // ratio controls through `imageAspect`, but width and height stay wherever
+  // the user put them: both backends fit the source to the request (ComfyUI
+  // through the ImageScale node, NovelAI in the client). Inpainting is the one
+  // exception, because the mask canvas has to be the image's size.
   function applyImageGeometry(width: number, height: number) {
     imageAspect = { w: width, h: height };
+    if (generation.mode !== "inpainting") return;
     generation.width = width;
     generation.height = height;
 

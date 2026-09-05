@@ -177,6 +177,7 @@ const es: Record<string, string> = {
   // ── Página de ajustes ───────────────────────────────────
   "settings.title": "Ajustes",
   "settings.search_placeholder": "Buscar ajustes...",
+  "settings.search_no_results": "No hay ajustes que coincidan con la búsqueda.",
   "settings.save": "Guardar",
   "settings.saving": "Guardando...",
   "settings.saved": "¡Guardado!",

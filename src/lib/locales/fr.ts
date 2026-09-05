@@ -204,6 +204,7 @@ const fr: Record<string, string> = {
   // ── Page des paramètres ─────────────────────────────────
   "settings.title": "Paramètres",
   "settings.search_placeholder": "Rechercher dans les paramètres...",
+  "settings.search_no_results": "Aucun paramètre ne correspond à la recherche.",
   "settings.save": "Enregistrer",
   "settings.saving": "Enregistrement...",
   "settings.saved": "Enregistré !",

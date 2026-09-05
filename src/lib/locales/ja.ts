@@ -204,6 +204,7 @@ const ja: Record<string, string> = {
   // ── 設定ページ ──────────────────────────────────────────
   "settings.title": "設定",
   "settings.search_placeholder": "設定を検索...",
+  "settings.search_no_results": "検索に一致する設定はありません。",
   "settings.save": "保存",
   "settings.saving": "保存中...",
   "settings.saved": "保存済み！",

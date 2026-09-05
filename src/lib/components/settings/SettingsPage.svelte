@@ -1103,43 +1103,19 @@
     localStorage.setItem("mooshieui.dyslexicFont", String(dyslexicFont));
   });
 
-  // Section collapse state (persisted across tab switches)
-  const COLLAPSED_KEY = "mooshieui.settings.collapsed.v1";
-  let collapsed: Record<string, boolean> = $state(loadCollapsedState());
+  // Active settings category (sidebar), persisted across tab switches
+  const ACTIVE_CATEGORY_KEY = "mooshieui.settings.activeCategory.v1";
+  let activeCategory = $state(loadActiveCategory());
 
-  function loadCollapsedState(): Record<string, boolean> {
-    const defaults: Record<string, boolean> = {
-      connection: false,
-      appearance: false,
-      performance: false,
-      models: false,
-      modelRequests: false,
-      paths: false,
-      autocomplete: false,
-      interrogator: false,
-      prompt_assistant: false,
-      civitai: false,
-      novelai: false,
-      about: false,
-    };
-    try {
-      const raw = localStorage.getItem(COLLAPSED_KEY);
-      if (!raw) return defaults;
-      const saved = JSON.parse(raw);
-      return { ...defaults, ...saved };
-    } catch {
-      return defaults;
-    }
+  function loadActiveCategory(): string {
+    try { return localStorage.getItem(ACTIVE_CATEGORY_KEY) ?? ""; } catch { return ""; }
   }
 
-  let settingsCollapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  $effect(() => {
-    const val = JSON.stringify(collapsed);
-    if (settingsCollapseSaveTimer) clearTimeout(settingsCollapseSaveTimer);
-    settingsCollapseSaveTimer = setTimeout(() => {
-      try { localStorage.setItem(COLLAPSED_KEY, val); } catch {}
-    }, 300);
-  });
+  function selectCategory(key: string) {
+    activeCategory = key;
+    try { localStorage.setItem(ACTIVE_CATEGORY_KEY, key); } catch {}
+    settingsScrollEl?.scrollTo({ top: 0 });
+  }
 
   const sections = [
     { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui" },
@@ -1159,7 +1135,9 @@
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
+    { key: "account", labelKey: "settings.account", keywords: "account password username display name login logout users lan accounts admin moderator role security migration" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
+    { key: "developer", labelKey: "settings.developer.title", keywords: "developer dev mode debug unlock" },
   ];
 
   function sectionVisible(key: string): boolean {
@@ -1169,6 +1147,31 @@
     const q = search.toLowerCase();
     return locale.t(s.labelKey).toLowerCase().includes(q) || s.keywords.includes(q);
   }
+
+  // Role / mode gate per category. Mirrors the guards on each section block below.
+  function categoryAllowed(key: string): boolean {
+    switch (key) {
+      case "appMode": return isAdmin && !mobileFriendly;
+      case "connection":
+      case "performance":
+      case "paths": return isAdmin;
+      case "models":
+      case "modelRequests":
+      case "civitai":
+      case "novelai": return canManageServer;
+      case "account": return isBrowserMode && (!isAdmin || usesLegacyPassword);
+      case "developer": return generation.devModeUnlocked;
+      default: return true;
+    }
+  }
+
+  const visibleCategories = $derived(sections.filter((sec) => categoryAllowed(sec.key) && sectionVisible(sec.key)));
+
+  // Keep the selection on a category the user can actually see (role change, search filter, stale localStorage).
+  $effect(() => {
+    const keys = visibleCategories.map((sec) => sec.key);
+    if (keys.length > 0 && !keys.includes(activeCategory)) activeCategory = keys[0];
+  });
 
   // Track original values for restart-needing settings
   let originalUrl = "";
@@ -1931,20 +1934,61 @@
     </div>
   {/if}
 
-  <!-- Scrollable content -->
-  <div
-    class="flex-1 overflow-y-auto {mobileFriendly ? 'p-4' : 'p-6'}"
-    bind:this={settingsScrollEl}
-    onscroll={onSettingsScroll}
-  >
-    <div class="columns-1 {mobileFriendly ? '' : 'lg:columns-2 xl:columns-3'} gap-4">
+  <!-- Category sidebar + content pane -->
+  <div class="flex-1 flex min-h-0 overflow-hidden">
+    {#if !mobileFriendly}
+    <aside class="w-52 shrink-0 border-r border-neutral-800 bg-neutral-900/60 p-3 overflow-y-auto">
+      <nav class="space-y-0.5" aria-label={locale.t('settings.title')}>
+        {#each visibleCategories as cat (cat.key)}
+          <button
+            type="button"
+            onclick={() => selectCategory(cat.key)}
+            aria-current={activeCategory === cat.key ? 'page' : undefined}
+            class="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors {activeCategory === cat.key
+              ? 'bg-indigo-600 text-white font-medium shadow-sm'
+              : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100'}"
+          >
+            {locale.t(cat.labelKey)}
+          </button>
+        {/each}
+        {#if visibleCategories.length === 0}
+          <p class="px-3 py-2 text-xs text-neutral-500">{locale.t('settings.search_no_results')}</p>
+        {/if}
+      </nav>
+    </aside>
+    {/if}
+
+    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+      {#if mobileFriendly}
+      <div class="shrink-0 flex gap-1.5 overflow-x-auto border-b border-neutral-800 bg-neutral-900 px-3 py-2">
+        {#each visibleCategories as cat (cat.key)}
+          <button
+            type="button"
+            onclick={() => selectCategory(cat.key)}
+            aria-current={activeCategory === cat.key ? 'page' : undefined}
+            class="shrink-0 rounded-full px-3 py-1.5 text-xs whitespace-nowrap transition-colors {activeCategory === cat.key
+              ? 'bg-indigo-600 text-white font-medium'
+              : 'bg-neutral-800 text-neutral-400'}"
+          >
+            {locale.t(cat.labelKey)}
+          </button>
+        {/each}
+      </div>
+      {/if}
+
+      <div
+        class="flex-1 overflow-y-auto {mobileFriendly ? 'p-4' : 'p-6'}"
+        bind:this={settingsScrollEl}
+        onscroll={onSettingsScroll}
+      >
+      <div class="{mobileFriendly ? '' : 'max-w-3xl'}">
       {#if loading}
         <div class="flex flex-col items-center justify-center py-12 text-neutral-500 gap-3">
           <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
           <p class="text-xs text-neutral-500">{locale.t("common.loading")}</p>
         </div>
       {:else if settingsLoadError}
-        <div class="rounded-xl border border-red-800/50 bg-red-950/30 p-5 space-y-3 break-inside-avoid">
+        <div class="rounded-xl border border-red-800/50 bg-red-950/30 p-5 space-y-3">
           <p class="text-sm text-red-200">{locale.t("settings.load_failed")}</p>
           <p class="text-xs text-red-300/90">{settingsLoadError}</p>
           <button
@@ -1954,9 +1998,13 @@
           >{locale.t("common.retry")}</button>
         </div>
       {:else if config}
+        {#if visibleCategories.length === 0}
+          <p class="text-sm text-neutral-500">{locale.t('settings.search_no_results')}</p>
+        {/if}
+
         <!-- Browser / App Mode Switch (admin only; hidden on mobile — users are already in browser mode) -->
-        {#if isAdmin && sectionVisible("appMode") && !mobileFriendly}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+        {#if isAdmin && activeCategory === "appMode" && !mobileFriendly}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="p-5 space-y-3">
             <div class="flex items-center justify-between">
               <div>
@@ -2118,8 +2166,8 @@
         {/if}
 
         <!-- Account Management (moderator in browser mode — admins see this inside the LAN section above) -->
-        {#if canManageServer && !isAdmin && isBrowserMode}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+        {#if activeCategory === "account" && canManageServer && !isAdmin && isBrowserMode}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="p-5 space-y-3">
             <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.lan.account_management')}</h3>
             <p class="text-xs text-neutral-500">{locale.t('settings.lan.account_management_desc')}</p>
@@ -2203,16 +2251,11 @@
         {/if}
 
         <!-- Queue (all users — always shown when section visible) -->
-        {#if sectionVisible("queue")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.queue = !collapsed.queue)}
-          >
+        {#if activeCategory === "queue"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.queue.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.queue ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          {#if !collapsed.queue}
+          </div>
           <div class="px-5 pb-5 space-y-3">
             {#if queueData === null}
               <p class="text-xs text-neutral-500">{locale.t('settings.queue.loading')}</p>
@@ -2280,57 +2323,16 @@
               {/if}
             {/if}
           </div>
-          {/if}
-        </section>
-        {/if}
-
-        <!-- Queue Management (admin / moderator in browser mode — legacy clear button kept for non-queue-section visibility) -->
-        {#if canManageServer && isBrowserMode && !sectionVisible("queue")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <div class="p-5 space-y-3">
-            <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.queue.management_title')}</h3>
-            <p class="text-xs text-neutral-500">{locale.t('settings.queue.management_desc')}</p>
-            {#if clearQueueError}
-              <p class="text-xs text-red-400">{clearQueueError}</p>
-            {/if}
-            {#if clearQueueDone}
-              <p class="text-xs text-green-400">{locale.t('settings.queue.cleared')}</p>
-            {/if}
-            {#if showClearQueueConfirm}
-              <p class="text-xs text-amber-300">{locale.t('settings.queue.clear_confirm')}</p>
-              <div class="flex gap-2">
-                <button
-                  class="flex-1 py-2 rounded-lg text-xs font-medium bg-neutral-700 hover:bg-neutral-600 text-neutral-300 transition-colors cursor-pointer"
-                  onclick={() => (showClearQueueConfirm = false)}
-                >{locale.t('common.cancel')}</button>
-                <button
-                  class="flex-1 py-2 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer disabled:opacity-50"
-                  disabled={clearQueueBusy}
-                  onclick={handleClearQueue}
-                >{clearQueueBusy ? locale.t('settings.queue.clearing') : locale.t('settings.queue.clear_confirm_yes')}</button>
-              </div>
-            {:else}
-              <button
-                class="w-full py-2 rounded-lg text-xs font-medium bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50 transition-colors cursor-pointer"
-                onclick={() => { clearQueueError = null; showClearQueueConfirm = true; }}
-              >{locale.t('settings.queue.clear_button')}</button>
-            {/if}
-          </div>
         </section>
         {/if}
 
         <!-- Connection (admin / moderator) -->
-        {#if isAdmin && sectionVisible("connection")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.connection = !collapsed.connection)}
-          >
+        {#if isAdmin && activeCategory === "connection"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.connection.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.connection ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.connection}
           <div class="px-5 pb-5 space-y-4">
           <div>
             <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.server_mode')}<span class="text-amber-400">*</span></label>
@@ -2456,22 +2458,16 @@
             </div>
           </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Appearance -->
-        {#if sectionVisible("appearance")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.appearance = !collapsed.appearance)}
-          >
+        {#if activeCategory === "appearance"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.appearance.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.appearance ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.appearance}
           <div class="px-5 pb-5 space-y-4">
           {#if deviceSupportsMobileLayout}
             <div class="rounded-lg border border-neutral-700 bg-neutral-950/60 p-4">
@@ -2728,22 +2724,16 @@
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.language_desc')}</p>
           </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Performance (admin / moderator) -->
-        {#if isAdmin && sectionVisible("performance")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.performance = !collapsed.performance)}
-          >
+        {#if isAdmin && activeCategory === "performance"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.performance.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.performance ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.performance}
           <div class="px-5 pb-5 space-y-4">
           <div>
             <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.performance.vram_mode')}<span class="text-amber-400">*</span></label>
@@ -2900,22 +2890,16 @@
           </div>
 
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Quality Tags (visible to all users) -->
-        {#if sectionVisible("quality")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.quality = !collapsed.quality)}
-          >
+        {#if activeCategory === "quality"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.performance.auto_quality_tags')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.quality ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.quality}
           <div class="px-5 pb-5 space-y-4">
           <div class="flex items-start gap-3">
             <input
@@ -2988,22 +2972,16 @@
           {/if}
           {/if}
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- GPU Workers (visible to all users) -->
-        {#if sectionVisible("gpu")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.gpu = !collapsed.gpu)}
-          >
+        {#if activeCategory === "gpu"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.sections.gpu')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.gpu ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.gpu}
           <div class="px-5 pb-5 space-y-4">
             {#if config}
               <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-3">
@@ -3070,22 +3048,16 @@
             {/if}
             <GpuStatusPanel />
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Model Management (mods/admins) -->
-        {#if canManageServer && sectionVisible("models")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.models = !collapsed.models)}
-          >
+        {#if canManageServer && activeCategory === "models"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.models.manage')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.models ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.models}
           <div class="px-5 pb-5">
             <button
               type="button"
@@ -3099,41 +3071,29 @@
               <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M12 12v6"/></svg>
             </button>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Model Requests (mods/admins) -->
-        {#if canManageServer && sectionVisible("modelRequests")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.modelRequests = !collapsed.modelRequests)}
-          >
+        {#if canManageServer && activeCategory === "modelRequests"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.sections.model_requests')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.modelRequests ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.modelRequests}
           <div class="px-5 pb-5">
             <ModelRequestsPanel {userRole} />
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Paths (admin only) -->
-        {#if isAdmin && sectionVisible("paths")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.paths = !collapsed.paths)}
-          >
+        {#if isAdmin && activeCategory === "paths"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.paths.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.paths ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.paths}
           <div class="px-5 pb-5 space-y-4">
 
           <!-- Open Model Folders -->
@@ -3351,22 +3311,16 @@
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.paths.extra_args_desc')}</p>
           </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Notifications -->
-        {#if sectionVisible("notifications")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.notifications = !collapsed.notifications)}
-          >
+        {#if activeCategory === "notifications"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.notifications.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.notifications ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.notifications}
           <div class="px-5 pb-5 space-y-4">
 
             <!-- OS desktop notifications -->
@@ -3408,22 +3362,16 @@
             {/if}
 
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Gallery -->
-        {#if sectionVisible("gallery")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.gallery = !collapsed.gallery)}
-          >
+        {#if activeCategory === "gallery"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.gallery.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.gallery ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.gallery}
           <div class="px-5 pb-5 space-y-4">
 
             {#if isAdmin}
@@ -3641,22 +3589,16 @@
               </div>
             </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Autocomplete -->
-        {#if sectionVisible("autocomplete")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.autocomplete = !collapsed.autocomplete)}
-          >
+        {#if activeCategory === "autocomplete"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.autocomplete.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.autocomplete ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.autocomplete}
           <div class="px-5 pb-5 space-y-4">
             <!-- Enabled toggle -->
             <label class="flex items-center justify-between gap-3 cursor-pointer">
@@ -3821,25 +3763,19 @@
               {locale.t('settings.autocomplete.undo_redo_tip')}
             </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Interrogator -->
-        {#if sectionVisible("interrogator")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.interrogator = !collapsed.interrogator)}
-          >
+        {#if activeCategory === "interrogator"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             <span class="flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               {locale.t('settings.interrogator.title')}
             </span>
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.interrogator ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.interrogator}
           <div class="px-5 pb-5 space-y-4">
             <!-- Guarded on a loaded list: binding a <select> with no options
                  would clear the selected id before the registry arrives. -->
@@ -3979,25 +3915,19 @@
               </div>
             </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Prompt Assistant -->
-        {#if sectionVisible("prompt_assistant")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.prompt_assistant = !collapsed.prompt_assistant)}
-          >
+        {#if activeCategory === "prompt_assistant"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             <span class="flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
               {locale.t('settings.prompt_assistant.title')}
             </span>
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.prompt_assistant ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.prompt_assistant}
           <div class="px-5 pb-5 space-y-4">
             <p class="text-[10px] text-neutral-500">
               {locale.t('settings.prompt_assistant.desc')}
@@ -4059,25 +3989,19 @@
               onstate={onProviderState}
             />
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- CivitAI (admin / moderator) -->
-        {#if canManageServer && sectionVisible("civitai")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.civitai = !collapsed.civitai)}
-          >
+        {#if canManageServer && activeCategory === "civitai"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             <span class="flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
               {locale.t('settings.civitai.title')}
             </span>
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.civitai ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.civitai}
           <div class="px-5 pb-5 space-y-3">
             <p class="text-[10px] text-neutral-500">{locale.t('settings.civitai.api_key_desc')}</p>
             <div>
@@ -4098,25 +4022,19 @@
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
             </div>
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- NovelAI (admin / moderator) -->
-        {#if canManageServer && sectionVisible("novelai")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.novelai = !collapsed.novelai)}
-          >
+        {#if canManageServer && activeCategory === "novelai"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             <span class="flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-teal-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
               {locale.t('settings.novelai.title')}
             </span>
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.novelai ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.novelai}
           <div class="px-5 pb-5 space-y-3">
             <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.api_key_desc')}</p>
             <div>
@@ -4229,13 +4147,12 @@
               </label>
             {/if}
           </div>
-          {/if}
         </section>
         {/if}
 
         <!-- Legacy password encryption upgrade (browser mode) -->
-        {#if isBrowserMode && usesLegacyPassword}
-        <section class="bg-neutral-900 rounded-xl border border-amber-800/50 overflow-hidden break-inside-avoid mb-4">
+        {#if activeCategory === "account" && isBrowserMode && usesLegacyPassword}
+        <section class="bg-neutral-900 rounded-xl border border-amber-800/50 overflow-hidden mb-4">
           <div class="p-5 space-y-3">
             <h3 class="text-sm font-medium text-amber-200">{locale.t('auth.legacy_password_migration_title')}</h3>
             <p class="text-xs text-neutral-400">
@@ -4272,8 +4189,8 @@
         {/if}
 
         <!-- Account / Change Password (browser mode non-admin users) -->
-        {#if isBrowserMode && !isAdmin}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+        {#if activeCategory === "account" && isBrowserMode && !isAdmin}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="p-5 space-y-3">
             <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.account')}</h3>
             <button
@@ -4338,17 +4255,12 @@
         {/if}
 
         <!-- About & Updates -->
-        {#if sectionVisible("about")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
-            onclick={() => (collapsed.about = !collapsed.about)}
-          >
+        {#if activeCategory === "about"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             {locale.t('settings.about.title')}
-            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.about ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
+          </div>
 
-          {#if !collapsed.about}
           <div class="px-5 pb-5 space-y-4">
             <div class="flex items-center justify-between">
               <div>
@@ -4511,20 +4423,14 @@
               <p class="text-[11px] text-neutral-500">{locale.t('settings.about.data_dir_hint')}</p>
             </div>
           </div>
-          {/if}
         </section>
         {/if}
 
-        {#if generation.devModeUnlocked}
-        <section class="bg-neutral-900 rounded-xl border border-amber-800/50 overflow-hidden break-inside-avoid mb-4">
-          <button
-            class="w-full flex items-center justify-between px-4 py-3 border-b border-amber-800/30 text-left"
-            onclick={() => (collapsed.developer = !collapsed.developer)}
-          >
+        {#if activeCategory === "developer" && generation.devModeUnlocked}
+        <section class="bg-neutral-900 rounded-xl border border-amber-800/50 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between px-4 py-3 border-b border-amber-800/30">
             <span class="text-[10px] font-semibold tracking-widest text-amber-400 uppercase">{locale.t('settings.developer.title')}</span>
-            <svg class="w-4 h-4 text-amber-600 transition-transform {collapsed.developer ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          {#if !collapsed.developer}
+          </div>
           <div class="p-4 space-y-3">
             <label class="flex items-center gap-3 cursor-pointer select-none">
               <input
@@ -4549,18 +4455,19 @@
               </div>
             </label>
           </div>
-          {/if}
         </section>
         {/if}
 
-        <p class="text-[10px] text-neutral-500 break-inside-avoid"><span class="text-amber-400">*</span> {locale.t('settings.restart_required')}</p>
+        <p class="text-[10px] text-neutral-500"><span class="text-amber-400">*</span> {locale.t('settings.restart_required')}</p>
 
         {#if error}
-          <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs break-inside-avoid">
+          <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs">
             {error}
           </div>
         {/if}
       {/if}
+      </div>
+      </div>
     </div>
   </div>
 </div>

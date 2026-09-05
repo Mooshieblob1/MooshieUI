@@ -204,6 +204,7 @@ const zhTw: Record<string, string> = {
   // ── 設定頁面 ────────────────────────────────────────────
   "settings.title": "設定",
   "settings.search_placeholder": "搜尋設定...",
+  "settings.search_no_results": "沒有符合搜尋的設定。",
   "settings.save": "儲存",
   "settings.saving": "儲存中...",
   "settings.saved": "已儲存！",
