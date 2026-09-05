@@ -2854,3 +2854,55 @@ from the code.
 
 **Do not skip:** 1, 3.
 **Low-risk, skip if short on time:** 2, 7, 8.
+
+### 2026-09-06 - Imported images set the dimensions through their ratio, and NovelAI mode accepts any aspect ratio again
+
+**Requested by:** the user: "sometimes when i2i-ing an image in NAI mode, it
+will visually apply the aspect ratio by making the correct button be
+highlighted, but the actual resolution is still what it previously was", then
+"we overcompensated with the aspect ratio restrictions, please restore the
+ability to set any aspect ratio but keep preventing images from setting the
+aspect ratio to the resolution and force them to use the lowest multiple of
+whatever NAI uses in NAI mode".
+
+**What was wrong.** The 2026-09-05 change left the two halves of the
+Dimensions panel disagreeing. An import moved the ratio readout, and with it
+the highlighted preset, to the image's shape, but never recomputed width and
+height, so 2:3 lit up while the request stayed 1024x1024. Separately, limiting
+NovelAI mode to five shapes went further than wanted: the API takes any size
+on its 64 grid.
+
+**What changed.**
+
+- An import now applies its ratio the way clicking the matching preset does:
+  width and height are recomputed at the current side length. The raw pixel
+  size is still never copied. In NovelAI mode `dimsUnderArea` picks the
+  largest 64-grid pair that stays at or under the side length's area, so a
+  portrait image at side 1024 gives 832x1216, never 832x1280. Inpainting is
+  skipped (the canvas must equal the image) and a locked resolution is left
+  alone entirely, readout included, so the highlight can never disagree with
+  the request.
+- The NovelAI-only preset list, the commit-time snap of typed ratios and the
+  nearest-NovelAI-shape inference are gone. All eight presets show on every
+  backend, any ratio can be typed, and inference is identical on both: exact
+  preset, then nearest preset within the 0.04 tolerance, then the reduced
+  fraction. `NOVELAI_ASPECT_RATIOS` and `nearestNovelAiAspect` were deleted
+  from `novelaiModels.ts`.
+- Still NovelAI-specific: the 64px grid, the round-down area rule, and the
+  store's snap to 64 when a NovelAI model is selected.
+
+This supersedes steps 2 and 7 of the first 2026-09-05 table and steps 3 to 6
+and 8 of the second.
+
+**Testing required: yes.** 1 and 4 are the reported problems.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, 1024x1024, img2img. Browse a 1024x1536 image | 2:3 highlights and the resolution reads 832x1216. Generation returns 832x1216 |
+| 2 | NAI mode, 1024x1024. Load a 1920x1080 image | 16:9 highlights, resolution 1344x768 (under 1 MP, Opus-free on 28 steps) |
+| 3 | NAI mode. Load a 1000x1400 image (no preset within tolerance) | Ratio reads 5 : 7, resolution 832x1216 (largest 64-grid pair under the area), nothing off the 64 grid |
+| 4 | NAI mode. Look at the preset row, then type 4 and 3 into the ratio fields and tab out | All eight buttons are present. The ratio stays 4 : 3 and the resolution follows it on the 64 grid |
+| 5 | NAI mode, lock the resolution, load a landscape image | Nothing changes: not the resolution, not the ratio readout, not the highlight |
+| 6 | NAI mode, inpainting. Load an image | Width and height equal the image's exact size, as before |
+| 7 | ComfyUI backend, 1024x1024. Load a 1216x832 image | Reads 3 : 2, resolution recomputed to 3:2 at side 1024 on the 8 grid |
+| 8 | ComfyUI backend at 21:9, switch to a NovelAI model | Ratio still reads 21 : 9, dimensions only snap to the 64 grid |
