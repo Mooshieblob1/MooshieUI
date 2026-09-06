@@ -1508,14 +1508,18 @@ modal, with the named rule in the amber problem list after the single retry
 fails to clear it.
 
 5. Empty `BASE:`. Problem names the empty base field.
-6. An em dash or en dash anywhere in any field. Problem names the dash.
+6. An em dash or an en dash in BASE or UC (not inside a `Text:` block). The
+   normalizer rewrites it to a comma; no problem line. A dash that survives
+   into a field (for example inside `Text:`) still names the dash.
 7. A markdown fence around the answer. The fence is stripped by the parser; if
    one survives into a field, the problem names it.
-8. `CHAR 1:` starting with `1girl`. Problem says counts belong in BASE only.
-9. `CHAR 1:` starting with `Character 1`. Problem says start the box with girl,
-   boy or other.
-10. Quality filler (`masterpiece`, `best quality`) in BASE with the quality
-    toggle on. Problem names the filler found.
+8. `CHAR 1:` starting with `1girl`. The normalizer rewrites it to `girl`; no
+   problem line. A count tag still sitting later in the box is reported.
+9. `CHAR 1:` starting with `Character 1`. The normalizer strips the numbered
+   label; no problem line if the rest already starts with girl, boy or other.
+10. Quality filler (`masterpiece`, `best quality`, `very aesthetic`) in BASE.
+    The normalizer drops those tags; no problem line. Filler that cannot be
+    pulled out as a comma/span item is still reported.
 11. Content after the `Text:` block in BASE. Problem says the Text block must be
     last.
 12. Unbalanced `{` or `[` in BASE. Problem names the brackets.
@@ -1525,6 +1529,10 @@ fails to clear it.
 14. A chatty preamble before the first label ("Sure, here you go"). Dropped by
     the parser, no problem line.
 15. No labels at all, just a bare prompt. Treated as BASE, no problem line.
+16. `1.2::rain, as109::` in BASE. The normalizer reorders to
+    `1.2::as109, rain::`. No problem line.
+17. Preset UC junk (`worst quality`, `lowres`) in UC. The normalizer drops
+    those tags; custom motif UC is kept. No problem line.
 
 **Digit suffix artist names.** Prompt:
 
@@ -2820,7 +2828,9 @@ Three fixes from one bug report.
   so the fold produced `..., Text:, Mumei` and NovelAI rendered the comma. The
   sanitizer now takes `keepNewlines`, set on the NovelAI path only: `BREAK`
   stripping and comma-run cleanup still run per line, but the line structure
-  survives and runs of blank lines collapse to one.
+  survives and runs of blank lines collapse to one. (Incomplete: the merge
+  step after the sanitizer flattened the prompt again whenever a style or
+  chunk was active. See 2026-09-07, "The comma before Text: was still there".)
 - **Quality tags kept switching off and the UC preset kept landing on Heavy.**
   Both NovelAI PNG readers (`novelaiPngMetadata.ts` and `novelai/metadata.rs`)
   stamped `mooshie_novelai_quality_toggle=false` and `mooshie_novelai_uc_preset=0`
@@ -2906,3 +2916,107 @@ and 8 of the second.
 | 6 | NAI mode, inpainting. Load an image | Width and height equal the image's exact size, as before |
 | 7 | ComfyUI backend, 1024x1024. Load a 1216x832 image | Reads 3 : 2, resolution recomputed to 3:2 at side 1024 on the 8 grid |
 | 8 | ComfyUI backend at 21:9, switch to a NovelAI model | Ratio still reads 21 : 9, dimensions only snap to the 64 grid |
+
+### 2026-09-07 - Enhance for V5 follows V5 Full / Curated prompting
+
+**Requested by:** the user: make the existing Enhance for V5 path work like
+the V5 Full and V5 Curated prompting specs (hybrid tags + NL, custom UC only,
+no quality stacks, digit-suffix artist spans).
+
+**What was wrong.** The rewrite asked for a quota of emphasised tags and a
+ten-to-thirty-item UC list, so the model padded both. Quality filler was a
+short list checked only in BASE, digit-suffix artist spans were described in
+the spec but never reordered, and a leading `1girl` in a character box cost a
+retry instead of being repaired. The result did not look like a paste-ready
+V5 pack.
+
+**What changed.**
+
+- The system prompt is hybrid: tags lock identity, natural language owns
+  camera, layout and mood. Default complexity is `high complexity`. Emphasis
+  is for locking or killing a motif, not a quota. UC is custom motif only
+  and may be empty when the preset is on. Quality / aesthetic filler is
+  forbidden in every field. Explicit ideas keep real Danbooru tags; the
+  rewrite does not sanitize them and does not invent them.
+- The normalizer now does the work the spec already promised: digit-suffix
+  names go first inside `n::...::` spans (trailing comma when every token
+  still ends in a digit), quality filler and preset quality-UC junk are
+  stripped, em/en dashes in prompt fields become commas, and a box that
+  starts `1girl` / `Character 1` is rewritten to `girl` / stripped. `Text:`
+  lettering is left alone.
+- Cached self-authored notes are invalidated (`SKILL_VERSION` 5) because
+  the job they were written for changed.
+
+**Where nothing changed.** The modal, the review gate, reference images, and
+the language select are untouched. Settings (steps, guidance, sampler) stay
+on the panel; the rewrite still returns labelled fields only.
+
+**Testing required: yes.** The LLM half cannot be asserted automatically.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | V5 Curated, Enhance for V5, `a girl standing in the rain at night, neon signs` | Review BASE is a tag line plus 1-3 NL sentences, includes `high complexity`, no `masterpiece` / `best quality` / `very aesthetic`. UC is short or empty, no `lowres` / `worst quality` |
+| 2 | Same idea on V5 Full | Review subtitle says V5 Full. NL body may be longer. Still no quality stack |
+| 3 | Instruction that is explicit | Real Danbooru tags in BASE/CHAR, not euphemisms |
+| 4 | `1.2::rain, as109::` in a rewrite that keeps that artist span | Applied BASE has `1.2::as109, rain::` |
+| 5 | First enhance after this change, same backend as before | Skill authoring runs once (notes cache miss), then later rewrites skip it |
+
+### 2026-09-07 - The comma before Text: was still there
+
+**Requested by:** the user: the 2026-09-06 fix did not take, the lettering
+still rendered with a leading comma.
+
+**What was wrong.** The 2026-09-06 change fixed `sanitizePromptForSend`, and
+that step does keep the newlines now. The flattening happened one step later.
+`toParams` merges system fragments into the prompt with `mergeTagPrompts`:
+the style preset's positive and negative tags, the active Artist Styles
+fragment, and a Prompt Chunk's prepend and append. That helper splits the
+whole prompt on commas, dedupes, and rejoins with ", ". A NovelAI prompt laid
+out the normal way, one tag line ending in a comma and then `Text:` on the
+next line, came out as `1girl, rain, Text:, Mumei`. It ran whenever any of
+those fragments was non-empty, even when the dedupe added nothing, which is
+why the bug looked intermittent: it followed the Artist Style or chunk, not
+the prompt. The gallery PNGs confirmed it: the sent prompt had every
+comma-terminated line joined with ", " and the `Text:` label mid-line, while
+the character captions, which never pass through the merge, kept their
+newlines.
+
+Two smaller flatteners sat next to it. Toggling an artist tag off from the
+artist gallery (or replacing one) rebuilt the prompt box with `join(", ")`,
+and the Transparent BG toggle appended its tag after a user-written `Text:`
+block, so the tag became lettering.
+
+**What changed.**
+
+- `mergeNovelAiTags` in `promptSanitize.ts` merges a fragment without
+  re-tokenizing the prompt: it splits off the `Text:` block, dedupes the new
+  tags against the head (case-insensitive, split on commas and newlines),
+  splices them in before or after the head, and reattaches the block with
+  its original newline. It returns the prompt untouched when nothing new is
+  left. Tags appended after a prose line that ends in a period start a new
+  line instead of joining the sentence.
+- `generation.svelte.ts` routes all five merge sites through
+  `mergeIntoPrompt`, which picks `mergeNovelAiTags` in NovelAI mode and the
+  old `mergeTagPrompts` elsewhere. ComfyUI prompts are unchanged.
+- `artistInsert.remove` and `apply("replace")` use `filterPromptTags`, which
+  rewrites only the lines that hold the dropped tag and leaves every other
+  line, blank lines included, byte for byte.
+- `payload.rs` gained a last-stop normaliser, `text_block_on_own_line`: a
+  `Text:` label that arrives after a comma on the same line is moved onto its
+  own line, and `with_transparency` now inserts its tag in front of a
+  user-written `Text:` block instead of after it. Both have `#[test]`s.
+
+**Testing required: yes.** The Rust tests cover the payload; the store-level
+merge can only be seen end to end.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NovelAI V5, activate an Artist Style (or a Prompt Chunk with an append). Prompt: `1girl, rain,` newline `Text:` newline `Mumei`. Generate | Lettering reads `Mumei`, no comma. The PNG Comment `prompt` has `rain, <style tags>` then a newline before `Text:` |
+| 2 | Same prompt, no style or chunk active | Same result (the 2026-09-06 path) |
+| 3 | Prose line ending in a period before the `Text:` block, style active | Style tags land on their own line after the sentence, `Text:` still last |
+| 4 | Transparent BG on, prompt ends with a `Text:` block | Image is transparent, lettering has no `2.1::transparent background::` in it |
+| 5 | Prompt with an artist tag on line 1 and a `Text:` block below, toggle that artist off in the artist gallery | Line 1 loses the tag, every other line (and the blank line in the block) is unchanged |
+| 6 | Local model (ComfyUI), style active, multi-line prompt | Sent prompt is the flat comma list it always was |
+
+**Do not skip:** 1, 4.
+**Low-risk, skip if short on time:** 3, 6.

@@ -15,6 +15,7 @@ import { generation } from "./generation.svelte.js";
 import { gallery } from "./gallery.svelte.js";
 import {
   artistTagBodiesMatch,
+  filterPromptTags,
   isArtistTagToken,
   splitPromptTags,
 } from "../utils/artistTag.js";
@@ -75,8 +76,9 @@ class ArtistInsertStore {
   remove(tag: string): void {
     const existing = generation.positivePrompt.trim();
     if (!existing) return;
-    const filtered = splitPromptTags(existing).filter((t) => !artistTagBodiesMatch(t, tag));
-    generation.positivePrompt = filtered.join(", ");
+    // Layout-preserving: only the lines holding the tag are rewritten, so a
+    // NovelAI `Text:` block or prose line survives the toggle untouched.
+    generation.positivePrompt = filterPromptTags(existing, (t) => artistTagBodiesMatch(t, tag));
     generation.saveSettings();
     this.pending = null;
   }
@@ -89,9 +91,7 @@ class ArtistInsertStore {
     let newPrompt: string;
     if (mode === "replace") {
       const drop = new Set(this.existingArtistTags());
-      const stripped = splitPromptTags(existing)
-        .filter((s) => !drop.has(s))
-        .join(", ");
+      const stripped = filterPromptTags(existing, (s) => drop.has(s));
       newPrompt = stripped ? `${cleaned}, ${stripped}` : cleaned;
     } else {
       newPrompt = existing ? `${cleaned}, ${existing}` : cleaned;

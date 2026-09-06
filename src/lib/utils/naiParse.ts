@@ -11,7 +11,7 @@
  * Leaf util. It must not import any store.
  */
 
-import { NAI_QUALITY_FILLER } from "./naiPrompt.js";
+import { NAI_PRESET_UC_JUNK, NAI_QUALITY_FILLER } from "./naiPrompt.js";
 
 /** What one full rewrite turn (attempt plus optional retry) produced. */
 export interface NaiRewriteResult {
@@ -171,12 +171,176 @@ export function normalizeWeightSpans(text: string): string {
   return count % 2 === 0 ? trimmed : `${trimmed}::`;
 }
 
+/** True when a span token would make novelai.net treat `::` as part of the name. */
+function endsInDigit(token: string): boolean {
+  return /\d$/.test(token.trim());
+}
+
+/**
+ * Put digit-suffix names first inside numeric weight spans.
+ *
+ * NovelAI's website parser reads trailing digits on the last token of a
+ * `n::...::` span as the start of an unclosed weight, so `1.2::rain, as109::`
+ * breaks when pasted into novelai.net. Generation through the API is fine;
+ * users still copy prompts out. If every token ends in a digit, a trailing
+ * comma is the remaining fix: `1.2::as109, pigeon666,::`.
+ */
+export function normalizeNumericSpans(text: string): string {
+  if (!text) return text;
+  return text.replace(/(-?\d+(?:\.\d+)?)::((?:(?!::)[\s\S])*?)::/g, (_m, weight: string, inner: string) => {
+    const tokens = inner
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "");
+    // An empty span is not this function's problem; leave it as the model wrote it.
+    if (tokens.length === 0) return _m;
+    const head = tokens.filter(endsInDigit);
+    const rest = tokens.filter((t) => !endsInDigit(t));
+    const ordered = [...head, ...rest];
+    let body = ordered.join(", ");
+    if (ordered.length > 0 && endsInDigit(ordered[ordered.length - 1])) body += ",";
+    return `${weight}::${body}::`;
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Split a field at its Text: block. The newline(s) that precede the label stay
+ * with the tail, so a caller can trim the head and concatenate the two without
+ * gluing the last prompt line onto `Text:`.
+ */
+function splitTextBlock(text: string): { head: string; tail: string } {
+  const match = text.match(/(^|\n)(\s*Text\s*:)/i);
+  if (!match || match.index === undefined) return { head: text, tail: "" };
+  return { head: text.slice(0, match.index), tail: text.slice(match.index) };
+}
+
+/**
+ * Comma- or span-bounded tag match. The `m` flag lets `^`/`$` stand in for a
+ * newline, so the pattern never has to write one into a string constructor.
+ */
+function listedTagPattern(tag: string, flags: string): RegExp {
+  return new RegExp("(^|,|::)\\s*" + escapeRegExp(tag) + "\\s*(?=,|$|::)", flags);
+}
+
+/**
+ * Strip listed tags from one line. Returns the line untouched when nothing
+ * matched, `null` when the strip emptied it, and otherwise the line with only
+ * the delimiters the removal orphaned repaired. Anything the model wrote
+ * correctly, including a deliberate trailing comma, is left alone.
+ */
+function stripTagsFromLine(line: string, tags: readonly string[]): string | null {
+  let out = line;
+  for (const tag of tags) {
+    const re = listedTagPattern(tag, "gi");
+    let prev = "";
+    while (prev !== out) {
+      prev = out;
+      out = out.replace(re, "$1");
+    }
+  }
+  if (out === line) return line;
+  const hadTrailingComma = /,\s*$/.test(line);
+  out = out
+    // The removed item was first inside a span: `1.2::, rain::`.
+    .replace(/(-?\d+(?:\.\d+)?)::\s*,\s*/g, "$1::")
+    // The removed item was last inside a span: `1.2::rain,::`.
+    .replace(/,\s*::/g, "::")
+    // The span held nothing but filler.
+    .replace(/-?\d+(?:\.\d+)?::::/g, "")
+    // The removed item sat between two others.
+    .replace(/,(?:\s*,)+/g, ",")
+    // The removed item was first on the line.
+    .replace(/^\s*,\s*/, "")
+    .trim();
+  if (!hadTrailingComma) out = out.replace(/,\s*$/, "");
+  return out === "" ? null : out;
+}
+
+/**
+ * Drop listed tags as comma (or span) delimited items, leaving the Text: block
+ * untouched. Used for quality filler and preset UC junk the model still emits.
+ *
+ * Works line by line so that a line the strip never touched comes back
+ * byte-for-byte, and a line it emptied disappears along with its newline.
+ */
+export function stripListedTags(text: string, tags: readonly string[]): string {
+  if (!text || tags.length === 0) return text;
+  const { head, tail } = splitTextBlock(text);
+  const lines = head
+    .split("\n")
+    .map((line) => stripTagsFromLine(line, tags))
+    .filter((line): line is string => line !== null);
+  const out = lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return out === "" ? tail.trimStart() : `${out}${tail}`;
+}
+
+function fieldContainsListedTag(text: string, tags: readonly string[]): string[] {
+  const { head } = splitTextBlock(text);
+  return tags.filter((tag) => listedTagPattern(tag, "im").test(head));
+}
+
+/** Em dash and en dash break NovelAI gens. A comma is the prescribed substitute. */
+export function replaceLongDashes(text: string): string {
+  if (!text) return text;
+  const { head, tail } = splitTextBlock(text);
+  const cleaned = head
+    .replace(/[ \t]*[–—][ \t]*/g, ", ")
+    .replace(/,(?:[ \t]*,)+/g, ",")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+  return `${cleaned}${tail}`;
+}
+
+/**
+ * Salvage the two ways a model numbers a character box.
+ *
+ * Counts belong in BASE; a leading `1girl` or `Character 1:` is a formatting
+ * miss, not a different character, and is cheaper to repair than to retry.
+ */
+export function normalizeCharIdentity(box: string): string {
+  let text = (box ?? "").trim();
+  if (!text) return "";
+  text = text.replace(/^(?:character|char)\s*\d+\s*[:,.\-–—]?\s*/i, "");
+  text = text.replace(
+    /^(\d+)\s*(girls?|boys?|others?)\b/i,
+    (_m, _n: string, noun: string) => {
+      const lower = noun.toLowerCase();
+      if (lower.startsWith("girl")) return "girl";
+      if (lower.startsWith("boy")) return "boy";
+      return "other";
+    },
+  );
+  return text.trim();
+}
+
+/**
+ * One field through every repair, in dependency order: dashes become commas,
+ * a hanging span is closed, filler comes out, and only then are digit-suffix
+ * names reordered, so the trailing comma that step may add is never mistaken
+ * for a strip artefact and removed again.
+ */
+function normalizeField(text: string, extraTags: readonly string[] = []): string {
+  return normalizeNumericSpans(
+    stripListedTags(normalizeWeightSpans(replaceLongDashes(text)), [
+      ...NAI_QUALITY_FILLER,
+      ...extraTags,
+    ]),
+  );
+}
+
 /** Run the normalizer over every field of a parsed response. */
 export function normalizeNaiResponse(parsed: NaiParsedResponse): NaiParsedResponse {
   return {
-    base: normalizeWeightSpans(parsed.base),
-    uc: normalizeWeightSpans(parsed.uc),
-    characters: parsed.characters.map(normalizeWeightSpans),
+    base: normalizeField(parsed.base),
+    uc: normalizeField(parsed.uc, NAI_PRESET_UC_JUNK),
+    characters: parsed.characters.map((box) => normalizeField(normalizeCharIdentity(box))),
     note: parsed.note.trim(),
   };
 }
@@ -225,12 +389,26 @@ export function validateNaiResponse(parsed: NaiParsedResponse): string[] {
 
   // Unconditional: the model is never the one who writes the quality stack.
   // With NovelAI's toggle on this would double it, and with the toggle off the
-  // user has asked for no stack at all.
-  const lowerBase = parsed.base.toLowerCase();
-  const filler = NAI_QUALITY_FILLER.filter((q) => lowerBase.includes(q));
-  if (filler.length > 0) {
+  // user has asked for no stack at all. Checked on every field because models
+  // also dump filler into UC and character boxes.
+  const fillerFields: Array<[string, string]> = [
+    ["BASE", parsed.base],
+    ["UC", parsed.uc],
+    ...parsed.characters.map((box, i): [string, string] => [`CHAR ${i + 1}`, box]),
+  ];
+  for (const [label, text] of fillerFields) {
+    const filler = fieldContainsListedTag(text, NAI_QUALITY_FILLER);
+    if (filler.length > 0) {
+      problems.push(
+        `${label} contained quality filler (${filler.join(", ")}). NovelAI's quality toggle owns that stack, so remove it.`,
+      );
+    }
+  }
+
+  const ucJunk = fieldContainsListedTag(parsed.uc, NAI_PRESET_UC_JUNK);
+  if (ucJunk.length > 0) {
     problems.push(
-      `BASE contained quality filler (${filler.join(", ")}). NovelAI's quality toggle owns that stack, so remove it.`,
+      `UC restated the preset (${ucJunk.join(", ")}). Keep custom motif undesirables only.`,
     );
   }
 

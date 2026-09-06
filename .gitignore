@@ -74,3 +74,6 @@ add-locale-stubs.ps1
 new_keys.txt
 .github/check_env_token.ps1
 .github/poll_pr169.ps1
+
+# Local LLM-agent NovelAI V5 prompting spec (not shipped)
+docs/NAI_V5_PROMPTING_AGENTS.md

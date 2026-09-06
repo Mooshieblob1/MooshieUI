@@ -104,3 +104,25 @@ export function isArtistTagToken(
   if (!index || index.size === 0) return false;
   return index.has(artistIndexKey(token));
 }
+
+/**
+ * Drop the tags `shouldDrop` flags from a prompt while keeping its layout.
+ *
+ * Lines that hold no dropped tag come back byte for byte, so a NovelAI `Text:`
+ * block, blank lines between rendered strings, and prose lines all survive an
+ * artist tag toggle. A line that loses tags is rejoined with ", " and keeps a
+ * trailing comma if it had one; a line left with nothing is removed.
+ */
+export function filterPromptTags(prompt: string, shouldDrop: (tag: string) => boolean): string {
+  return prompt
+    .split("\n")
+    .map((line) => {
+      const parts = line.split(",");
+      if (!parts.some((part) => part.trim() && shouldDrop(part.trim()))) return line;
+      const kept = parts.map((part) => part.trim()).filter((part) => part && !shouldDrop(part));
+      if (kept.length === 0) return null;
+      return kept.join(", ") + (/,\s*$/.test(line) ? "," : "");
+    })
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
