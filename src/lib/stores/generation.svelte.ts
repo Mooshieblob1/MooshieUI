@@ -8,7 +8,11 @@ import {
   parseScheduledPrompt,
 } from "../utils/promptSchedule.js";
 import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
-import { joinPromptBoxes, sanitizePromptForSend } from "../utils/promptSanitize.js";
+import {
+  joinPromptBoxes,
+  mergeNovelAiTags,
+  sanitizePromptForSend,
+} from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
@@ -1695,6 +1699,21 @@ class GenerationStore {
     return merged.join(", ");
   }
 
+  /**
+   * Merge a system tag fragment (style preset, Artist Style, Prompt Chunk)
+   * into a prompt. ComfyUI prompts are flat tag lists, so `mergeTagPrompts`
+   * may re-tokenize them freely. NovelAI prompts carry layout that matters
+   * (a `Text:` block on its own line, blank lines between rendered strings,
+   * prose lines), so they go through `mergeNovelAiTags`, which splices the
+   * new tags in ahead of the `Text:` block and leaves the rest untouched.
+   */
+  private mergeIntoPrompt(prompt: string, tags: string, where: "before" | "after"): string {
+    if (this.isNovelAi) return mergeNovelAiTags(prompt, tags, where);
+    return where === "before"
+      ? this.mergeTagPrompts(tags, prompt)
+      : this.mergeTagPrompts(prompt, tags);
+  }
+
   private loadPromptHistory() {
     try {
       const raw = localStorage.getItem(PROMPT_HISTORY_KEY);
@@ -3219,8 +3238,15 @@ class GenerationStore {
     // tags) are merged in — a trailing-form segment must not swallow them.
     const parsedSegmentDetails = parseSegmentDetailPrompt(inlinePositive);
 
-    let positivePrompt = this.mergeTagPrompts(parsedSegmentDetails.baseText, style.positive);
-    let negativePrompt = this.mergeTagPrompts(inlineNegative, style.negative);
+    // Every merge below goes through mergeIntoPrompt: in NovelAI mode the
+    // comma re-tokenizer would fold `1girl, rain,\nText:\nMumei` into
+    // `1girl, rain, Text:, Mumei` the moment any style or chunk is active.
+    let positivePrompt = this.mergeIntoPrompt(
+      parsedSegmentDetails.baseText,
+      style.positive,
+      "after",
+    );
+    let negativePrompt = this.mergeIntoPrompt(inlineNegative, style.negative, "after");
 
     // Inject tags contributed by any currently-active Artist Styles. These are
     // not visible in the prompt textbox — they flow straight into the payload
@@ -3230,7 +3256,7 @@ class GenerationStore {
     // the prompt-chunk sigil on NovelAI, not an artist marker.
     const styleFragment = styles.buildPromptFragment(this.isNovelAi);
     if (styleFragment) {
-      positivePrompt = this.mergeTagPrompts(positivePrompt, styleFragment);
+      positivePrompt = this.mergeIntoPrompt(positivePrompt, styleFragment, "after");
     }
 
     // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
@@ -3242,10 +3268,10 @@ class GenerationStore {
       advanceFixedOrdered: false,
     });
     if (preset.prepend) {
-      positivePrompt = this.mergeTagPrompts(preset.prepend, positivePrompt);
+      positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.prepend, "before");
     }
     if (preset.append) {
-      positivePrompt = this.mergeTagPrompts(positivePrompt, preset.append);
+      positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
     }
 
     // Auto-apply quality tags for supported model families.

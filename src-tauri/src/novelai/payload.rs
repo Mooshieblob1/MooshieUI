@@ -35,9 +35,11 @@ pub fn build(
     model: &NovelAiModel,
 ) -> Result<Value, String> {
     let action = normalise_action(&nai.action, input);
-    // Transparency first, text second, so the `Text:` block ends up last: the
-    // API wants it at the very end of the prompt, after every tag.
-    let positive_prompt = with_transparency(&input.positive_prompt, nai, model);
+    // Own-line first, transparency second, text third, so the `Text:` block
+    // ends up last and on its own line: the API wants it at the very end of
+    // the prompt, after every tag, and reads `, Text:` as a comma to render.
+    let positive_prompt = text_block_on_own_line(&input.positive_prompt);
+    let positive_prompt = with_transparency(&positive_prompt, nai, model);
     let positive_prompt = with_text_blocks(&positive_prompt, model);
     let mut parameters = Map::new();
 
@@ -183,11 +185,70 @@ fn with_transparency(prompt: &str, nai: &NovelAiParams, model: &NovelAiModel) ->
     if prompt.to_lowercase().contains("transparent background") {
         return prompt.to_string();
     }
-    let trimmed = prompt.trim_end().trim_end_matches(',').trim_end();
-    if trimmed.is_empty() {
-        return TRANSPARENCY_TAG.to_string();
+    // The tag joins the tag list, never the lettering: a user-written `Text:`
+    // block must stay the last thing in the prompt, so the tag goes in front
+    // of it.
+    let (head, text) = split_text_block(prompt);
+    let trimmed = head.trim_end().trim_end_matches(',').trim_end();
+    let tags = if trimmed.is_empty() {
+        TRANSPARENCY_TAG.to_string()
+    } else {
+        format!("{trimmed}, {TRANSPARENCY_TAG}")
+    };
+    if text.is_empty() {
+        tags
+    } else {
+        format!("{tags}\n{text}")
     }
-    format!("{trimmed}, {TRANSPARENCY_TAG}")
+}
+
+/// Split a prompt at the first `Text:` label that starts a line. The tail
+/// begins at the label itself (leading blank lines are dropped); it is empty
+/// when the prompt has no lettering block.
+fn split_text_block(prompt: &str) -> (&str, &str) {
+    let mut offset = 0;
+    for line in prompt.split_inclusive('\n') {
+        if line.trim_start().starts_with("Text:") {
+            let head = &prompt[..offset];
+            let tail = prompt[offset..].trim_start();
+            return (head, tail);
+        }
+        offset += line.len();
+    }
+    (prompt, "")
+}
+
+/// Move a `Text:` label that arrived comma-joined onto its own line.
+///
+/// NovelAI reads the prompt line by line and everything after `Text:` is
+/// lettering, so `1girl, rain, Text: Mumei` renders a stray comma while
+/// `1girl, rain\nText: Mumei` renders `Mumei`. Every frontend path is meant to
+/// keep the newline, but this is the last stop before the payload, so the
+/// label is put back on its own line here whenever it follows a comma on the
+/// same line. A `Text:` that already starts a line, or that is glued to a
+/// word (`SubText:`), is left alone.
+fn text_block_on_own_line(prompt: &str) -> String {
+    for (idx, _) in prompt.match_indices("Text:") {
+        let head = &prompt[..idx];
+        let boundary = head
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || c == ',');
+        if !boundary {
+            continue;
+        }
+        let stripped = head.trim_end();
+        // Already at the start of the prompt or of a line: nothing to fix.
+        if stripped.is_empty() || head[stripped.len()..].contains('\n') {
+            return prompt.to_string();
+        }
+        if !stripped.ends_with(',') {
+            return prompt.to_string();
+        }
+        let body = stripped.trim_end_matches(|c: char| c == ',' || c.is_whitespace());
+        return format!("{body}\n{}", &prompt[idx..]);
+    }
+    prompt.to_string()
 }
 
 /// Quote pairs that mark text to be rendered in the image. NovelAI's V5
@@ -932,5 +993,61 @@ mod tests {
         let body = build(&input(), &n, v5()).unwrap();
         let caps = &body["parameters"]["v4_prompt"]["caption"]["char_captions"];
         assert_eq!(caps.as_array().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn a_comma_joined_text_label_is_moved_onto_its_own_line() {
+        assert_eq!(
+            text_block_on_own_line("1girl, rain, Text: Mumei"),
+            "1girl, rain\nText: Mumei"
+        );
+        // Trailing whitespace and repeated commas before the label go too.
+        assert_eq!(
+            text_block_on_own_line("1girl, rain,, Text:\nMumei\n\nHello"),
+            "1girl, rain\nText:\nMumei\n\nHello"
+        );
+    }
+
+    #[test]
+    fn a_text_label_already_on_its_own_line_is_untouched() {
+        for prompt in [
+            "1girl, rain\nText: Mumei",
+            "1girl, rain,\nText: Mumei",
+            "1girl, rain,\n\nText:\nMumei",
+            "Text: Mumei",
+            // Glued to a word it is not a label, and without a comma it is left
+            // to the user (a sentence can legitimately end in "Text:").
+            "1girl, SubText: foo",
+            "1girl rain Text: foo",
+            "1girl, rain",
+        ] {
+            assert_eq!(text_block_on_own_line(prompt), prompt, "{prompt:?}");
+        }
+    }
+
+    #[test]
+    fn build_puts_a_comma_joined_text_label_on_its_own_line() {
+        let mut i = input();
+        i.positive_prompt = "1girl, rain, Text: Mumei".into();
+        let body = build(&i, &nai(), v5()).unwrap();
+        let expected = "1girl, rain\nText: Mumei";
+        assert_eq!(body["input"], expected);
+        assert_eq!(
+            body["parameters"]["v4_prompt"]["caption"]["base_caption"],
+            expected
+        );
+    }
+
+    #[test]
+    fn transparency_goes_in_front_of_a_manual_text_block() {
+        let mut n = nai();
+        n.transparent_background = true;
+        let mut i = input();
+        i.positive_prompt = "1girl, rain,\nText:\nMumei\n\nHello".into();
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, rain, 2.1::transparent background::\nText:\nMumei\n\nHello"
+        );
     }
 }

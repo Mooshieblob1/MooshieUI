@@ -1,3 +1,13 @@
+## What's New in v2.2.8
+
+### Fixes and maintenance
+- **The comma before NovelAI `Text:` lettering is actually gone this time**: v2.2.6 fixed the sanitizer, but the step after it flattened the prompt again. Whenever a style preset, an Artist Style or a Prompt Chunk was active, the merge that adds their tags split the whole prompt on commas and rejoined it with ", ", so `1girl, rain,` followed by `Text:` on the next line still reached NovelAI as `1girl, rain, Text:, Mumei`. That is why it looked random: it followed the active style, not the prompt. NovelAI prompts now keep their layout through the merge, new tags are spliced in ahead of the `Text:` block (on a new line when the last line is a sentence), and the Rust side moves a `Text:` label that still arrives after a comma onto its own line as a last stop. ComfyUI prompts are merged flat as before.
+- **Transparent BG no longer writes its tag into the lettering**: with a `Text:` block in the prompt, the `2.1::transparent background::` tag was appended after it and rendered as text. It now goes in front of the block.
+- **Toggling an artist tag off keeps your prompt layout**: removing or replacing an artist from the artist gallery rebuilt the whole prompt as one comma list. Only the line holding that tag is rewritten now; every other line, `Text:` blocks and blank lines included, is left as written.
+- **Enhance for V5 follows the V5 Full and V5 Curated prompting rules**: the rewrite no longer pads a quota of emphasised tags or a long undesired content list. BASE is a tag line plus a few natural language sentences with `high complexity` by default, emphasis is reserved for locking or killing a motif, UC is custom motif only and may be empty when the preset is on, and quality filler (`masterpiece`, `best quality`, `very aesthetic`) is dropped from every field. The normalizer now reorders digit-suffix artist names to the front of `n::...::` spans, turns em and en dashes in prompt fields into commas, rewrites a character box starting with `1girl` or `Character 1` instead of failing the review, and strips preset UC junk like `worst quality` and `lowres`. `Text:` lettering is left alone. Cached self-authored notes are refreshed once on the first enhance after updating.
+
+---
+
 ## What's New in v2.2.7
 
 ### Fixes and maintenance

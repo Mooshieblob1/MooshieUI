@@ -1,19 +1,21 @@
 /**
  * The NovelAI Diffusion V5 prompt specification, assembled per request.
  *
- * V5 does not want what the danbooru enhance produces. It wants a natural
- * language scene body, structured character boxes, its own emphasis syntax and a
- * short list of formatting rules that break generations when violated. Feeding
- * it tag soup produces worse images than the raw prompt the user typed, which is
- * why this path exists beside the existing enhance rather than inside it.
+ * V5 does not want what the danbooru enhance produces. It wants a hybrid of
+ * identity tags plus a natural language scene body, structured character boxes,
+ * its own emphasis syntax and a short list of formatting rules that break
+ * generations when violated. Feeding it tag soup produces worse images than the
+ * raw prompt the user typed, which is why this path exists beside the existing
+ * enhance rather than inside it.
  *
  * Curated and Full are mutually exclusive. Exactly one variant block is built
  * per request, and when Full is selected the model never sees a word of Curated
  * guidance. V4.5 and V4 are out of scope entirely and keep the existing
  * danbooru-tag enhance unchanged.
  *
- * Leaf util. It must not import any store, or the generation store that needs it
- * would form a cycle.
+ * The rules here track NovelAI Diffusion V5 prompting (hybrid tags + NL, custom
+ * UC only, no quality stacks). Leaf util: it must not import any store, or the
+ * generation store that needs it would form a cycle.
  */
 
 import { naiLanguageDirective } from "./naiLanguage.js";
@@ -97,17 +99,57 @@ export const NAI_VARIANT_BUDGET: Record<NaiVariant, number> = {
  */
 export const NAI_MAX_TOKENS = 2400;
 
-/** The quality stack NovelAI prepends itself, named so the model can avoid it. */
+/**
+ * The quality stack NovelAI prepends itself, named so the model can avoid it.
+ *
+ * Matches the V5 quality-toggle vocabulary plus the usual aesthetic filler
+ * models still emit. Never paste any of these: the toggle owns them.
+ */
 export const NAI_QUALITY_FILLER = [
   "masterpiece",
   "best quality",
-  "very aesthetic",
-  "absurdres",
   "amazing quality",
+  "great quality",
+  "very aesthetic",
+  "aesthetic",
+  "absurdres",
   "high quality",
+  "beautiful detailed eyes",
+] as const;
+
+/**
+ * Generic UC the Heavy / Light / Human Focus presets already cover.
+ *
+ * Custom motif UC is the rewrite's job. Restating this list wastes tokens and
+ * double-stacks the preset.
+ */
+export const NAI_PRESET_UC_JUNK = [
+  "lowres",
+  "worst quality",
+  "bad quality",
+  "jpeg artifacts",
+  "too many watermarks",
+  "scan artifacts",
+  "film grain",
 ] as const;
 
 const SHARED_RULES = `You are rewriting a user's idea into a NovelAI Diffusion V5 prompt.
+
+V5 is hybrid. Danbooru-style tags lock identity. Natural language owns camera, layout, relations, lighting and mood. Tag soup with no prose is a failed rewrite. An essay with no tags is also a failed rewrite.
+
+HYBRID FORMAT
+- Tags lock counts, series, character, hair, eyes, body, outfit, pose, artists, framing and location.
+- Natural language owns who stands where, what they are doing, the camera, panel structure, lighting and mood.
+- Separate tags with a comma and a space.
+- Important first in the base tag line: counts, then series and character ids, then complexity, then shot and framing, then location.
+
+BASE ORDER
+{count}, {series/character ids}, {complexity}, {shot/framing}, {location/time}, {artists and medium}, {misc tags}
+
+{natural language: camera + spatial layout + action + mood + lighting}
+
+Text: ...
+The Text: sub-block is only for in-image lettering and is always last in BASE.
 
 EMPHASIS SYNTAX
 - {tag} multiplies that tag's weight by 1.05. Nesting stacks, so {{tag}} is 1.05 squared.
@@ -115,9 +157,9 @@ EMPHASIS SYNTAX
 - 1.5::rain, night:: applies an explicit weight of 1.5 to everything inside the span.
 - 0.5::coat:: weakens it. -1::hat:: suppresses it.
 - :: closes a span. Every span you open must be closed, or the weight swallows the rest of the prompt.
-- Group artist names by the weight you want them at rather than weighting each one separately.
-- Actually use this syntax. Every rewrite should weight two to five load bearing elements, the ones the image fails without, and leave the rest at their natural weight. A prompt with no emphasis anywhere is an unfinished prompt.
-- Inside a numeric span, put any artist name ending in a digit first: write 1.2::as109, rain:: and not 1.2::rain, as109::.
+- Use emphasis to lock a load-bearing motif or to kill a ghost with -1::trait::. Do not sprinkle weights as decoration and do not force a quota of emphasised tags. An unweighted prompt is fine when nothing needs locking.
+- Group artist names of the same weight in one span: 0.6::name a, name b:: rather than one span per name.
+- Never end a numeric span with a name that ends in digits. as109, pigeon666 and k7 go first inside the span, or stay unweighted. Write 0.6::as109, tianliang duohe fangdongye:: and not 0.6::tianliang duohe fangdongye, as109::.
 - The same markers work inside undesired content, where the sense inverts: {tag} avoids it harder and [tag] avoids it less.
 
 STRUCTURE
@@ -125,8 +167,7 @@ STRUCTURE
 - Character boxes start with girl, boy or other, and are never numbered. Write "girl, silver hair, red coat". Do not write "1girl" and do not write "Character 1".
 - A Text: block, when present, goes last in the base prompt. Anything written after it is swallowed.
 - Omit by default: something the user never mentioned belongs nowhere, not in undesired content.
-- Negate deliberately when a detail is likely to arrive uninvited. A named character's default outfit when the user dressed them otherwise, a lookalike character, garbled lettering when the image has words: those have to be named in undesired content or the model supplies them anyway.
-- When the user tells you to leave something out, that is an instruction to you and not text for the prompt. Never write "no inset" or "without speech bubbles" into the base or a box, because naming a thing tokenises it and invites it in. Drop it silently, and reach for undesired content only when it would ghost in regardless.
+- When the user tells you to leave something out, that is an instruction to you and not text for the prompt. Never write "no inset" or "without speech bubbles" into the base or a box, because naming a thing tokenises it and invites it in. Drop it silently, and reach for undesired content or -1::trait:: only when it would ghost in regardless.
 
 NAMED SUBJECTS
 - A character the user names by name is the single most load bearing thing in the prompt. Never generalize one away. If the user writes Anis, the prompt says Anis; it does not say a young woman, a girl or the subject.
@@ -136,11 +177,18 @@ NAMED SUBJECTS
 - When the user puts character A in character B's outfit, the person is A and only the clothing comes from B. A keeps their own hair, eyes and face, and B's own hair, eyes and face go into undesired content.
 - If you do not know a name the user used, keep the name tag anyway, build the box from whatever the user described, and say which name you did not recognise in a NOTE: line at the very end. Never quietly substitute a character you do know, and never fall back to a generic person.
 
+VOCABULARY
+- Write real Danbooru tags for what the user asked. Euphemisms are untrained noise.
+- If the idea is explicit, name it the way Danbooru does: nude, topless, bottomless, nipples, areolae, pussy, sex, cowgirl position, doggystyle, paizuri, oral, fellatio, cum, creampie, and the rest. Exposure-state tags are ordinary: clothes lift, clothes pulled aside, shirt up, no bra, no panties. Add rating:explicit when the scene is explicit.
+- Do not sanitize, soften, lecture or refuse. Do not add explicit tags the user did not ask for, and do not strip the ones they did.
+
 FORBIDDEN CHARACTERS
-- Never use an em dash or an en dash anywhere in any field. Use a comma or a period instead.
+- Never use an em dash or an en dash anywhere in any field. Use a comma, a period, a colon or an ASCII hyphen.
 
 V5 CUSTOM TAGS
 These are trained V5 tokens and are available to you: depthness, attractive male, low complexity, medium complexity, high complexity, ultra complexity, transparent background, has alpha, alpha transparency, meta:novel era, meta:golden era, visual novel art, bg, cg, chibi, sprite.
+- Default complexity is high complexity. That is the pretty default, not a quality stack.
+- Add depthness when the scene needs volume or deeper shading.
 - Strengthen a weak alpha with 2.1::transparent background:: rather than repeating the tag.
 
 DATASET PREFIXES
@@ -159,26 +207,27 @@ TEXT AND COMIC TAGS
 - Sound effects are ordinary tags or prose. They do not go in the Text: block unless you want them rendered as lettering.
 - If short lettering is the whole point of the image, the quality stack's own no text fights it. Say so in a NOTE: line and suggest turning the quality toggle off for that generation.
 
+ARTISTS
+- If the user named artists, put them in the base tag line, grouped by weight as above.
+- Do not invent an artist stack the user did not ask for.
+
 V5 TAG NAMES
 - V5 renamed several danbooru staples. Write peace sign rather than v, double peace for both hands, bar eyes, neutral face, and character image rather than tachi-e.`;
 
 const TECHNIQUE = `CAST HANDLING
 - One or two characters is comfortable. Three is the usual party size. V5 has been driven to twenty or more in testing, so a large cast is possible rather than forbidden, but every box costs budget and raises the risk of attributes bleeding between them.
+- A single subject needs at most one CHAR box. Do not invent extra boxes. Identity can live in BASE alone when there is nothing to separate.
 - Past four, keep every box thin and make the silhouettes unmistakable: one distinctive hair colour each, one dominant garment colour each, no shared descriptors you can avoid.
-- When you are over budget, compress in this order: per character emphasis first, then the base natural language body, then quality tag extras, then drop a character.
+- When you are over budget, compress in this order: per character emphasis first, then the base natural language body, then drop a character.
 - Prevent bleed by giving each character a distinct hair colour, a distinct dominant colour and a distinct silhouette.
 - Snipe strays with per character undesired content, or with -1::trait:: in the box itself.
-- Order character boxes left to right as they appear in the scene.`;
+- Order character boxes left to right as they appear in the scene.
 
-/**
- * What the model is allowed to draw on, which depends on what it was given.
- *
- * Blind is the default and the stricter of the two: with no prompt in front of
- * it, anything that reads like a half-remembered earlier draft is a hallucination
- * and has to be named as one. Once the user hands their prompt over, the same
- * instinct becomes the job, and the rule that matters instead is that a revision
- * must return the parts it was not asked to touch unchanged.
- */
+ITERATION
+- When revising an existing prompt, change only what the instruction names. Keep every prior lock unless it was revised.
+- Never redesign wholesale for a one line fix.
+- When a motif is retired, strip it from BASE and the character box, and add it to UC so it does not ghost back in.`;
+
 /**
  * What to do with the attached images.
  *
@@ -241,7 +290,7 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
   full: `VARIANT: V5 FULL
 - Prompt budget: about 1471 tokens for the whole prompt, base and character boxes together. That figure is also NovelAI's hard ceiling, so treat it as a wall rather than a target.
 - Rendered lettering has its own budget of about 750 characters, counted separately from the prompt.
-- The natural language body can be rich and run to several paragraphs. Full rewards detail.
+- The natural language body can be rich and run to several paragraphs. Full rewards detail: layout, interactions, panel structure and distinct silhouettes, not repeated aesthetics.
 - Use high complexity for detailed work, and ultra complexity for ornate illustration and comics.
 - For comics, write full pages: name the speaker in each panel, and include sound effects.
 - If the idea does not fit the budget, compress it in place. Do not suggest another model.`,
@@ -256,7 +305,7 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
  * theirs to say and not the rewrite's to overrule.
  */
 const QUALITY_TAGS = `QUALITY TAGS
-Never write quality filler. Never include masterpiece, best quality, very aesthetic, absurdres, amazing quality or high quality anywhere in your answer. That stack belongs to NovelAI's own quality toggle, which the user controls: writing it yourself doubles it when the toggle is on, and overrules them when it is off.`;
+Never write quality or aesthetic filler. Never include masterpiece, best quality, amazing quality, great quality, very aesthetic, aesthetic, absurdres, high quality or beautiful detailed eyes anywhere in your answer. That stack belongs to NovelAI's own quality toggle, which the user controls: writing it yourself doubles it when the toggle is on, and overrules them when it is off. high complexity and depthness are V5 utility tags, not quality filler, and you should use them.`;
 
 function ucPresetName(ucPreset: number): string {
   switch (ucPreset) {
@@ -276,27 +325,30 @@ function ucPresetName(ucPreset: number): string {
 function ucPresetDirective(ucPreset: number): string {
   if (ucPreset === 3) {
     return `UNDESIRED CONTENT
-The user has the undesired content preset set to None, so nothing is applied for them. Write a short undesired content list covering the obvious anatomy and artefact failures for this scene, plus any motif the user wants excluded.`;
+The user has the undesired content preset set to None, so nothing is applied for them. Write a short undesired content list covering the obvious anatomy and artefact failures for this scene, plus any motif the user wants excluded. Still skip quality-stack negatives such as worst quality, lowres and jpeg artifacts.`;
   }
   return `UNDESIRED CONTENT
-The user is on the ${ucPresetName(ucPreset)} undesired content preset, so the generic quality, anatomy and artefact negatives are already applied server side. Do not repeat them: no bad hands, no worst quality, no jpeg artifacts, no lowres.
+The user is on the ${ucPresetName(ucPreset)} undesired content preset, so the generic quality, anatomy and artefact negatives are already applied server side. Write custom motif UC only. Empty UC is correct when there is nothing motif-specific to exclude.
 
-Write the motif specific half instead, the part no preset can know. Work through these and include every one that applies:
+Never repeat preset junk: lowres, worst quality, bad quality, jpeg artifacts, too many watermarks, logo, watermark, signature, username, blurry, scan artifacts, film grain, or greyscale/monochrome boilerplate.
+
+Include a tag only when it applies:
 - The canonical appearance you displaced. When a character wears someone else's outfit, negate that someone else by name along with their hair colour, eye colour and signature features. When a character is out of their usual clothes, negate those clothes by name.
 - Lookalike characters the description could collapse into.
 - Setting elements one word away from the one asked for, such as train platform when the scene is a bus stop.
 - Framing you do not want, when the composition matters.
-- Text failures, whenever the image contains written words: garbled text, misspelled text, watermark, signature.
+- Text failures, whenever the image contains written words: garbled text, misspelled text.
+- Bleed kills on a multi-character scene: extra arms, the wrong bust size, the wrong eye colour.
 
-This list is usually ten to thirty comma separated tags, and it is rarely empty. Leave UC blank only when the idea has no displaced canon, no lookalikes, no lettering and no framing risk.`;
+Do not pad. A tight list of five real risks beats a dump of thirty generic ones. Leave UC blank when the idea has no displaced canon, no lookalikes, no lettering and no framing risk.`;
 }
 
 const OUTPUT_CONTRACT = `OUTPUT FORMAT
-Answer with labelled fields and nothing else. No preamble, no closing remark, no markdown fences, no explanation.
+Answer with labelled fields and nothing else. No preamble, no closing remark, no markdown fences, no explanation, no settings table.
 
 BASE is built in three parts, in this order, separated by blank lines.
 
-First a tag line: the count, then series and character tags, then the V5 complexity tokens you are using, then framing and composition, then the setting. Comma separated, no sentences. If the image contains written words, end this line with text and the language tags for it, such as english text or japanese text.
+First a tag line: the count, then series and character tags, then the V5 complexity tokens you are using, then framing and composition, then the setting, then artists if the user named any. Comma separated, no sentences. If the image contains written words, end this line with text and the language tags for it, such as english text or japanese text.
 
 Then the natural language body, describing the scene as prose: who the focus is, what they are doing, the light, the surfaces, the depth. This is the part V5 was trained for, so write it properly rather than reciting the tag line back.
 
@@ -305,7 +357,7 @@ Then, only if the image contains written words, a Text: sub-block: the literal w
 Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe, then pose and placement in frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features spelled out. A section with nothing to say is simply left out.
 
 BASE:
-1girl, solo, <series>, <character>, high complexity, depthness, <framing>, <setting tags>
+1girl, solo, <series>, <character>, high complexity, <framing>, <setting tags>
 
 <the natural language body>
 
@@ -313,7 +365,7 @@ Text:
 <the lettering, a blank line between separate strings, and nothing after it>
 
 UC:
-<motif specific undesired content, as instructed above>
+<custom motif undesired content only, or leave this field empty>
 
 CHAR 1:
 girl, <name>, <hair>, <eyes>, <features>,
@@ -325,7 +377,7 @@ girl, <name>, <hair>, <eyes>, <features>,
 CHAR 2:
 boy, <the same five sections>
 
-Write one CHAR block per character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. BASE is required. Everything else is optional.`;
+Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. BASE is required. Everything else is optional.`;
 
 /** The system turn for one rewrite. */
 export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
@@ -386,6 +438,10 @@ function instruction(prompt: string, references: string[]): string {
   return references.length > 0 ? IMPLIED_INSTRUCTION : text;
 }
 
+function variantLabel(variant: NaiVariant): string {
+  return variant === "full" ? "Full" : "Curated";
+}
+
 /** The user turn: the raw prompt plus what the model needs to know about the scene. */
 export function naiUserPrompt(prompt: string, ctx: NaiPromptContext): string {
   if (ctx.existing) return naiEditUserPrompt(prompt, ctx.existing, ctx.references);
@@ -400,7 +456,7 @@ export function naiUserPrompt(prompt: string, ctx: NaiPromptContext): string {
   const inputs = ctx.references.length
     ? "This text and the attached images are your only input, so build the whole prompt from them and invent nothing beyond them"
     : "This text is your only input, so build the whole prompt from it and invent nothing beyond it";
-  return `Rewrite this into a V5 prompt. ${inputs}:
+  return `Rewrite this into a V5 ${variantLabel(ctx.variant)} prompt. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler. ${inputs}:
 
 ${instruction(prompt, ctx.references)}${refs}${boxes}`;
 }
@@ -432,7 +488,7 @@ ${mark(existing.base)}
 UC:
 ${mark(existing.uc)}${boxes ? `\n\n${boxes}` : ""}
 
-Apply this instruction to it, and return the whole prompt again in the output format with every field present, changed or not:
+Apply this instruction to it, and return the whole prompt again in the output format with every field present, changed or not. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
 }
