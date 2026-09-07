@@ -1894,6 +1894,7 @@ const es: Record<string, string> = {
   "style_creator.index_loading": "El índice de artistas todavía se está cargando",
   "style_creator.no_manifest_url": "No hay ninguna URL de manifiesto de la Galería de artistas configurada, así que el índice de artistas no puede cargarse",
   "style_creator.novelai_key_required": "Añade una clave de API de NovelAI en Ajustes > NovelAI para usar el Creador de estilos",
+  "style_creator.nai_stagger": "NovelAI limita dos generaciones a la vez, así que la segunda imagen empieza cuando termina la primera.",
   "style_creator.pool_short": "Solo hay {count} artistas disponibles, se usan todos",
   "style_creator.pool_empty": "No hay artistas disponibles para el sorteo",
   "style_creator.exhausted": "Se han probado todas las combinaciones. Borra el historial o cambia los ajustes.",

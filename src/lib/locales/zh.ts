@@ -1872,6 +1872,7 @@ const zh: Record<string, string> = {
   "style_creator.index_loading": "画师索引仍在加载中",
   "style_creator.no_manifest_url": "未配置画师图库的 manifest URL，因此无法加载画师索引",
   "style_creator.novelai_key_required": "请在 设置 > NovelAI 中添加 NovelAI API 密钥以使用风格生成器",
+  "style_creator.nai_stagger": "NovelAI 会限制同时进行两次生成，因此第二张图会在第一张完成后才开始。",
   "style_creator.pool_short": "只有 {count} 位画师可用，将从全部中抽取",
   "style_creator.pool_empty": "没有可抽取的画师",
   "style_creator.exhausted": "所有组合都已尝试过。请清除记录或更改设置。",
