@@ -31,6 +31,7 @@ import { artistFavourites } from "../artist-gallery/favourites.svelte.js";
 import { submitGeneration } from "../utils/generationSubmit.js";
 import { classifyGenerationError } from "../utils/generationErrors.js";
 import { artistIndexKey, artistTagBodiesMatch, stripArtistSigil } from "../utils/artistTag.js";
+import { isBelowThresholdCount } from "../artist-gallery/counts.js";
 import type { ArtistSearchHit } from "../artist-gallery/types.js";
 import type { OutputImage } from "../types/index.js";
 
@@ -208,7 +209,7 @@ class StyleCreatorStore {
     const seen = new Set<string>();
     const pool: ArtistSearchHit[] = [];
     for (const hit of gallery.artistTagIndex.values()) {
-      if (hit.belowThreshold) continue;
+      if (isBelowThresholdCount(hit)) continue;
       const slug = hit.slug.toLowerCase();
       if (seen.has(slug)) continue;
       seen.add(slug);
@@ -332,28 +333,28 @@ class StyleCreatorStore {
     for (let i = 0; i < round.cards.length; i++) {
       if (!this.running || this.roundSerial !== serial) return;
       const card = round.cards[i];
-      const fragment = fragmentForStyles(
-        [{ artists: card.artists, overallWeight: 1 }],
-        generation.isNovelAi,
-      );
-      const params = generation.toParams({
-        extraPositive: fragment,
-        skipActiveStyles: true,
-        seed: round.seed,
-        overrides: { mode: "txt2img", input_image: null, mask_image: null },
-      });
-      params.batch_size = 1;
-      if (!card.saveable) {
-        // Identical params mean an identical image: reuse the last anchor
-        // render instead of paying for it again.
-        const signature = JSON.stringify(params);
-        if (signature === this.lastAnchorSignature && this.lastAnchorImage) {
-          this.record(i, this.lastAnchorImage);
-          continue;
-        }
-        this.pendingAnchorSignature = signature;
-      }
       try {
+        const fragment = fragmentForStyles(
+          [{ artists: card.artists, overallWeight: 1 }],
+          generation.isNovelAi,
+        );
+        const params = generation.toParams({
+          extraPositive: fragment,
+          skipActiveStyles: true,
+          seed: round.seed,
+          overrides: { mode: "txt2img", input_image: null, mask_image: null },
+        });
+        params.batch_size = 1;
+        if (!card.saveable) {
+          // Identical params mean an identical image: reuse the last anchor
+          // render instead of paying for it again.
+          const signature = JSON.stringify(params);
+          if (signature === this.lastAnchorSignature && this.lastAnchorImage) {
+            this.record(i, this.lastAnchorImage);
+            continue;
+          }
+          this.pendingAnchorSignature = signature;
+        }
         const promptId = await submitGeneration(params);
         if (!this.running || this.roundSerial !== serial) return;
         this.pending.set(promptId, i);
@@ -410,6 +411,7 @@ class StyleCreatorStore {
     this.phase = "idle";
     this.running = false;
     this.error = message;
+    this.note = null;
   }
 
   /** A backend execution error carrying a prompt id from this round. */
@@ -502,6 +504,8 @@ class StyleCreatorStore {
    */
   stop(): void {
     this.running = false;
+    this.error = null;
+    this.note = null;
     if (this.phase === "generating") {
       this.pending.clear();
       this.pendingAnchorSignature = null;
