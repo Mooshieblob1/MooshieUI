@@ -21,6 +21,9 @@
   // With one card there is nothing to lay out beside it, so the pair controls
   // collapse to the single-card form regardless of the stored preference.
   const sideBySide = $derived(styleCreator.viewerSideBySide && cards.length > 1);
+  // The anchor-alone card is a reference, not a candidate, so a round that
+  // holds one has nothing to save "both" of.
+  const saveableCount = $derived(cards.filter((c) => c.saveable).length);
 
   function chipLabel(artist: StyleArtist): string {
     const tag = generation.isNovelAi ? stripArtistSigil(artist.tag) : artist.tag;
@@ -174,6 +177,15 @@
               >
             {/if}
 
+            {#if saveableCount > 1}
+              <button
+                type="button"
+                class="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                disabled={!choosing}
+                onclick={() => void styleCreator.pickAll()}
+                >{locale.t("style_creator.pick_both")}</button
+              >
+            {/if}
             <button
               type="button"
               class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-50"

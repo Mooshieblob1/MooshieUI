@@ -570,16 +570,49 @@ class StyleCreatorStore {
     const style = styles.create(name, artists);
     if (edit) styleEditors.openStyle(style.id);
     if (this.running) this.nextRound();
+    await this.attachThumbnail(style.id, image);
+    gallery.showToast(locale.t("style_creator.saved", { name: style.name }), "success");
+  }
+
+  /**
+   * Save every candidate in the round, for when both cards are worth keeping.
+   * The anchor-alone card is a reference rather than a candidate, so it is
+   * judged with the rest but saves nothing.
+   */
+  async pickAll(): Promise<void> {
+    if (this.phase !== "choosing") return;
+    const round = this.round;
+    if (!round) return;
+    // Snapshot before finishRound clears the round out from under us.
+    const picks = round.cards
+      .filter((c) => c.saveable && c.image)
+      .map((c) => ({
+        image: c.image as OutputImage,
+        name: c.name,
+        artists: c.artists.map((a) => ({ ...a })),
+      }));
+    if (picks.length === 0) return;
+    this.finishRound();
+    const created = picks.map((p) => styles.create(p.name, p.artists));
+    // Same as pick: the next round starts before the resizes are awaited.
+    if (this.running) this.nextRound();
+    await Promise.all(created.map((style, i) => this.attachThumbnail(style.id, picks[i].image)));
+    gallery.showToast(
+      locale.t("style_creator.saved_count", { count: created.length }),
+      "success",
+    );
+  }
+
+  /** Resize the card image into the style thumbnail. Never throws. */
+  private async attachThumbnail(styleId: string, image: OutputImage): Promise<void> {
     try {
       const source = image.sessionBlob ?? image.fullImageUrl ?? image.url;
-      if (source) {
-        const dataUrl = await resizeImageToDataUrl(source);
-        styles.setThumbnail(style.id, dataUrl);
-      }
+      if (!source) return;
+      const dataUrl = await resizeImageToDataUrl(source);
+      styles.setThumbnail(styleId, dataUrl);
     } catch (e) {
       console.error("styleCreator: thumbnail failed", e);
     }
-    gallery.showToast(locale.t("style_creator.saved", { name: style.name }), "success");
   }
 
   /** Judge the round without saving anything. */
