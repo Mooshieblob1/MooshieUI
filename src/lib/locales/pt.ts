@@ -1834,6 +1834,8 @@ const pt: Record<string, string> = {
   "style_creator.nai_stagger": "O NovelAI limita duas gerações ao mesmo tempo, então a segunda imagem começa depois que a primeira termina.",
   "style_creator.switch_card": "Alternar",
   "style_creator.show_round": "Mostrar rodada",
+  "style_creator.view_side_by_side": "Lado a lado",
+  "style_creator.view_single": "Uma de cada vez",
   "style_creator.pool_short": "Apenas {count} artistas disponíveis, sorteando entre todos",
   "style_creator.pool_empty": "Nenhum artista disponível para sortear",
   "style_creator.exhausted": "Todas as combinações já foram testadas. Limpe o histórico ou mude as configurações.",

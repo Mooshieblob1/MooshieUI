@@ -1859,6 +1859,8 @@ const fr: Record<string, string> = {
   "style_creator.nai_stagger": "NovelAI limite deux générations simultanées, la seconde image démarre donc une fois la première terminée.",
   "style_creator.switch_card": "Changer",
   "style_creator.show_round": "Afficher la manche",
+  "style_creator.view_side_by_side": "Côte à côte",
+  "style_creator.view_single": "Un par un",
   "style_creator.pool_short": "Seulement {count} artistes disponibles, tirage sur l'ensemble",
   "style_creator.pool_empty": "Aucun artiste disponible pour le tirage",
   "style_creator.exhausted": "Toutes les combinaisons ont été essayées. Effacez l'historique ou changez les réglages.",

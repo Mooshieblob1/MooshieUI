@@ -1855,6 +1855,8 @@ const de: Record<string, string> = {
   "style_creator.nai_stagger": "NovelAI drosselt zwei gleichzeitige Generierungen, daher startet das zweite Bild erst, wenn das erste fertig ist.",
   "style_creator.switch_card": "Wechseln",
   "style_creator.show_round": "Runde anzeigen",
+  "style_creator.view_side_by_side": "Nebeneinander",
+  "style_creator.view_single": "Einzeln",
   "style_creator.pool_short": "Nur {count} Künstler verfügbar, es wird aus allen gezogen",
   "style_creator.pool_empty": "Keine Künstler zum Ziehen verfügbar",
   "style_creator.exhausted": "Alle Kombinationen wurden ausprobiert. Leere den Verlauf oder ändere die Einstellungen.",
