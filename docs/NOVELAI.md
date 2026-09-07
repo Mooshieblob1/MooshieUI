@@ -3020,3 +3020,64 @@ merge can only be seen end to end.
 
 **Do not skip:** 1, 4.
 **Low-risk, skip if short on time:** 3, 6.
+
+### 2026-09-07 - Style Creator
+
+**Requested by:** Mooshie
+
+Finding artist combinations meant typing tags into the prompt box and
+generating one at a time. The Style Creator does the search: it draws random
+artist combinations from the Artists index, generates two of them on the same
+seed, puts the images side by side, and saves the one you pick as an Artist
+Style with that image as its thumbnail.
+
+An anchor row holds zero or more artists you always want in the mix, typed by
+hand or loaded from a saved style, so a round can compare "my style" against
+"my style plus one more". Combinations are remembered order-insensitively, and
+every saved style is blocked too, so nothing is offered twice.
+
+**What changed.**
+
+- New bottom-panel tab, Style Creator, in both ComfyUI and NovelAI modes. It
+  loads the same artist index the Artists tab uses.
+- New store `styleCreator.svelte.ts` owns the controls, the persisted
+  combination history, the draw, the round, and the pick/skip flow. Storage key
+  `mooshieui.styleCreator.v1`. The draw is pure random. No LLM is involved.
+- `toParams()` gained `extraPositive`, `skipActiveStyles` and `seed` options,
+  so a round can pin one seed across both cards and keep the user's active
+  styles out of the comparison.
+- `styles.svelte.ts` exports `fragmentForStyles()` and `bakedArtistWeight()`;
+  `buildPromptFragment()` now delegates to the first of them.
+- The Style Editor gained "Add from style", which merges another saved style's
+  artists at their baked weights, skipping ones already present.
+- The Generate button's Anlas estimate moved into
+  `utils/novelaiCurrentCost.ts`, where the panel's per-round badge reuses it.
+- NovelAI has a "Two per round" toggle, on by default. Switched off, a round
+  is a single card, which halves the Anlas.
+
+**Testing required: yes.** The draw, the history keys and the seed pinning can
+only be seen end to end.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | ComfyUI mode, no anchor, count 3: Start. | Two cards fill, each shows three `@` chips, and the sets differ. Pick the left card: the style appears in Artist Styles with those three artists and the card image as thumbnail, the history count rises by two, the next round starts. |
+| 2 | Activate that saved style and generate with the round's seed. | The image matches the card. |
+| 3 | Skip a round. | Nothing is saved, the history count rises by two. |
+| 4 | Vary weights off, Favourites only with exactly two favourites, count 2. | The short-pool note shows, the round runs with one card, and after it is judged the next round ends with the "every combination tried" message. Clear history and Start again: a round runs. |
+| 5 | Create a style by hand with the same two favourites, clear history, Start. | The "every combination tried" message, because the saved style blocks it. |
+| 6 | One anchor chip, count 1. | The left card shows the anchor alone with the "Anchor only" caption and no name field, the right card shows the anchor plus one. Pick right: a style with both artists is saved. Pick left on the next round: nothing is saved, the history rises by one. |
+| 7 | Two anchor chips typed by hand, count 1. | The left card shows two chips, the right card three. Pick right: a three-artist style is saved with every weight at 1. |
+| 8 | Load a saved style with non-default weights into the anchor, Start. | The left card chips match the style. Generating with that style active on the round's seed matches the left card. Pick right: the new style keeps the anchor weights, the extra is at 1, and the name was pre-filled with the style name plus the extra. |
+| 9 | Favourites only with a single favourite `c`, count 1, anchor loaded from saved style `{a, b}`, and another saved style `{a, b, c}` present: Start. | Ends at once with the "every combination tried" message. Delete the `{a, b, c}` style and Start again: a round runs. |
+| 10 | Clear the anchor row and Start. | The round is two random combinations again. |
+| 11 | Vary weights on, same two favourites as step 4, count 2. | Rounds keep coming after the first is judged, each chip shows its weight, and no two rounds show the same pair of weights. Pick one: the saved style carries those weights, and generating with it active on the round's seed matches the card. |
+| 12 | Pick and edit. | The Style Editor opens on the new style with its artists, weights and thumbnail while the next round generates behind it. Change a weight and close: the Artist Styles tab shows the change. |
+| 13 | In the Style Editor, Add from style with another saved style. | Its artists appear at their baked weights, ones already present are skipped, and the select returns to its placeholder. Works from the Styles tab too. |
+| 14 | Anchor set with a pinned seed, second round. | It submits one job, not two, and the left card fills immediately. |
+| 15 | NovelAI mode, Two per round off. | One card, chips carry no `@`, Pick saves, Skip discards, and the badge shows the one-generation estimate. |
+| 16 | NovelAI mode, Two per round on. | The badge doubles and both cards fill. |
+| 17 | Stop during generation. | The images still land in the gallery, the panel returns to idle, nothing is saved, and the history count is unchanged. |
+| 18 | Disconnect the backend and press Start. | A toast with the classified error, panel idle. |
+
+**Do not skip:** 1, 6, 8, 9, 14, 15.
+**Low-risk, skip if short on time:** 3, 10, 16.
