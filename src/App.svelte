@@ -86,6 +86,7 @@
     ArtistPreviewVariant,
   } from "./lib/artist-gallery/previewRecipe.js";
   import { artistLocalPreviews } from "./lib/stores/artistLocalPreviews.svelte.js";
+  import { styleCreator } from "./lib/stores/styleCreator.svelte.js";
   import { submitGeneration } from "./lib/utils/generationSubmit.js";
   import InterrogateQuickModal from "./lib/components/generation/InterrogateQuickModal.svelte";
   import {
@@ -2171,6 +2172,15 @@
       }
     }
 
+    // Route a finished Style Creator card back to its round. Must run before
+    // the artist-preview block, which is followed by an early return.
+    const creatorCard = styleCreator.resolve(promptId);
+    if (creatorCard !== null) {
+      const cardImage = newImages[0];
+      if (cardImage) styleCreator.record(creatorCard, cardImage);
+      else styleCreator.failAll();
+    }
+
     // Route a finished artist-preview generation back to its placeholder card.
     // Must run before the style-thumbnail block below, which returns early.
     const previewTarget = artistLocalPreviews.resolve(promptId);
@@ -2763,6 +2773,7 @@
         promptLastActivity.clear();
         progress.cancelAll();
         artistLocalPreviews.failAll();
+        styleCreator.failAll();
         compare.clearGridBatch();
       }),
       ipcListen("novelai:vibes_encoded", (event: any) => {
@@ -3159,6 +3170,8 @@
           progress.removePrompt(data.prompt_id);
           const errPreviewTarget = artistLocalPreviews.resolve(data.prompt_id);
           if (errPreviewTarget) artistLocalPreviews.fail(errPreviewTarget.slug, errPreviewTarget.variant);
+          // `toastMsg` is the classified message the toast above already showed.
+          styleCreator.fail(data.prompt_id, toastMsg);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
@@ -3167,6 +3180,7 @@
           promptLastActivity.clear();
           progress.cancelAll();
           artistLocalPreviews.failAll();
+          styleCreator.failAll();
           compare.clearGridBatch();
         }
       }),
@@ -3264,7 +3278,16 @@
                     : locale.t("app.generation_lost"),
                   "error",
                 );
+                // Recovery found nothing to show. A no-op for anything that
+                // isn't this prompt's Style Creator card, but without it the
+                // card's spinner would run forever.
+                styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
               }
+            } else {
+              // `completePrompt` did not recognise this prompt at all. Same
+              // give-up outcome as above, so the Style Creator card (if any)
+              // must be released the same way.
+              styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
             }
           }
         }

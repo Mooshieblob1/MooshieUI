@@ -103,6 +103,48 @@ function round2(n: number): number {
 }
 
 /**
+ * The weight an artist is actually written with: its own weight times the
+ * style's overall weight, rounded to two places. Exported so the Style
+ * Creator can key a saved style the same way it keys a drawn combination.
+ */
+export function bakedArtistWeight(artist: StyleArtist, overallWeight: number): number {
+  return round2(clampWeight(artist.weight) * clampWeight(overallWeight));
+}
+
+/**
+ * Build the prompt fragment for a list of styles. Tags are deduped by
+ * lowercase body, a weight of exactly 1 is written bare, and `stripSigil`
+ * drops the `@` for NovelAI. `buildPromptFragment()` calls this over the
+ * active styles; the Style Creator calls it over an unsaved artist list.
+ */
+export function fragmentForStyles(
+  styles: Array<{ artists: StyleArtist[]; overallWeight: number }>,
+  stripSigil: boolean,
+): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  for (const style of styles) {
+    for (const a of style.artists) {
+      const tag = stripSigil ? stripArtistSigil(a.tag.trim()) : a.tag.trim();
+      if (!tag) continue;
+      const key = tag.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const w = bakedArtistWeight(a, style.overallWeight);
+      if (w <= 0) continue;
+      const safeTag = escapeTagForPrompt(tag);
+      // A weight of exactly 1 is written bare. `(tag:1)` and `tag` render
+      // identically on every backend, but the wrapped form is noise in the
+      // saved metadata, it defeats mergeTagPrompts' dedupe against a tag the
+      // user typed by hand, and on NovelAI it is A1111 syntax that only
+      // survives because the Rust translator strips it again on the way out.
+      parts.push(w === 1 ? safeTag : `(${safeTag}:${w})`);
+    }
+  }
+  return parts.join(", ");
+}
+
+/**
  * Resize an image (blob/dataUrl) down to THUMBNAIL_MAX_DIM and return a JPEG
  * data URL. Keeps exports/localStorage reasonably sized.
  */
@@ -218,27 +260,7 @@ class StylesStore {
    * store: that dependency already runs the other way.
    */
   buildPromptFragment(stripSigil = false): string {
-    const parts: string[] = [];
-    const seen = new Set<string>();
-    for (const style of this.activeStyles) {
-      for (const a of style.artists) {
-        const tag = stripSigil ? stripArtistSigil(a.tag.trim()) : a.tag.trim();
-        if (!tag) continue;
-        const key = tag.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const w = round2(clampWeight(a.weight) * clampWeight(style.overallWeight));
-        if (w <= 0) continue;
-        const safeTag = escapeTagForPrompt(tag);
-        // A weight of exactly 1 is written bare. `(tag:1)` and `tag` render
-        // identically on every backend, but the wrapped form is noise in the
-        // saved metadata, it defeats mergeTagPrompts' dedupe against a tag the
-        // user typed by hand, and on NovelAI it is A1111 syntax that only
-        // survives because the Rust translator strips it again on the way out.
-        parts.push(w === 1 ? safeTag : `(${safeTag}:${w})`);
-      }
-    }
-    return parts.join(", ");
+    return fragmentForStyles(this.activeStyles, stripSigil);
   }
 
   // ---------------------------------------------------------------------------

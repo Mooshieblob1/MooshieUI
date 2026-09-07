@@ -36,7 +36,7 @@ class ArtistInsertStore {
    * artist index; if it has not loaded, this comes back empty and the caller
    * degrades to a plain add rather than replacing tags it cannot identify.
    */
-  private existingArtistTags(): string[] {
+  existingArtistTags(): string[] {
     const prefix = generation.artistTagPrefix;
     const index = gallery.artistIndexReady ? gallery.artistTagIndex : null;
     return splitPromptTags(generation.positivePrompt.trim()).filter((t) =>

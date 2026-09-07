@@ -197,6 +197,19 @@ export interface GenerationToParamsOptions {
   fixedPresetChoices?: ReadonlyMap<string, string>;
   /** When false, positive_regions is omitted (regional inpaint chain). */
   includeConditioningRegions?: boolean;
+  /**
+   * Extra positive tags merged right after the Artist Styles slot. The Style
+   * Creator passes a fragment for an unsaved artist combination here.
+   */
+  extraPositive?: string;
+  /** Skip the active Artist Styles fragment (the Style Creator supplies its own). */
+  skipActiveStyles?: boolean;
+  /**
+   * Seed to use instead of the store's seed, as the same string form the
+   * store holds. Lets a caller pin one seed across several submissions
+   * without touching the user's setting.
+   */
+  seed?: string;
   overrides?: Partial<
     Pick<
       GenerationParams,
@@ -3221,7 +3234,8 @@ class GenerationStore {
     // stores the resolved (expanded) prompt so regenerating always reproduces.
     const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
     const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
-    const numericSeed = parseInt(this.seed, 10);
+    const seedSource = options.seed ?? this.seed;
+    const numericSeed = parseInt(seedSource, 10);
     const rngSeed: number =
       !isNaN(numericSeed) && numericSeed !== -1
         ? numericSeed >>> 0
@@ -3254,9 +3268,12 @@ class GenerationStore {
     // NovelAI mode strips the `@` a style may have stored: a style built
     // while an Anima checkpoint was selected holds `@artist`, and `@` is
     // the prompt-chunk sigil on NovelAI, not an artist marker.
-    const styleFragment = styles.buildPromptFragment(this.isNovelAi);
+    const styleFragment = options.skipActiveStyles ? "" : styles.buildPromptFragment(this.isNovelAi);
     if (styleFragment) {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, styleFragment, "after");
+    }
+    if (options.extraPositive) {
+      positivePrompt = this.mergeIntoPrompt(positivePrompt, options.extraPositive, "after");
     }
 
     // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
@@ -3470,7 +3487,7 @@ class GenerationStore {
       scheduler: this.scheduler,
       steps: this.steps,
       cfg: this.cfg,
-      seed: this.seed,
+      seed: seedSource,
       width: this.width,
       height: this.height,
       batch_size: this.batchSize,
