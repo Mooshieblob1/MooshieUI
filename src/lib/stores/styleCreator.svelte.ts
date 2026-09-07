@@ -631,8 +631,10 @@ class StyleCreatorStore {
     this.error = null;
     this.running = true;
     // A round left in "choosing" keeps its cards: Start resumes the loop only
-    // after that round is judged.
+    // after that round is judged. Closing the lightbox on such a round hides
+    // it, so put it back on screen rather than letting Start look dead.
     if (this.phase === "idle") this.nextRound();
+    else if (this.round) this.viewerOpen = true;
   }
 
   /**
