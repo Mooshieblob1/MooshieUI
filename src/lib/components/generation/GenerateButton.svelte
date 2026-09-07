@@ -16,8 +16,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
-  import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
-  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
@@ -549,22 +548,7 @@
     if (generation.isNovelAi && novelai.apiKeyConfigured) void novelai.ensureSubscription();
   });
 
-  const anlasEstimate = $derived.by(() => {
-    if (!generation.isNovelAi) return null;
-    const nai = generation.novelaiSettings;
-    return estimateNovelAiCost({
-      width: generation.width,
-      height: generation.height,
-      steps: generation.steps,
-      nSamples: generation.batchSize,
-      strength: generation.mode === "txt2img" ? 1 : nai.strength,
-      isOpus: novelai.isOpus,
-      // V5 has no Opus unlimited: with the allowance drained it bills in full.
-      opusExhausted:
-        naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
-      vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
-    });
-  });
+  const anlasEstimate = $derived(estimateCurrentNovelAiCost());
 
   /**
    * Ctrl+Enter generates -- but only when nothing is sitting on top of the
