@@ -1850,6 +1850,8 @@ const de: Record<string, string> = {
   "style_creator.pick_edit": "Auswählen und bearbeiten",
   "style_creator.skip": "Überspringen",
   "style_creator.index_loading": "Der Künstlerindex wird noch geladen",
+  "style_creator.no_manifest_url": "Für die Künstler-Galerie ist keine Manifest-URL konfiguriert, daher kann der Künstlerindex nicht geladen werden",
+  "style_creator.novelai_key_required": "Fügen Sie unter Einstellungen > NovelAI einen NovelAI-API-Schlüssel hinzu, um den Style Creator zu nutzen",
   "style_creator.pool_short": "Nur {count} Künstler verfügbar, es wird aus allen gezogen",
   "style_creator.pool_empty": "Keine Künstler zum Ziehen verfügbar",
   "style_creator.exhausted": "Alle Kombinationen wurden ausprobiert. Leere den Verlauf oder ändere die Einstellungen.",

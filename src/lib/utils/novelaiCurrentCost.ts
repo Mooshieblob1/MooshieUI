@@ -6,6 +6,11 @@
  * Opus and V5 rules. `nSamples` defaults to the batch size, so a caller that
  * submits one image at a time passes 1.
  *
+ * `forceTxt2ImgStrength` defaults to false so the Generate button's caller is
+ * unaffected. Pass true for a caller (Style Creator) whose request forces
+ * `mode: "txt2img"` regardless of the app's current mode, so the estimate
+ * does not under-price the request while the app itself sits in img2img.
+ *
  * Returns null outside NovelAI mode, where Anlas do not apply.
  */
 import { generation } from "../stores/generation.svelte.js";
@@ -13,7 +18,10 @@ import { novelai } from "../stores/novelai.svelte.js";
 import { estimateNovelAiCost } from "./novelaiCost.js";
 import { naiV5Variant } from "./novelaiModels.js";
 
-export function estimateCurrentNovelAiCost(nSamples: number = generation.batchSize): number | null {
+export function estimateCurrentNovelAiCost(
+  nSamples: number = generation.batchSize,
+  forceTxt2ImgStrength = false,
+): number | null {
   if (!generation.isNovelAi) return null;
   const nai = generation.novelaiSettings;
   return estimateNovelAiCost({
@@ -21,7 +29,7 @@ export function estimateCurrentNovelAiCost(nSamples: number = generation.batchSi
     height: generation.height,
     steps: generation.steps,
     nSamples,
-    strength: generation.mode === "txt2img" ? 1 : nai.strength,
+    strength: forceTxt2ImgStrength || generation.mode === "txt2img" ? 1 : nai.strength,
     isOpus: novelai.isOpus,
     // V5 has no Opus unlimited: with the allowance drained it bills in full.
     opusExhausted: naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,

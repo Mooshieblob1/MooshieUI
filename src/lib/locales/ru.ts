@@ -1829,6 +1829,8 @@ const ru: Record<string, string> = {
   "style_creator.pick_edit": "Выбрать и изменить",
   "style_creator.skip": "Пропустить",
   "style_creator.index_loading": "Индекс художников ещё загружается",
+  "style_creator.no_manifest_url": "URL манифеста Галереи художников не настроен, поэтому индекс художников не может загрузиться",
+  "style_creator.novelai_key_required": "Добавьте ключ API NovelAI в разделе Настройки > NovelAI, чтобы использовать Создатель стилей",
   "style_creator.pool_short": "Доступно только {count} художников, выбор из всех",
   "style_creator.pool_empty": "Нет художников для выбора",
   "style_creator.exhausted": "Все сочетания уже опробованы. Очистите историю или измените настройки.",

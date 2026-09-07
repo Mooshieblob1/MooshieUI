@@ -1854,6 +1854,8 @@ const fr: Record<string, string> = {
   "style_creator.pick_edit": "Choisir et modifier",
   "style_creator.skip": "Passer",
   "style_creator.index_loading": "L'index des artistes est encore en cours de chargement",
+  "style_creator.no_manifest_url": "Aucune URL de manifeste pour la Galerie d'artistes n'est configurée, l'index des artistes ne peut donc pas se charger",
+  "style_creator.novelai_key_required": "Ajoutez une clé API NovelAI dans Paramètres > NovelAI pour utiliser le Créateur de styles",
   "style_creator.pool_short": "Seulement {count} artistes disponibles, tirage sur l'ensemble",
   "style_creator.pool_empty": "Aucun artiste disponible pour le tirage",
   "style_creator.exhausted": "Toutes les combinaisons ont été essayées. Effacez l'historique ou changez les réglages.",

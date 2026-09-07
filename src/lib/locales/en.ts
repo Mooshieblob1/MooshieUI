@@ -1582,6 +1582,8 @@ const en: Record<string, string> = {
   "style_creator.pick_edit": "Pick and edit",
   "style_creator.skip": "Skip",
   "style_creator.index_loading": "The Artists index is still loading",
+  "style_creator.no_manifest_url": "No Artist Gallery manifest URL is configured, so the Artists index cannot load",
+  "style_creator.novelai_key_required": "Add a NovelAI API key in Settings > NovelAI to use Style Creator",
   "style_creator.pool_short": "Only {count} artists available, drawing from all of them",
   "style_creator.pool_empty": "No artists available to draw from",
   "style_creator.exhausted": "Every combination has been tried. Clear the history or change the settings.",

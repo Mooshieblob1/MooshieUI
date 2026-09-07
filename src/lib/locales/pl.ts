@@ -1536,6 +1536,8 @@ const pl: Record<string, string> = {
   "style_creator.pick_edit": "Wybierz i edytuj",
   "style_creator.skip": "Pomiń",
   "style_creator.index_loading": "Indeks artystów wciąż się wczytuje",
+  "style_creator.no_manifest_url": "Nie skonfigurowano adresu URL manifestu Galerii artystów, więc indeks artystów nie może się wczytać",
+  "style_creator.novelai_key_required": "Dodaj klucz API NovelAI w Ustawienia > NovelAI, aby korzystać z Kreatora stylów",
   "style_creator.pool_short": "Dostępnych jest tylko {count} artystów, losowanie ze wszystkich",
   "style_creator.pool_empty": "Brak artystów do losowania",
   "style_creator.exhausted": "Wypróbowano już wszystkie kombinacje. Wyczyść historię lub zmień ustawienia.",

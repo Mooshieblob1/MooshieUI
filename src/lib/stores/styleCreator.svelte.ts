@@ -40,6 +40,12 @@ const STORAGE_KEY = "mooshieui.styleCreator.v1";
 const MAX_DRAW_ATTEMPTS = 100;
 const MIN_COUNT = 1;
 const MAX_COUNT = 10;
+/**
+ * Cap on persisted history keys, FIFO evicted (oldest first). Bounds the
+ * localStorage quota risk shared with every other store's settings; a real
+ * user will never draw this many combinations.
+ */
+const MAX_HISTORY = 5000;
 
 export type StyleCreatorPhase = "idle" | "generating" | "choosing";
 
@@ -80,7 +86,15 @@ export function combinationKey(entries: KeyEntry[]): string {
     .join("+");
 }
 
-/** A hand-typed artist has no slug, so its index key stands in for one. */
+/**
+ * A hand-typed artist has no slug, so its index key stands in for one.
+ * `artistIndexKey` normalises to lowercase-underscored and unescapes parens
+ * (see artistTag.ts), which is not guaranteed to match the manifest's
+ * filesystem-safe slug for names with parens or other punctuation. When it
+ * does not match, the combination this artist is part of can fail to be
+ * recognised as already-tried. The consequence is benign: that combination
+ * may be offered again despite already being saved or judged.
+ */
 function artistSlug(a: StyleArtist): string {
   return a.slug ?? artistIndexKey(a.tag);
 }
@@ -121,6 +135,12 @@ function sampleWithoutReplacement<T>(pool: T[], n: number): T[] {
 function clampCount(n: unknown): number {
   const v = typeof n === "number" && Number.isFinite(n) ? Math.round(n) : 3;
   return Math.max(MIN_COUNT, Math.min(MAX_COUNT, v));
+}
+
+/** Drop the oldest keys (insertion order) until the set is at most MAX_HISTORY. */
+function capHistory(keys: Set<string>): Set<string> {
+  if (keys.size <= MAX_HISTORY) return keys;
+  return new Set([...keys].slice(keys.size - MAX_HISTORY));
 }
 
 class StyleCreatorStore {
@@ -284,7 +304,9 @@ class StyleCreatorStore {
     this.pendingAnchorSignature = null;
     const pool = this.buildPool();
     if (pool.length === 0) {
-      this.endRound(locale.t("style_creator.pool_empty"));
+      // Pool exhaustion is a successful terminal state, not a failure: route
+      // it through the amber note channel rather than the red error one.
+      this.endRound(locale.t("style_creator.pool_empty"), true);
       return;
     }
     let count = this.count;
@@ -300,14 +322,16 @@ class StyleCreatorStore {
       if (wantTwo) cards.push(this.anchorCard());
       const drawn = this.drawCard(pool, count, blocked);
       if (!drawn) {
-        this.endRound(locale.t("style_creator.exhausted"));
+        // Every combination has already been tried: a successful terminal
+        // state, not a failure, so it goes through the amber note channel.
+        this.endRound(locale.t("style_creator.exhausted"), true);
         return;
       }
       cards.push(drawn);
     } else {
       const first = this.drawCard(pool, count, blocked);
       if (!first) {
-        this.endRound(locale.t("style_creator.exhausted"));
+        this.endRound(locale.t("style_creator.exhausted"), true);
         return;
       }
       cards.push(first);
@@ -359,13 +383,17 @@ class StyleCreatorStore {
         if (!this.running || this.roundSerial !== serial) return;
         this.pending.set(promptId, i);
       } catch (err) {
-        this.submitFailed(err);
+        this.submitFailed(err, serial);
         return;
       }
     }
   }
 
-  private submitFailed(err: unknown): void {
+  private submitFailed(err: unknown, serial: number): void {
+    // A rejection from a stopped round (Stop, then Start again before the
+    // in-flight submit settles) must not tear down the round that replaced
+    // it. Only the round that is still current may end itself here.
+    if (this.roundSerial !== serial) return;
     const message = err instanceof Error ? err.message : String(err);
     const classified = classifyGenerationError(message);
     const detail =
@@ -403,15 +431,20 @@ class StyleCreatorStore {
     if (next.cards.every((c) => c.image !== null)) this.phase = "choosing";
   }
 
-  /** Drop the round and stop the loop, showing `message` in the panel. */
-  private endRound(message: string | null): void {
+  /**
+   * Drop the round and stop the loop, showing `message` in the panel. A
+   * successful terminal state (pool exhausted) is routed to the amber
+   * `note` channel via `asNote`; a real failure stays on the red `error`
+   * channel.
+   */
+  private endRound(message: string | null, asNote = false): void {
     this.pending.clear();
     this.pendingAnchorSignature = null;
     this.round = null;
     this.phase = "idle";
     this.running = false;
-    this.error = message;
-    this.note = null;
+    this.error = asNote ? null : message;
+    this.note = asNote ? message : null;
   }
 
   /** A backend execution error carrying a prompt id from this round. */
@@ -433,12 +466,16 @@ class StyleCreatorStore {
     const round = this.round;
     if (round) {
       const keys = round.cards.map((c) => c.key).filter((k) => k.length > 0);
-      if (keys.length > 0) this.history = new Set([...this.history, ...keys]);
+      if (keys.length > 0) this.history = capHistory(new Set([...this.history, ...keys]));
     }
     this.pending.clear();
     this.pendingAnchorSignature = null;
     this.round = null;
     this.phase = "idle";
+    // When the loop is not continuing, a stale "only N artists available"
+    // note (set by nextRound for the round just judged) would otherwise sit
+    // under the idle panel until the next Start.
+    if (!this.running) this.note = null;
     this.saveSettings();
   }
 

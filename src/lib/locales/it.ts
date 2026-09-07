@@ -1829,6 +1829,8 @@ const it: Record<string, string> = {
   "style_creator.pick_edit": "Scegli e modifica",
   "style_creator.skip": "Salta",
   "style_creator.index_loading": "L'indice degli artisti si sta ancora caricando",
+  "style_creator.no_manifest_url": "Nessun URL manifest della Galleria artisti è configurato, quindi l'indice degli artisti non può caricarsi",
+  "style_creator.novelai_key_required": "Aggiungi una chiave API NovelAI in Impostazioni > NovelAI per usare il Creatore di stili",
   "style_creator.pool_short": "Solo {count} artisti disponibili, si pesca da tutti",
   "style_creator.pool_empty": "Nessun artista disponibile da pescare",
   "style_creator.exhausted": "Tutte le combinazioni sono state provate. Cancella la cronologia o cambia le impostazioni.",

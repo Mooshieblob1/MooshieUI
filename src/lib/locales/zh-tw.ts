@@ -1829,6 +1829,8 @@ const zhTw: Record<string, string> = {
   "style_creator.pick_edit": "選擇並編輯",
   "style_creator.skip": "略過",
   "style_creator.index_loading": "畫師索引仍在載入中",
+  "style_creator.no_manifest_url": "未設定繪師圖庫的 manifest URL，因此無法載入畫師索引",
+  "style_creator.novelai_key_required": "請在 設定 > NovelAI 中新增 NovelAI API 金鑰以使用風格產生器",
   "style_creator.pool_short": "只有 {count} 位畫師可用，將從全部中抽取",
   "style_creator.pool_empty": "沒有可抽取的畫師",
   "style_creator.exhausted": "所有組合都試過了。請清除紀錄或更改設定。",

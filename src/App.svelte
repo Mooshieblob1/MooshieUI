@@ -3278,7 +3278,16 @@
                     : locale.t("app.generation_lost"),
                   "error",
                 );
+                // Recovery found nothing to show. A no-op for anything that
+                // isn't this prompt's Style Creator card, but without it the
+                // card's spinner would run forever.
+                styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
               }
+            } else {
+              // `completePrompt` did not recognise this prompt at all. Same
+              // give-up outcome as above, so the Style Creator card (if any)
+              // must be released the same way.
+              styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
             }
           }
         }

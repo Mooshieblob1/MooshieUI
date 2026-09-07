@@ -4,6 +4,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
   import { stripArtistSigil } from "../../utils/artistTag.js";
@@ -14,15 +15,23 @@
 
   const hasAnchor = $derived(styleCreator.anchor.length > 0);
   const indexReady = $derived(gallery.artistIndexReady);
+  // Without a manifest URL, gallery.loadArtistIndex is never called (see
+  // BottomPanel.svelte), so indexReady would stay false forever with no
+  // explanation of why.
+  const noManifest = $derived(!connection.artistGalleryManifestUrl);
   // NovelAI generates server-side, so a round is impossible without a key.
-  const canStart = $derived(
-    indexReady && (!generation.isNovelAi || novelai.apiKeyConfigured),
-  );
+  const naiKeyMissing = $derived(generation.isNovelAi && !novelai.apiKeyConfigured);
+  const canStart = $derived(indexReady && !naiKeyMissing);
   const choosing = $derived(styleCreator.phase === "choosing");
 
-  /** Per-round Anlas: the single-image estimate times the number of cards. */
+  /**
+   * Per-round Anlas: the single-image estimate times the number of cards. A
+   * round always forces txt2img regardless of the current mode, so the
+   * strength used for the estimate is forced to match, otherwise img2img
+   * mode would understate what the round actually costs.
+   */
   const anlas = $derived.by(() => {
-    const one = estimateCurrentNovelAiCost(1);
+    const one = estimateCurrentNovelAiCost(1, true);
     return one === null ? null : one * styleCreator.cardsPerRound;
   });
 
@@ -276,9 +285,17 @@
       disabled={!choosing}
       onclick={() => styleCreator.skip()}>{locale.t("style_creator.skip")}</button
     >
+  {:else if noManifest}
+    <div class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-4 text-center text-[11px] text-neutral-500">
+      {locale.t("style_creator.no_manifest_url")}
+    </div>
   {:else if !indexReady}
     <div class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-4 text-center text-[11px] text-neutral-500">
       {locale.t("style_creator.index_loading")}
+    </div>
+  {:else if naiKeyMissing}
+    <div class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-4 text-center text-[11px] text-neutral-500">
+      {locale.t("style_creator.novelai_key_required")}
     </div>
   {/if}
 </div>
