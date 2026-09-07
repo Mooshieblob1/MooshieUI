@@ -1539,6 +1539,8 @@ const pl: Record<string, string> = {
   "style_creator.no_manifest_url": "Nie skonfigurowano adresu URL manifestu Galerii artystów, więc indeks artystów nie może się wczytać",
   "style_creator.novelai_key_required": "Dodaj klucz API NovelAI w Ustawienia > NovelAI, aby korzystać z Kreatora stylów",
   "style_creator.nai_stagger": "NovelAI ogranicza dwa jednoczesne generowania, więc drugi obraz startuje po zakończeniu pierwszego.",
+  "style_creator.switch_card": "Przełącz",
+  "style_creator.show_round": "Pokaż rundę",
   "style_creator.pool_short": "Dostępnych jest tylko {count} artystów, losowanie ze wszystkich",
   "style_creator.pool_empty": "Brak artystów do losowania",
   "style_creator.exhausted": "Wypróbowano już wszystkie kombinacje. Wyczyść historię lub zmień ustawienia.",
