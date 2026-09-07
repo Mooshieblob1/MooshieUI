@@ -165,6 +165,15 @@ class StyleCreatorStore {
    * the cards go out one at a time and the panel says why.
    */
   staggering = $state(false);
+  /**
+   * Whether the round is on screen in its own lightbox. The two cards are
+   * compared full size there rather than side by side in the bottom panel,
+   * and closing the lightbox does not judge the round, so the panel can
+   * reopen it.
+   */
+  viewerOpen = $state(false);
+  /** Which card the lightbox is showing. */
+  viewerIndex = $state(0);
 
   /** promptId -> card index for the round in flight. */
   private pending = new Map<string, number>();
@@ -357,6 +366,8 @@ class StyleCreatorStore {
     this.pending.clear();
     this.round = round;
     this.phase = "generating";
+    this.viewerIndex = 0;
+    this.viewerOpen = true;
     void this.submitRound(round, serial);
   }
 
@@ -481,6 +492,7 @@ class StyleCreatorStore {
     this.pending.clear();
     this.pendingAnchorSignature = null;
     this.round = null;
+    this.viewerOpen = false;
     this.phase = "idle";
     this.running = false;
     this.error = asNote ? null : message;
@@ -512,6 +524,7 @@ class StyleCreatorStore {
     this.pending.clear();
     this.pendingAnchorSignature = null;
     this.round = null;
+    this.viewerOpen = false;
     this.phase = "idle";
     // When the loop is not continuing, a stale "only N artists available"
     // note (set by nextRound for the round just judged) would otherwise sit
@@ -589,8 +602,29 @@ class StyleCreatorStore {
       this.pending.clear();
       this.pendingAnchorSignature = null;
       this.round = null;
+      this.viewerOpen = false;
       this.phase = "idle";
     }
+  }
+
+  /** Reopen the round's lightbox after it was closed with Escape. */
+  openViewer(): void {
+    if (!this.round) return;
+    this.viewerOpen = true;
+  }
+
+  closeViewer(): void {
+    this.viewerOpen = false;
+  }
+
+  /**
+   * Move to the next card, wrapping. One button switches between the pair
+   * rather than showing both at once, so each card gets the full frame.
+   */
+  switchCard(): void {
+    const round = this.round;
+    if (!round || round.cards.length < 2) return;
+    this.viewerIndex = (this.viewerIndex + 1) % round.cards.length;
   }
 
   /**

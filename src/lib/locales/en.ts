@@ -1585,6 +1585,8 @@ const en: Record<string, string> = {
   "style_creator.no_manifest_url": "No Artist Gallery manifest URL is configured, so the Artists index cannot load",
   "style_creator.novelai_key_required": "Add a NovelAI API key in Settings > NovelAI to use Style Creator",
   "style_creator.nai_stagger": "NovelAI rate limits two generations at once, so the second image starts after the first finishes.",
+  "style_creator.switch_card": "Switch",
+  "style_creator.show_round": "Show round",
   "style_creator.pool_short": "Only {count} artists available, drawing from all of them",
   "style_creator.pool_empty": "No artists available to draw from",
   "style_creator.exhausted": "Every combination has been tried. Clear the history or change the settings.",

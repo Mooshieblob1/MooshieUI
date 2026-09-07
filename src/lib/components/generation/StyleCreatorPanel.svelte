@@ -22,7 +22,6 @@
   // NovelAI generates server-side, so a round is impossible without a key.
   const naiKeyMissing = $derived(generation.isNovelAi && !novelai.apiKeyConfigured);
   const canStart = $derived(indexReady && !naiKeyMissing);
-  const choosing = $derived(styleCreator.phase === "choosing");
 
   /**
    * Per-round Anlas: the single-image estimate times the number of cards. A
@@ -229,65 +228,15 @@
 
   <!-- Round -->
   {#if styleCreator.round}
-    <div class="flex gap-3">
-      {#each styleCreator.round.cards as card, i (i)}
-        <div class="flex min-w-0 flex-1 flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-950/50 p-2">
-          <div class="flex flex-wrap gap-1">
-            {#each card.artists as artist, j (artist.tag + j)}
-              <span class="rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-200">
-                {chipLabel(artist)}
-              </span>
-            {/each}
-          </div>
-          <div class="relative aspect-square w-full overflow-hidden rounded border border-neutral-800 bg-neutral-900">
-            {#if card.image}
-              <img src={card.image.url} alt="" class="h-full w-full object-contain" />
-            {:else}
-              <div class="absolute inset-0 flex items-center justify-center">
-                <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-              </div>
-            {/if}
-          </div>
-          {#if card.saveable}
-            <input
-              type="text"
-              value={card.name}
-              placeholder={locale.t("style_creator.name")}
-              oninput={(e) => styleCreator.setCardName(i, (e.currentTarget as HTMLInputElement).value)}
-              class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
-            />
-            <div class="flex gap-2">
-              <button
-                type="button"
-                class="flex-1 rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                disabled={!choosing}
-                onclick={() => void styleCreator.pick(i)}>{locale.t("style_creator.pick")}</button
-              >
-              <button
-                type="button"
-                class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:text-indigo-200 disabled:opacity-50"
-                disabled={!choosing}
-                onclick={() => void styleCreator.pick(i, true)}>{locale.t("style_creator.pick_edit")}</button
-              >
-            </div>
-          {:else}
-            <p class="text-center text-[11px] text-neutral-500">{locale.t("style_creator.anchor_alone")}</p>
-            <button
-              type="button"
-              class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-50"
-              disabled={!choosing}
-              onclick={() => void styleCreator.pick(i)}>{locale.t("style_creator.pick")}</button
-            >
-          {/if}
-        </div>
-      {/each}
-    </div>
-    <button
-      type="button"
-      class="self-start rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-50"
-      disabled={!choosing}
-      onclick={() => styleCreator.skip()}>{locale.t("style_creator.skip")}</button
-    >
+    <!-- The pair lives in its own lightbox so each image gets the full frame;
+         this only puts it back on screen after Escape closed it. -->
+    {#if !styleCreator.viewerOpen}
+      <button
+        type="button"
+        class="self-start rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500"
+        onclick={() => styleCreator.openViewer()}>{locale.t("style_creator.show_round")}</button
+      >
+    {/if}
   {:else if noManifest}
     <div class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-4 text-center text-[11px] text-neutral-500">
       {locale.t("style_creator.no_manifest_url")}

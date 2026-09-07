@@ -59,6 +59,7 @@
   import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
   import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
   import NaiImageEnhanceModal from "./lib/components/generation/NaiImageEnhanceModal.svelte";
+  import StyleCreatorLightbox from "./lib/components/generation/StyleCreatorLightbox.svelte";
   import NovelAiPositionModal from "./lib/components/generation/NovelAiPositionModal.svelte";
   import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
   import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
@@ -369,12 +370,14 @@
   // The enhance and Director Tools modals stack on the lightbox the same way
   // and own Escape while open; this document handler would otherwise run first
   // (document before window) and close the lightbox underneath the modal.
+  // The Style Creator lightbox is a full-screen overlay of the same kind.
   $effect(() => {
     if (
       !gallery.lightboxOpen ||
       gallery.compareOpen ||
       naiImageEnhance.isOpen ||
-      directorTools.isOpen
+      directorTools.isOpen ||
+      styleCreator.viewerOpen
     )
       return;
     const handler = (e: KeyboardEvent) => {
@@ -4568,6 +4571,10 @@
 <!-- NovelAI image Enhance. Root-mounted for the same reason Director Tools is:
      it acts on whatever image is open, not on the generation panel. -->
 <NaiImageEnhanceModal />
+
+<!-- Style Creator round. Root-mounted so the pair covers the whole window
+     instead of the bottom panel that starts the round. -->
+<StyleCreatorLightbox />
 
 <!-- NovelAI character placement. Root-mounted because the prompt panel that
      opens it is a scroll container, which would bound the fixed overlay. -->

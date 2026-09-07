@@ -1832,6 +1832,8 @@ const zhTw: Record<string, string> = {
   "style_creator.no_manifest_url": "未設定繪師圖庫的 manifest URL，因此無法載入畫師索引",
   "style_creator.novelai_key_required": "請在 設定 > NovelAI 中新增 NovelAI API 金鑰以使用風格產生器",
   "style_creator.nai_stagger": "NovelAI 會限制同時進行兩次生成，因此第二張圖會在第一張完成後才開始。",
+  "style_creator.switch_card": "切換",
+  "style_creator.show_round": "顯示本輪",
   "style_creator.pool_short": "只有 {count} 位畫師可用，將從全部中抽取",
   "style_creator.pool_empty": "沒有可抽取的畫師",
   "style_creator.exhausted": "所有組合都試過了。請清除紀錄或更改設定。",
