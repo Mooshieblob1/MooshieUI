@@ -17,6 +17,7 @@
   import CheckpointGallery from "./CheckpointGallery.svelte";
   import CompareGrid from "./CompareGrid.svelte";
   import StyleManager from "./StyleManager.svelte";
+  import StyleCreatorPanel from "./StyleCreatorPanel.svelte";
   import ScheduleBuilder from "./ScheduleBuilder.svelte";
   import VideoTimelinePanel from "../video/VideoTimelinePanel.svelte";
   import { videoTimeline } from "../../stores/videoTimeline.svelte.js";
@@ -41,7 +42,7 @@
 
   let { onupscale, oninpaint, onrefine, oncontextmenu }: Props = $props();
 
-  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule" | "timeline" | "notes";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "style_creator" | "schedule" | "timeline" | "notes";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
@@ -56,7 +57,7 @@
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
-  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "styles", "schedule", "compare", "notes"];
+  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "styles", "style_creator", "schedule", "compare", "notes"];
   // Video mode keeps only the tabs that mean something for H3: session output,
   // prompt history and notes. LoRAs and checkpoints do not apply to the H3
   // stack, and artists / artist styles / scheduling / compare are all booru-tag
@@ -91,6 +92,7 @@
     compare: "bottom_panel.tab.compare",
     artists: "bottom_panel.tab.artists",
     styles: "bottom_panel.tab.styles",
+    style_creator: "bottom_panel.tab.style_creator",
     schedule: "bottom_panel.tab.schedule",
     timeline: "bottom_panel.tab.timeline",
     notes: "bottom_panel.tab.notes",
@@ -188,10 +190,14 @@
   // Ensure the manifest + search index are loaded the first time the tab is
   // viewed so cards can render thumbnails without visiting the gallery page.
   $effect(() => {
-    if (activeTab !== "artists" || !artistStore) return;
+    // The Style Creator draws from the same index the Artists tab uses.
+    const wantsIndex = (activeTab === "artists" && !!artistStore) || activeTab === "style_creator";
+    if (!wantsIndex) return;
     if (connection.artistGalleryManifestUrl) {
       void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
     }
+    // Everything below is the Artists tab's own manifest load.
+    if (activeTab !== "artists" || !artistStore) return;
     if (!artistStore.manifest && !artistStore.manifestLoading) {
       void artistStore.init();
     }
@@ -461,6 +467,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
         {:else if tab === "styles"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 9 22 9.5 16.5 14.5 18.5 22 12 18 5.5 22 7.5 14.5 2 9.5 9 9 12 2"/></svg>
+        {:else if tab === "style_creator"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></svg>
         {:else if tab === "schedule"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         {:else if tab === "timeline"}
@@ -672,6 +680,8 @@
       </div>
     {:else if activeTab === "styles"}
       <StyleManager />
+    {:else if activeTab === "style_creator"}
+      <StyleCreatorPanel />
     {:else if activeTab === "schedule"}
       <ScheduleBuilder />
     {:else if activeTab === "timeline"}
