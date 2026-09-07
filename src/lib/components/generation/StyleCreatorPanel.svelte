@@ -74,6 +74,7 @@
             <button
               type="button"
               class="text-neutral-500 hover:text-red-400"
+              aria-label={locale.t("common.remove")}
               title={locale.t("common.remove")}
               onclick={() => styleCreator.removeAnchor(i)}>x</button
             >
@@ -135,7 +136,13 @@
         min="1"
         max="10"
         value={styleCreator.count}
-        onchange={(e) => styleCreator.setCount(Number((e.currentTarget as HTMLInputElement).value))}
+        onchange={(e) => {
+          const el = e.currentTarget as HTMLInputElement;
+          styleCreator.setCount(Number(el.value));
+          // setCount clamps to 1..10; write the stored value back so a
+          // rejected entry cannot sit in the field misreporting the setting.
+          el.value = String(styleCreator.count);
+        }}
         class="w-16 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100 focus:border-indigo-500 focus:outline-none"
       />
     </label>
