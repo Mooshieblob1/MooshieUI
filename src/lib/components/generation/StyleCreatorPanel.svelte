@@ -223,6 +223,9 @@
   {#if styleCreator.note}
     <p class="text-[11px] text-amber-400">{styleCreator.note}</p>
   {/if}
+  {#if styleCreator.staggering}
+    <p class="text-[11px] text-neutral-400">{locale.t("style_creator.nai_stagger")}</p>
+  {/if}
 
   <!-- Round -->
   {#if styleCreator.round}

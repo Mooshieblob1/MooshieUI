@@ -1856,6 +1856,7 @@ const ja: Record<string, string> = {
   "style_creator.index_loading": "アーティストインデックスを読み込み中です",
   "style_creator.no_manifest_url": "アーティストギャラリーのマニフェストURLが設定されていないため、アーティストインデックスを読み込めません",
   "style_creator.novelai_key_required": "スタイルクリエーターを使うには、設定 > NovelAI で NovelAI の API キーを追加してください",
+  "style_creator.nai_stagger": "NovelAI は同時に 2 件の生成を制限するため、2 枚目は 1 枚目の完了後に開始します。",
   "style_creator.pool_short": "利用できるアーティストは {count} 名のみです。すべてから抽選します",
   "style_creator.pool_empty": "抽選できるアーティストがいません",
   "style_creator.exhausted": "すべての組み合わせを試しました。履歴をクリアするか設定を変更してください。",

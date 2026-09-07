@@ -159,6 +159,12 @@ class StyleCreatorStore {
   round = $state<StyleCreatorRound | null>(null);
   error = $state<string | null>(null);
   note = $state<string | null>(null);
+  /**
+   * True while a NovelAI round holds back its next card. NovelAI rate limits
+   * an account that runs two generations at once (429), so on that backend
+   * the cards go out one at a time and the panel says why.
+   */
+  staggering = $state(false);
 
   /** promptId -> card index for the round in flight. */
   private pending = new Map<string, number>();
@@ -169,6 +175,8 @@ class StyleCreatorStore {
   private lastAnchorSignature: string | null = null;
   private lastAnchorImage: OutputImage | null = null;
   private pendingAnchorSignature: string | null = null;
+  /** Resolves the NovelAI stagger wait once the card in flight settles. */
+  private staggerRelease: (() => void) | null = null;
 
   constructor() {
     this.load();
@@ -352,8 +360,15 @@ class StyleCreatorStore {
     void this.submitRound(round, serial);
   }
 
-  /** Submit each card left to right on the round's seed. */
+  /**
+   * Submit each card left to right on the round's seed.
+   *
+   * NovelAI rejects a second concurrent generation on the same account with
+   * a 429, so on that backend a card is not submitted until the previous one
+   * has landed. Every other backend queues fine and submits back to back.
+   */
   private async submitRound(round: StyleCreatorRound, serial: number): Promise<void> {
+    const stagger = generation.isNovelAi;
     for (let i = 0; i < round.cards.length; i++) {
       if (!this.running || this.roundSerial !== serial) return;
       const card = round.cards[i];
@@ -382,11 +397,34 @@ class StyleCreatorStore {
         const promptId = await submitGeneration(params);
         if (!this.running || this.roundSerial !== serial) return;
         this.pending.set(promptId, i);
+        if (stagger && i < round.cards.length - 1) {
+          this.staggering = true;
+          await this.waitForCard();
+          if (!this.running || this.roundSerial !== serial) return;
+        }
       } catch (err) {
         this.submitFailed(err, serial);
         return;
       }
     }
+  }
+
+  /**
+   * Block until the card in flight settles: `resolve()` consumes its prompt
+   * id when the image lands, and every teardown path (failure, stop, round
+   * finished) releases the wait so the loop can never hang on a dead round.
+   */
+  private waitForCard(): Promise<void> {
+    return new Promise((release) => {
+      this.staggerRelease = release;
+    });
+  }
+
+  private releaseStagger(): void {
+    const release = this.staggerRelease;
+    this.staggerRelease = null;
+    this.staggering = false;
+    release?.();
   }
 
   private submitFailed(err: unknown, serial: number): void {
@@ -410,6 +448,7 @@ class StyleCreatorStore {
     const index = this.pending.get(promptId);
     if (index === undefined) return null;
     this.pending.delete(promptId);
+    this.releaseStagger();
     return index;
   }
 
@@ -438,6 +477,7 @@ class StyleCreatorStore {
    * channel.
    */
   private endRound(message: string | null, asNote = false): void {
+    this.releaseStagger();
     this.pending.clear();
     this.pendingAnchorSignature = null;
     this.round = null;
@@ -468,6 +508,7 @@ class StyleCreatorStore {
       const keys = round.cards.map((c) => c.key).filter((k) => k.length > 0);
       if (keys.length > 0) this.history = capHistory(new Set([...this.history, ...keys]));
     }
+    this.releaseStagger();
     this.pending.clear();
     this.pendingAnchorSignature = null;
     this.round = null;
@@ -543,6 +584,7 @@ class StyleCreatorStore {
     this.running = false;
     this.error = null;
     this.note = null;
+    this.releaseStagger();
     if (this.phase === "generating") {
       this.pending.clear();
       this.pendingAnchorSignature = null;

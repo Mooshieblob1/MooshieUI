@@ -1831,6 +1831,7 @@ const ko: Record<string, string> = {
   "style_creator.index_loading": "아티스트 색인을 아직 불러오는 중입니다",
   "style_creator.no_manifest_url": "아티스트 갤러리 매니페스트 URL이 설정되어 있지 않아 아티스트 색인을 불러올 수 없습니다",
   "style_creator.novelai_key_required": "스타일 크리에이터를 사용하려면 설정 > NovelAI에서 NovelAI API 키를 추가하세요",
+  "style_creator.nai_stagger": "NovelAI는 동시 생성 2건을 제한하므로 두 번째 이미지는 첫 번째가 끝난 뒤에 시작합니다.",
   "style_creator.pool_short": "아티스트가 {count}명뿐이라 전부에서 뽑습니다",
   "style_creator.pool_empty": "뽑을 아티스트가 없습니다",
   "style_creator.exhausted": "모든 조합을 시도했습니다. 기록을 지우거나 설정을 바꾸세요.",
