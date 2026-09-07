@@ -1834,6 +1834,8 @@ const ru: Record<string, string> = {
   "style_creator.nai_stagger": "NovelAI ограничивает две генерации одновременно, поэтому второе изображение начнётся после завершения первого.",
   "style_creator.switch_card": "Переключить",
   "style_creator.show_round": "Показать раунд",
+  "style_creator.view_side_by_side": "Рядом",
+  "style_creator.view_single": "По одной",
   "style_creator.pool_short": "Доступно только {count} художников, выбор из всех",
   "style_creator.pool_empty": "Нет художников для выбора",
   "style_creator.exhausted": "Все сочетания уже опробованы. Очистите историю или измените настройки.",

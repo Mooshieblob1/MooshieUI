@@ -149,6 +149,12 @@ class StyleCreatorStore {
   favouritesOnly = $state(false);
   varyWeights = $state(false);
   pairInNai = $state(true);
+  /**
+   * Show both cards at once in the lightbox instead of one at a time with
+   * the Switch button. Persisted: it is a viewing preference, not part of
+   * the round.
+   */
+  viewerSideBySide = $state(false);
   anchor = $state<StyleArtist[]>([]);
   anchorStyleId = $state<string | null>(null);
   history = $state<Set<string>>(new Set());
@@ -217,6 +223,14 @@ class StyleCreatorStore {
 
   setPairInNai(v: boolean): void {
     this.pairInNai = v;
+    this.saveSettings();
+  }
+
+  setViewerSideBySide(v: boolean): void {
+    this.viewerSideBySide = v;
+    // Nothing is hidden in side by side, so the single-card index would be
+    // stale on the way back. Start from the first card again.
+    if (v) this.viewerIndex = 0;
     this.saveSettings();
   }
 
@@ -685,6 +699,7 @@ class StyleCreatorStore {
       if (data.favouritesOnly !== undefined) this.favouritesOnly = !!data.favouritesOnly;
       if (data.varyWeights !== undefined) this.varyWeights = !!data.varyWeights;
       if (data.pairInNai !== undefined) this.pairInNai = !!data.pairInNai;
+      if (data.viewerSideBySide !== undefined) this.viewerSideBySide = !!data.viewerSideBySide;
       if (data.anchor?.artists !== undefined && Array.isArray(data.anchor.artists)) {
         this.anchor = data.anchor.artists
           .filter((a: any) => a && typeof a.tag === "string" && a.tag.trim())
@@ -714,6 +729,7 @@ class StyleCreatorStore {
           favouritesOnly: this.favouritesOnly,
           varyWeights: this.varyWeights,
           pairInNai: this.pairInNai,
+          viewerSideBySide: this.viewerSideBySide,
           anchor: {
             artists: this.anchor.map((a) => ({ tag: a.tag, slug: a.slug, weight: a.weight })),
             styleId: this.anchorStyleId,

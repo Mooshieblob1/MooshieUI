@@ -1859,6 +1859,8 @@ const ja: Record<string, string> = {
   "style_creator.nai_stagger": "NovelAI は同時に 2 件の生成を制限するため、2 枚目は 1 枚目の完了後に開始します。",
   "style_creator.switch_card": "切り替え",
   "style_creator.show_round": "ラウンドを表示",
+  "style_creator.view_side_by_side": "並べて表示",
+  "style_creator.view_single": "1枚ずつ",
   "style_creator.pool_short": "利用できるアーティストは {count} 名のみです。すべてから抽選します",
   "style_creator.pool_empty": "抽選できるアーティストがいません",
   "style_creator.exhausted": "すべての組み合わせを試しました。履歴をクリアするか設定を変更してください。",

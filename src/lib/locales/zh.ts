@@ -1875,6 +1875,8 @@ const zh: Record<string, string> = {
   "style_creator.nai_stagger": "NovelAI 会限制同时进行两次生成，因此第二张图会在第一张完成后才开始。",
   "style_creator.switch_card": "切换",
   "style_creator.show_round": "显示本轮",
+  "style_creator.view_side_by_side": "并排显示",
+  "style_creator.view_single": "逐张显示",
   "style_creator.pool_short": "只有 {count} 位画师可用，将从全部中抽取",
   "style_creator.pool_empty": "没有可抽取的画师",
   "style_creator.exhausted": "所有组合都已尝试过。请清除记录或更改设置。",

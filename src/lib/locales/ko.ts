@@ -1834,6 +1834,8 @@ const ko: Record<string, string> = {
   "style_creator.nai_stagger": "NovelAI는 동시 생성 2건을 제한하므로 두 번째 이미지는 첫 번째가 끝난 뒤에 시작합니다.",
   "style_creator.switch_card": "전환",
   "style_creator.show_round": "라운드 보기",
+  "style_creator.view_side_by_side": "나란히 보기",
+  "style_creator.view_single": "한 장씩",
   "style_creator.pool_short": "아티스트가 {count}명뿐이라 전부에서 뽑습니다",
   "style_creator.pool_empty": "뽑을 아티스트가 없습니다",
   "style_creator.exhausted": "모든 조합을 시도했습니다. 기록을 지우거나 설정을 바꾸세요.",
