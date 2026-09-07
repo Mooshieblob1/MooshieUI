@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { styles, resizeImageToDataUrl, type ArtistStyle, type StyleArtist } from "../../stores/styles.svelte.js";
+  import { styles, resizeImageToDataUrl, bakedArtistWeight, type ArtistStyle, type StyleArtist } from "../../stores/styles.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
-  import { stripArtistSigil } from "../../utils/artistTag.js";
+  import { artistTagBodiesMatch, stripArtistSigil } from "../../utils/artistTag.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
@@ -108,6 +108,34 @@
       if (t) addArtist(t);
     }
     newTagInput = "";
+  }
+
+  /** Every other saved style is a possible source to merge artists from. */
+  const mergeSources = $derived(styles.styles.filter((s) => s.id !== styleId));
+
+  /**
+   * Merge another style's artists into this one. Weights are baked (the source
+   * artist's weight times that style's overall weight), so the merged artists
+   * keep the balance they had, and this style's own overall weight is left
+   * alone. Artists already present are skipped.
+   */
+  function addFromStyle(e: Event) {
+    const select = e.currentTarget as HTMLSelectElement;
+    const sourceId = select.value;
+    select.value = "";
+    if (!sourceId || !style) return;
+    const source = styles.getById(sourceId);
+    if (!source) return;
+    for (const a of source.artists) {
+      const tag = normalizeArtistTag(a.tag.trim());
+      if (!tag) continue;
+      if (style.artists.some((existing) => artistTagBodiesMatch(existing.tag, tag))) continue;
+      styles.addArtist(style.id, {
+        tag,
+        slug: a.slug,
+        weight: bakedArtistWeight(a, source.overallWeight),
+      });
+    }
   }
 
   function updateArtistWeight(index: number, value: number) {
@@ -426,6 +454,21 @@
               onclick={addFromFreeText}
             >{locale.t("common.add")}</button>
           </div>
+        </div>
+
+        <!-- Merge another saved style's artists in -->
+        <div>
+          <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.editor.add_from_style")}</p>
+          <select
+            value=""
+            onchange={addFromStyle}
+            class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-200 focus:border-indigo-500 focus:outline-none"
+          >
+            <option value="">{locale.t("styles.editor.add_from_style_placeholder")}</option>
+            {#each mergeSources as source (source.id)}
+              <option value={source.id}>{source.name}</option>
+            {/each}
+          </select>
         </div>
       </section>
 
