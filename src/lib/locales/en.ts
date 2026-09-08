@@ -2726,6 +2726,7 @@ const en: Record<string, string> = {
   "styles.manager.empty_styles": "You haven't created any styles yet.",
   "styles.manager.empty_presets": "No chunks yet. Create one to store a reusable prompt fragment or a wildcard list.",
   "styles.manager.no_thumb": "no thumb",
+  "styles.manager.view_thumb": "View full image",
   "styles.manager.active": "active",
   "styles.manager.artists_count": "{count} artist",
   "styles.manager.artists_count_plural": "{count} artists",

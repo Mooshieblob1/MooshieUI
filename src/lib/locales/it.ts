@@ -2451,6 +2451,7 @@ const it: Record<string, string> = {
   "styles.manager.empty_styles": "Non hai ancora creato alcuno stile.",
   "styles.manager.empty_presets": "Nessun blocco. Creane uno per memorizzare un frammento di prompt riutilizzabile o un elenco wildcard.",
   "styles.manager.no_thumb": "nessuna anteprima",
+  "styles.manager.view_thumb": "Visualizza immagine intera",
   "styles.manager.active": "attivo",
   "styles.manager.artists_count": "{count} artista",
   "styles.manager.artists_count_plural": "{count} artisti",

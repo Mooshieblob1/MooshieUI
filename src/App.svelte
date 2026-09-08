@@ -62,6 +62,7 @@
   import StyleCreatorLightbox from "./lib/components/generation/StyleCreatorLightbox.svelte";
   import NovelAiPositionModal from "./lib/components/generation/NovelAiPositionModal.svelte";
   import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
+  import StyleThumbnailLightbox from "./lib/components/generation/StyleThumbnailLightbox.svelte";
   import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
   import { styleEditors } from "./lib/stores/styleEditors.svelte.js";
   import ReportErrorModal from "./lib/components/errors/ReportErrorModal.svelte";
@@ -4711,3 +4712,6 @@
 {#if styleEditors.presetId}
   <PresetEditor presetId={styleEditors.presetId} onclose={() => styleEditors.closePreset()} />
 {/if}
+
+<!-- Same reason: the style list that opens this lives in the bottom panel. -->
+<StyleThumbnailLightbox />

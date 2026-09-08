@@ -2476,6 +2476,7 @@ const ja: Record<string, string> = {
   "styles.manager.empty_styles": "まだスタイルを作成していません。",
   "styles.manager.empty_presets": "チャンクがありません。再利用可能なプロンプト断片やワイルドカードリストを保存するには作成してください。",
   "styles.manager.no_thumb": "サムネなし",
+  "styles.manager.view_thumb": "画像を拡大表示",
   "styles.manager.active": "有効",
   "styles.manager.artists_count": "アーティスト {count} 件",
   "styles.manager.artists_count_plural": "アーティスト {count} 件",

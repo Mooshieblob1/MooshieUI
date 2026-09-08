@@ -2477,6 +2477,7 @@ const fr: Record<string, string> = {
   "styles.manager.empty_styles": "Vous n'avez pas encore créé de styles.",
   "styles.manager.empty_presets": "Aucun bloc. Créez-en un pour stocker un fragment de prompt réutilisable ou une liste de jokers.",
   "styles.manager.no_thumb": "pas de vignette",
+  "styles.manager.view_thumb": "Afficher en grand",
   "styles.manager.active": "actif",
   "styles.manager.artists_count": "{count} artiste",
   "styles.manager.artists_count_plural": "{count} artistes",

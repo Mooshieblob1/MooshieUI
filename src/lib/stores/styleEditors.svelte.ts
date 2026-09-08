@@ -13,6 +13,12 @@ class StyleEditorsStore {
   styleId = $state<string | null>(null);
   /** Prompt chunk being edited, or null when the chunk editor is closed. */
   presetId = $state<string | null>(null);
+  /**
+   * Artist style whose thumbnail is being viewed full size, or null when that
+   * lightbox is closed. Same reason as the editors: the list it opens from
+   * lives in the bottom panel, but the overlay has to cover the whole app.
+   */
+  thumbnailStyleId = $state<string | null>(null);
 
   openStyle(id: string): void {
     this.styleId = id;
@@ -28,6 +34,14 @@ class StyleEditorsStore {
 
   closePreset(): void {
     this.presetId = null;
+  }
+
+  openThumbnail(id: string): void {
+    this.thumbnailStyleId = id;
+  }
+
+  closeThumbnail(): void {
+    this.thumbnailStyleId = null;
   }
 }
 

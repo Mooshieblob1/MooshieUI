@@ -2451,6 +2451,7 @@ const ru: Record<string, string> = {
   "styles.manager.empty_styles": "Вы ещё не создали ни одного стиля.",
   "styles.manager.empty_presets": "Блоков пока нет. Создайте один для хранения фрагмента промпта или списка wildcard.",
   "styles.manager.no_thumb": "нет миниатюры",
+  "styles.manager.view_thumb": "Открыть изображение целиком",
   "styles.manager.active": "активен",
   "styles.manager.artists_count": "{count} художник",
   "styles.manager.artists_count_plural": "{count} художников",
