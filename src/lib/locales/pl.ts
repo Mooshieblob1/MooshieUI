@@ -2674,6 +2674,7 @@ const pl: Record<string, string> = {
   "styles.manager.empty_styles": "Nie utworzono jeszcze żadnych stylów.",
   "styles.manager.empty_presets": "Brak bloków. Utwórz jeden, aby przechować wielokrotnie używany fragment Promptu lub listę wildcardów.",
   "styles.manager.no_thumb": "brak miniatury",
+  "styles.manager.view_thumb": "Zobacz pełny obraz",
   "styles.manager.active": "aktywny",
   "styles.manager.artists_count": "{count} artysta",
   "styles.manager.artists_count_plural": "{count} artystów",

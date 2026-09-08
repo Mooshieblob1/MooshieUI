@@ -2451,6 +2451,7 @@ const ko: Record<string, string> = {
   "styles.manager.empty_styles": "아직 만든 스타일이 없습니다.",
   "styles.manager.empty_presets": "청크가 없습니다. 재사용 가능한 프롬프트 조각이나 와일드카드 목록을 저장하려면 하나를 만드세요.",
   "styles.manager.no_thumb": "썸네일 없음",
+  "styles.manager.view_thumb": "전체 이미지 보기",
   "styles.manager.active": "활성",
   "styles.manager.artists_count": "아티스트 {count}명",
   "styles.manager.artists_count_plural": "아티스트 {count}명",

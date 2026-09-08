@@ -2451,6 +2451,7 @@ const zhTw: Record<string, string> = {
   "styles.manager.empty_styles": "您尚未建立任何風格。",
   "styles.manager.empty_presets": "尚無片段。建立一個以儲存可重複使用的提示詞片段或萬用字元清單。",
   "styles.manager.no_thumb": "無縮圖",
+  "styles.manager.view_thumb": "檢視完整圖片",
   "styles.manager.active": "已啟用",
   "styles.manager.artists_count": "{count} 位藝術家",
   "styles.manager.artists_count_plural": "{count} 位藝術家",

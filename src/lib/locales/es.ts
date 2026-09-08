@@ -2515,6 +2515,7 @@ const es: Record<string, string> = {
   "styles.manager.empty_styles": "Aún no has creado ningún estilo.",
   "styles.manager.empty_presets": "No hay bloques. Crea uno para guardar un fragmento de prompt reutilizable o una lista de comodines.",
   "styles.manager.no_thumb": "sin miniatura",
+  "styles.manager.view_thumb": "Ver imagen completa",
   "styles.manager.active": "activo",
   "styles.manager.artists_count": "{count} artista",
   "styles.manager.artists_count_plural": "{count} artistas",

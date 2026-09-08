@@ -2473,6 +2473,7 @@ const de: Record<string, string> = {
   "styles.manager.empty_styles": "Noch keine Stile erstellt.",
   "styles.manager.empty_presets": "Noch keine Bausteine. Erstellen Sie einen für ein wiederverwendbares Prompt-Fragment oder eine Wildcard-Liste.",
   "styles.manager.no_thumb": "kein Vorschaubild",
+  "styles.manager.view_thumb": "Vollbild anzeigen",
   "styles.manager.active": "aktiv",
   "styles.manager.artists_count": "{count} Künstler",
   "styles.manager.artists_count_plural": "{count} Künstler",

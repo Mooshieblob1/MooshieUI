@@ -2492,6 +2492,7 @@ const zh: Record<string, string> = {
   "styles.manager.empty_styles": "您尚未创建任何风格。",
   "styles.manager.empty_presets": "暂无片段。创建一个以存储可复用的提示词片段或通配符列表。",
   "styles.manager.no_thumb": "无缩略图",
+  "styles.manager.view_thumb": "查看完整图片",
   "styles.manager.active": "已激活",
   "styles.manager.artists_count": "{count} 位艺术家",
   "styles.manager.artists_count_plural": "{count} 位艺术家",

@@ -2452,6 +2452,7 @@ const pt: Record<string, string> = {
   "styles.manager.empty_styles": "Você ainda não criou nenhum estilo.",
   "styles.manager.empty_presets": "Nenhum bloco. Crie um para armazenar um fragmento de prompt reutilizável ou uma lista de curingas.",
   "styles.manager.no_thumb": "sem miniatura",
+  "styles.manager.view_thumb": "Ver imagem completa",
   "styles.manager.active": "ativo",
   "styles.manager.artists_count": "{count} artista",
   "styles.manager.artists_count_plural": "{count} artistas",

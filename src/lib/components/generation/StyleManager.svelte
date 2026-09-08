@@ -261,7 +261,17 @@
             <li class="flex items-center gap-3 rounded-lg border {active ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-neutral-800 bg-neutral-950/60'} p-2">
               <div class="h-14 w-14 shrink-0 overflow-hidden rounded border border-neutral-800 bg-neutral-900">
                 {#if style.thumbnail}
-                  <img src={style.thumbnail} alt="" class="h-full w-full object-cover" />
+                  <!-- The full-size view is a lightbox mounted at the app root,
+                       so it covers the window rather than this panel. -->
+                  <button
+                    type="button"
+                    class="h-full w-full cursor-zoom-in"
+                    title={locale.t("styles.manager.view_thumb")}
+                    aria-label={locale.t("styles.manager.view_thumb")}
+                    onclick={() => styleEditors.openThumbnail(style.id)}
+                  >
+                    <img src={style.thumbnail} alt="" class="h-full w-full object-cover" />
+                  </button>
                 {:else}
                   <div class="flex h-full w-full items-center justify-center text-[9px] text-neutral-600">{locale.t("styles.manager.no_thumb")}</div>
                 {/if}
