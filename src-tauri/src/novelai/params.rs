@@ -83,17 +83,21 @@ pub struct NovelAiVibe {
 /// A Precise Reference (`director_reference_*`) entry. V4.5 only.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NovelAiDirectorReference {
-    /// Base64 PNG, already normalised client-side to one of NovelAI's accepted
-    /// reference aspect ratios. The output canvas is unaffected.
+    /// Base64 PNG at whatever size the user picked. `reference_canvas`
+    /// letterboxes it onto one of NovelAI's three accepted canvases while the
+    /// payload is built; the output canvas is unaffected.
     #[serde(default)]
     pub image: String,
     /// What to take from the reference, e.g. "character" or "character&style".
     #[serde(default = "default_reference_description")]
     pub description: String,
-    #[serde(default = "default_information_extracted")]
-    pub information_extracted: f64,
     #[serde(default = "default_reference_strength")]
     pub strength: f64,
+    /// How closely the result tracks the reference. Reaches NovelAI inverted,
+    /// as `director_reference_secondary_strength_values`, which is the form
+    /// their own client sends.
+    #[serde(default = "default_reference_fidelity")]
+    pub fidelity: f64,
 }
 
 /// The NovelAI-only half of a generation request.
@@ -262,6 +266,10 @@ fn default_information_extracted() -> f64 {
 }
 
 fn default_reference_strength() -> f64 {
+    1.0
+}
+
+fn default_reference_fidelity() -> f64 {
     1.0
 }
 

@@ -2126,7 +2126,7 @@ class GenerationStore {
     this.updateNovelAiSettings({
       director_references: [
         ...this.novelaiSettings.director_references,
-        { image, description: "character", information_extracted: 1.0, strength: 1.0 },
+        { image, description: "character", strength: 1.0, fidelity: 1.0 },
       ],
       vibes: [],
     });
@@ -2624,11 +2624,23 @@ class GenerationStore {
           this.videoAudioVaeModel = saved.videoAudioVaeModel;
         // Merged over the defaults rather than assigned, so a settings blob
         // written by an older build still gets every field NovelAI now needs.
-        if (saved.novelaiSettings !== undefined)
-          this.novelaiSettings = {
+        if (saved.novelaiSettings !== undefined) {
+          const merged = {
             ...createDefaultNovelAiSettings(),
             ...(saved.novelaiSettings as Partial<NovelAiSettings>),
           };
+          // The merge above is shallow, so references saved before Fidelity
+          // existed arrive without it and would render as `undefined` on the
+          // slider. Full strength is what those builds effectively sent.
+          this.novelaiSettings = {
+            ...merged,
+            director_references: (merged.director_references ?? []).map((reference) => ({
+              ...reference,
+              strength: reference.strength ?? 1.0,
+              fidelity: reference.fidelity ?? 1.0,
+            })),
+          };
+        }
         if (saved.showNovelaiUsage !== undefined)
           this.showNovelaiUsage = saved.showNovelaiUsage;
         if (saved.naiEnhanceLanguage !== undefined)

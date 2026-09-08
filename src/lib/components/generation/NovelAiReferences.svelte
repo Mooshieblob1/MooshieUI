@@ -141,18 +141,19 @@
                 />
               </label>
               <label class="block text-[11px] text-neutral-500">
-                {locale.t("generation.novelai.reference.information")}
-                {reference.information_extracted.toFixed(2)}
+                {locale.t("generation.novelai.reference.fidelity")}
+                {reference.fidelity.toFixed(2)}
+                <InfoTip text={locale.t("generation.novelai.reference.fidelity_tip")} />
                 <input
                   type="range"
                   min="0"
                   max="1"
                   step="0.05"
                   class="w-full accent-indigo-500"
-                  value={reference.information_extracted}
+                  value={reference.fidelity}
                   oninput={(e) =>
                     generation.updateNovelAiDirectorReference(index, {
-                      information_extracted: Number(e.currentTarget.value),
+                      fidelity: Number(e.currentTarget.value),
                     })}
                 />
               </label>

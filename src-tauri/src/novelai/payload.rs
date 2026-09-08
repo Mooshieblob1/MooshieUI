@@ -8,6 +8,7 @@ use serde_json::{json, Map, Value};
 
 use super::models::{self, NovelAiModel};
 use super::params::{NovelAiCharacter, NovelAiParams};
+use super::reference_canvas;
 
 /// The generic half of a generation, extracted from `GenerationParams`.
 #[derive(Debug, Clone, Default)]
@@ -451,7 +452,10 @@ fn apply_director_references(
     }
     parameters.insert(
         "director_reference_images".into(),
-        json!(active.iter().map(|r| json!(r.image)).collect::<Vec<_>>()),
+        json!(active
+            .iter()
+            .map(|r| json!(reference_canvas::letterbox_reference(&r.image)))
+            .collect::<Vec<_>>()),
     );
     parameters.insert(
         "director_reference_descriptions".into(),
@@ -466,16 +470,25 @@ fn apply_director_references(
             }))
             .collect::<Vec<_>>()),
     );
+    // Fixed at 1, matching NovelAI's own client. Unlike vibe transfer, where
+    // this is the user-facing extraction slider, character reference has no
+    // control for it: the second knob is Fidelity, below.
     parameters.insert(
         "director_reference_information_extracted".into(),
-        json!(active
-            .iter()
-            .map(|r| json!(r.information_extracted))
-            .collect::<Vec<_>>()),
+        json!(active.iter().map(|_| json!(1.0)).collect::<Vec<_>>()),
     );
     parameters.insert(
         "director_reference_strength_values".into(),
         json!(active.iter().map(|r| json!(r.strength)).collect::<Vec<_>>()),
+    );
+    // NovelAI sends Fidelity inverted, and rejects the request outright when
+    // the array is missing.
+    parameters.insert(
+        "director_reference_secondary_strength_values".into(),
+        json!(active
+            .iter()
+            .map(|r| json!(1.0 - r.fidelity))
+            .collect::<Vec<_>>()),
     );
 }
 
@@ -520,6 +533,7 @@ pub(super) fn strip_data_url(s: &str) -> &str {
 mod tests {
     use super::*;
     use crate::novelai::params::{NovelAiCoord, NovelAiDirectorReference, NovelAiVibe};
+    use base64::Engine as _;
 
     fn input() -> PayloadInput {
         PayloadInput {
@@ -806,18 +820,66 @@ mod tests {
         n.director_references = vec![NovelAiDirectorReference {
             image: "refpng".into(),
             description: "character&style".into(),
-            information_extracted: 1.0,
             strength: 0.8,
+            fidelity: 1.0,
         }];
         let body = build(&input(), &n, v45()).unwrap();
         let p = &body["parameters"];
         assert!(p.get("reference_image_multiple").is_none());
+        // Not a decodable image, so it is passed through rather than dropped.
         assert_eq!(p["director_reference_images"][0], "refpng");
         assert_eq!(
             p["director_reference_descriptions"][0]["caption"]["base_caption"],
             "character&style"
         );
         assert_eq!(p["director_reference_strength_values"][0], 0.8);
+    }
+
+    #[test]
+    fn a_reference_carries_the_arrays_novelai_requires() {
+        let mut n = nai();
+        n.director_references = vec![NovelAiDirectorReference {
+            image: "refpng".into(),
+            description: "character".into(),
+            strength: 1.0,
+            fidelity: 0.75,
+        }];
+        let p = &build(&input(), &n, v45()).unwrap()["parameters"];
+        // Missing this array is one of the two things #665 got wrong. Fidelity
+        // reaches NovelAI inverted.
+        assert_eq!(p["director_reference_secondary_strength_values"][0], 0.25);
+        // Character reference has no extraction control; NovelAI's client pins
+        // it to 1 and the request is rejected without the array.
+        assert_eq!(p["director_reference_information_extracted"][0], 1.0);
+        assert_eq!(
+            p["director_reference_descriptions"][0]["legacy_uc"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn a_reference_image_is_letterboxed_onto_an_accepted_canvas() {
+        use image::{DynamicImage, ImageFormat, RgbImage};
+        use std::io::Cursor;
+
+        // The shape the picker produces: longest side 1024, source ratio kept.
+        // NovelAI's encoder answers anything but its three canvases with a 400.
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(RgbImage::new(1024, 683))
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        let engine = base64::engine::general_purpose::STANDARD;
+
+        let mut n = nai();
+        n.director_references = vec![NovelAiDirectorReference {
+            image: engine.encode(png.into_inner()),
+            ..Default::default()
+        }];
+        let p = &build(&input(), &n, v45()).unwrap()["parameters"];
+
+        let sent = p["director_reference_images"][0].as_str().unwrap();
+        let decoded = image::load_from_memory(&engine.decode(sent).unwrap()).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (1536, 1024));
     }
 
     #[test]
