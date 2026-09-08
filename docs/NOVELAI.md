@@ -491,6 +491,18 @@ artist tag looks like any other danbooru tag, the artist index is what tells
 them apart. Saved styles keep a narrower rule (`animaArtistTagPrefix`), because
 only Anima-family checkpoints were trained on `@artist`.
 
+The `artist:` prefix is dropped on the way out. Danbooru tags its posts with the
+bare artist name; `artist:` is the search-box category filter, and NovelAI's
+tag suggestion box uses the same word to filter suggestions to artists, which is
+how it ends up in prompts. The model never saw it, so it only spends tokens.
+`payload::strip_artist_prefixes` removes it (any case, plus spaces after the
+colon) at tag boundaries in the base prompt, the negative prompt and every
+character prompt and UC. It has to follow a comma, newline, `::`, `{`, `[`, `(`
+or the start of the prompt, so `artist name`, `artist_name` and `subartist:`
+survive. The `Text:` block is lettering and is left alone. The prompt box and
+the saved metadata keep what the user typed; the NovelAI token bar counts the
+typed text, so it reads a few tokens high when prefixes are present.
+
 On V5, quoted prompt text is auto-formatted into a `Text:` block, mirroring
 what NovelAI's own frontend does for V5's text rendering.
 `payload::with_text_blocks` collects everything inside `"..."`, `“...”` or
@@ -609,6 +621,29 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-09-07 - The artist: prefix is stripped from outgoing NovelAI prompts
+
+**Requested by:** the user, after asking whether `artist:jtveemo` does anything
+`jtveemo` does not: "for token saving sakes let's make MooshieUI omit artist:
+in actual tag submission and only submit the raw artist tag".
+
+**What changed.** `payload::strip_artist_prefixes` runs on the base prompt (via
+`without_artist_prefixes`, which skips the `Text:` block), the negative prompt
+and each character prompt and UC. It is case-insensitive, eats spaces after the
+colon, and fires only at a tag boundary. Nothing in the frontend changed: the
+textarea, styles, artist index and metadata all keep the typed text. Four unit
+tests cover boundaries, lookalikes, the `Text:` block and the full payload.
+
+**Testing needed:** yes, one request, to confirm the strip is visible in the
+request and nowhere else.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NovelAI mode, prompt `artist:jtveemo, 1girl, artist name`, generate | Rust log shows the payload prompt as `jtveemo, 1girl, artist name`; the image is in jtveemo's style |
+| 2 | Same prompt, add a character with prompt `1girl, artist:as109` and UC `artist:wlop` | Payload character prompt is `1girl, as109`, its UC is `wlop` |
+| 3 | Prompt `artist:foo, 1girl` then a `Text:` line reading `artist:foo` | Payload is `foo, 1girl` with the `Text:` line still reading `artist:foo` |
+| 4 | Open the generated image's metadata in the lightbox | The prompt shows `artist:jtveemo` as typed; the textarea is unchanged |
 
 ### 2026-09-05 - NovelAI img2img and inpainting returned a 500, and imports never change the resolution
 
@@ -3081,3 +3116,67 @@ only be seen end to end.
 
 **Do not skip:** 1, 6, 8, 9, 14, 15.
 **Low-risk, skip if short on time:** 3, 10, 16.
+### 2026-09-07 - Enhance left the old character box behind
+
+**Reported by:** the user, in one line: enhance "sometimes duplicates
+characters if I prompt 2 characters but then use enhance to make a new image
+to only prompt 1 instead of deleting the old unused character slot".
+
+**What was wrong.** Three things, one on top of the other.
+
+- `apply()` in `naiEnhance.svelte.ts` only wrote the rows it was given, and
+  the modal built one row per returned `CHAR` block. With two boxes open and
+  one block back, box two had no row at all: it was not in the diff, it was
+  never cleared, and it went into the payload next to a base prompt written
+  for a single character. That is the extra character the user saw.
+- `naiPrompt.ts` told the model "The user has N character boxes open. Return
+  at least that many CHAR blocks." Asked for a one character scene with two
+  boxes open, the model padded, and padding usually came back as a near copy
+  of the character it had just written. That is why the extra one looked like
+  a duplicate rather than a leftover. The edit path had no wording at all for
+  taking a character out.
+- `naiParse.ts` dropped empty `CHAR` blocks with a plain `!== ""` filter,
+  which closes the gap and shifts every later block onto the wrong box, since
+  `targetIndex` is just the array position.
+
+**What changed.**
+
+- `NaiEnhanceCharacterRow` gained `targetIndex` (which box the row writes to,
+  null for a character the rewrite invented) and `removes` (the box the
+  rewrite dropped). The modal now emits a removal row for every filled box
+  past the end of the returned cast: `before -> (empty)`, labelled removed,
+  ticked by default. Unticking it keeps the box.
+- `apply()` collects deletions into a set and filters after the writes, so
+  every `targetIndex` still points at the box it was built against while the
+  writes run. `undo()` needed no change: it restores the whole snapshotted
+  `characters` array, deletions included.
+- The prompt rules now say the count follows the scene. The no-existing path
+  asks for one block per character the idea calls for and forbids padding;
+  the edit path says a character the instruction takes out is removed by
+  leaving its block out, renumbered from `CHAR 1`, never blanked and never
+  replaced by a repeat of another character.
+- `naiParse.ts` treats `(empty)`, `none`, `n/a`, `blank`, `removed` and
+  `deleted` as blanks as well as the empty string, since a model told to
+  return every field will echo the `(empty)` marker the edit turn wrote.
+  `unchanged` is deliberately not on that list: a model writing it is asking
+  to keep the box, and reading it as a blank would delete what it meant to
+  protect.
+
+**Testing required: yes.** The bug is entirely in TypeScript and Svelte and
+this repo has no frontend test framework, so it is hand-tested. `npm run
+build`, `npm run check:i18n` and `npm run check` are clean (`check` still
+reports its four pre-existing errors, none in these files).
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | V5 checkpoint, fill two character boxes, Enhance for V5, ask for a scene with one character | The review lists CHAR 1 as a normal diff and CHAR 2 as a ticked row reading `before -> (empty)` with a removed chip |
+| 2 | Press Apply | One character box is left, holding the rewritten text. The base prompt describes one character |
+| 3 | Press Undo inside the 10s window | Both boxes come back with their original text |
+| 4 | Same as 1, but untick the CHAR 2 removal row before Apply | Box two survives untouched |
+| 5 | Two boxes, ask for a two character scene | No removal rows. Both boxes are written in place, box two still means the same character |
+| 6 | Two boxes, the second one empty, ask for one character | No removal row for the blank box. It is left alone |
+| 7 | One box, ask for a three character scene | Box one is written, two rows are labelled new, Apply appends two boxes (capped at the checkpoint's limit) |
+| 8 | Enhance with an instruction that removes a character ("drop the second girl") | Same as 1: a removal row, not a blanked box and not a repeat of character one |
+
+**Do not skip:** 1, 2, 3, 4.
+**Low-risk, skip if short on time:** 6, 7.

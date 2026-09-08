@@ -2922,6 +2922,7 @@ const pt: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "Conteúdo indesejado",
   "prompt_assistant.nai_field_character": "Personagem {index}",
   "prompt_assistant.nai_new_character": "novo",
+  "prompt_assistant.nai_removed_character": "removido",
   "prompt_assistant.nai_before": "Agora",
   "prompt_assistant.nai_after": "Proposto",
   "prompt_assistant.nai_empty": "vazio",

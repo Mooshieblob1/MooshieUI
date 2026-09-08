@@ -2922,6 +2922,7 @@ const zh: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "负面内容",
   "prompt_assistant.nai_field_character": "角色 {index}",
   "prompt_assistant.nai_new_character": "新增",
+  "prompt_assistant.nai_removed_character": "移除",
   "prompt_assistant.nai_before": "当前",
   "prompt_assistant.nai_after": "建议",
   "prompt_assistant.nai_empty": "空",

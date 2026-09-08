@@ -259,7 +259,8 @@ function sourceFidelity(
 - The user's current prompt is given to you below, and their message is an instruction for changing it. This is a revision, not a fresh start.
 - Return every field in full, including the ones you did not change. Your answer replaces their prompt outright, so anything you leave out is deleted.
 - Carry the untouched parts over word for word wherever the wording still works. The user tuned those parts on purpose, and quietly rewording them is the failure this mode exists to avoid.
-- Return one CHAR block per box they already have, in the same order, so that box three still means the same character afterwards. Add a box only if the instruction calls for a new character.
+- Return one CHAR block per character that survives the instruction, in their existing order, so that box three still means the same character afterwards. Add a box only if the instruction calls for a new character.
+- When the instruction cuts the cast down, return only the characters that remain, renumbered from CHAR 1. Their boxes are resized to match, so returning fewer blocks is how a character is removed. Never keep a dropped character alive by repeating another one to fill the slot, and never return an empty CHAR block as a placeholder.
 - Apply the instruction completely, and nothing beyond it. Do not take the chance to add a location, a time of day, weather, a wardrobe, a mood or a camera angle they did not ask for.
 - If the current prompt is not in V5 shape, put it in V5 shape as you go. That is repair, and it is expected of you; it is not licence to invent.
 - A named character keeps their name, their tags and their canon through the revision. Never generalize one away while editing.`;
@@ -450,7 +451,7 @@ export function naiUserPrompt(prompt: string, ctx: NaiPromptContext): string {
     ctx.characterCount > 0
       ? `\n\nThe user has ${ctx.characterCount} character box${
           ctx.characterCount === 1 ? "" : "es"
-        } open, whose contents you have not been given. Return at least that many CHAR blocks, written from the idea above alone. Add more only if the scene needs them.`
+        } open, whose contents you have not been given, and their boxes will be resized to match your answer. Write one CHAR block per character the idea above actually calls for, and no more. Returning fewer blocks than they have boxes is correct whenever the idea is smaller than what they had; never pad the count with a character the idea does not name.`
       : "";
   const refs = referenceManifest(ctx.references);
   const inputs = ctx.references.length
@@ -488,7 +489,7 @@ ${mark(existing.base)}
 UC:
 ${mark(existing.uc)}${boxes ? `\n\n${boxes}` : ""}
 
-Apply this instruction to it, and return the whole prompt again in the output format with every field present, changed or not. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
+Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
 }

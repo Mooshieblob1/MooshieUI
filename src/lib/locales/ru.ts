@@ -2921,6 +2921,7 @@ const ru: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "Нежелательное содержимое",
   "prompt_assistant.nai_field_character": "Персонаж {index}",
   "prompt_assistant.nai_new_character": "новый",
+  "prompt_assistant.nai_removed_character": "удалён",
   "prompt_assistant.nai_before": "Сейчас",
   "prompt_assistant.nai_after": "Предложено",
   "prompt_assistant.nai_empty": "пусто",

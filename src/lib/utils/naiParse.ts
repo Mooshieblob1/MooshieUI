@@ -131,9 +131,29 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
     // it wrote the scene body first and started labelling at CHAR 1.
     base: joinedBase || (sawBaseLabel ? "" : joinField(stripLeadIn(preamble))),
     uc: joinField(uc),
-    characters: chars.map((c) => joinField(c)).filter((c) => c !== ""),
+    characters: chars.map((c) => joinField(c)).filter((c) => !isBlankBox(c)),
     note: joinField(note),
   };
+}
+
+/**
+ * Placeholders a model returns instead of leaving a character box out.
+ *
+ * The edit turn writes `(empty)` under a box that has no text, and a model
+ * asked to return every field will sometimes echo that marker back rather than
+ * omit the block. Taken literally it becomes a character box whose prompt is
+ * the word "(empty)", which NovelAI would dutifully render. Treated as the
+ * blank it means, the block drops out and the box is offered for removal
+ * instead, which is what a shorter cast is supposed to do.
+ *
+ * Deliberately not on this list: "unchanged". A model writing that is asking to
+ * keep the box, and reading it as a blank would delete the very thing it meant
+ * to protect.
+ */
+const BLANK_BOX = /^[\s.\-*_]*(?:\(?\s*(?:empty|none|n\/a|blank|removed|deleted)\s*\)?)?[\s.\-*_]*$/i;
+
+function isBlankBox(box: string): boolean {
+  return BLANK_BOX.test(box);
 }
 
 /**
