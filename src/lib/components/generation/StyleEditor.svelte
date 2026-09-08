@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { generateStyleThumbnail } from "../../utils/styleThumbnailGen.js";
   import { styles, resizeImageToDataUrl, bakedArtistWeight, type ArtistStyle, type StyleArtist } from "../../stores/styles.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import { artistTagBodiesMatch, stripArtistSigil } from "../../utils/artistTag.js";
   import { locale } from "../../stores/locale.svelte.js";
 
@@ -181,7 +183,9 @@
       if (!resp.ok) throw new Error(`Fetch failed (${resp.status})`);
       const blob = await resp.blob();
       const dataUrl = await resizeImageToDataUrl(blob);
-      styles.setThumbnail(style.id, dataUrl);
+      // The gallery filename rides along so the lightbox can show the picture
+      // at full resolution instead of upscaling the small stored copy.
+      styles.setThumbnail(style.id, dataUrl, latest.gallery_filename ?? null);
     } catch (e) {
       thumbnailError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -259,6 +263,16 @@
               onclick={setThumbnailFromLastGen}
               disabled={thumbnailBusy}
             >{locale.t("styles.editor.use_last_gen")}</button>
+            <!-- Renders a fresh picture from the prompt the user has typed
+                 right now, with this style's tags and no other style's. -->
+            <button
+              type="button"
+              class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500 disabled:opacity-50"
+              onclick={() => void generateStyleThumbnail(style.id)}
+              disabled={thumbnailBusy || style.artists.length === 0 || progress.isGenerating}
+            >{styles.pendingThumbnail?.styleId === style.id
+                ? locale.t("styles.editor.generating")
+                : locale.t("styles.editor.gen_thumb")}</button>
             <button
               type="button"
               class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500 disabled:opacity-50"

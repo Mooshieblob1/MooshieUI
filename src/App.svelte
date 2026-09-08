@@ -40,7 +40,7 @@
   import { characterInsert } from "./lib/stores/characterInsert.svelte.js";
   import CharacterInsertModal from "./lib/animadex/components/CharacterInsertModal.svelte";
   import type { AnimadexCharacter } from "./lib/animadex/types.js";
-  import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
+  import { styles as stylesStore, resizeImageToDataUrl } from "./lib/stores/styles.svelte.js";
   import { promptAssistant } from "./lib/stores/promptAssistant.svelte.js";
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
@@ -2214,43 +2214,29 @@
       }
     }
 
-    // If a style was just applied to the prompt and it doesn't have a thumbnail yet,
-    // automatically assign this generation's primary image to it.
-    if (stylesStore.pendingStyleForThumbnail) {
-      const styleId = stylesStore.pendingStyleForThumbnail;
-      stylesStore.pendingStyleForThumbnail = null; // Clear immediately
-      if (newImages.length === 0) return;
-
+    // A style with no thumbnail can ask the next generation to become one
+    // (the regenerate button in the style list). Two things get stored: a
+    // small data URL, which renders the tile instantly and outlives the
+    // gallery entry, and the gallery filename, which lets the lightbox show
+    // the picture at full resolution instead of upscaling the tile.
+    if (stylesStore.pendingThumbnail?.promptId === promptId) {
+      const styleId = stylesStore.pendingThumbnail.styleId;
+      stylesStore.pendingThumbnail = null; // Clear immediately
       const firstImage = newImages[0];
-      const persistPromise = gallery.getPersistPromise(firstImage);
-      if (persistPromise) {
-        persistPromise.then(async (galleryFilename) => {
-          if (!galleryFilename) return;
-          // Resolve to a proper URL for this platform (thumbnail:// or https://thumbnail.localhost/ on Windows)
-          let thumbnail = galleryFilename;
+      if (firstImage) {
+        void (async () => {
           try {
-            if (isTauri) {
-              const { convertFileSrc } = await import("@tauri-apps/api/core");
-              thumbnail = convertFileSrc(galleryFilename, "thumbnail");
-            } else if (isBrowserMode) {
-              thumbnail = `/internal-api/_gallery_image/${galleryFilename}`;
-            }
-          } catch { /* keep raw filename as fallback */ }
-          stylesStore.updateStyle(styleId, { thumbnail });
-        });
-      } else if (firstImage.gallery_filename) {
-        // Already persisted synchronously (rare) — resolve URL the same way
-        (async () => {
-          let thumbnail = firstImage.gallery_filename!;
-          try {
-            if (isTauri) {
-              const { convertFileSrc } = await import("@tauri-apps/api/core");
-              thumbnail = convertFileSrc(thumbnail, "thumbnail");
-            } else if (isBrowserMode) {
-              thumbnail = `/internal-api/_gallery_image/${thumbnail}`;
-            }
-          } catch { /* keep raw filename */ }
-          stylesStore.updateStyle(styleId, { thumbnail });
+            // `url` first: for a JXL generation it is the WebP blob the
+            // session already decoded, and the raw JXL blob would not load.
+            const source = firstImage.url ?? firstImage.sessionBlob ?? firstImage.fullImageUrl;
+            if (!source) return;
+            const dataUrl = await resizeImageToDataUrl(source);
+            const galleryFilename =
+              (await gallery.getPersistPromise(firstImage)) ?? firstImage.gallery_filename ?? null;
+            stylesStore.setThumbnail(styleId, dataUrl, galleryFilename);
+          } catch (e) {
+            console.error("Failed to set style thumbnail:", e);
+          }
         })();
       }
     }
@@ -2778,6 +2764,7 @@
         progress.cancelAll();
         artistLocalPreviews.failAll();
         styleCreator.failAll();
+        stylesStore.failThumbnail();
         compare.clearGridBatch();
       }),
       ipcListen("novelai:vibes_encoded", (event: any) => {
@@ -3176,6 +3163,7 @@
           if (errPreviewTarget) artistLocalPreviews.fail(errPreviewTarget.slug, errPreviewTarget.variant);
           // `toastMsg` is the classified message the toast above already showed.
           styleCreator.fail(data.prompt_id, toastMsg);
+          stylesStore.failThumbnail(data.prompt_id);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
@@ -3185,6 +3173,7 @@
           progress.cancelAll();
           artistLocalPreviews.failAll();
           styleCreator.failAll();
+          stylesStore.failThumbnail();
           compare.clearGridBatch();
         }
       }),
@@ -3286,12 +3275,14 @@
                 // isn't this prompt's Style Creator card, but without it the
                 // card's spinner would run forever.
                 styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
+                stylesStore.failThumbnail(p.promptId);
               }
             } else {
               // `completePrompt` did not recognise this prompt at all. Same
               // give-up outcome as above, so the Style Creator card (if any)
               // must be released the same way.
               styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
+              stylesStore.failThumbnail(p.promptId);
             }
           }
         }
