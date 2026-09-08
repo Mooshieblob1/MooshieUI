@@ -1,11 +1,16 @@
 /**
  * Turning a picked file into the base64 PNG NovelAI's reference fields take.
  *
- * NovelAI reference images go straight into the request body as bare base64,
- * with no data-URL prefix and no ComfyUI upload step, so this never touches the
+ * NovelAI reference images go into the request body as bare base64, with no
+ * data-URL prefix and no ComfyUI upload step, so this never touches the
  * backend. Large sources are downscaled first: a reference only needs enough
  * pixels for NovelAI to read it, and the encoded string is carried in every
  * request the vibe stays attached to.
+ *
+ * The aspect ratio is preserved as picked. Vibes are encoded server-side at
+ * whatever size they arrive, and Precise References are letterboxed onto one of
+ * NovelAI's three accepted canvases by the Rust payload builder
+ * (`novelai::reference_canvas`), so neither path needs a fixed size here.
  *
  * This is a leaf util. It must not import a store.
  */

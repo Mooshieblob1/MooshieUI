@@ -142,12 +142,20 @@ export interface NovelAiVibeEncoding {
 
 /** A Precise Reference (also called character reference). V4.5 only. */
 export interface NovelAiDirectorReference {
-  /** Base64 PNG, pre-normalised client-side to an accepted reference ratio. */
+  /**
+   * Base64 PNG at whatever size the user picked. The Rust payload builder
+   * letterboxes it onto one of NovelAI's three accepted reference canvases.
+   */
   image: string;
   /** What to take from the reference, e.g. "character" or "character&style". */
   description: string;
-  information_extracted: number;
   strength: number;
+  /**
+   * How closely the result tracks the reference. NovelAI takes this inverted,
+   * as `director_reference_secondary_strength_values`; the inversion happens
+   * in Rust so the slider reads the way NovelAI's own client labels it.
+   */
+  fidelity: number;
 }
 
 /**

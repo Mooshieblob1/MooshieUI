@@ -109,6 +109,36 @@ the vibe arrays before writing the director arrays, and the UI mirrors the same
 rule. Note that "Precise Reference" and "character reference" are two names for
 the same `director_reference_*` system.
 
+#### The reference encoder only accepts three canvases
+
+NovelAI's character-reference encoder takes `1024x1536`, `1536x1024` or
+`1472x1472` and nothing else. Anything else comes back as
+`Error encoding v4 director references: non-200 response: 400`, which is the
+whole of issue #665. Their own client letterboxes before it uploads, so
+`novelai::reference_canvas` does the same: pick the canvas whose aspect ratio
+is closest, scale the source to fit inside it, centre it on black. Alpha is
+flattened, because a transparent border reads as content to the encoder.
+
+This runs in `apply_director_references()` rather than in the file picker, so
+it also repairs references already sitting in a user's settings and ones that
+arrive through the metadata import modal. An image that is already on an
+accepted canvas is returned untouched, so nothing is re-encoded per
+generation, and an image that will not decode is passed through unchanged: the
+request fails the way it used to instead of silently dropping the reference the
+user picked.
+
+Vibe transfer does not go through this. Vibes are encoded server-side by
+`/ai/encode-vibe`, which accepts any size.
+
+#### Fidelity, not "information extracted"
+
+The character-reference request needs five length-matched arrays, and shipping
+four of them is also a 400. `director_reference_information_extracted` is
+pinned to `1.0`, matching NovelAI's client, and the second slider is Fidelity,
+sent inverted as `director_reference_secondary_strength_values = 1 - fidelity`.
+The panel used to label that slider "Information extracted" and send nothing
+for it, which is the vibe-transfer knob, not this one.
+
 ### 2.6 Model capabilities are data, not branches
 
 `models.rs` carries per-model capabilities (`v4_prompt`, `precise_reference`,
@@ -3180,3 +3210,66 @@ reports its four pre-existing errors, none in these files).
 
 **Do not skip:** 1, 2, 3, 4.
 **Low-risk, skip if short on time:** 6, 7.
+
+### 2026-09-08 - Character Reference always 400'd (issue #665)
+
+**Reported by:** neopawlitans, on v2.2.7: any generation with a Character
+Reference image on `nai-diffusion-4-5-full` failed with
+`API error (400): Error encoding v4 director references: non-200 response:
+400`. The feature had never worked; it shipped broken in PR #618 and survived
+to v2.2.7, because the Phase E checklist only tested the vibe-vs-reference
+exclusivity UI and never ran a generation with a reference attached.
+
+**What was wrong.** Three things, all in the request.
+
+- `fileToNovelAiBase64()` downscales the longest side to 1024 and keeps the
+  source ratio, so a reference reached NovelAI at whatever shape the user
+  picked. Their encoder accepts `1024x1536`, `1536x1024` and `1472x1472` and
+  refuses everything else. This alone is the 400 in the report.
+- `director_reference_secondary_strength_values` was never sent. The API wants
+  five length-matched director arrays and rejects the request when one is
+  missing, so even a correctly sized image would have failed.
+- The second slider was bound to `information_extracted` and sent as
+  `director_reference_information_extracted`, which is the vibe-transfer
+  control. Character reference has no such knob: NovelAI's client pins that
+  field to 1 and exposes Fidelity instead.
+
+**What changed.**
+
+- New `src-tauri/src/novelai/reference_canvas.rs` letterboxes each reference
+  onto the closest accepted canvas: aspect preserved, centred, black padding,
+  alpha flattened. It runs while the payload is built, so references already
+  saved in settings and ones imported from metadata are fixed too, not only
+  newly picked files. An image already on an accepted canvas is left alone, and
+  one that will not decode is passed through rather than dropped.
+- `apply_director_references()` now writes all five arrays, with
+  `information_extracted` pinned to 1.0 and
+  `secondary_strength_values` as `1 - fidelity`.
+- `NovelAiDirectorReference` swaps `information_extracted` for `fidelity` in
+  Rust and TypeScript, the slider is relabelled Fidelity with a tooltip, and
+  the settings load path fills `strength` and `fidelity` in for references
+  saved by older builds so they do not render as `undefined`.
+
+The output canvas is unaffected: this only reshapes the reference image, not
+the image being generated.
+
+**Testing required: yes.** `cargo test` covers the canvas maths and the payload
+arrays (7 new tests). The generation itself needs a real NovelAI account, so
+steps 1 to 5 are hand-tested. `npm run build`, `npm run check` and `cargo
+clippy` are clean (`check` still reports its four pre-existing errors, none in
+these files).
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Pick `nai-diffusion-4-5-full`, add a Precise Reference image with an odd aspect ratio (a wide crop, a tall crop), generate | The image generates. No 400 |
+| 2 | Repeat with a square image and with an already 1024x1536 image | Both generate |
+| 3 | Move the Fidelity slider to 0.00 and generate, then to 1.00 and generate | Low fidelity strays from the reference, high fidelity tracks it closely |
+| 4 | Move Strength across its range | The reference's influence changes independently of Fidelity |
+| 5 | Add two references and generate | Both apply. No 400 |
+| 6 | Open a build with a reference saved by v2.2.7, before Fidelity existed | The Fidelity slider reads 1.00, not blank |
+| 7 | Import a NovelAI image whose metadata carries a reference, then generate | The reference is picked up and the generation succeeds |
+| 8 | Add a Vibe Transfer image while a reference is attached | The reference list empties and dims, as before |
+| 9 | Switch UI language | The Fidelity label and its tooltip are translated |
+
+**Do not skip:** 1, 3, 6.
+**Low-risk, skip if short on time:** 4, 8, 9.
