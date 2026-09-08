@@ -603,13 +603,19 @@ class StyleCreatorStore {
     );
   }
 
-  /** Resize the card image into the style thumbnail. Never throws. */
+  /**
+   * Resize the card image into the style thumbnail, and remember which
+   * gallery entry it came from so the lightbox can show it full size.
+   * Never throws.
+   */
   private async attachThumbnail(styleId: string, image: OutputImage): Promise<void> {
     try {
       const source = image.sessionBlob ?? image.fullImageUrl ?? image.url;
       if (!source) return;
       const dataUrl = await resizeImageToDataUrl(source);
-      styles.setThumbnail(styleId, dataUrl);
+      const galleryFilename =
+        (await gallery.getPersistPromise(image)) ?? image.gallery_filename ?? null;
+      styles.setThumbnail(styleId, dataUrl, galleryFilename);
     } catch (e) {
       console.error("styleCreator: thumbnail failed", e);
     }

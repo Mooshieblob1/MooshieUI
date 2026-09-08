@@ -6,6 +6,7 @@
    */
   import { styles } from "../../stores/styles.svelte.js";
   import { styleEditors } from "../../stores/styleEditors.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   const style = $derived(
@@ -16,6 +17,47 @@
   // A style can lose its thumbnail while the lightbox is up (cleared from the
   // editor), which leaves nothing to show.
   const open = $derived(style !== null && !!style.thumbnail);
+
+  /** Full-resolution image, once the gallery has decoded it. */
+  let fullUrl = $state<string | null>(null);
+  let fullLoading = $state(false);
+
+  // The stored thumbnail is a 384 px JPEG: sharp at tile size, mush at full
+  // screen. Styles that remember which gallery entry they came from get the
+  // real picture loaded here (loadFullImage transcodes JXL to WebP on the
+  // way), with the small one on screen until it arrives.
+  $effect(() => {
+    const filename = open ? (style?.thumbnailImage ?? null) : null;
+    if (!filename) {
+      fullLoading = false;
+      return;
+    }
+    let cancelled = false;
+    let created: string | null = null;
+    fullLoading = true;
+    void gallery
+      .loadFullImage(filename)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        created = url;
+        fullUrl = url;
+      })
+      // The gallery entry can be gone (deleted, or a different install
+      // importing the style). The small thumbnail stays on screen.
+      .catch((e) => console.error("Failed to load full style thumbnail:", e))
+      .finally(() => {
+        if (!cancelled) fullLoading = false;
+      });
+    return () => {
+      cancelled = true;
+      fullUrl = null;
+      fullLoading = false;
+      if (created) URL.revokeObjectURL(created);
+    };
+  });
 
   function onKeydown(e: KeyboardEvent) {
     if (!open) return;
@@ -40,12 +82,17 @@
         onclick={() => styleEditors.closeThumbnail()}>x</button
       >
     </div>
-    <div class="min-h-0 flex-1 p-4">
+    <div class="relative min-h-0 flex-1 p-4">
       <img
-        src={style.thumbnail}
+        src={fullUrl ?? style.thumbnail}
         alt={locale.t("styles.editor.thumbnail_alt")}
         class="h-full w-full object-contain"
       />
+      {#if fullLoading}
+        <div
+          class="absolute bottom-6 right-6 h-5 w-5 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent"
+        ></div>
+      {/if}
     </div>
   </div>
 {/if}

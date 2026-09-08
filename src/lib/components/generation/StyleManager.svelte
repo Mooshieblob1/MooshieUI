@@ -5,6 +5,8 @@
   import PresetActivationModal from "./PresetActivationModal.svelte";
   import { styleEditors } from "../../stores/styleEditors.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
+  import { generateStyleThumbnail } from "../../utils/styleThumbnailGen.js";
 
   interface Props {
     onclose?: () => void;
@@ -273,7 +275,22 @@
                     <img src={style.thumbnail} alt="" class="h-full w-full object-cover" />
                   </button>
                 {:else}
-                  <div class="flex h-full w-full items-center justify-center text-[9px] text-neutral-600">{locale.t("styles.manager.no_thumb")}</div>
+                  <!-- No thumbnail: offer to render one from the prompt the
+                       user has typed right now, with this style's tags on top. -->
+                  <button
+                    type="button"
+                    class="flex h-full w-full items-center justify-center px-1 text-center text-[9px] leading-tight text-neutral-500 hover:text-indigo-300 disabled:cursor-default disabled:text-neutral-600 disabled:hover:text-neutral-600"
+                    title={locale.t("styles.manager.gen_thumb")}
+                    aria-label={locale.t("styles.manager.gen_thumb")}
+                    disabled={style.artists.length === 0 || progress.isGenerating}
+                    onclick={() => void generateStyleThumbnail(style.id)}
+                  >
+                    {#if styles.pendingThumbnail?.styleId === style.id}
+                      <span class="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent"></span>
+                    {:else}
+                      {locale.t("styles.manager.no_thumb")}
+                    {/if}
+                  </button>
                 {/if}
               </div>
               <div class="flex-1 min-w-0">

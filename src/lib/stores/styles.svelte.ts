@@ -41,6 +41,14 @@ export interface ArtistStyle {
   overallWeight: number;
   /** Base64 data URL. Omitted when the style has no thumbnail. */
   thumbnail: string | null;
+  /**
+   * Gallery filename the thumbnail was made from, used to show the image at
+   * full resolution. Only a reference: the pixels stay in the gallery, so a
+   * style costs the same in localStorage whether or not it has one. Null when
+   * the thumbnail came from a file the user picked, or from a gallery entry
+   * that has since been deleted.
+   */
+  thumbnailImage: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -83,6 +91,7 @@ function sanitizeStyle(raw: any): ArtistStyle | null {
     artists,
     overallWeight: clampWeight(raw.overallWeight, 1.0),
     thumbnail: typeof raw.thumbnail === "string" && raw.thumbnail.startsWith("data:") ? raw.thumbnail : null,
+    thumbnailImage: typeof raw.thumbnailImage === "string" && raw.thumbnailImage ? raw.thumbnailImage : null,
     createdAt: typeof raw.createdAt === "number" && raw.createdAt > 0 ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" && raw.updatedAt > 0 ? raw.updatedAt : now,
   };
@@ -177,8 +186,13 @@ class StylesStore {
   styles = $state<ArtistStyle[]>([]);
   /** IDs of currently-active styles. Their tags are injected into every generation. */
   activeIds = $state<string[]>([]);
-  /** Style waiting for the next generated image to become its thumbnail. */
-  pendingStyleForThumbnail = $state<string | null>(null);
+  /**
+   * Style waiting on a generation to become its thumbnail, and the prompt it
+   * is waiting on. The prompt id is what keeps the claim honest: the user can
+   * queue other work while the thumbnail renders, and only the image from
+   * this submission may be taken.
+   */
+  pendingThumbnail = $state<{ styleId: string; promptId: string } | null>(null);
 
   constructor() {
     this.loadSettings();
@@ -307,6 +321,7 @@ class StylesStore {
       artists: artists.map((a) => ({ ...a, weight: clampWeight(a.weight, 1.0) })),
       overallWeight: clampWeight(overallWeight, 1.0),
       thumbnail: null,
+      thumbnailImage: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -338,6 +353,12 @@ class StylesStore {
             : typeof patch.thumbnail === "string" && patch.thumbnail.startsWith("data:")
               ? patch.thumbnail
               : s.thumbnail,
+        thumbnailImage:
+          patch.thumbnailImage === null
+            ? null
+            : typeof patch.thumbnailImage === "string" && patch.thumbnailImage
+              ? patch.thumbnailImage
+              : s.thumbnailImage,
         updatedAt: Date.now(),
       };
     });
@@ -399,8 +420,31 @@ class StylesStore {
     this.update(styleId, { artists: style.artists.filter((_, i) => i !== index) });
   }
 
-  setThumbnail(id: string, dataUrl: string | null): void {
-    this.update(id, { thumbnail: dataUrl });
+  /**
+   * Release a thumbnail claim whose generation died. `promptId` releases only
+   * that prompt's claim; omit it for the wholesale failures (queue cleared,
+   * an error with no prompt attached) that kill everything in flight. Without
+   * this the button would stay stuck on "generating" until the next reload.
+   */
+  failThumbnail(promptId?: string): void {
+    if (!this.pendingThumbnail) return;
+    if (promptId === undefined || this.pendingThumbnail.promptId === promptId) {
+      this.pendingThumbnail = null;
+    }
+  }
+
+  /**
+   * Store a style's thumbnail. `galleryFilename` is the gallery entry the
+   * image came from: kept alongside the small data URL so the lightbox can
+   * show the picture at full resolution instead of upscaling the tile.
+   * Omit it when there is no gallery entry (a file the user picked); pass
+   * null to drop a stale one. Clearing the thumbnail clears both.
+   */
+  setThumbnail(id: string, dataUrl: string | null, galleryFilename?: string | null): void {
+    this.update(id, {
+      thumbnail: dataUrl,
+      thumbnailImage: dataUrl === null ? null : (galleryFilename ?? undefined),
+    });
   }
 
   // ---------------------------------------------------------------------------
