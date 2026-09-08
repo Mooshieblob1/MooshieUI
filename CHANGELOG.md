@@ -1,5 +1,20 @@
 # Changelog
 
+## What's New in v2.3.0
+
+### New features
+- **Style Creator**: a new tab in the bottom panel that helps you find artist tag combinations you like. It draws random combinations from the Artists index, generates two of them on the same seed, and shows the pair in a full-app lightbox so you can compare them properly. Pick the one you prefer, Pick and edit to adjust the weights or add known artists before saving, Save both if you like them both, or Skip to draw again. Whatever you save becomes an Artist Style with that image as its thumbnail. Every combination you accept or reject is remembered, so the same set never comes back, including the same artists in a different order. Anchor artists pins one or more tags (typed, loaded from a saved style, or none at all) and varies only the extras around them; Artists per combination, Extra artists, Favourites only and Vary weights control the draw. Works in both ComfyUI and NovelAI modes, where the `@` artist sigil is omitted and a per round Anlas estimate is shown next to Start.
+- **Artist Style thumbnails open full size**: clicking a thumbnail in Artist Styles opens the image in a lightbox that covers the whole app instead of being trapped inside the bottom panel. The saved gallery image is loaded at its full resolution rather than upscaling the small tile, and it falls back to the tile when the gallery entry is gone.
+- **Generate a thumbnail for a style that does not have one**: styles with no thumbnail now show a Generate thumbnail button in Artist Styles, and a Generate button in the style editor. It renders one image using whatever prompt you currently have typed, with that style's artist tags applied on top, and saves the result as the thumbnail. Disabled while a generation is already running or when the style has no artists.
+
+### Fixes and maintenance
+- **NovelAI no longer rate limits the Style Creator**: NovelAI rejects two generations started at once with a 429, so the pair is now staggered, the second image starting after the first finishes. The panel says so in NovelAI mode rather than leaving you to guess why one side is waiting.
+- **Start reopens a stopped round**: after stopping a round and closing the lightbox, pressing Start again did nothing. It now starts a fresh round.
+- **The `artist:` prefix is dropped from outgoing NovelAI prompts**: Danbooru tags its posts with the bare artist name, so `artist:` is a search box filter the model was never trained on and it only spends tokens. It is now stripped from the base prompt, the negative prompt and every character prompt and undesired content field on the way to NovelAI. It is removed only at a tag boundary, so `artist name`, `artist_name` and `subartist:` survive, and `Text:` lettering is left alone. Your prompt box and the saved image metadata keep exactly what you typed.
+- **Enhance for V5 stops leaving an unused character box behind**: asking for a one character scene with two boxes open rewrote box one and left box two standing, so the extra character still went into the image and looked like a duplicate. A box the rewrite drops is now shown in the review as a ticked row reading `before -> (empty)` with a removed chip, which you can untick to keep the box. The model is also told that returning fewer blocks is how a character is removed, rather than padding the count, and a returned `(empty)` placeholder is read as the blank it means instead of becoming a character box that renders the word.
+
+---
+
 ## What's New in v2.2.8
 
 ### Fixes and maintenance

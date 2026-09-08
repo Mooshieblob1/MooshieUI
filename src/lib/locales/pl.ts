@@ -2970,6 +2970,7 @@ const pl: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "Niepożądana treść",
   "prompt_assistant.nai_field_character": "Postać {index}",
   "prompt_assistant.nai_new_character": "nowa",
+  "prompt_assistant.nai_removed_character": "usunięta",
   "prompt_assistant.nai_before": "Teraz",
   "prompt_assistant.nai_after": "Propozycja",
   "prompt_assistant.nai_empty": "puste",

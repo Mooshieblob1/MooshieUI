@@ -44,6 +44,17 @@ export interface NaiEnhanceCharacterRow extends NaiEnhanceRow {
    * a character the user does not have a slot for yet.
    */
   targetIndex: number | null;
+  /**
+   * True for a box the rewrite dropped, where `after` is empty and applying the
+   * row deletes the slot outright.
+   *
+   * A rewrite that comes back with fewer characters than the user has boxes
+   * open has written a base prompt for the smaller cast, so a box left behind
+   * puts a character in the image that nothing in the prompt asked for. It is
+   * offered as a ticked row rather than cleared silently, because the box may
+   * hold work the user tuned by hand.
+   */
+  removes: boolean;
 }
 
 export interface NaiEnhancePending {
@@ -283,15 +294,24 @@ class NaiEnhanceStore {
     if (p.uc.selected) generation.negativePrompt = p.uc.after;
 
     const chars = generation.novelaiSettings.characters.map((c) => ({ ...c }));
+    // Deletions are collected and applied after the writes rather than spliced
+    // as they are met, so that every `targetIndex` keeps pointing at the box it
+    // was built against. Appended slots land past the end and are never in the
+    // set, so the filter cannot catch one.
+    const dropped = new Set<number>();
     for (const row of p.characters) {
       if (!row.selected) continue;
-      if (row.targetIndex !== null && row.targetIndex < chars.length) {
+      if (row.removes) {
+        if (row.targetIndex !== null) dropped.add(row.targetIndex);
+      } else if (row.targetIndex !== null && row.targetIndex < chars.length) {
         chars[row.targetIndex] = { ...chars[row.targetIndex], prompt: row.after };
       } else if (chars.length < novelAiMaxCharacters(generation.checkpoint)) {
         chars.push({ ...createNovelAiCharacter(), prompt: row.after });
       }
     }
-    generation.updateNovelAiSettings({ characters: chars });
+    generation.updateNovelAiSettings({
+      characters: chars.filter((_, i) => !dropped.has(i)),
+    });
     generation.saveSettings();
 
     this.stage = null;

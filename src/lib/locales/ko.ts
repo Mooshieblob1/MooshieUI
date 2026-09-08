@@ -2921,6 +2921,7 @@ const ko: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "제외할 내용",
   "prompt_assistant.nai_field_character": "캐릭터 {index}",
   "prompt_assistant.nai_new_character": "신규",
+  "prompt_assistant.nai_removed_character": "삭제",
   "prompt_assistant.nai_before": "현재",
   "prompt_assistant.nai_after": "제안",
   "prompt_assistant.nai_empty": "비어 있음",

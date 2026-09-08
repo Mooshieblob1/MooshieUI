@@ -176,12 +176,32 @@
         // character boxes no longer match.
         base: { before: generation.positivePrompt, after: result.parsed.base, selected: true },
         uc: { before: generation.negativePrompt, after: result.parsed.uc, selected: true },
-        characters: result.parsed.characters.map((after, i) => ({
-          before: boxes[i]?.prompt ?? "",
-          after,
-          selected: true,
-          targetIndex: i < boxes.length ? i : null,
-        })),
+        characters: [
+          ...result.parsed.characters.map((after, i) => ({
+            before: boxes[i]?.prompt ?? "",
+            after,
+            selected: true,
+            targetIndex: i < boxes.length ? i : null,
+            removes: false,
+          })),
+          // Boxes the rewrite came back short of. The base prompt it wrote
+          // describes the cast it returned, so a box left standing puts a
+          // character in the image that nothing asked for -- the duplicate the
+          // user sees after asking for a smaller cast. Offered as a ticked
+          // removal row rather than cleared behind their back, and only for
+          // boxes with something in them: an already blank slot sends nothing.
+          ...boxes
+            .map((box, i) => ({ box, i }))
+            .slice(result.parsed.characters.length)
+            .filter(({ box }) => (box.prompt ?? "").trim() !== "")
+            .map(({ box, i }) => ({
+              before: box.prompt ?? "",
+              after: "",
+              selected: true,
+              targetIndex: i,
+              removes: true,
+            })),
+        ],
       });
     } catch (e) {
       console.error("NovelAI V5 prompt rewrite failed:", e);
@@ -567,13 +587,21 @@
           )}
           {#each pending.characters as char, i (i)}
             {@render row(
-              locale.t("prompt_assistant.nai_field_character", { index: String(i + 1) }),
+              locale.t("prompt_assistant.nai_field_character", {
+                // A removal row is named after the box it deletes, not its place
+                // in this list, so the number matches the panel underneath.
+                index: String((char.targetIndex ?? i) + 1),
+              }),
               char.before,
               char.after,
               char.selected,
               pending.budget,
               () => naiEnhance.toggleCharacter(i),
-              char.targetIndex === null ? locale.t("prompt_assistant.nai_new_character") : "",
+              char.removes
+                ? locale.t("prompt_assistant.nai_removed_character")
+                : char.targetIndex === null
+                  ? locale.t("prompt_assistant.nai_new_character")
+                  : "",
             )}
           {/each}
         </div>

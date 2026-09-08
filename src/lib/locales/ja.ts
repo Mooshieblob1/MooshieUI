@@ -2946,6 +2946,7 @@ const ja: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "不要な要素",
   "prompt_assistant.nai_field_character": "キャラクター {index}",
   "prompt_assistant.nai_new_character": "新規",
+  "prompt_assistant.nai_removed_character": "削除",
   "prompt_assistant.nai_before": "現在",
   "prompt_assistant.nai_after": "提案",
   "prompt_assistant.nai_empty": "空",

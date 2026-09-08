@@ -7,7 +7,7 @@
 use serde_json::{json, Map, Value};
 
 use super::models::{self, NovelAiModel};
-use super::params::NovelAiParams;
+use super::params::{NovelAiCharacter, NovelAiParams};
 
 /// The generic half of a generation, extracted from `GenerationParams`.
 #[derive(Debug, Clone, Default)]
@@ -39,8 +39,10 @@ pub fn build(
     // ends up last and on its own line: the API wants it at the very end of
     // the prompt, after every tag, and reads `, Text:` as a comma to render.
     let positive_prompt = text_block_on_own_line(&input.positive_prompt);
+    let positive_prompt = without_artist_prefixes(&positive_prompt);
     let positive_prompt = with_transparency(&positive_prompt, nai, model);
     let positive_prompt = with_text_blocks(&positive_prompt, model);
+    let negative_prompt = strip_artist_prefixes(&input.negative_prompt);
     let mut parameters = Map::new();
 
     parameters.insert("params_version".into(), json!(model.params_version));
@@ -65,7 +67,7 @@ pub fn build(
     parameters.insert("legacy_v3_extend".into(), json!(false));
     parameters.insert("prefer_brownian".into(), json!(true));
     parameters.insert("deliberate_euler_ancestral_bug".into(), json!(false));
-    parameters.insert("negative_prompt".into(), json!(input.negative_prompt));
+    parameters.insert("negative_prompt".into(), json!(negative_prompt));
 
     // "Variety+" disables CFG for the earliest, highest-noise steps. NovelAI
     // derives the cutoff from the pixel count rather than exposing a slider.
@@ -82,6 +84,14 @@ pub fn build(
     // past the cap is untested, and a 400 there costs the user a paid request.
     let mut characters = nai.active_characters();
     characters.truncate(model.max_characters);
+    let characters: Vec<NovelAiCharacter> = characters
+        .into_iter()
+        .map(|c| NovelAiCharacter {
+            prompt: strip_artist_prefixes(&c.prompt),
+            negative_prompt: strip_artist_prefixes(&c.negative_prompt),
+            ..c.clone()
+        })
+        .collect();
     parameters.insert("use_coords".into(), json!(nai.use_coords));
 
     if model.v4_prompt {
@@ -110,7 +120,7 @@ pub fn build(
             "v4_negative_prompt".into(),
             json!({
                 "caption": {
-                    "base_caption": input.negative_prompt,
+                    "base_caption": negative_prompt,
                     "char_captions": characters
                         .iter()
                         .map(|c| json!({
@@ -249,6 +259,49 @@ fn text_block_on_own_line(prompt: &str) -> String {
         return format!("{body}\n{}", &prompt[idx..]);
     }
     prompt.to_string()
+}
+
+/// Drop the `artist:` prefix people carry over from Danbooru's search box and
+/// NovelAI's tag suggestion filter. Danbooru posts are tagged with the bare
+/// name, so that is what the model was trained on; the prefix is dead weight
+/// in the token budget and, inside a weight span, a little dilution. The
+/// prefix is removed only at a tag boundary (start, after a comma, newline,
+/// `::`, `{`, `[` or `(`), together with any spaces after the colon, so
+/// `artist name`, `artist_name` and `subartist:` are untouched. The prompt box
+/// keeps what the user typed; this runs on the outgoing payload only.
+fn strip_artist_prefixes(prompt: &str) -> String {
+    const PREFIX: &str = "artist:";
+    let mut out = String::with_capacity(prompt.len());
+    let mut rest = prompt;
+    let mut prev: Option<char> = None;
+    while let Some(c) = rest.chars().next() {
+        let at_boundary =
+            prev.is_none_or(|p| p.is_whitespace() || matches!(p, ',' | ':' | '{' | '[' | '('));
+        if at_boundary
+            && rest.len() >= PREFIX.len()
+            && rest.is_char_boundary(PREFIX.len())
+            && rest[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
+        {
+            rest = rest[PREFIX.len()..].trim_start_matches([' ', '\t']);
+            continue;
+        }
+        out.push(c);
+        prev = Some(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// [`strip_artist_prefixes`] for the positive prompt: the `Text:` block is
+/// lettering and is handed back byte for byte.
+fn without_artist_prefixes(prompt: &str) -> String {
+    let (head, text) = split_text_block(prompt);
+    let head = strip_artist_prefixes(head);
+    if text.is_empty() {
+        head
+    } else {
+        format!("{head}{text}")
+    }
 }
 
 /// Quote pairs that mark text to be rendered in the image. NovelAI's V5
@@ -466,9 +519,7 @@ pub(super) fn strip_data_url(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::novelai::params::{
-        NovelAiCharacter, NovelAiCoord, NovelAiDirectorReference, NovelAiVibe,
-    };
+    use crate::novelai::params::{NovelAiCoord, NovelAiDirectorReference, NovelAiVibe};
 
     fn input() -> PayloadInput {
         PayloadInput {
@@ -1036,6 +1087,76 @@ mod tests {
             body["parameters"]["v4_prompt"]["caption"]["base_caption"],
             expected
         );
+    }
+
+    #[test]
+    fn artist_prefixes_are_stripped_at_tag_boundaries() {
+        for (prompt, want) in [
+            ("artist:jtveemo, 1girl", "jtveemo, 1girl"),
+            ("1girl, artist:jtveemo", "1girl, jtveemo"),
+            ("1girl,\nArtist: k7", "1girl,\nk7"),
+            ("1.2::artist:as109, artist:wlop::", "1.2::as109, wlop::"),
+            (
+                "{artist:foo}, [artist:bar], (artist:baz:1.1)",
+                "{foo}, [bar], (baz:1.1)",
+            ),
+            ("artist:  spaced", "spaced"),
+            ("ARTIST:caps", "caps"),
+        ] {
+            assert_eq!(strip_artist_prefixes(prompt), want, "{prompt:?}");
+        }
+    }
+
+    #[test]
+    fn artist_lookalikes_are_untouched() {
+        for prompt in [
+            "artist name, artist_name, artist self-insert",
+            "subartist:foo, myartist:bar",
+            "1girl, solo",
+            "",
+        ] {
+            assert_eq!(strip_artist_prefixes(prompt), prompt, "{prompt:?}");
+        }
+    }
+
+    #[test]
+    fn artist_prefix_inside_the_text_block_is_lettering() {
+        assert_eq!(
+            without_artist_prefixes("artist:foo, 1girl,\n\nText:\nartist:foo\n\nHello"),
+            "foo, 1girl,\n\nText:\nartist:foo\n\nHello"
+        );
+    }
+
+    #[test]
+    fn build_strips_artist_prefixes_from_every_prompt_field() {
+        let mut n = nai();
+        n.characters = vec![NovelAiCharacter {
+            prompt: "1girl, artist:as109".into(),
+            negative_prompt: "artist:wlop".into(),
+            enabled: true,
+            ..Default::default()
+        }];
+        let mut i = input();
+        i.positive_prompt = "artist:jtveemo, 1girl, rain, Text: Mumei".into();
+        i.negative_prompt = "artist:k7, lowres".into();
+        let body = build(&i, &n, v5()).unwrap();
+        let p = &body["parameters"];
+        assert_eq!(body["input"], "jtveemo, 1girl, rain\nText: Mumei");
+        assert_eq!(
+            p["v4_prompt"]["caption"]["base_caption"],
+            "jtveemo, 1girl, rain\nText: Mumei"
+        );
+        assert_eq!(p["negative_prompt"], "k7, lowres");
+        assert_eq!(
+            p["v4_negative_prompt"]["caption"]["base_caption"],
+            "k7, lowres"
+        );
+        let ch = &p["v4_prompt"]["caption"]["char_captions"][0];
+        assert_eq!(ch["char_caption"], "1girl, as109");
+        let uc = &p["v4_negative_prompt"]["caption"]["char_captions"][0];
+        assert_eq!(uc["char_caption"], "wlop");
+        assert_eq!(p["characterPrompts"][0]["prompt"], "1girl, as109");
+        assert_eq!(p["characterPrompts"][0]["uc"], "wlop");
     }
 
     #[test]

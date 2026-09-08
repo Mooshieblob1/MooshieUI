@@ -3029,6 +3029,7 @@ const en: Record<string, string> = {
   "prompt_assistant.nai_field_uc": "Undesired content",
   "prompt_assistant.nai_field_character": "Character {index}",
   "prompt_assistant.nai_new_character": "new",
+  "prompt_assistant.nai_removed_character": "removed",
   "prompt_assistant.nai_before": "Now",
   "prompt_assistant.nai_after": "Proposed",
   "prompt_assistant.nai_empty": "empty",
