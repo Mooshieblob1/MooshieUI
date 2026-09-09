@@ -36,6 +36,34 @@ pub use client::NovelAiClient;
 pub use models::is_novelai_model;
 pub use response::{StreamEvent, Subscription};
 
+/// A resolved NovelAI API key, tied to whoever is paying for the request.
+///
+/// A newtype rather than a bare `String` for two reasons. It makes "whose key
+/// is this" a compile-time question at every call site, and its `Debug` is
+/// redacted, so the token cannot reach the ring-buffer log through a `{:?}` on
+/// some enclosing struct. The log buffer ships to users in diagnostic exports.
+///
+/// Never put this inside `GenerationParams` or `PreparedAugment`: both are
+/// serialised, logged, and written into image metadata.
+#[derive(Clone)]
+pub struct NaiCredential(String);
+
+impl NaiCredential {
+    pub fn new(key: String) -> Self {
+        Self(key)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for NaiCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NaiCredential(***)")
+    }
+}
+
 /// Mint the synthetic prompt id a NovelAI generation reports under.
 pub fn new_prompt_id() -> String {
     format!("nai-{}", uuid::Uuid::new_v4())
@@ -1044,6 +1072,19 @@ pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_credential_does_not_print_its_secret() {
+        // The credential is passed through spawned tasks and error paths; one
+        // stray `{:?}` must not be enough to put a NovelAI token in the log
+        // buffer, which ships to users in diagnostic exports.
+        let cred = NaiCredential::new("pst-super-secret-token".to_string());
+        let rendered = format!("{cred:?}");
+        assert!(!rendered.contains("pst-super-secret-token"));
+        assert_eq!(rendered, "NaiCredential(***)");
+        // The value is still readable through the accessor.
+        assert_eq!(cred.as_str(), "pst-super-secret-token");
+    }
 
     /// Only a ComfyUI upload name gets resolved; image data of either shape
     /// passes through untouched.
