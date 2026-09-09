@@ -24,6 +24,7 @@ use base64::Engine;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::config;
 
@@ -214,21 +215,32 @@ fn restrict_permissions(_path: &std::path::Path) {}
 
 // --- storage ------------------------------------------------------------
 
-/// Strip everything that could escape the users directory.
+/// Strip everything that could escape the users directory, then disambiguate.
 ///
-/// Same filter as [`crate::user_prefs`]: alphanumerics, `_` and `-` only, which
-/// also covers the reserved `_admin` name. `.` and `/` are dropped outright, so
-/// `../../etc/passwd` collapses to the single harmless segment `etcpasswd`.
+/// The character filter (alphanumerics, `_` and `-` only) is the same
+/// traversal guard [`crate::user_prefs`] uses: `.` and `/` are dropped
+/// outright, so `../../etc/passwd` collapses to the harmless `etcpasswd`.
+///
+/// Unlike `user_prefs`, that filtered string is not used as the path segment
+/// on its own. Account creation (`crate::auth::create_account_ex`) only
+/// lowercases a username; it does not restrict its character set. That means
+/// two distinct accounts, e.g. `bob` and `b.o.b`, both filter down to `bob`
+/// and would otherwise collide on the same `secrets.json`, silently
+/// clobbering each other's stored key. To keep lookalikes apart, the filtered
+/// string is suffixed with `-` and the first 8 hex characters of the SHA-256
+/// of the *lowercased raw* username (matching how `auth` stores it, not the
+/// filtered form), giving each raw username its own directory.
 fn sanitize_username(username: &str) -> Option<String> {
     let safe: String = username
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
         .collect();
     if safe.is_empty() {
-        None
-    } else {
-        Some(safe)
+        return None;
     }
+    let digest = Sha256::digest(username.to_ascii_lowercase().as_bytes());
+    let suffix = hex::encode(digest);
+    Some(format!("{safe}-{}", &suffix[..8]))
 }
 
 /// The storage layer takes its root directory and master key as parameters
@@ -396,11 +408,17 @@ mod tests {
     #[test]
     fn sanitize_strips_path_traversal() {
         // Dots and slashes are filtered out entirely, so a crafted username
-        // collapses to a single harmless directory name.
-        assert_eq!(
-            sanitize_username("../../etc/passwd").as_deref(),
-            Some("etcpasswd")
-        );
+        // collapses to a harmless directory name with a hash suffix; none of
+        // that can reintroduce a separator, a dot, or a drive-letter colon.
+        let result = sanitize_username("../../etc/passwd").unwrap();
+        assert!(result.starts_with("etcpasswd-"));
+        assert!(!result.contains('/'));
+        assert!(!result.contains('\\'));
+        assert!(!result.contains('.'));
+        assert!(!result.contains(':'));
+
+        // A username that filters to nothing is still rejected outright,
+        // not stored under a bare hash.
         assert_eq!(sanitize_username("..").as_deref(), None);
         assert_eq!(sanitize_username("../").as_deref(), None);
         assert_eq!(sanitize_username("").as_deref(), None);
@@ -408,9 +426,17 @@ mod tests {
 
     #[test]
     fn sanitize_keeps_ordinary_and_reserved_names() {
-        assert_eq!(sanitize_username("alice").as_deref(), Some("alice"));
-        assert_eq!(sanitize_username("_admin").as_deref(), Some("_admin"));
-        assert_eq!(sanitize_username("bob-2").as_deref(), Some("bob-2"));
+        for name in ["alice", "_admin", "bob-2"] {
+            let result = sanitize_username(name).unwrap();
+            assert!(result.starts_with(&format!("{name}-")));
+            // 8 hex characters after the filtered name and its separator.
+            let suffix = &result[name.len() + 1..];
+            assert_eq!(suffix.len(), 8);
+            assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(!result.contains('/'));
+            assert!(!result.contains('\\'));
+            assert!(!result.contains(':'));
+        }
     }
 
     /// A unique scratch directory. Deliberately does NOT use `app_data_dir()`
@@ -491,5 +517,36 @@ mod tests {
         let back: SecretsFile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.version, 1);
         assert_eq!(back.novelai_api_key.unwrap().nonce, "AAAA");
+    }
+
+    #[test]
+    fn two_usernames_that_filter_alike_get_different_paths() {
+        let root = scratch("collide-paths");
+        let bob = secrets_path_in(&root, "bob").unwrap();
+        let b_o_b = secrets_path_in(&root, "b.o.b").unwrap();
+        assert_ne!(bob, b_o_b);
+        assert_eq!(secrets_path_in(&root, "bob").unwrap(), bob);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_key_stored_for_one_username_is_invisible_to_a_lookalike() {
+        let root = scratch("collide-keys");
+        save_nai_key_in(&root, &KEY, "bob", Some("bobs-secret-token")).unwrap();
+        // A lookalike account cannot decrypt bob's stored key...
+        assert!(load_nai_key_in(&root, &KEY, "b.o.b").is_none());
+        // ...and, crucially, saving its own key must not clobber bob's: if
+        // both usernames sanitized to the same path, this save would
+        // overwrite the file bob's key lives in.
+        save_nai_key_in(&root, &KEY, "b.o.b", Some("lookalikes-own-token")).unwrap();
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "bob").as_deref(),
+            Some("bobs-secret-token")
+        );
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "b.o.b").as_deref(),
+            Some("lookalikes-own-token")
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
