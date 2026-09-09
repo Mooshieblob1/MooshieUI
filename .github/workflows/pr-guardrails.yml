@@ -31,6 +31,9 @@ jobs:
       - name: i18n parity
         run: node scripts/check-i18n-parity.mjs
 
+      - name: Release artifact checks
+        run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
+
       - name: Compute changed files
         run: |
           git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt

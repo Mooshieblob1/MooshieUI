@@ -203,6 +203,13 @@ jobs:
           fi
 
           if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            if [ "$INCLUDE_MACOS" = 'true' ]; then
+              immutable=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.immutable // false')
+              if [ "$immutable" = 'true' ]; then
+                echo "::error::Release ${TAG} is immutable. Mac installers must be included before publication; use a new release tag."
+                exit 1
+              fi
+            fi
             echo "Release ${TAG} already exists; updating notes and replacing assets."
             gh release edit "${TAG}" \
               --repo "${{ github.repository }}" \
@@ -214,6 +221,11 @@ jobs:
               --clobber \
               release-files/* >"${upload_log}" 2>&1; then
               if grep -qi "immutable release" "${upload_log}"; then
+                if [ "$INCLUDE_MACOS" = 'true' ]; then
+                  cat "${upload_log}"
+                  echo '::error::Mac assets were not published. Use a new release tag.'
+                  exit 1
+                fi
                 echo "Release ${TAG} is immutable; keeping existing release assets."
               else
                 cat "${upload_log}"

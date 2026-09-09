@@ -1,11 +1,33 @@
 # macOS release readiness for 2.3.1
 
-Status: implementation in progress, 2026-09-10. Native CI, managed runtime pins,
+Status: implementation complete; physical-Mac qualification pending, 2026-09-10.
+Native CI, managed runtime pins,
 MPS setup verification, packaging, updater collection and publication gating are
-implemented. Local build gates pass; the first native CI run is pending;
-physical-Mac qualification remains outstanding. See [MACOS.md](MACOS.md) for the
+implemented. Local and native Mac build gates pass. See [MACOS.md](MACOS.md) for the
 current candidate and release procedure. Versions remain 2.3.0 until the normal
 2.3.1 release process.
+
+## Automated candidate evidence
+
+[Candidate run 34411575042](https://github.com/Mooshieblob1/MooshieUI/actions/runs/34411575042)
+passed on macOS 15.7.9. Its tested checkout is
+`505d44dda71d7cbe658111a4d04fdc8e0161aabd`, the PR merge ref for head `2f6a58e`.
+
+- Native ARM build, 518 Rust tests (one existing ignored), formatting and lint checks.
+- ARM `.app` and DMG, minimum macOS 14, ad-hoc signature verification, DMG integrity,
+  and matching app signature inside the mounted installer.
+- ARM Python 3.11.14, torch/torchaudio 2.11.0 and torchvision 0.26.0; MPS tensor
+  operation passed. All 26 required custom-node classes registered against ComfyUI
+  v0.34.0, with no core node input mismatches. Node registration ran in CPU mode.
+- Frontend build and i18n parity passed. Existing Svelte diagnostics are archived;
+  no blocking type errors occur in changed files. The final Windows suite passed
+  519 Rust tests (one existing ignored), and desktop/server compile checks passed.
+
+The DMG in that run is `MooshieUI_2.3.0_aarch64.dmg`, SHA-256
+`084b750f61e2e68e504c0e71ad6360461721450121ac44675b4de663580bb881`.
+Use each later candidate's own reports and checksum. This is an experimental
+candidate, not the 2.3.1 release. Finder/Gatekeeper, real model generation, optional
+native features and application updates still need physical-Mac acceptance.
 
 ## Proposed support scope
 
@@ -54,6 +76,10 @@ already selects `torch.device("mps")` and shared-memory handling when available.
 MooshieUI should use this existing backend and validate the resulting behavior.
 
 ## Build and validation gates
+
+These are the checks for the final 2.3.1 build. The candidate evidence above
+establishes the pipeline; repeat qualification against the actual release source
+and artifacts before enabling Mac publication.
 
 Run candidate builds before tagging 2.3.1. A dedicated macOS validation workflow
 can produce downloadable test artifacts without publishing a release. An explicit

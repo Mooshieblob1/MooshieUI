@@ -319,7 +319,16 @@ def main() -> int:
         object_info = wait_for_object_info(
             proc, args.host, args.port, args.boot_timeout, log_path
         )
-    except (RuntimeError, TimeoutError) as e:
+        with urllib.request.urlopen(
+            f"http://{args.host}:{args.port}/system_stats", timeout=30
+        ) as response:
+            system_stats = json.load(response)
+        if (not isinstance(system_stats, dict)
+                or not isinstance(system_stats.get("system"), dict)
+                or not isinstance(system_stats.get("devices"), list)
+                or not system_stats["devices"]):
+            raise RuntimeError("ComfyUI /system_stats did not report a system and device")
+    except (RuntimeError, TimeoutError, OSError, ValueError) as e:
         log(f"ERROR: {e}")
         log("\n----- ComfyUI log tail -----")
         log(tail(log_path))
@@ -339,6 +348,8 @@ def main() -> int:
         "missing": missing,
         "core_input_problems": signature_problems,
         "registered_count": len(registered),
+        "execution_mode": "cpu",
+        "system_stats": system_stats,
         "passed": not missing and not signature_problems,
     }
     if args.summary_json:
