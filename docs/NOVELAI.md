@@ -661,9 +661,14 @@ stated otherwise.
   keys" below.
 - Redacted to null in the config JSON sent to browser clients, alongside a
   `novelai_api_key_configured` boolean so the UI can show "key set" without ever
-  receiving the value. For a caller with their own account (including a
-  moderator or admin viewing their own settings), that boolean now reports the
-  CALLING ACCOUNT's own key state, not the instance owner's. `get_config` used
+  receiving the value. For any account that `resolve_username`
+  (`webserver.rs`) names, which includes moderators, that boolean now reports
+  the CALLING ACCOUNT's own key state, not the instance owner's. Admin-role
+  accounts are the deliberate exception: `resolve_username` returns `None` for
+  an admin, so `scrub_nai_key_for_user` never runs on that response at all, and
+  an admin sees the config key exactly as localhost and the desktop app do,
+  including the real key in plain text when `include_secrets = true`. That is
+  by design, since admins are treated as the instance owner. `get_config` used
   to hand moderators `include_secrets = true`, which meant a moderator received
   the host's real NovelAI key in plain text; `scrub_nai_key_for_user`
   (`webserver.rs`) now blanks `novelai_api_key` on that response and substitutes
@@ -694,6 +699,12 @@ account brings its own instead of billing the instance owner:
   in `novelai/mod.rs`).
 - Desktop and admin behavior is unchanged: they keep using the key in
   `config.json`, resolved the same way it always was.
+- Promoting an existing account to `admin` changes which key it uses:
+  `resolve_username` starts returning `None` for it, so it switches to the
+  instance owner's `config.json` key and its own `secrets.json` is left on
+  disk unread. Its NovelAI usage then spends the instance owner's Anlas, not
+  its own subscription. Demoting it back restores its own key, because the
+  file is deliberately not deleted on promotion.
 - Keys are stored at `{app_data_dir}/users/{sanitized}-{8hex}/secrets.json`,
   encrypted with XChaCha20-Poly1305 and bound to the username as additional
   authenticated data. The directory name is not the raw username:

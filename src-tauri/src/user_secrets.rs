@@ -179,7 +179,7 @@ fn load_or_create_key_file() -> Option<[u8; KEY_LEN]> {
     }
     // create_new so two processes racing on first start cannot each write a
     // key and leave the loser's stored secrets undecryptable.
-    match std::fs::OpenOptions::new()
+    match secure_create_options()
         .write(true)
         .create_new(true)
         .open(&path)
@@ -217,6 +217,38 @@ fn restrict_permissions(path: &std::path::Path) {
 /// Windows has no mode bits to set; the file inherits the data directory's ACL.
 #[cfg(not(unix))]
 fn restrict_permissions(_path: &std::path::Path) {}
+
+/// `OpenOptions` that create a new file at mode 0600 on Unix, so there is no
+/// window between file creation and a later `chmod` in which the file is
+/// world-readable. Windows has no mode bits; the file inherits the data
+/// directory's ACL, same as `restrict_permissions` above.
+#[cfg(unix)]
+fn secure_create_options() -> std::fs::OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.mode(0o600);
+    opts
+}
+
+#[cfg(not(unix))]
+fn secure_create_options() -> std::fs::OpenOptions {
+    std::fs::OpenOptions::new()
+}
+
+/// A sibling temp path derived from `path`'s own file name, plus this
+/// process's id and the current time, so a concurrent save (this account
+/// saving twice at once, or another account entirely) cannot collide with it.
+fn tmp_path_for(path: &std::path::Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "secrets.json".to_string());
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+}
 
 // --- storage ------------------------------------------------------------
 
@@ -308,7 +340,38 @@ fn save_nai_key_in(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+
+    // Write to a sibling temp file, fsync it, then rename it over `path`,
+    // rather than std::fs::write()'s truncate-in-place. A crash or a full
+    // disk mid-write would otherwise leave a truncated secrets.json, which
+    // load_file_in(...).unwrap_or_default() above would silently treat as an
+    // empty file, so the next save would replace the user's stored key
+    // instead of preserving it. Same-directory rename is atomic on both Unix
+    // and Windows (Rust's fs::rename uses MoveFileEx with
+    // MOVEFILE_REPLACE_EXISTING there). The temp file is created at mode 0600
+    // so there is no unprotected window at all: the rename carries that mode
+    // across.
+    let tmp_path = tmp_path_for(&path);
+    let write_result: Result<(), String> = (|| {
+        let mut f = secure_create_options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)
+            .map_err(|e| e.to_string())?;
+        f.write_all(&bytes).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())?;
+        drop(f);
+        std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        // Best-effort: a crash before this point already left nothing behind
+        // to clean up, and a failure here is not worth surfacing over the
+        // original error.
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    write_result?;
     restrict_permissions(&path);
     Ok(())
 }
