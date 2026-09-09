@@ -1512,7 +1512,8 @@ pub(crate) fn apply_pip_install_options(
     use_uv: bool,
     network_proxy: Option<&str>,
     pip_index_url: Option<&str>,
-) {
+) -> Result<(), String> {
+    super::runtime::apply_constraints(cmd)?;
     apply_network_proxy(cmd, network_proxy);
     if let Some(url) = pip_index_url.map(str::trim).filter(|s| !s.is_empty()) {
         if use_uv {
@@ -1521,6 +1522,7 @@ pub(crate) fn apply_pip_install_options(
             cmd.args(["-i", url]);
         }
     }
+    Ok(())
 }
 
 async fn clone_custom_node(
@@ -1591,7 +1593,7 @@ async fn install_requirements_if_needed(
         command
     };
 
-    apply_pip_install_options(&mut command, use_uv, network_proxy, pip_index_url);
+    apply_pip_install_options(&mut command, use_uv, network_proxy, pip_index_url)?;
     let output = command
         .output()
         .await

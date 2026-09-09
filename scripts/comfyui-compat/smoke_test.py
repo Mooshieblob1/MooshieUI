@@ -264,6 +264,7 @@ def main() -> int:
     )
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8188)
+    ap.add_argument("--extra-required-file", type=Path, help="JSON list of external node classes installed by a platform check")
     ap.add_argument(
         "--boot-timeout",
         type=float,
@@ -287,6 +288,11 @@ def main() -> int:
         return 1
 
     required = parse_required_classes(nodes_rs)
+    if args.extra_required_file:
+        extra = json.loads(args.extra_required_file.read_text(encoding="utf-8"))
+        if not isinstance(extra, list) or not all(isinstance(name, str) for name in extra):
+            raise ValueError("Extra required nodes must be a JSON list of class names")
+        required = list(dict.fromkeys(required + extra))
     requirements = parse_mooshie_requirements(nodes_rs)
 
     log("=== MooshieUI custom-node compatibility smoke test ===")
@@ -294,11 +300,10 @@ def main() -> int:
     log(f"ComfyUI dir    : {comfyui_dir}")
     log(f"required nodes : {', '.join(required)}")
     log(f"core signatures: {', '.join(REQUIRED_CORE_NODE_INPUTS)}")
-    log(
-        "scope note     : bundled MooshieUI nodes and core node signatures only; "
-        "external ControlNet / style-transfer git packages are NOT covered by "
-        "this test."
-    )
+    if args.extra_required_file:
+        log("scope note     : bundled nodes, requested external nodes and core signatures; CPU registration only.")
+    else:
+        log("scope note     : bundled nodes and core signatures only; external git packages are not covered.")
 
     log("\n[1/3] Deploying bundled MooshieUI nodes...")
     try:

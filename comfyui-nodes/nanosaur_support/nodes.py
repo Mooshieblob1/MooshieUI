@@ -516,6 +516,8 @@ class NanoSaurLoader:
         weight_dtype="default",
         clip_device="default",
     ):
+        if weight_dtype.startswith("fp8") and comfy.model_management.get_torch_device().type == "mps":
+            raise ValueError("Explicit FP8 precision is not supported on Apple Metal. Use default precision.")
         model_options = {}
         if weight_dtype == "fp8_e4m3fn":
             model_options["dtype"] = torch.float8_e4m3fn

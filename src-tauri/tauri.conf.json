@@ -34,7 +34,9 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
       "frameworks": []
     },
     "windows": {

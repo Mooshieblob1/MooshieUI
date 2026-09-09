@@ -891,6 +891,8 @@ class MooshieDiffusionLoaderPath:
     )
 
     def load_unet(self, unet_path, weight_dtype="default"):
+        if weight_dtype.startswith("fp8") and comfy.model_management.get_torch_device().type == "mps":
+            raise ValueError("Explicit FP8 precision is not supported on Apple Metal. Use default precision.")
         path = _validate_model_path("MooshieDiffusionLoaderPath", unet_path)
         # Mirrors core UNETLoader's dtype handling.
         model_options = {}
