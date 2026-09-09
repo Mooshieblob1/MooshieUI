@@ -1020,8 +1020,85 @@ class MooshieLoadVideoPath:
             return float("nan")
 
 
+class MooshieFaceDetect:
+    """Detect faces and report the boxes as JSON. No sampling, no model load.
+
+    The NovelAI face detailer keeps detection local but sends each crop to
+    NovelAI, so the crop, the repaint and the composite all happen in Rust.
+    All ComfyUI is asked for here is where the faces are, which is why this
+    node loads neither a checkpoint nor a VAE.
+
+    The result reaches Rust through the history endpoint as
+    `outputs[<node>]["text"][0]`, a JSON object of the form
+    `{"width": W, "height": H, "boxes": [{"x1": .., "y1": .., "x2": .., "y2":
+    .., "confidence": ..}, ...]}` with boxes sorted most-confident first.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "detector_model": (folder_paths.get_filename_list("ultralytics"),),
+                "bbox_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "max_faces": ("INT", {"default": 0, "min": 0, "max": 100}),
+            }
+        }
+
+    RETURN_TYPES = ()
+    FUNCTION = "detect"
+    CATEGORY = "mooshie"
+    OUTPUT_NODE = True
+
+    def detect(self, image, detector_model, bbox_threshold, max_faces=0):
+        from ultralytics import YOLO
+
+        B, H, W, C = image.shape
+        payload = {"width": int(W), "height": int(H), "boxes": []}
+
+        model_path = folder_paths.get_full_path("ultralytics", detector_model)
+        if model_path is None:
+            print(f"[MooshieFaceDetect] Model not found: {detector_model}")
+            payload["error"] = f"detector model not found: {detector_model}"
+            return {"ui": {"text": [json.dumps(payload)]}}
+
+        yolo = YOLO(model_path)
+
+        # Only the first frame is inspected: the caller runs one image at a
+        # time, and a batch would have no way to say which boxes belong to
+        # which frame in a single flat list.
+        frame = image[0].cpu().numpy()
+        if np.isnan(frame).any():
+            print("[MooshieFaceDetect] WARNING: NaN values in input image, replacing with zeros")
+            frame = np.nan_to_num(frame, nan=0.0)
+        img_np = (frame * 255).astype(np.uint8)
+
+        detections = yolo(img_np, verbose=False)
+        if detections and len(detections[0].boxes) > 0:
+            boxes = [box for box in detections[0].boxes if box.conf[0].item() >= bbox_threshold]
+            # Sorted here rather than in Rust so max_faces means the same
+            # "strongest detections win" it does in MooshieFaceDetailer.
+            boxes = sorted(boxes, key=lambda box: box.conf[0].item(), reverse=True)
+            if max_faces > 0:
+                boxes = boxes[:max_faces]
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().int().tolist()
+                payload["boxes"].append(
+                    {
+                        "x1": int(x1),
+                        "y1": int(y1),
+                        "x2": int(x2),
+                        "y2": int(y2),
+                        "confidence": float(box.conf[0].item()),
+                    }
+                )
+
+        return {"ui": {"text": [json.dumps(payload)]}}
+
+
 NODE_CLASS_MAPPINGS = {
     "MooshieFaceDetailer": MooshieFaceDetailer,
+    "MooshieFaceDetect": MooshieFaceDetect,
     "MooshieSegmentDetailer": MooshieSegmentDetailer,
     "MooshieSaveImage": MooshieSaveImage,
     "MooshieCheckpointLoaderPath": MooshieCheckpointLoaderPath,
@@ -1032,6 +1109,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieFaceDetailer": "Mooshie Face Detailer",
+    "MooshieFaceDetect": "Mooshie Face Detect",
     "MooshieSegmentDetailer": "Mooshie Segment Detailer",
     "MooshieSaveImage": "Mooshie Save Image",
     "MooshieCheckpointLoaderPath": "Mooshie Checkpoint Loader (path)",

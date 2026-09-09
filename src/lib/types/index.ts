@@ -159,6 +159,41 @@ export interface NovelAiDirectorReference {
 }
 
 /**
+ * The NovelAI-mode face detailer. Mirrors `NovelAiFaceDetail` in
+ * `src-tauri/src/novelai/params.rs`.
+ *
+ * Detection is always local YOLO; `detailer_engine` picks who repaints the
+ * crop. Deliberately separate from the top-level `facefix_*` params, whose
+ * panel is hidden in NovelAI mode.
+ */
+export interface NovelAiFaceDetail {
+  enabled: boolean;
+  /** "novelai" | "local". */
+  detailer_engine: string;
+  /** YOLO weight in `models/ultralytics`. */
+  detector_model: string;
+  threshold: number;
+  /** Crop side as a multiple of the bounding box's long side. */
+  padding: number;
+  /** 0 means every detection. */
+  max_faces: number;
+  /** Long side the crop is scaled to before repainting. */
+  guide_size: number;
+  strength: number;
+  /** Clamped to 28 on the NovelAI engine so a free pass stays free. */
+  steps: number;
+  /** At least a sixth of the crop's short side, whatever is set here. */
+  feather: number;
+  /** "auto" | "generic" | "custom". */
+  prompt_mode: string;
+  custom_prompt: string;
+  /** "fit_free" | "allow_paid". */
+  anlas_policy: string;
+  /** General-tag confidence floor for the tagger run on the crop. */
+  tagger_threshold: number;
+}
+
+/**
  * The NovelAI-only request surface. Mirrors `src-tauri/src/novelai/params.rs`.
  *
  * Nested under `GenerationParams.novelai` so NovelAI's controls never leak into
@@ -233,6 +268,8 @@ export interface NovelAiParams {
   /** Prompt in ComfyUI weight syntax, for the local pass only. */
   local_positive_prompt: string | null;
   local_negative_prompt: string | null;
+  /** The NovelAI-mode face detailer panel's settings. */
+  face_detail: NovelAiFaceDetail;
 }
 
 /** NovelAI's `/user/subscription` response, as the backend re-serialises it. */

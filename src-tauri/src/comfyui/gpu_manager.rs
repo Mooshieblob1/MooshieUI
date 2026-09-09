@@ -517,6 +517,33 @@ impl GpuManager {
         None
     }
 
+    /// Read one prompt's history from the worker that actually ran it.
+    ///
+    /// [`Self::api_get`] picks the first ready worker, which is fine for the
+    /// read-only model and sampler lists but wrong for history: in a multi-GPU
+    /// deployment the prompt may have run on a different worker, whose history
+    /// the chosen one knows nothing about. Callers that hold the `worker_id`
+    /// from [`Self::submit_prompt`] should use this instead.
+    pub async fn get_history_from_worker(
+        &self,
+        worker_id: u32,
+        prompt_id: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        let worker = self
+            .workers
+            .get(worker_id as usize)
+            .ok_or_else(|| AppError::Other(format!("Unknown GPU worker {worker_id}")))?;
+        let url = format!("{}/history/{}", worker.base_url, prompt_id);
+        let resp = self.http_client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(resp.json().await?)
+    }
+
     /// Check if we're in single-worker mode (backward-compat, no gpu_workers configured).
     pub fn is_single_worker(&self) -> bool {
         self.workers.len() == 1

@@ -26,7 +26,24 @@ pub fn append_facefix_chain(
     // Optionally condition the detailer on a face-only subset of the prompt so
     // scene/pose/background tags don't bleed into the re-denoised face. Falls back
     // to the full positive conditioning when the prompt has no face-relevant tags.
-    let positive_source = if params.facefix_auto_prompt {
+    // An override is a decision already made by whoever set it (the NovelAI
+    // face-detail panel), including its emptiness, so it skips both the
+    // extraction and the full-prompt fallback below.
+    let positive_source = if let Some(face_prompt) = params.facefix_prompt_override.clone() {
+        let encode_id = next_id.to_string();
+        workflow.insert(
+            encode_id.clone(),
+            json!({
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": [result.clip_source.0.clone(), result.clip_source.1],
+                    "text": face_prompt
+                }
+            }),
+        );
+        *next_id += 1;
+        (encode_id, 0)
+    } else if params.facefix_auto_prompt {
         let face_prompt =
             crate::prompt_assistant::grounding::extract_face_tags(&params.positive_prompt);
         if face_prompt.trim().is_empty() {
@@ -69,9 +86,9 @@ pub fn append_facefix_chain(
                 "scheduler": params.scheduler,
                 "denoise": params.facefix_denoise,
                 "guide_size": params.facefix_guide_size,
-                "bbox_threshold": 0.5,
-                "bbox_padding": 1.5,
-                "feather": 20,
+                "bbox_threshold": params.facefix_bbox_threshold,
+                "bbox_padding": params.facefix_bbox_padding,
+                "feather": params.facefix_feather,
                 "max_faces": params.facefix_max_faces
             }
         }),

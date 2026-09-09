@@ -372,6 +372,28 @@ pub struct GenerationParams {
     /// don't bleed into the re-denoised face region.
     #[serde(default)]
     pub facefix_auto_prompt: bool,
+    /// Detector confidence, crop padding and seam feather for the detailer.
+    ///
+    /// The FaceFix panel does not expose these and never sets them, so the
+    /// defaults are the values the node was called with when they were
+    /// hardcoded. They exist because the NovelAI face-detail panel *does*
+    /// expose them, and under its `local` engine its sliders have to reach the
+    /// graph or they visibly do nothing.
+    #[serde(default = "default_facefix_bbox_threshold")]
+    pub facefix_bbox_threshold: f64,
+    #[serde(default = "default_facefix_bbox_padding")]
+    pub facefix_bbox_padding: f64,
+    #[serde(default = "default_facefix_feather")]
+    pub facefix_feather: u32,
+    /// Exact text to condition the face detailer on, bypassing
+    /// `facefix_auto_prompt`'s extraction and its full-prompt fallback.
+    ///
+    /// Set by the NovelAI face-detail panel's `local` engine, which owns its
+    /// own prompt modes. Empty means "render the face with no prompt", which
+    /// is what its `generic` mode asks for, so this is deliberately not
+    /// filtered for emptiness.
+    #[serde(default)]
+    pub facefix_prompt_override: Option<String>,
     /// Output image bit depth — "8bit" (default) or "16bit"
     #[serde(default = "default_output_bit_depth")]
     pub output_bit_depth: String,
@@ -645,4 +667,16 @@ fn default_facefix_guide_size() -> u32 {
 
 fn default_facefix_max_faces() -> u32 {
     8
+}
+
+fn default_facefix_bbox_threshold() -> f64 {
+    0.5
+}
+
+fn default_facefix_bbox_padding() -> f64 {
+    1.5
+}
+
+fn default_facefix_feather() -> u32 {
+    20
 }

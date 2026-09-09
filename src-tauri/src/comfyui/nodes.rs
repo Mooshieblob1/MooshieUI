@@ -231,6 +231,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveVideo",
     "MooshieLoadVideoPath",
     "MooshieFaceDetailer",
+    "MooshieFaceDetect",
     "MooshieSegmentDetailer",
     "MooshieSoftGuidance",
     "MooshieSmartGuidance",
@@ -1897,6 +1898,39 @@ mod tests {
         assert!(
             class_source.contains("metadata_json=\"\""),
             "save_video must default metadata_json so an older caller still works"
+        );
+    }
+
+    /// `templates/face_detect.rs` builds a graph that sets exactly these four
+    /// inputs and then reads the boxes back out of the node's `ui.text`
+    /// payload. Same agreement problem as the test above, with the added
+    /// wrinkle that the node must be an output node or ComfyUI prunes it from
+    /// the graph and the history carries nothing.
+    #[test]
+    fn bundled_face_detect_node_matches_the_template() {
+        let start = MOOSHIE_NODES_INIT
+            .find("class MooshieFaceDetect:")
+            .expect("MooshieFaceDetect is bundled");
+        let body = &MOOSHIE_NODES_INIT[start..];
+        let end = body[1..]
+            .find("\nclass ")
+            .map(|i| i + 1)
+            .unwrap_or(body.len());
+        let class_source = &body[..end];
+
+        for input in ["image", "detector_model", "bbox_threshold", "max_faces"] {
+            assert!(
+                class_source.contains(&format!("\"{input}\":")),
+                "MooshieFaceDetect must declare a {input} input"
+            );
+        }
+        assert!(
+            class_source.contains("OUTPUT_NODE = True"),
+            "MooshieFaceDetect must be an output node or its result never reaches the history"
+        );
+        assert!(
+            class_source.contains("\"ui\": {\"text\":"),
+            "MooshieFaceDetect must report through ui.text, which is what Rust reads"
         );
     }
 }
