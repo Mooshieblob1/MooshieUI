@@ -1511,23 +1511,31 @@ class GalleryStore {
         this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
         return;
       }
-      // Tauri mode: prefer native clipboard
-      if (image.gallery_filename) {
-        if (image.gallery_filename.endsWith(".jxl")) {
+      // Tauri mode: prefer native clipboard.
+      // Wait for a still-running persist first: the gallery file goes on the
+      // clipboard as a file reference (byte-for-byte, NovelAI chunks intact),
+      // while the blob fallback below may have to re-encode the pixels.
+      const desktopGalleryFilename = await this.resolveGalleryFilename(image);
+      if (desktopGalleryFilename) {
+        if (desktopGalleryFilename.endsWith(".jxl")) {
           // JXL can't be pasted as an image from the raw file path — the
           // backend transcodes to PNG (with metadata embedded) and puts it on
           // the clipboard in one call, so no image bytes cross IPC.
           await copyGalleryImageToClipboard(
-            image.gallery_filename,
+            desktopGalleryFilename,
             image.metadata ?? undefined,
             generation.metadataMode,
           );
         } else {
-          const path = await getGalleryImagePath(image.gallery_filename);
+          const path = await getGalleryImagePath(desktopGalleryFilename);
           await copyImageToClipboard(path);
         }
-      } else if (image.url) {
-        await this.copyBlobToClipboard(image.url, image.metadata ?? undefined);
+      } else if (image.url || image.sessionBlob) {
+        await this.copyBlobToClipboard(
+          image.url ?? "",
+          image.metadata ?? undefined,
+          image.sessionBlob,
+        );
         return;
       } else {
         this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
@@ -1596,31 +1604,53 @@ class GalleryStore {
     throw new Error(locale.t("common.clipboard_unavailable"));
   }
 
-  /** Copy a blob URL image to clipboard via native Tauri clipboard or browser Clipboard API. */
-  async copyBlobToClipboard(blobUrl: string, metadata?: Record<string, string>) {
+  /**
+   * Copy an image to the clipboard from a blob URL (or an in-memory blob) via
+   * the native Tauri clipboard or the browser Clipboard API.
+   *
+   * `sourceBlob` wins when supplied: reading it needs no `fetch`, so the
+   * original bytes reach the clipboard untouched. That matters for NovelAI
+   * output, whose provenance lives in ancillary PNG chunks that the
+   * <img> + canvas fallback discards along with every other chunk.
+   */
+  async copyBlobToClipboard(
+    blobUrl: string,
+    metadata?: Record<string, string>,
+    sourceBlob?: Blob,
+  ) {
     this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
-      let bytes: number[];
+      let bytes: number[] | null = null;
       let mimeType = "image/png";
-      try {
-        const response = await fetch(blobUrl);
-        if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
-        const blob = await response.blob();
-        mimeType = blob.type || "image/png";
-        const arrayBuf = await blob.arrayBuffer();
-        bytes = Array.from(new Uint8Array(arrayBuf));
-      } catch {
-        // fetch on blob: URLs can be blocked by CSP (e.g. Cloudflare proxy).
-        // Fall back to drawing through <img> + canvas to extract PNG bytes.
-        bytes = await this._blobUrlToPngBytes(blobUrl);
-        mimeType = "image/png";
+      if (sourceBlob) {
+        mimeType = sourceBlob.type || "image/png";
+        bytes = await blobToBytes(sourceBlob);
       }
+      if (!bytes && blobUrl) {
+        try {
+          const response = await fetch(blobUrl);
+          if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+          const blob = await response.blob();
+          mimeType = blob.type || "image/png";
+          bytes = await blobToBytes(blob);
+        } catch {
+          // fetch on blob: URLs can be blocked by CSP (e.g. Cloudflare proxy).
+          // Fall back to drawing through <img> + canvas to extract PNG bytes.
+          // This re-encodes the pixels, so whatever chunks the source PNG
+          // carried (NovelAI's Title/Description/Source/Comment) are gone.
+          console.warn("Blob fetch failed; re-encoding via canvas — source PNG chunks will be lost");
+          bytes = await this._blobUrlToPngBytes(blobUrl);
+          mimeType = "image/png";
+        }
+      }
+      if (!bytes) throw new Error(locale.t("gallery.error.image_bytes_unavailable"));
 
       // Always export as PNG — convert WebP blobs (JXL display copies) via canvas
       // so metadata embedding works and the image pastes correctly in all apps.
-      if (mimeType !== "image/png") {
-        bytes = await this._blobUrlToPngBytes(blobUrl);
-        mimeType = "image/png";
+      // Bytes that already are a PNG pass through verbatim; re-encoding them
+      // would strip the generator's own chunks for no gain.
+      if (!isPngBytes(bytes)) {
+        bytes = await this._blobToPngBytes(new Blob([new Uint8Array(bytes)], { type: mimeType }));
       }
 
       if (metadata) {
@@ -1628,13 +1658,9 @@ class GalleryStore {
       }
 
       if (isBrowserMode) {
-        const pngBlob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
-        await this.writeBlobToClipboard(pngBlob);
+        await this.writeBlobToClipboard(pngBlobFromBytes(bytes));
       } else {
-        const ext = mimeType === "image/jpeg" ? "jpg"
-          : mimeType === "image/webp" ? "webp"
-          : "png";
-        await copyBytesToClipboard(bytes, ext);
+        await copyBytesToClipboard(bytes, "png");
       }
       this.showToast(locale.t("gallery.toast.copied"), "success");
     } catch (e) {
