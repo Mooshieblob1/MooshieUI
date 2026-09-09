@@ -50,6 +50,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: macos-native
+          cache-on-failure: true
       - name: Frontend checks
         run: |
           npm ci
@@ -67,17 +68,17 @@ jobs:
       - name: Native Rust checks
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin
-          cargo clippy --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
       - name: Build candidate DMG
         if: ${{ !inputs.release }}
-        run: npx tauri build --target aarch64-apple-darwin --bundles dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
       - name: Build release DMG and signed updater
         if: ${{ inputs.release }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target aarch64-apple-darwin --bundles dmg
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
       - name: Verify app and disk image
         run: python3 scripts/macos/verify_bundle.py --bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle --output-dir macos-reports
       - name: Install the native managed runtime and check nodes
