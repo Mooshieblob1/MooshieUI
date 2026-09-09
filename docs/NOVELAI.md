@@ -503,6 +503,105 @@ logged. Generating one image at a time is the way to get the free upscale today.
 **It is also skipped while Transparent BG is on**, for the reason in section
 2.11: the pass would flatten the alpha channel onto a solid background.
 
+### 3.1 The NovelAI face detailer
+
+The local pass above fixes faces with a *different* model than the one that drew
+the image, which is exactly the thing NovelAI users notice. The NovelAI face
+detailer keeps detection local and sends the repaint back to NovelAI, so every
+pixel in the frame comes from one model.
+
+It lives in its own panel (`NaiFaceDetailSettings.svelte`), sibling to the
+NovelAI panel, visible only in NovelAI mode, and it **replaces** the FaceFix
+panel there. Its settings are `novelai.face_detail.*`, never the persisted
+`facefix_*` values, which belong to local mode and would otherwise drive a pass
+the user cannot see.
+
+**The pipeline**, per single-image generation, after the base render and before
+any local upscale handoff:
+
+1. **Detect locally.** A detect-only ComfyUI graph (`templates/face_detect.rs`)
+   runs `LoadImage` into the new `MooshieFaceDetect` node, which returns
+   bounding boxes as JSON in its `ui` output. No checkpoint, VAE or CLIP is
+   loaded, so this path needs a running ComfyUI with `ultralytics` and a
+   detector weight, but **not** a local SD checkpoint. `novelai/detect.rs`
+   submits and polls history for the result.
+2. **Plan the crop in Rust.** `face_pass::plan_crop` squares up the box,
+   applies the padding multiplier, clamps to the image, snaps to 64 and decides
+   the request size against the free window.
+3. **Build the face prompt.** Never the full positive prompt. See below.
+4. **img2img on the same model**, one request per face, `n_samples = 1`,
+   steps clamped to `FREE_STEPS`, `seed + 2 + i`.
+5. **Composite in Rust.** `face_pass::composite_face` does a cosine-ramp
+   feathered alpha blend with a floor of `min(h, w) / 6`. Each face crops from
+   the running composite, so overlapping faces behave.
+
+**Why img2img and not infill.** Infill switches to the model's
+`inpainting_id`. V5 Curated has no inpainting model of its own and borrows 4.5
+Curated's, so a masked face pass on V5 Curated would be painted by a different
+model than the image it is fixing, which defeats the whole point. NovelAI masks
+are also hard-edged at latent resolution (8 px blocks), so a border-ring mask
+buys no better seam than the pixel-space feather and costs the same.
+
+**The free window is mirrored in Rust.** `face_pass::FREE_PIXELS` (1 MP) and
+`FREE_STEPS` (28) are a deliberate duplicate of `OPUS_FREE_PIXELS` /
+`OPUS_FREE_STEPS` in `src/lib/utils/novelaiCost.ts`, because the runtime
+decision (downscale or send at full size) happens in Rust while the cost badge
+is computed in the frontend. A unit test pins the constants; change one side and
+change the other.
+
+`anlas_policy` decides what happens when a crop does not fit:
+
+- `fit_free` (default): scale the crop down so the request lands inside the
+  window, send, scale the result back. Never spends Anlas on Opus.
+- `allow_paid`: send at native crop size for more face detail, and pay per face.
+
+Crops routinely exceed 1 MP on upscaled images: an 832x1216 render at 2x is
+1664x2432, where a face 30% of frame height produces a 1152 px crop at padding
+1.5, which is 1.33 MP. The panel warns whenever upscale is on or the output is
+already over 1 MP, and separately when the account is not Opus (every face pass
+is billed) or the V5 allowance is empty.
+
+**The face prompt** comes from three sources merged, in priority order:
+
+1. Identity from the user's prompt, via `prompt_assistant::grounding::extract_face_tags`.
+2. Attributes read off *this crop* by the WD tagger, reusing the interrogator's
+   model and its `wd-eva02-large-tagger-v3` default, at a higher threshold than
+   the interrogator uses.
+3. A fixed framing anchor, `portrait, close-up, face focus`.
+
+A tagger run on a face crop structurally cannot emit `full body`, `standing` or
+`cowboy shot`, because none of that is in the pixels. That is the whole reason
+it beats parsing the prompt: the failure mode is removed by construction rather
+than by a blocklist that has to stay complete. What is filtered is defect tags
+(`blurry`, `lowres`, `bad anatomy`, `3d`, ...), plus ratings and copyright tags.
+
+`FacePromptTier` is the fallback chain: full merge, tagger only, prompt identity
+only, generic quality. It **never** falls back to the complete positive prompt.
+That fallback is what puts full-body composition tags on a face crop, and a unit
+test pins that it cannot happen. When the tagger model or the ORT library is
+absent, `prompt_mode = auto` degrades down this chain silently rather than
+downloading 1.26 GB mid-generation.
+
+**Rate limits.** Faces are strictly sequential, with `FACE_GAP` (400 ms) between
+requests and one retry after `RATE_LIMIT_BACKOFF` (6 s) on a 429. The backoff is
+a fixed constant, not the response's `Retry-After`: `client::check_status` turns
+the response into an `AppError` without reading headers, and threading the
+header through would touch every `ApiError` construction site in the crate for
+one call path. If the retry fails, the composite so far is delivered rather than
+losing the paid base image.
+
+**The `detailer_engine` dropdown** picks who paints: `novelai` (the above) or
+`local` (the existing ComfyUI checkpoint pass, now driven by
+`face_detail.*` instead of `facefix_*`). Under `local`, the Anlas controls are
+hidden (nothing is billed), the local checkpoint is shown read-only because it
+is owned by the NovelAI panel, and picking the engine implies
+`local_post_process`, which gates the whole handoff. `auto` prompt mode degrades
+to prompt identity only under `local`, because the local path never produces a
+crop in Rust for the tagger to read.
+
+**Same limits as the local pass:** single-image generations only, and skipped
+while Transparent BG is on, since the crop path flattens alpha.
+
 ## 4. Prompt syntax
 
 Outside NovelAI mode the app translates NovelAI weight syntax (`1.1::tag::`)
@@ -651,6 +750,56 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-09-09 - The NovelAI face detailer
+
+**Requested by:** the user: "instead of using a local llm to inpaint a face
+segment, what if we use NovelAI when in NAI mode for it?", then "the image
+segmenter itself will still be a local model, it's just the model used to
+generate within that masked segment is NAI", then "let's make this only
+available in NAI mode ... a dedicated separate face detailer for NAI mode, in
+it's own panel, not inside the NAI panel", with "let's use a detailer engine
+dropdown inside the new panel".
+
+**What changed.** Architecture in section 3.1. In short: a new panel
+(`NaiFaceDetailSettings.svelte`) that replaces FaceFix in NovelAI mode, a
+detect-only `MooshieFaceDetect` ComfyUI node feeding Rust-side crop and
+composite (`novelai/face_pass.rs`, `novelai/face_detail.rs`,
+`novelai/detect.rs`), per-face img2img on the same NovelAI model, a
+tagger-derived face prompt that can never fall back to the full positive
+prompt, a Rust mirror of the Opus free-window rule with a `fit_free` /
+`allow_paid` policy, and a `detailer_engine` dropdown that keeps the old local
+checkpoint pass available but now drives it from `face_detail.*` instead of the
+stale `facefix_*` values. 44 new i18n keys across all 12 locales.
+
+**Testing needed:** yes, and a lot of it. Every branch below spends either a
+NovelAI request or a real Anlas balance, so none of it is covered by
+`cargo test`.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NovelAI mode, Opus account, enable the face detailer, generate a single portrait with one face | Progress reads "NovelAI face 1/1"; face is sharper; Anlas balance unchanged |
+| 2 | Generate a group shot with three visible faces, `max_faces` 3 | Three sequential passes, roughly 400 ms apart; all three faces repainted; balance unchanged |
+| 3 | Same, `max_faces` 1 | Only the highest-confidence face is repainted |
+| 4 | Sign in on a non-Opus account | Panel shows the "every face pass costs Anlas" notice; the generate cost badge includes the worst case |
+| 5 | V5 model with the Opus allowance empty | Panel shows the V5 allowance notice; face passes are billed |
+| 6 | 832x1216 portrait with local upscale on, policy `fit_free` | Panel shows the >1 MP warning; the crop request is downscaled; balance unchanged |
+| 7 | Same image, policy `allow_paid` | Stronger warning in the panel; crop sent at full size; balance drops by roughly one image per face |
+| 8 | Set steps to 40, policy `fit_free` | Panel shows the "clamped to 28" note; the request carries 28 |
+| 9 | Enable Transparent BG on V5, generate | Face pass is skipped, image delivered untouched, warning in the log; alpha intact |
+| 10 | Batch of 4 with the detailer on | Face pass skipped with a logged warning, same as the local pass |
+| 11 | Trigger a 429 during face 2 of 3 (generate elsewhere at the same time) | One retry after 6 s; if it fails, the composite with face 1 is delivered rather than nothing |
+| 12 | Cancel mid-pass, between faces | Generation stops; the partial composite is delivered, not the raw image |
+| 13 | Remove the tagger model (or run with no ORT library), `prompt_mode = auto` | Panel shows the tagger note; prompt degrades to identity tags; no 1.26 GB download starts mid-generation |
+| 14 | Stop ComfyUI, generate with the detailer on | Detection fails cleanly, base image is delivered, error surfaced rather than swallowed |
+| 15 | Set `prompt_mode = custom` with text `1girl, smile` | The crop request carries exactly that plus the framing anchor, nothing from the main prompt |
+| 16 | Switch `detailer_engine` to `local` | Anlas controls disappear; the local checkpoint line appears read-only; `local_post_process` turns itself on |
+| 17 | With `local` selected and no local checkpoint picked | The "pick one in the NovelAI panel" warning shows; nothing arms |
+| 18 | With `local`, move this panel's threshold/padding/feather sliders | The ComfyUI graph reflects them, not whatever FaceFix was last set to in local mode |
+| 19 | Enable FaceFix in ComfyUI mode, switch to NovelAI mode, leave the new panel off | Nothing arms; no face pass runs |
+| 20 | Switch back to ComfyUI mode | The FaceFix panel returns, the face detailer panel disappears, both keep their own settings |
+| 21 | Reorder or collapse the new panel, restart the app | Layout and collapse state persist; older saved layouts pick the panel up automatically |
+| 22 | Check the metadata of a detailed image | Stamped `mooshie_novelai_post_processed` |
 
 ### 2026-09-07 - The artist: prefix is stripped from outgoing NovelAI prompts
 

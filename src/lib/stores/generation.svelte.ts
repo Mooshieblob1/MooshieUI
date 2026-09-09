@@ -62,6 +62,7 @@ import type {
   LoraEntry,
   NovelAiCharacter,
   NovelAiDirectorReference,
+  NovelAiFaceDetail,
   NovelAiParams,
   NovelAiVibe,
   NovelAiVibeEncoding,
@@ -164,6 +165,29 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     local_sampler: null,
     local_scheduler: null,
     local_cfg: null,
+    face_detail: createDefaultNovelAiFaceDetail(),
+  };
+}
+
+/** Defaults for the NovelAI face detailer. Mirrors `NovelAiFaceDetail::default`. */
+export function createDefaultNovelAiFaceDetail(): NovelAiFaceDetail {
+  return {
+    enabled: false,
+    detailer_engine: "novelai",
+    detector_model: "Anzhc Face seg 640 v4 y11n.pt",
+    threshold: 0.5,
+    padding: 1.5,
+    max_faces: 3,
+    // 1024 puts a square crop exactly on the free window's one-megapixel edge.
+    guide_size: 1024,
+    strength: 0.35,
+    // The free window's step ceiling, so the default never costs Anlas.
+    steps: 28,
+    feather: 20,
+    prompt_mode: "auto",
+    custom_prompt: "",
+    anlas_policy: "fit_free",
+    tagger_threshold: 0.4,
   };
 }
 
@@ -1943,6 +1967,13 @@ class GenerationStore {
     this.saveSettings();
   }
 
+  /** Patch the nested face-detail block without the panel spreading it by hand. */
+  updateNovelAiFaceDetail(patch: Partial<NovelAiFaceDetail>) {
+    this.updateNovelAiSettings({
+      face_detail: { ...this.novelaiSettings.face_detail, ...patch },
+    });
+  }
+
   /**
    * Pick the local model the free post-process pass samples with.
    *
@@ -2634,6 +2665,12 @@ class GenerationStore {
           // slider. Full strength is what those builds effectively sent.
           this.novelaiSettings = {
             ...merged,
+            // Same shallow-merge problem one level down: a blob written before
+            // a face-detail field existed would leave that field undefined.
+            face_detail: {
+              ...createDefaultNovelAiFaceDetail(),
+              ...(merged.face_detail ?? {}),
+            },
             director_references: (merged.director_references ?? []).map((reference) => ({
               ...reference,
               strength: reference.strength ?? 1.0,

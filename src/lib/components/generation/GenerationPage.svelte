@@ -12,6 +12,7 @@
   import GenerateButton from "./GenerateButton.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
+  import NaiFaceDetailSettings from "./NaiFaceDetailSettings.svelte";
   import NovelAiSettings from "./NovelAiSettings.svelte";
   import NovelAiImageSettings from "./NovelAiImageSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
@@ -78,6 +79,7 @@
     | "model"
     | "sampler"
     | "novelai"
+    | "naiFaceDetail"
     | "controlnet"
     | "styleTransfer"
     | "styleRef"
@@ -129,6 +131,7 @@
     model: "right",
     sampler: "right",
     novelai: "right",
+    naiFaceDetail: "right",
     controlnet: "right",
     styleTransfer: "right",
     styleRef: "right",
@@ -160,6 +163,7 @@
     "model",
     "sampler",
     "novelai",
+    "naiFaceDetail",
     "controlnet",
     "styleTransfer",
     "styleRef",
@@ -309,6 +313,7 @@
     if (section === "model") return locale.t('generation.model.title');
     if (section === "sampler") return locale.t('generation.sampler.title');
     if (section === "novelai") return locale.t('generation.novelai.title');
+    if (section === "naiFaceDetail") return locale.t('generation.nai_face_detail.title');
     if (section === "facefix") return locale.t('generation.facefix.title');
     if (section === "styleTransfer") return locale.t('generation.style_transfer.title');
     if (section === "styleRef") return locale.t('generation.style_ref.title');
@@ -322,9 +327,13 @@
       return section === "prompts" || section === "videoSettings";
     if (section === "videoSettings") return false;
     // NovelAI renders on its own servers: LoRAs, ControlNet and style transfer
-    // have no counterpart in its API and would silently do nothing. FaceFix and
-    // Upscale stay put, because they drive the free local post-process pass.
+    // have no counterpart in its API and would silently do nothing. Upscale
+    // stays put, because it drives the free local post-process pass. FaceFix
+    // swaps for the NovelAI face detailer, which owns its own settings and its
+    // own engine dropdown; showing both would give two panels the same job.
     if (section === "novelai") return generation.isNovelAi;
+    if (section === "naiFaceDetail")
+      return generation.isNovelAi && generation.mode !== "inpainting";
     if (generation.isNovelAi && (section === "controlnet" || section === "styleTransfer"))
       return false;
     if (section === "imageInputs")
@@ -335,7 +344,8 @@
     if (section === "model") return generation.mode !== "inpainting";
     if (section === "sampler") return generation.mode !== "inpainting";
     if (section === "upscaleHistory") return generation.mode !== "inpainting";
-    if (section === "facefix") return generation.mode !== "inpainting";
+    if (section === "facefix")
+      return generation.mode !== "inpainting" && !generation.isNovelAi;
     if (section === "styleTransfer") return generation.isAnima && generation.mode === "txt2img";
     if (section === "styleRef") return !generation.isNovelAi && (generation.mode === "txt2img" || generation.mode === "img2img" || generation.mode === "inpainting");
     return true;
@@ -379,6 +389,7 @@
   let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
   let styleTransferSectionOpen = $state(savedCollapse.styleTransfer !== false);
   let styleRefSectionOpen = $state(savedCollapse.styleRef !== false);
+  let naiFaceDetailSectionOpen = $state(savedCollapse.naiFaceDetail !== false);
   let facefixSectionOpen = $state(savedCollapse.facefix !== false);
   let postSectionOpen = $state(savedCollapse.upscaleHistory !== false);
 
@@ -397,6 +408,7 @@
       controlnet: controlnetSectionOpen,
       styleTransfer: styleTransferSectionOpen,
       styleRef: styleRefSectionOpen,
+      naiFaceDetail: naiFaceDetailSectionOpen,
       facefix: facefixSectionOpen,
       upscaleHistory: postSectionOpen,
     };
@@ -2010,6 +2022,27 @@
     </div>
   {/snippet}
 
+  {#snippet naiFaceDetailSection()}
+    <div bind:this={sectionRefs['naiFaceDetail']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'naiFaceDetail' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("naiFaceDetail")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (naiFaceDetailSectionOpen = !naiFaceDetailSectionOpen)}
+          title={naiFaceDetailSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.nai_face_detail.title') }) : locale.t('common.expand', { section: locale.t('generation.nai_face_detail.title') })}
+        >
+          <span class="font-medium">{locale.t('generation.nai_face_detail.title')}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {naiFaceDetailSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if naiFaceDetailSectionOpen}
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
+          <NaiFaceDetailSettings />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet controlnetSection()}
     <div bind:this={sectionRefs['controlnet']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
@@ -2202,6 +2235,8 @@
       {@render samplerSection()}
     {:else if section === "novelai"}
       {@render novelaiSection()}
+    {:else if section === "naiFaceDetail"}
+      {@render naiFaceDetailSection()}
     {:else if section === "controlnet"}
       {@render controlnetSection()}
     {:else if section === "styleTransfer"}

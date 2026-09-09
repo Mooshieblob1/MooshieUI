@@ -1,4 +1,5 @@
 pub mod controlnet;
+pub mod face_detect;
 pub mod facefix;
 pub mod image_edit;
 pub mod img2img;

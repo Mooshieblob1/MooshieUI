@@ -100,6 +100,104 @@ pub struct NovelAiDirectorReference {
     pub fidelity: f64,
 }
 
+/// The NovelAI-mode face detailer block.
+///
+/// Detection is always local YOLO inside ComfyUI; `detailer_engine` picks who
+/// repaints the crop. `novelai` sends each face back to NovelAI as img2img,
+/// which keeps the style of the base render; `local` hands off to the existing
+/// ComfyUI face-fix chain, which needs [`NovelAiParams::local_checkpoint`].
+///
+/// This block deliberately does not reuse the top-level `facefix_*` fields.
+/// Those belong to the local-mode FaceFix panel, which is hidden in NovelAI
+/// mode, so their persisted values would arm a pass the user cannot see.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NovelAiFaceDetail {
+    #[serde(default)]
+    pub enabled: bool,
+    /// `novelai` or `local`.
+    #[serde(default = "default_detailer_engine")]
+    pub detailer_engine: String,
+    /// YOLO weight in `models/ultralytics`.
+    #[serde(default = "default_face_detector")]
+    pub detector_model: String,
+    /// Minimum detection confidence.
+    #[serde(default = "default_face_threshold")]
+    pub threshold: f64,
+    /// Crop side as a multiple of the bounding box's long side.
+    #[serde(default = "default_face_padding")]
+    pub padding: f64,
+    /// 0 means every detection.
+    #[serde(default = "default_face_max_faces")]
+    pub max_faces: u32,
+    /// Long side the crop is scaled to before repainting.
+    #[serde(default = "default_face_guide_size")]
+    pub guide_size: u32,
+    /// img2img strength for the crop pass.
+    #[serde(default = "default_face_strength")]
+    pub strength: f64,
+    /// Steps for the crop pass. Clamped to 28 on the NovelAI engine so a free
+    /// pass does not silently become a paid one.
+    #[serde(default = "default_face_steps")]
+    pub steps: u32,
+    /// Composite feather in pixels. The effective value is at least a sixth of
+    /// the crop's short side.
+    #[serde(default = "default_face_feather")]
+    pub feather: u32,
+    /// `auto`, `generic` or `custom`.
+    #[serde(default = "default_face_prompt_mode")]
+    pub prompt_mode: String,
+    /// Used verbatim when `prompt_mode` is `custom`.
+    #[serde(default)]
+    pub custom_prompt: String,
+    /// `fit_free` downscales crops to stay inside the Opus free window;
+    /// `allow_paid` sends them at native size.
+    #[serde(default = "default_anlas_policy")]
+    pub anlas_policy: String,
+    /// General-tag confidence floor for the tagger run on the crop. Higher
+    /// than the interrogator default on purpose: a wrong tag read off a
+    /// malformed face gets painted in confidently.
+    #[serde(default = "default_tagger_threshold")]
+    pub tagger_threshold: f64,
+}
+
+impl Default for NovelAiFaceDetail {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            detailer_engine: default_detailer_engine(),
+            detector_model: default_face_detector(),
+            threshold: default_face_threshold(),
+            padding: default_face_padding(),
+            max_faces: default_face_max_faces(),
+            guide_size: default_face_guide_size(),
+            strength: default_face_strength(),
+            steps: default_face_steps(),
+            feather: default_face_feather(),
+            prompt_mode: default_face_prompt_mode(),
+            custom_prompt: String::new(),
+            anlas_policy: default_anlas_policy(),
+            tagger_threshold: default_tagger_threshold(),
+        }
+    }
+}
+
+impl NovelAiFaceDetail {
+    /// The face is repainted by NovelAI rather than a local checkpoint.
+    pub fn uses_novelai_engine(&self) -> bool {
+        !self.detailer_engine.eq_ignore_ascii_case("local")
+    }
+
+    /// The pass is on and hands off to the local ComfyUI chain.
+    pub fn uses_local_engine(&self) -> bool {
+        self.enabled && !self.uses_novelai_engine()
+    }
+
+    /// Crops are shrunk to stay inside the Opus free window.
+    pub fn fits_free_window(&self) -> bool {
+        !self.anlas_policy.eq_ignore_ascii_case("allow_paid")
+    }
+}
+
 /// The NovelAI-only half of a generation request.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NovelAiParams {
@@ -225,6 +323,9 @@ pub struct NovelAiParams {
     /// Guidance scale for the local pass. See [`Self::local_sampler`].
     #[serde(default)]
     pub local_cfg: Option<f64>,
+    /// The NovelAI-mode face detailer panel's settings.
+    #[serde(default)]
+    pub face_detail: NovelAiFaceDetail,
 }
 
 impl NovelAiParams {
@@ -279,6 +380,59 @@ fn default_reference_description() -> String {
 
 fn default_img2img_strength() -> f64 {
     0.7
+}
+
+fn default_detailer_engine() -> String {
+    "novelai".to_string()
+}
+
+/// Same weight the FaceFix panel recommends, and the same
+/// `models/ultralytics` folder.
+fn default_face_detector() -> String {
+    "Anzhc Face seg 640 v4 y11n.pt".to_string()
+}
+
+fn default_face_threshold() -> f64 {
+    0.5
+}
+
+fn default_face_padding() -> f64 {
+    1.5
+}
+
+fn default_face_max_faces() -> u32 {
+    3
+}
+
+/// 1024 keeps a square crop exactly at the free window's one-megapixel edge.
+fn default_face_guide_size() -> u32 {
+    1024
+}
+
+/// Low enough that img2img reshapes the face without inventing a new one.
+fn default_face_strength() -> f64 {
+    0.35
+}
+
+/// The free window's ceiling, so the default never costs Anlas.
+fn default_face_steps() -> u32 {
+    28
+}
+
+fn default_face_feather() -> u32 {
+    20
+}
+
+fn default_face_prompt_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_anlas_policy() -> String {
+    "fit_free".to_string()
+}
+
+fn default_tagger_threshold() -> f64 {
+    0.4
 }
 
 #[cfg(test)]

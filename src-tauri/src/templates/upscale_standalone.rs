@@ -47,7 +47,14 @@ pub fn is_requested(params: &GenerationParams) -> bool {
     let Some(nai) = params.novelai.as_ref() else {
         return false;
     };
-    nai.local_post_process && can_run(params) && (params.upscale_enabled || params.facefix_enabled)
+    // `facefix_enabled` is deliberately not an input here. It belongs to the
+    // FaceFix panel, which is hidden in NovelAI mode, so a user who left it on
+    // in local mode would otherwise arm a face pass they can neither see nor
+    // configure. The NovelAI face-detail panel is the only thing that asks for
+    // faces here, and only when its engine is the local one.
+    nai.local_post_process
+        && can_run(params)
+        && (params.upscale_enabled || nai.face_detail.uses_local_engine())
 }
 
 /// Derive the refine-only parameters for the local pass.
@@ -167,6 +174,35 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     }
     if let Some(neg) = nai.local_negative_prompt.clone() {
         out.negative_prompt = neg;
+    }
+
+    // Faces come from the NovelAI face-detail panel, never from FaceFix. In
+    // NovelAI mode FaceFix is hidden, so `facefix_*` is whatever the user last
+    // set in local mode: left alone, the new panel's sliders would build a
+    // graph out of settings the user cannot see. Mapped rather than read
+    // directly because the detailer template is shared with local mode.
+    let face = &nai.face_detail;
+    out.facefix_enabled = face.uses_local_engine();
+    if out.facefix_enabled {
+        out.facefix_detector = Some(face.detector_model.clone());
+        out.facefix_bbox_threshold = face.threshold;
+        out.facefix_bbox_padding = face.padding;
+        out.facefix_guide_size = face.guide_size;
+        out.facefix_feather = face.feather;
+        out.facefix_max_faces = face.max_faces;
+        out.facefix_steps = face.steps.max(1);
+        // NovelAI `strength` and ComfyUI `denoise` are the same dial under two
+        // names, and the panel shows one slider for both engines.
+        out.facefix_denoise = face.strength;
+        // The tagger runs on a Rust-side crop, and this path never makes one:
+        // cropping happens inside the Python node. So `auto` degrades to the
+        // prompt-identity tier, which is what an empty tag list yields. The
+        // point of routing through here at all is the fallback chain, which
+        // ends at the framing anchor instead of the whole scene prompt.
+        let (prompt, _tier) =
+            crate::novelai::face_pass::build_face_prompt(face, &out.positive_prompt, None, &[]);
+        out.facefix_prompt_override = Some(prompt);
+        out.facefix_auto_prompt = false;
     }
 
     // One image in, one image out. The NovelAI batch has already been split
@@ -316,10 +352,14 @@ mod tests {
     }
 
     #[test]
-    fn facefix_alone_is_enough_to_run() {
-        let mut p = with_nai(local_nai());
+    fn a_face_pass_alone_is_enough_to_run() {
+        // Faces come from the NovelAI face-detail panel now, not from
+        // `facefix_enabled`; see the stale-toggle test below.
+        let mut nai = local_nai();
+        nai.face_detail.enabled = true;
+        nai.face_detail.detailer_engine = "local".into();
+        let mut p = with_nai(nai);
         p.upscale_enabled = false;
-        p.facefix_enabled = true;
         assert!(is_requested(&p));
     }
 
@@ -611,5 +651,100 @@ mod tests {
 
         let err = rewrite_novelai_request(&mut p).expect_err("nothing to refine");
         assert!(err.contains("nai-diffusion-5-full"), "unhelpful: {err}");
+    }
+
+    /// A NovelAI request with nothing but the face panel asking for work.
+    fn face_only_nai(engine: &str) -> NovelAiParams {
+        let mut nai = local_nai();
+        nai.face_detail.enabled = true;
+        nai.face_detail.detailer_engine = engine.into();
+        nai
+    }
+
+    fn without_upscale(mut params: GenerationParams) -> GenerationParams {
+        params.upscale_enabled = false;
+        params
+    }
+
+    #[test]
+    fn a_stale_facefix_toggle_no_longer_arms_the_local_chain() {
+        // The FaceFix panel is hidden in NovelAI mode, so this flag is whatever
+        // the user last left set in local mode.
+        let mut p = without_upscale(with_nai(local_nai()));
+        p.facefix_enabled = true;
+        assert!(!is_requested(&p));
+    }
+
+    #[test]
+    fn the_local_engine_arms_the_local_chain_on_its_own() {
+        assert!(is_requested(&without_upscale(with_nai(face_only_nai(
+            "local"
+        )))));
+    }
+
+    #[test]
+    fn the_novelai_engine_does_not_arm_the_local_chain() {
+        // It is run in Rust, before this pass is even considered.
+        assert!(!is_requested(&without_upscale(with_nai(face_only_nai(
+            "novelai"
+        )))));
+        // ... but an upscale still asks for the local chain, faces or not.
+        assert!(is_requested(&with_nai(face_only_nai("novelai"))));
+    }
+
+    #[test]
+    fn the_local_branch_reads_the_face_panel_and_not_facefix() {
+        let mut nai = face_only_nai("local");
+        nai.face_detail.detector_model = "custom-face.pt".into();
+        nai.face_detail.threshold = 0.42;
+        nai.face_detail.padding = 1.8;
+        nai.face_detail.guide_size = 768;
+        nai.face_detail.feather = 33;
+        nai.face_detail.max_faces = 2;
+        nai.face_detail.steps = 26;
+        nai.face_detail.strength = 0.31;
+
+        let mut p = with_nai(nai);
+        // Every FaceFix value set to something the assertions would catch.
+        p.facefix_detector = Some("stale-detector.pt".into());
+        p.facefix_guide_size = 512;
+        p.facefix_max_faces = 8;
+        p.facefix_steps = 20;
+        p.facefix_denoise = 0.4;
+
+        let out = build_params(&p, "nai.png").expect("derived");
+        assert!(out.facefix_enabled);
+        assert_eq!(out.facefix_detector.as_deref(), Some("custom-face.pt"));
+        assert!((out.facefix_bbox_threshold - 0.42).abs() < 1e-9);
+        assert!((out.facefix_bbox_padding - 1.8).abs() < 1e-9);
+        assert_eq!(out.facefix_guide_size, 768);
+        assert_eq!(out.facefix_feather, 33);
+        assert_eq!(out.facefix_max_faces, 2);
+        assert_eq!(out.facefix_steps, 26);
+        assert!((out.facefix_denoise - 0.31).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_local_branch_never_conditions_the_face_on_the_scene_prompt() {
+        let mut p = with_nai(face_only_nai("local"));
+        p.novelai.as_mut().unwrap().local_positive_prompt =
+            Some("1girl, full body, standing in a forest, cowboy shot".into());
+
+        let out = build_params(&p, "nai.png").expect("derived");
+        let face = out.facefix_prompt_override.expect("override set");
+        assert!(!face.contains("full body"), "scene prompt leaked: {face}");
+        assert!(!face.contains("forest"), "scene prompt leaked: {face}");
+        assert!(face.contains("portrait"), "no framing anchor: {face}");
+        // The override exists precisely to bypass the extraction path and its
+        // fall back to the full positive conditioning.
+        assert!(!out.facefix_auto_prompt);
+    }
+
+    #[test]
+    fn the_novelai_engine_leaves_the_local_chain_faceless() {
+        // An upscale-only hand-off must not grow a face pass from the panel
+        // that is being run in Rust instead.
+        let out = build_params(&with_nai(face_only_nai("novelai")), "nai.png").expect("derived");
+        assert!(!out.facefix_enabled);
     }
 }

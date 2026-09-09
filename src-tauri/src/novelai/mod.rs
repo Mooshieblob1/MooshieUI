@@ -8,6 +8,9 @@
 
 pub mod augment;
 pub mod client;
+pub mod detect;
+pub mod face_detail;
+pub mod face_pass;
 pub mod metadata;
 pub mod models;
 pub mod params;
@@ -663,7 +666,11 @@ async fn run_inner(
     // pixels. NovelAI cannot read those, so they become the base64 PNGs it
     // takes before the payload exists, and before any Anlas are spent.
     let with_uploads = resolve_upload_images(state, encoded.as_ref().unwrap_or(params)).await?;
-    let body = build_request(with_uploads.as_ref().or(encoded.as_ref()).unwrap_or(params))?;
+    // What the request is actually built from: vibes encoded, upload names
+    // resolved to pixels. The face pass builds its crop requests from the same
+    // thing so it inherits the encoded vibes rather than re-paying for them.
+    let resolved = with_uploads.as_ref().or(encoded.as_ref()).unwrap_or(params);
+    let body = build_request(resolved)?;
     log_vibe_summary(&body);
     log_character_summary(&body);
     let steps = params.steps.max(1);
@@ -706,6 +713,47 @@ async fn run_inner(
             }
         })
         .await?;
+
+    if state.prompt_queue.is_cancelled(prompt_id) {
+        state.prompt_queue.cleanup_alias(prompt_id);
+        return Ok(RunOutcome::Completed);
+    }
+
+    // The NovelAI face pass, before any local hand-off: the local upscale ends
+    // this function by handing the image to ComfyUI, so a face pass after it
+    // would have nothing left to run on. Same failure policy as below, and for
+    // the same reason: the base image is already paid for.
+    let mut images = images;
+    if params
+        .novelai
+        .as_ref()
+        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine())
+    {
+        if transparency_requested(params) {
+            // The crop path decodes to RGBA and re-encodes the composite, and
+            // the seam feather would blend the repainted face against black
+            // wherever the background is transparent.
+            log::warn!(
+                "NovelAI {prompt_id}: face pass skipped, it would flatten the                  transparent background"
+            );
+        } else if let [png] = images.as_slice() {
+            match face_detail::run_face_pass(state, sink, prompt_id, resolved, &client, png).await {
+                Ok(Some(composite)) => images = vec![composite],
+                Ok(None) => {}
+                Err(err) => log::warn!(
+                    "NovelAI {prompt_id}: face pass could not run ({err}); delivering                      the unmodified image"
+                ),
+            }
+        } else {
+            // Every face is its own NovelAI request, so a batch multiplies the
+            // round trips and the Opus allowance draw by the batch size. The
+            // single-image limit matches the local pass below.
+            log::warn!(
+                "NovelAI {prompt_id}: face pass skipped, it runs on single-image                  generations only ({} returned)",
+                images.len()
+            );
+        }
+    }
 
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);
