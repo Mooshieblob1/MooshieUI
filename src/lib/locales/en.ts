@@ -2160,7 +2160,7 @@ const en: Record<string, string> = {
   "settings.civitai.api_key_link": "Get your key at civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "API Key",
-  "settings.novelai.api_key_desc": "Adds NovelAI's image models to the model list. Generations run on NovelAI's servers and spend your Anlas.",
+  "settings.novelai.api_key_desc": "Adds NovelAI's image models to the model list. Generations run on NovelAI's servers and spend your Anlas. The key belongs to your account and is stored encrypted.",
   "settings.novelai.api_key_placeholder": "Paste your NovelAI persistent API token here",
   "settings.novelai.api_key_set": "A key is saved",
   "settings.novelai.api_key_set_hint": "Key saved. It is never shown again.",

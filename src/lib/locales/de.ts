@@ -2010,7 +2010,7 @@ const de: Record<string, string> = {
   "settings.civitai.api_key_link": "Schlüssel unter civitai.com/user/account erstellen",
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "API-Schlüssel",
-  "settings.novelai.api_key_desc": "Fügt die Bildmodelle von NovelAI zur Modellliste hinzu. Generierungen laufen auf den Servern von NovelAI und verbrauchen Ihr Anlas.",
+  "settings.novelai.api_key_desc": "Fügt die Bildmodelle von NovelAI zur Modellliste hinzu. Generierungen laufen auf den Servern von NovelAI und verbrauchen Ihr Anlas. Der Schlüssel gehört zu Ihrem Konto und wird verschlüsselt gespeichert.",
   "settings.novelai.api_key_placeholder": "Fügen Sie hier Ihren dauerhaften NovelAI-API-Token ein",
   "settings.novelai.api_key_set": "Ein Schlüssel ist gespeichert",
   "settings.novelai.api_key_set_hint": "Schlüssel gespeichert. Er wird nie wieder angezeigt.",
