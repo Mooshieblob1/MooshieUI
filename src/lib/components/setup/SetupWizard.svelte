@@ -271,9 +271,13 @@
   });
 
   const gpuOptions = $derived([
-    { value: "nvidia", label: locale.t("setup.gpu.nvidia"), icon: "🟢", color: "bg-green-900/50 text-green-400" },
-    { value: "amd", label: locale.t("setup.gpu.amd"), icon: "🔴", color: "bg-red-900/50 text-red-400" },
-    { value: "intel", label: locale.t("setup.gpu.intel"), icon: "🔵", color: "bg-blue-900/50 text-blue-400" },
+    ...(detectedGpu === "mps" ? [
+      { value: "mps", label: locale.t("setup.gpu.mps"), icon: "🔵", color: "bg-blue-900/50 text-blue-400" },
+    ] : [
+      { value: "nvidia", label: locale.t("setup.gpu.nvidia"), icon: "🟢", color: "bg-green-900/50 text-green-400" },
+      { value: "amd", label: locale.t("setup.gpu.amd"), icon: "🔴", color: "bg-red-900/50 text-red-400" },
+      { value: "intel", label: locale.t("setup.gpu.intel"), icon: "🔵", color: "bg-blue-900/50 text-blue-400" },
+    ]),
     { value: "cpu", label: locale.t("setup.gpu.cpu"), icon: "⚪", color: "bg-neutral-700 text-neutral-400" },
   ]);
 
@@ -543,17 +547,6 @@
         {:else}
         <!-- GPU Selection -->
         <div class="mb-6">
-          {#if gpu === "mps"}
-            <div class="bg-neutral-800 rounded-lg p-4">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-blue-900/50 text-blue-400">🔵</div>
-                <div>
-                  <p class="text-sm font-medium text-neutral-200">{locale.t("setup.gpu.mps")}</p>
-                  <p class="text-xs text-neutral-500">{locale.t('setup.gpu.mps_note')}</p>
-                </div>
-              </div>
-            </div>
-          {:else}
             <p class="text-xs text-neutral-400 mb-2">{locale.t('setup.gpu_section')}</p>
             <div class="space-y-1.5">
               {#each gpuOptions as opt}
@@ -581,7 +574,6 @@
             {#if gpu === "cpu"}
               <p class="text-xs text-amber-400/70 mt-2">{locale.t('setup.gpu.cpu_warning')}</p>
             {/if}
-          {/if}
         </div>
 
         <!-- Advanced Options (NVIDIA only — attention backend selection) -->

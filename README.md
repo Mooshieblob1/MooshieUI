@@ -1,7 +1,7 @@
 # MooshieUI
 
 MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that runs in two modes:
-- **Desktop app** via Tauri (Windows/Linux, macOS source build)
+- **Desktop app** via Tauri (Windows/Linux; [native Apple Silicon macOS candidates](docs/MACOS.md))
 - **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile UI)
 
 Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity behind a clean, guided workflow so you can generate without hand-editing graphs.

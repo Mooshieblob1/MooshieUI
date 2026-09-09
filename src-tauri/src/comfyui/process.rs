@@ -370,6 +370,12 @@ fn attention_backend_flag(backend: &str) -> Option<AttentionBackend> {
 /// omit this entirely, so multi-GPU users rendered at SDPA speed while the settings
 /// UI reported sage or flash was on.
 fn apply_attention_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
+    if cfg!(target_os = "macos") {
+        if config.attention_backend != "default" {
+            log::warn!("Using default attention on macOS; Sage/Flash require CUDA.");
+        }
+        return;
+    }
     let Some(backend) = attention_backend_flag(config.attention_backend.as_str()) else {
         return;
     };
@@ -846,7 +852,17 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                         let uv_str = uv.to_string_lossy().to_string();
                         let mut repair = tokio_command_no_window(&uv_str);
                         repair
-                            .args(["venv", &venv_str, "--python", "3.11", "--allow-existing"])
+                            .args([
+                                "venv",
+                                &venv_str,
+                                "--python",
+                                if cfg!(target_os = "macos") {
+                                    super::runtime::MACOS_PYTHON.trim()
+                                } else {
+                                    "3.11"
+                                },
+                                "--allow-existing",
+                            ])
                             .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
                             .stdout(std::process::Stdio::null())
                             .stderr(std::process::Stdio::null());
@@ -881,6 +897,9 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         )));
     }
 
+    #[cfg(target_os = "macos")]
+    super::runtime::validate_macos_args(&config.extra_args)?;
+
     log::info!("Spawning ComfyUI: {} {}", python_path, main_path);
 
     let mut cmd = tokio::process::Command::new(&python_path);
@@ -908,7 +927,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     }
 
     // VRAM management flag (mutually exclusive with --cpu, so skip when forcing CPU)
-    if !force_cpu {
+    if !force_cpu && !config.extra_args.iter().any(|a| a == "--cpu") {
         match config.vram_mode.as_str() {
             "high" => {
                 apply_highvram_flag(&mut cmd, &config);
@@ -1479,6 +1498,8 @@ pub async fn start_worker_process(
     worker: &Arc<GpuWorker>,
 ) -> Result<(), AppError> {
     let config = state.config.read().await.clone();
+    #[cfg(target_os = "macos")]
+    super::runtime::validate_macos_args(&config.extra_args)?;
 
     // Deploy custom nodes (same as single-process path)
     if !config.comfyui_path.is_empty() {
@@ -1650,7 +1671,7 @@ pub async fn start_worker_process(
     }
 
     // VRAM mode: worker-specific override > global config (mutually exclusive with --cpu)
-    if !force_cpu {
+    if !force_cpu && !config.extra_args.iter().any(|a| a == "--cpu") {
         let vram_mode = worker
             .vram_mode
             .as_deref()

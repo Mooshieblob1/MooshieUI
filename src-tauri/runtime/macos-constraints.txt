@@ -1,0 +1,4 @@
+# Native Apple Silicon runtime. Shared by setup, package installs, and Mac CI.
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0

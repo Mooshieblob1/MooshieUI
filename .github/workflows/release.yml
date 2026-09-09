@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -55,6 +57,12 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - name: Verify release versions
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/verify-release-version.mjs "$RELEASE_TAG"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
@@ -89,21 +97,21 @@ jobs:
       # shared state entirely. AppImage is built first since it's the only format
       # our updater manifest (latest.json) actually distributes.
       - name: Build Tauri app (Linux, AppImage)
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --target ${{ matrix.target }} --bundles appimage
 
       - name: Build Tauri app (Linux, deb)
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --target ${{ matrix.target }} --bundles deb
 
       - name: Build Tauri app (Linux, rpm)
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -121,13 +129,28 @@ jobs:
         with:
           name: artifacts-${{ matrix.target }}
           path: src-tauri/target/${{ matrix.target }}/release/bundle/
-          if-no-files-found: warn
+          if-no-files-found: error
+
+  # Enable only after the physical-Mac acceptance checks in docs/MACOS.md.
+  build-macos:
+    if: vars.MACOS_RELEASE_ENABLED == 'true'
+    uses: ./.github/workflows/macos-native.yml
+    with:
+      source_ref: ${{ github.event.inputs.tag || github.ref_name }}
+      release: true
+    secrets: inherit
 
   release:
-    needs: build
+    needs: [build, build-macos]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout release scripts and notes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -135,70 +158,20 @@ jobs:
           pattern: artifacts-*
           merge-multiple: true
 
-      - name: Collect release files
-        run: |
-          mkdir -p release-files
-          find artifacts -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage*" -o -name "*.exe" -o -name "*.exe.sig" -o -name "*.msi*" -o -name "*.nsis.zip*" \) -exec cp {} release-files/ \;
-          echo "=== Release files ==="
-          ls -lh release-files/ || echo "No release files found"
-          [ -f "$(find release-files -type f -print -quit)" ] || { echo "ERROR: No release files collected, aborting"; exit 1; }
-
-      - name: Generate updater manifest (latest.json)
+      - name: Collect installers, updater manifest and checksums
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          REPO_URL: https://github.com/${{ github.repository }}/releases/download
+          REPOSITORY: ${{ github.repository }}
+          INCLUDE_MACOS: ${{ needs.build-macos.result == 'success' }}
         run: |
-          VERSION="${TAG#v}"
-          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-          # Discover updater artifact names from actual files to avoid tag/version mismatch issues.
-          LINUX_BUNDLE=$(find release-files -maxdepth 1 -type f -name "*.AppImage" -printf "%f\n" | head -n1)
-          WINDOWS_BUNDLE=$(find release-files -maxdepth 1 -type f -name "*x64-setup.exe" -printf "%f\n" | head -n1)
-
-          if [ -z "$LINUX_BUNDLE" ] || [ -z "$WINDOWS_BUNDLE" ]; then
-            echo "Missing updater artifacts: linux='$LINUX_BUNDLE' windows='$WINDOWS_BUNDLE'"
-            exit 1
-          fi
-
-          if [ ! -f "release-files/${LINUX_BUNDLE}.sig" ] || [ ! -f "release-files/${WINDOWS_BUNDLE}.sig" ]; then
-            echo "Missing updater signatures: linux='${LINUX_BUNDLE}.sig' windows='${WINDOWS_BUNDLE}.sig'"
-            exit 1
-          fi
-
-          APPIMAGE_SIG=$(cat "release-files/${LINUX_BUNDLE}.sig")
-          WINDOWS_SIG=$(cat "release-files/${WINDOWS_BUNDLE}.sig")
-
-          # Build latest.json with jq for proper escaping
-          jq -n \
-            --arg version "$VERSION" \
-            --arg notes "MooshieUI ${TAG}" \
-            --arg pub_date "$PUB_DATE" \
-            --arg linux_sig "$APPIMAGE_SIG" \
-            --arg linux_url "${REPO_URL}/${TAG}/${LINUX_BUNDLE}" \
-            --arg win_sig "$WINDOWS_SIG" \
-            --arg win_url "${REPO_URL}/${TAG}/${WINDOWS_BUNDLE}" \
-            '{
-              version: $version,
-              notes: $notes,
-              pub_date: $pub_date,
-              platforms: {
-                "linux-x86_64": { signature: $linux_sig, url: $linux_url },
-                "windows-x86_64": { signature: $win_sig, url: $win_url }
-              }
-            }' > release-files/latest.json
-
-          echo "=== latest.json ==="
-          cat release-files/latest.json
-
-      - name: Preserve release files before checkout
-        run: cp -r release-files /tmp/release-files
-
-      - name: Checkout (for release notes)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          args=(--source artifacts --output release-files --tag "$TAG" --repo "$REPOSITORY")
+          if [ "$INCLUDE_MACOS" = 'true' ]; then args+=(--macos); fi
+          python3 scripts/release_artifacts.py "${args[@]}"
 
       - name: Create or update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INCLUDE_MACOS: ${{ needs.build-macos.result == 'success' }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           # Build release body: installer blurb + changelog from RELEASE_NOTES.md
@@ -215,6 +188,14 @@ jobs:
             '' \
             > /tmp/release-body.md
 
+          if [ "$INCLUDE_MACOS" = 'true' ]; then
+            printf '%s\n' \
+              '### macOS (Apple Silicon)' \
+              'Download the `_aarch64.dmg` for macOS 14 or later. Verify its SHA-256 against `SHA256SUMS`, copy MooshieUI to Applications, and open it. This app is ad-hoc signed and is not notarized by Apple; if blocked, use System Settings > Privacy & Security > Open Anyway.' \
+              'See [Mac installation and supported scope](https://github.com/${{ github.repository }}/blob/${{ github.event.inputs.tag || github.ref_name }}/docs/MACOS.md).' \
+              '' >> /tmp/release-body.md
+          fi
+
           # Append only this version's section from RELEASE_NOTES.md
           if [ -f RELEASE_NOTES.md ]; then
             # Extract from "## What's New in vX.Y.Z" until the next "---" or next version heading
@@ -222,6 +203,13 @@ jobs:
           fi
 
           if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            if [ "$INCLUDE_MACOS" = 'true' ]; then
+              immutable=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.immutable // false')
+              if [ "$immutable" = 'true' ]; then
+                echo "::error::Release ${TAG} is immutable. Mac installers must be included before publication; use a new release tag."
+                exit 1
+              fi
+            fi
             echo "Release ${TAG} already exists; updating notes and replacing assets."
             gh release edit "${TAG}" \
               --repo "${{ github.repository }}" \
@@ -231,8 +219,13 @@ jobs:
             if ! gh release upload "${TAG}" \
               --repo "${{ github.repository }}" \
               --clobber \
-              /tmp/release-files/* >"${upload_log}" 2>&1; then
+              release-files/* >"${upload_log}" 2>&1; then
               if grep -qi "immutable release" "${upload_log}"; then
+                if [ "$INCLUDE_MACOS" = 'true' ]; then
+                  cat "${upload_log}"
+                  echo '::error::Mac assets were not published. Use a new release tag.'
+                  exit 1
+                fi
                 echo "Release ${TAG} is immutable; keeping existing release assets."
               else
                 cat "${upload_log}"
@@ -246,7 +239,7 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "MooshieUI ${TAG}" \
               --notes-file /tmp/release-body.md \
-              /tmp/release-files/*
+              release-files/*
           fi
 
   # -------------------------------------------------------------------------
@@ -258,6 +251,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Prepare local build caches (NUC)
         if: env.USE_NUC_RUNNER == 'true'
@@ -331,6 +326,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0

@@ -3660,7 +3660,7 @@ async fn dispatch_command(
                         true,
                         network_proxy,
                         pip_index_url,
-                    );
+                    )?;
                     cmd.status()
                         .await
                         .map_err(|e| format!("uv pip install failed: {}", e))?
@@ -3677,7 +3677,7 @@ async fn dispatch_command(
                         false,
                         network_proxy,
                         pip_index_url,
-                    );
+                    )?;
                     cmd.status()
                         .await
                         .map_err(|e| format!("pip install failed: {}", e))?
@@ -3723,7 +3723,7 @@ async fn dispatch_command(
                     true,
                     network_proxy,
                     pip_index_url,
-                );
+                )?;
                 cmd.output()
                     .await
                     .map_err(|e| format!("uv pip install failed to start: {}", e))?
@@ -3740,7 +3740,7 @@ async fn dispatch_command(
                     false,
                     network_proxy,
                     pip_index_url,
-                );
+                )?;
                 cmd.output()
                     .await
                     .map_err(|e| format!("pip install failed to start: {}", e))?

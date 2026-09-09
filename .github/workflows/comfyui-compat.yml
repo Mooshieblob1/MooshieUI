@@ -179,11 +179,41 @@ jobs:
             smoke-summary.json
           if-no-files-found: warn
 
+  macos-smoke-test:
+    name: Apple Silicon runtime compatibility
+    needs: detect
+    if: needs.detect.outputs.should_test == 'true'
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/macos-runtime/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install managed runtime and check candidate ComfyUI
+        env:
+          COMFYUI_REF: ${{ needs.detect.outputs.target_ref }}
+        run: |
+          mkdir -p macos-runtime/bin
+          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          tar -xzf macos-runtime/uv.tar.gz --strip-components=1 -C macos-runtime/bin
+          python3 scripts/macos/setup_runtime.py --uv "$PWD/macos-runtime/bin/uv" --work-dir "$PWD/macos-runtime" --comfyui-ref "$COMFYUI_REF"
+      - name: Upload Mac runtime evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: comfyui-compat-macos-${{ needs.detect.outputs.target_ref }}
+          path: |
+            macos-runtime/runtime-report.json
+            macos-runtime/node-summary.json
+            macos-runtime/requirements-resolved.txt
+            macos-runtime/ComfyUI-*/comfyui-smoke.log
+          if-no-files-found: warn
+
   propose:
     name: Open pin-bump PR
-    needs: [detect, smoke-test]
+    needs: [detect, smoke-test, macos-smoke-test]
     # Only when the bundled nodes passed AND the candidate is strictly newer.
-    if: needs.smoke-test.result == 'success' && needs.detect.outputs.is_newer == 'true'
+    if: needs.smoke-test.result == 'success' && needs.macos-smoke-test.result == 'success' && needs.detect.outputs.is_newer == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

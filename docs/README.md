@@ -8,6 +8,8 @@ Project docs that are not release notes or AI workflow prompts.
 | [FEATURE_RESEARCH.md](FEATURE_RESEARCH.md) | Feature research shortlist (local/offline-first) |
 | [METADATA_CARRIERS.md](METADATA_CARRIERS.md) | Where generation metadata lives per output format, and what survives |
 | [NOVELAI.md](NOVELAI.md) | The NovelAI generation backend: architecture, the free local post-process, and known unknowns |
+| [MACOS_RELEASE_PLAN.md](MACOS_RELEASE_PLAN.md) | macOS 2.3.1 release requirements and Apple Silicon validation gates |
+| [MACOS.md](MACOS.md) | Apple Silicon candidate installation, validation, and release gating |
 | [superpowers/plans/](superpowers/plans/) | Implementation plans (superpowers workflow) |
 | [superpowers/specs/](superpowers/specs/) | Design specs paired with plans |
 

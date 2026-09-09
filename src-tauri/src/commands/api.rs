@@ -3056,7 +3056,7 @@ pub async fn install_custom_node(
                 true,
                 network_proxy,
                 pip_index_url,
-            );
+            )?;
             cmd.spawn()
                 .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
         } else {
@@ -3075,7 +3075,7 @@ pub async fn install_custom_node(
                 false,
                 network_proxy,
                 pip_index_url,
-            );
+            )?;
             cmd.spawn()
                 .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
         };
@@ -3162,7 +3162,7 @@ pub async fn install_pip_package(
             true,
             network_proxy,
             pip_index_url,
-        );
+        )?;
         cmd.output()
             .await
             .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
@@ -3181,7 +3181,7 @@ pub async fn install_pip_package(
             false,
             network_proxy,
             pip_index_url,
-        );
+        )?;
         cmd.output()
             .await
             .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
@@ -7919,7 +7919,7 @@ pub async fn install_attention_backend_core(
             true,
             network_proxy.as_deref(),
             pip_index_url.as_deref(),
-        );
+        )?;
 
         let output = cmd
             .output()

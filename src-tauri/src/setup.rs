@@ -728,8 +728,13 @@ async fn step_create_venv(
 async fn detect_gpu_type() -> String {
     #[cfg(target_os = "macos")]
     {
-        log::info!("GPU detection: macOS detected, using MPS");
-        return "mps".to_string();
+        // Platform eligibility only; verify the installed Python after setup.
+        return if cfg!(target_arch = "aarch64") {
+            "mps"
+        } else {
+            "cpu"
+        }
+        .to_string();
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1038,8 +1043,9 @@ async fn uv_pip(
             true,
             net.network_proxy.as_deref(),
             net.pip_index_url.as_deref(),
-        );
+        )?;
     } else {
+        crate::comfyui::runtime::apply_constraints(&mut cmd)?;
         crate::comfyui::nodes::apply_network_proxy(&mut cmd, net.network_proxy.as_deref());
     }
 
@@ -1368,7 +1374,18 @@ async fn step_install_pytorch(
                 base,
                 &["torch", "torchvision", "torchaudio"],
                 net,
-                false,
+                true,
+            )
+            .await
+        }
+        "cpu" if cfg!(target_os = "macos") => {
+            // CPU execution uses the same native PyPI wheels as MPS on macOS.
+            uv_pip(
+                app,
+                base,
+                &["torch", "torchvision", "torchaudio"],
+                net,
+                true,
             )
             .await
         }
@@ -1423,7 +1440,7 @@ async fn step_install_deps(
         true,
         net.network_proxy.as_deref(),
         net.pip_index_url.as_deref(),
-    );
+    )?;
 
     // Keep the underlying cause: the common failures here (a corrupted
     // site-packages path, a proxy rejection, a full disk) are only actionable if
@@ -1796,32 +1813,15 @@ async fn detect_vram_mb() -> u64 {
         }
     }
 
-    // macOS: use system_profiler for GPU VRAM
+    // Apple Silicon has unified memory, not dedicated VRAM. Report it in
+    // diagnostics while leaving ComfyUI in its shared-memory default mode.
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = tokio::process::Command::new("system_profiler")
-            .args(["SPDisplaysDataType"])
-            .output()
-            .await
-        {
-            if output.status.success() {
-                let text = String::from_utf8_lossy(&output.stdout);
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("VRAM") || trimmed.contains("Memory:") {
-                        for word in trimmed.split_whitespace() {
-                            if let Ok(val) = word.parse::<u64>() {
-                                if trimmed.contains("GB") {
-                                    return val * 1024;
-                                } else if trimmed.contains("MB") {
-                                    return val;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let system = sysinfo::System::new_all();
+        log::info!(
+            "Apple unified memory: {} MiB (shared with macOS)",
+            system.total_memory() / (1024 * 1024)
+        );
     }
 
     0
@@ -2382,6 +2382,8 @@ pub async fn run_setup(
     network_proxy: Option<String>,
     pip_index_url: Option<String>,
 ) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    crate::comfyui::runtime::validate_host()?;
     let net = SetupNetworkOpts::from_options(network_proxy.clone(), pip_index_url.clone());
     // If user chose a custom install path, save it as the bootstrap pointer
     // before anything else so all subsequent path resolution uses it.
@@ -2415,11 +2417,24 @@ pub async fn run_setup(
         Some(ref g) if !g.is_empty() => g.clone(),
         _ => detect_gpu_type().await,
     };
+    #[cfg(target_os = "macos")]
+    if !matches!(gpu.as_str(), "mps" | "cpu") {
+        return Err(AppError::Other(
+            "Apple Silicon supports Apple Metal or CPU. Select one of those backends in setup."
+                .into(),
+        ));
+    }
     #[cfg(target_os = "windows")]
     let amd_windows_rocm = gpu == "amd" && detect_amd_windows_rocm_supported().await;
     #[cfg(not(target_os = "windows"))]
     let amd_windows_rocm = false;
-    let python_version = if amd_windows_rocm { "3.12" } else { "3.11" };
+    let python_version = if cfg!(target_os = "macos") {
+        crate::comfyui::runtime::MACOS_PYTHON.trim()
+    } else if amd_windows_rocm {
+        "3.12"
+    } else {
+        "3.11"
+    };
 
     // 2. Install Python
     emit(
@@ -2468,6 +2483,13 @@ pub async fn run_setup(
     emit(&app, "deps", "Installing ComfyUI dependencies...", 75);
     step_install_deps(&app, &base, &net).await?;
 
+    #[cfg(target_os = "macos")]
+    {
+        let report =
+            crate::comfyui::runtime::verify_python(&venv_python(&base), gpu == "mps").await?;
+        emit_log(&app, &format!("Apple Silicon runtime verified: {report}"));
+    }
+
     // 6b. Quantization (convrot) kernels: comfy-kitchen ships with the deps above,
     // but needs Triton for its fast path on Windows. Both steps are non-fatal.
     ensure_quant_kernel_backend(&app, &base, &net).await;
@@ -2482,6 +2504,13 @@ pub async fn run_setup(
         .as_deref()
         .unwrap_or("default")
         .to_string();
+    if gpu != "nvidia" && attention != "default" {
+        emit_log(
+            &app,
+            "Using default attention: optional Sage/Flash backends require NVIDIA CUDA.",
+        );
+        attention = "default".to_string();
+    }
     if attention != "default" {
         emit(
             &app,
@@ -2514,7 +2543,12 @@ pub async fn run_setup(
         95,
     );
     let vram_mb = detect_vram_mb().await;
-    let vram_mode = recommended_vram_mode(vram_mb);
+    // ComfyUI manages Apple shared memory. Total system RAM is not free VRAM.
+    let vram_mode = if cfg!(target_os = "macos") {
+        "normal"
+    } else {
+        recommended_vram_mode(vram_mb)
+    };
     log::info!(
         "Detected {}MB VRAM, setting vram_mode={}",
         vram_mb,
@@ -2524,6 +2558,8 @@ pub async fn run_setup(
         let mut cfg = state.config.write().await;
         cfg.comfyui_path = base.join("comfyui").to_string_lossy().to_string();
         cfg.venv_path = base.join("venv").to_string_lossy().to_string();
+        #[cfg(target_os = "macos")]
+        crate::comfyui::runtime::set_macos_cpu_mode(&mut cfg.extra_args, gpu == "cpu");
         cfg.vram_mode = vram_mode.to_string();
         cfg.attention_backend = attention;
         cfg.network_proxy = net.network_proxy.clone();

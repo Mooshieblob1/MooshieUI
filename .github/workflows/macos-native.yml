@@ -1,0 +1,109 @@
+name: macOS Native Validation
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'src/**'
+      - 'comfyui-nodes/**'
+      - 'package*.json'
+      - 'scripts/macos/**'
+      - 'scripts/comfyui-compat/**'
+      - '.github/workflows/macos-native.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        default: ''
+      release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Apple Silicon build and runtime
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '2'
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      APPLE_SIGNING_IDENTITY: '-'
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/macos-runtime/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: src-tauri
+          key: macos-native
+          cache-on-failure: true
+      - name: Frontend checks
+        run: |
+          npm ci
+          npm run build
+          npm run check:i18n
+          npx svelte-check --output machine > svelte-check.txt 2>&1 || true
+          # Existing type debt is reported; PR Guardrails separately blocks new errors.
+          tail -n 1 svelte-check.txt
+          python3 -m unittest discover -s scripts -p test_release_artifacts.py
+      - name: Verify release version
+        if: ${{ inputs.release }}
+        env:
+          RELEASE_TAG: ${{ inputs.source_ref }}
+        run: node scripts/verify-release-version.mjs "$RELEASE_TAG"
+      - name: Native Rust checks
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
+      - name: Build candidate DMG
+        if: ${{ !inputs.release }}
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Build release DMG and signed updater
+        if: ${{ inputs.release }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+      - name: Verify app and disk image
+        run: python3 scripts/macos/verify_bundle.py --bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle --output-dir macos-reports
+      - name: Install the native managed runtime and check nodes
+        run: |
+          mkdir -p macos-runtime/bin
+          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          tar -xzf macos-runtime/uv.tar.gz --strip-components=1 -C macos-runtime/bin
+          python3 scripts/macos/setup_runtime.py --uv "$PWD/macos-runtime/bin/uv" --work-dir "$PWD/macos-runtime"
+      - name: Upload candidate and evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ${{ inputs.release && 'artifacts-aarch64-apple-darwin' || 'macos-candidate' }}
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz*
+            macos-reports/
+            macos-runtime/runtime-report.json
+            macos-runtime/node-summary.json
+            macos-runtime/requirements-resolved.txt
+            macos-runtime/ComfyUI-*/comfyui-smoke.log
+            svelte-check.txt
+          if-no-files-found: error
+      - name: Validation scope
+        if: always()
+        run: |
+          echo '### Apple Silicon candidate' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Build, signature, runtime and node checks are automated. Finder/Gatekeeper, real model generation on MPS, and in-app update testing must pass on a physical Mac before enabling MACOS_RELEASE_ENABLED.' >> "$GITHUB_STEP_SUMMARY"
