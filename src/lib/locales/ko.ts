@@ -1990,7 +1990,7 @@ const ko: Record<string, string> = {
   "settings.civitai.api_key_link": "civitai.com/user/account 에서 키 발급",
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "API 키",
-  "settings.novelai.api_key_desc": "NovelAI 이미지 모델을 모델 목록에 추가합니다. 생성은 NovelAI 서버에서 실행되며 Anlas를 소모합니다.",
+  "settings.novelai.api_key_desc": "NovelAI 이미지 모델을 모델 목록에 추가합니다. 생성은 NovelAI 서버에서 실행되며 Anlas를 소모합니다. 키는 내 계정에 속하며 암호화되어 저장됩니다.",
   "settings.novelai.api_key_placeholder": "NovelAI 영구 API 토큰을 여기에 붙여넣으세요",
   "settings.novelai.api_key_set": "키가 저장되어 있습니다",
   "settings.novelai.api_key_set_hint": "키를 저장했습니다. 다시 표시되지 않습니다.",

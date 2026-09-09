@@ -24,6 +24,7 @@ pub mod state;
 pub mod temp_images;
 pub mod templates;
 pub mod user_prefs;
+pub mod user_secrets;
 pub mod webserver;
 
 use std::sync::Arc;

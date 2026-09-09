@@ -1990,7 +1990,7 @@ const zhTw: Record<string, string> = {
   "settings.civitai.api_key_link": "於 civitai.com/user/account 取得金鑰",
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "API 金鑰",
-  "settings.novelai.api_key_desc": "將 NovelAI 的圖像模型加入模型清單。生成在 NovelAI 的伺服器上執行，並消耗你的 Anlas。",
+  "settings.novelai.api_key_desc": "將 NovelAI 的圖像模型加入模型清單。生成在 NovelAI 的伺服器上執行，並消耗你的 Anlas。金鑰屬於您的帳戶，並以加密方式儲存。",
   "settings.novelai.api_key_placeholder": "在此貼上你的 NovelAI 永久 API 權杖",
   "settings.novelai.api_key_set": "已儲存金鑰",
   "settings.novelai.api_key_set_hint": "金鑰已儲存，不會再次顯示。",

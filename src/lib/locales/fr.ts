@@ -2014,7 +2014,7 @@ const fr: Record<string, string> = {
   "settings.civitai.api_key_link": "Obtenir votre clé sur civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "Clé API",
-  "settings.novelai.api_key_desc": "Ajoute les modèles d'image de NovelAI à la liste des modèles. Les générations s'exécutent sur les serveurs de NovelAI et consomment vos Anlas.",
+  "settings.novelai.api_key_desc": "Ajoute les modèles d'image de NovelAI à la liste des modèles. Les générations s'exécutent sur les serveurs de NovelAI et consomment vos Anlas. La clé appartient à votre compte et est stockée chiffrée.",
   "settings.novelai.api_key_placeholder": "Collez ici votre jeton API persistant NovelAI",
   "settings.novelai.api_key_set": "Une clé est enregistrée",
   "settings.novelai.api_key_set_hint": "Clé enregistrée. Elle n'est plus jamais affichée.",

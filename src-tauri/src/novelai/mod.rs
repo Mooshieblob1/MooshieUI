@@ -36,6 +36,71 @@ pub use client::NovelAiClient;
 pub use models::is_novelai_model;
 pub use response::{StreamEvent, Subscription};
 
+/// A resolved NovelAI API key, tied to whoever is paying for the request.
+///
+/// A newtype rather than a bare `String` for two reasons. It makes "whose key
+/// is this" a compile-time question at every call site, and its `Debug` is
+/// redacted, so the token cannot reach the ring-buffer log through a `{:?}` on
+/// some enclosing struct. The log buffer ships to users in diagnostic exports.
+///
+/// Never put this inside `GenerationParams` or `PreparedAugment`: both are
+/// serialised, logged, and written into image metadata.
+#[derive(Clone)]
+pub struct NaiCredential(String);
+
+impl NaiCredential {
+    pub fn new(key: String) -> Self {
+        Self(key)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for NaiCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NaiCredential(***)")
+    }
+}
+
+/// Resolve whose NovelAI key pays for this request.
+///
+/// `None` means the desktop app, a localhost caller, or an admin account:
+/// `webserver::resolve_username` collapses all three to `None`, and they share
+/// the instance owner's key in `config`, exactly as before per-account keys
+/// existed.
+///
+/// `Some(user)` is a named account on a hosted server. It uses its own key or
+/// it does not generate: falling back to the host's key would put several
+/// humans on one NovelAI subscription, which its terms of service forbid, and
+/// would bill the host for a guest's work.
+///
+/// Call this at the request edge, before a prompt id is minted, so a missing
+/// key fails the caller's own call instead of arriving later as an
+/// `execution_error` against an id the frontend has already committed to.
+pub async fn resolve_credential(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+) -> Result<NaiCredential, AppError> {
+    match username {
+        None => {
+            let key = {
+                let config = state.config.read().await;
+                config.novelai_api_key.clone().unwrap_or_default()
+            };
+            Ok(NaiCredential::new(key))
+        }
+        Some(user) => crate::user_secrets::load_nai_key(user)
+            .map(NaiCredential::new)
+            .ok_or_else(|| {
+                AppError::Other(
+                    "No NovelAI API key on this account. Add your own key in Settings.".to_string(),
+                )
+            }),
+    }
+}
+
 /// Mint the synthetic prompt id a NovelAI generation reports under.
 pub fn new_prompt_id() -> String {
     format!("nai-{}", uuid::Uuid::new_v4())
@@ -618,8 +683,9 @@ pub async fn run(
     sink: EventSink,
     prompt_id: String,
     params: GenerationParams,
+    credential: NaiCredential,
 ) -> Result<RunOutcome, AppError> {
-    match run_inner(&state, &sink, &prompt_id, &params).await {
+    match run_inner(&state, &sink, &prompt_id, &params, &credential).await {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
             sink.emit(
@@ -641,12 +707,9 @@ async fn run_inner(
     sink: &EventSink,
     prompt_id: &str,
     params: &GenerationParams,
+    credential: &NaiCredential,
 ) -> Result<RunOutcome, AppError> {
-    let api_key = {
-        let config = state.config.read().await;
-        config.novelai_api_key.clone().unwrap_or_default()
-    };
-    let client = NovelAiClient::new(&state.http_client, &api_key)?;
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
 
     // Checked before anything else touches the payload. An upscale has no
     // prompt to encode, no vibes to pay for and no steps to report against, so
@@ -1021,12 +1084,11 @@ async fn deliver_image(sink: &EventSink, prompt_id: &str, png: &[u8]) {
 }
 
 /// Fetch the subscription record backing the Anlas and Opus readouts.
-pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, AppError> {
-    let api_key = {
-        let config = state.config.read().await;
-        config.novelai_api_key.clone().unwrap_or_default()
-    };
-    let client = NovelAiClient::new(&state.http_client, &api_key)?;
+pub async fn fetch_subscription(
+    state: &Arc<AppState>,
+    credential: &NaiCredential,
+) -> Result<Subscription, AppError> {
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
     let mut sub = client.subscription().await?;
     sub.derive_opus_allowance();
 
@@ -1044,6 +1106,19 @@ pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_credential_does_not_print_its_secret() {
+        // The credential is passed through spawned tasks and error paths; one
+        // stray `{:?}` must not be enough to put a NovelAI token in the log
+        // buffer, which ships to users in diagnostic exports.
+        let cred = NaiCredential::new("pst-super-secret-token".to_string());
+        let rendered = format!("{cred:?}");
+        assert!(!rendered.contains("pst-super-secret-token"));
+        assert_eq!(rendered, "NaiCredential(***)");
+        // The value is still readable through the accessor.
+        assert_eq!(cred.as_str(), "pst-super-secret-token");
+    }
 
     /// Only a ComfyUI upload name gets resolved; image data of either shape
     /// passes through untouched.

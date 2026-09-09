@@ -2109,7 +2109,7 @@ const pl: Record<string, string> = {
   "settings.civitai.api_key_link": "Pobierz swój klucz na civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "Klucz API",
-  "settings.novelai.api_key_desc": "Dodaje modele obrazów NovelAI do listy modeli. Generowanie odbywa się na serwerach NovelAI i zużywa twoje Anlas.",
+  "settings.novelai.api_key_desc": "Dodaje modele obrazów NovelAI do listy modeli. Generowanie odbywa się na serwerach NovelAI i zużywa twoje Anlas. Klucz należy do Twojego konta i jest przechowywany w postaci zaszyfrowanej.",
   "settings.novelai.api_key_placeholder": "Wklej tutaj swój trwały token API NovelAI",
   "settings.novelai.api_key_set": "Klucz jest zapisany",
   "settings.novelai.api_key_set_hint": "Klucz zapisany. Nie zostanie ponownie pokazany.",
