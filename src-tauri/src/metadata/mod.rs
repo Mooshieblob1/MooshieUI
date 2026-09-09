@@ -1534,6 +1534,73 @@ mod tests {
         output
     }
 
+    /// A PNG carrying the tEXt chunks NovelAI writes into its own output.
+    fn make_novelai_png(width: u32, height: u32) -> Vec<u8> {
+        let mut output = Vec::new();
+        let buf = vec![128u8; (width as usize) * (height as usize) * 4];
+        {
+            let mut encoder = png::Encoder::new(&mut output, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            for (keyword, text) in [
+                ("Title", "AI generated image"),
+                ("Description", "1girl, standing"),
+                ("Software", "NovelAI"),
+                ("Source", "NovelAI Diffusion V4 ABC123"),
+                (
+                    "Comment",
+                    "{\"seed\": 577536437, \"width\": 8, \"height\": 8}",
+                ),
+            ] {
+                encoder
+                    .add_text_chunk(keyword.to_string(), text.to_string())
+                    .unwrap();
+            }
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&buf).unwrap();
+        }
+        output
+    }
+
+    /// NovelAI's own chunks are what novelai.net reads back on import, and a
+    /// re-encode drops every one of them. Embedding must therefore hand a
+    /// NovelAI PNG straight back rather than rewriting it.
+    #[test]
+    fn embedding_preserves_novelai_png_byte_for_byte() {
+        let png_bytes = make_novelai_png(8, 8);
+        assert!(png_carries_novelai_metadata(&png_bytes));
+
+        let mut params = HashMap::new();
+        params.insert("positive_prompt".to_string(), "1girl, standing".to_string());
+        params.insert("seed".to_string(), "577536437".to_string());
+
+        for mode in [
+            MetadataMode::TextChunk,
+            MetadataMode::StealthAlpha,
+            MetadataMode::Both,
+        ] {
+            let embedded = embed_image_metadata(&png_bytes, &params, mode).unwrap();
+            assert_eq!(embedded, png_bytes, "NovelAI PNG was rewritten in {mode:?}");
+        }
+    }
+
+    /// The guard keys off NovelAI's chunks, so an image whose chunks a local
+    /// post-process already stripped must take the normal embedding path.
+    #[test]
+    fn embedding_still_writes_metadata_for_non_novelai_png() {
+        let png_bytes = make_test_png(8, 8, false);
+        assert!(!png_carries_novelai_metadata(&png_bytes));
+
+        let mut params = HashMap::new();
+        params.insert("seed".to_string(), "577536437".to_string());
+
+        let embedded = embed_image_metadata(&png_bytes, &params, MetadataMode::TextChunk).unwrap();
+        assert_ne!(embedded, png_bytes);
+        let decoder = png::Decoder::new(Cursor::new(embedded.as_slice()));
+        let reader = decoder.read_info().unwrap();
+        assert!(png_text_chunks(reader.info()).contains_key("parameters"));
+    }
+
     #[test]
     fn stealth_alpha_round_trip_8bit() {
         let png_bytes = make_test_png(64, 64, false);
