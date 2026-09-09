@@ -1,14 +1,19 @@
 //! Per-account third-party credentials, encrypted at rest.
 //!
-//! Sibling to [`crate::user_prefs`]: same `{app_data}/users/{username}/`
-//! layout, same username sanitisation, but the payload is a credential that
-//! belongs to the account holder rather than to the instance owner.
+//! Sibling to [`crate::user_prefs`]: both live under `{app_data}/users/`, but
+//! this module suffixes each directory with a hash of the raw username (see
+//! `sanitize_username` below) to keep lookalike accounts such as `bob` and
+//! `b.o.b` from colliding, and the payload here is a credential that belongs
+//! to the account holder rather than to the instance owner.
 //!
 //! This exists because a hosted MooshieUI serves several people from one
 //! process. NovelAI's terms of service do not allow several humans to share
 //! one key, so each account brings its own and the server never mixes them.
 //!
-//! Data stored at `{app_data_dir}/users/{username}/secrets.json`.
+//! Data stored at `{app_data_dir}/users/{sanitized}-{8hex}/secrets.json`,
+//! where `{sanitized}-{8hex}` is `sanitize_username`'s output: the username
+//! filtered to alphanumerics/`_`/`-`, suffixed with the first 8 hex
+//! characters of the SHA-256 of the lowercased raw username.
 //!
 //! **Threat model.** The master key lives on the same host as the ciphertext,
 //! so this is obfuscation-grade against a full host compromise, not a vault.
