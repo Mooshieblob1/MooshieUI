@@ -53,6 +53,11 @@ pub async fn novelai_generate(
     // against a prompt id that the frontend has already committed to.
     novelai::preflight(&params)?;
 
+    // Desktop is always the instance owner, so this is the config key. It is
+    // resolved here rather than inside the spawned task so a missing key is a
+    // command error the caller shows inline.
+    let credential = novelai::resolve_credential(state.inner(), None).await?;
+
     let prompt_id = novelai::new_prompt_id();
     let seed = params.seed;
 
@@ -65,7 +70,14 @@ pub async fn novelai_generate(
     let bg_prompt_id = prompt_id.clone();
     tokio::spawn(async move {
         let sink = novelai::EventSink::new(Arc::clone(&bg_state), Some(app));
-        let result = novelai::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), params).await;
+        let result = novelai::run(
+            Arc::clone(&bg_state),
+            sink,
+            bg_prompt_id.clone(),
+            params,
+            credential,
+        )
+        .await;
         if let Err(err) = &result {
             log::error!("NovelAI generation {bg_prompt_id} failed: {err}");
         }
@@ -95,6 +107,7 @@ pub async fn novelai_augment(
     crate::temp_images::cleanup(300);
 
     let prepared = novelai::augment::PreparedAugment::prepare(params)?;
+    let credential = novelai::resolve_credential(state.inner(), None).await?;
     let prompt_id = novelai::new_prompt_id();
 
     state.prompt_queue.insert(&prompt_id, None);
@@ -104,9 +117,14 @@ pub async fn novelai_augment(
     let bg_prompt_id = prompt_id.clone();
     tokio::spawn(async move {
         let sink = novelai::EventSink::new(Arc::clone(&bg_state), Some(app));
-        let result =
-            novelai::augment::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), prepared)
-                .await;
+        let result = novelai::augment::run(
+            Arc::clone(&bg_state),
+            sink,
+            bg_prompt_id.clone(),
+            prepared,
+            credential,
+        )
+        .await;
         if let Err(err) = &result {
             log::error!("NovelAI Director Tools {bg_prompt_id} failed: {err}");
         }
@@ -122,7 +140,8 @@ pub async fn novelai_augment(
 pub async fn novelai_subscription(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Subscription, AppError> {
-    novelai::fetch_subscription(state.inner()).await
+    let credential = novelai::resolve_credential(state.inner(), None).await?;
+    novelai::fetch_subscription(state.inner(), &credential).await
 }
 
 /// Store the NovelAI API key. An empty string is an explicit clear.

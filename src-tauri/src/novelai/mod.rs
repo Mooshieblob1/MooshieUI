@@ -64,6 +64,43 @@ impl std::fmt::Debug for NaiCredential {
     }
 }
 
+/// Resolve whose NovelAI key pays for this request.
+///
+/// `None` means the desktop app, a localhost caller, or an admin account:
+/// `webserver::resolve_username` collapses all three to `None`, and they share
+/// the instance owner's key in `config`, exactly as before per-account keys
+/// existed.
+///
+/// `Some(user)` is a named account on a hosted server. It uses its own key or
+/// it does not generate: falling back to the host's key would put several
+/// humans on one NovelAI subscription, which its terms of service forbid, and
+/// would bill the host for a guest's work.
+///
+/// Call this at the request edge, before a prompt id is minted, so a missing
+/// key fails the caller's own call instead of arriving later as an
+/// `execution_error` against an id the frontend has already committed to.
+pub async fn resolve_credential(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+) -> Result<NaiCredential, AppError> {
+    match username {
+        None => {
+            let key = {
+                let config = state.config.read().await;
+                config.novelai_api_key.clone().unwrap_or_default()
+            };
+            Ok(NaiCredential::new(key))
+        }
+        Some(user) => crate::user_secrets::load_nai_key(user)
+            .map(NaiCredential::new)
+            .ok_or_else(|| {
+                AppError::Other(
+                    "No NovelAI API key on this account. Add your own key in Settings.".to_string(),
+                )
+            }),
+    }
+}
+
 /// Mint the synthetic prompt id a NovelAI generation reports under.
 pub fn new_prompt_id() -> String {
     format!("nai-{}", uuid::Uuid::new_v4())
@@ -646,8 +683,9 @@ pub async fn run(
     sink: EventSink,
     prompt_id: String,
     params: GenerationParams,
+    credential: NaiCredential,
 ) -> Result<RunOutcome, AppError> {
-    match run_inner(&state, &sink, &prompt_id, &params).await {
+    match run_inner(&state, &sink, &prompt_id, &params, &credential).await {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
             sink.emit(
@@ -669,12 +707,9 @@ async fn run_inner(
     sink: &EventSink,
     prompt_id: &str,
     params: &GenerationParams,
+    credential: &NaiCredential,
 ) -> Result<RunOutcome, AppError> {
-    let api_key = {
-        let config = state.config.read().await;
-        config.novelai_api_key.clone().unwrap_or_default()
-    };
-    let client = NovelAiClient::new(&state.http_client, &api_key)?;
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
 
     // Checked before anything else touches the payload. An upscale has no
     // prompt to encode, no vibes to pay for and no steps to report against, so
@@ -1049,12 +1084,11 @@ async fn deliver_image(sink: &EventSink, prompt_id: &str, png: &[u8]) {
 }
 
 /// Fetch the subscription record backing the Anlas and Opus readouts.
-pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, AppError> {
-    let api_key = {
-        let config = state.config.read().await;
-        config.novelai_api_key.clone().unwrap_or_default()
-    };
-    let client = NovelAiClient::new(&state.http_client, &api_key)?;
+pub async fn fetch_subscription(
+    state: &Arc<AppState>,
+    credential: &NaiCredential,
+) -> Result<Subscription, AppError> {
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
     let mut sub = client.subscription().await?;
     sub.derive_opus_allowance();
 

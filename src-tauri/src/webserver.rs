@@ -3060,6 +3060,13 @@ async fn dispatch_command(
             // call instead of arriving later as an execution_error.
             crate::novelai::preflight(&params).map_err(|e| e.to_string())?;
 
+            // Whose key pays. Resolved before the id is minted and before the
+            // queue insert, so an account with no key of its own gets an inline
+            // error rather than a queued prompt that can only fail.
+            let credential = crate::novelai::resolve_credential(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+
             let prompt_id = crate::novelai::new_prompt_id();
             let seed = params.seed;
             let user = username.map(|s| s.to_string());
@@ -3086,9 +3093,14 @@ async fn dispatch_command(
                     #[cfg(feature = "desktop")]
                     None,
                 );
-                let result =
-                    crate::novelai::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), params)
-                        .await;
+                let result = crate::novelai::run(
+                    Arc::clone(&bg_state),
+                    sink,
+                    bg_prompt_id.clone(),
+                    params,
+                    credential,
+                )
+                .await;
                 if let Err(err) = &result {
                     log::error!("[nai] generation {bg_prompt_id} failed: {err}");
                 }
@@ -3120,6 +3132,10 @@ async fn dispatch_command(
             let prepared = crate::novelai::augment::PreparedAugment::prepare(params)
                 .map_err(|e| e.to_string())?;
 
+            let credential = crate::novelai::resolve_credential(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+
             let prompt_id = crate::novelai::new_prompt_id();
             let user = username.map(|s| s.to_string());
             log::info!(
@@ -3144,6 +3160,7 @@ async fn dispatch_command(
                     sink,
                     bg_prompt_id.clone(),
                     prepared,
+                    credential,
                 )
                 .await;
                 if let Err(err) = &result {
@@ -3156,7 +3173,10 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "prompt_id": prompt_id }))
         }
         "novelai_subscription" => {
-            let sub = crate::novelai::fetch_subscription(&state)
+            let credential = crate::novelai::resolve_credential(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+            let sub = crate::novelai::fetch_subscription(&state, &credential)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(sub).map_err(|e| e.to_string())
