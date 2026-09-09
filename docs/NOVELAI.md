@@ -706,7 +706,7 @@ account brings its own instead of billing the instance owner:
   clobber each other's stored key.
 - The master key that encrypts every stored key comes from
   `MOOSHIEUI_SECRET_KEY` (base64 of 32 bytes) if set, otherwise
-  `{data_dir}/secrets.key`, generated on first use.
+  `{app_data_dir}/secrets.key`, generated on first use.
 - On Kubernetes, put `MOOSHIEUI_SECRET_KEY` in a Secret so one volume snapshot
   does not carry both the master key and the ciphertext it decrypts. Generate
   one with `openssl rand -base64 32`.
@@ -805,9 +805,10 @@ here, newest first. Each entry says plainly whether testing is needed at all.
 
 ### 2026-09-10 - Per-account NovelAI keys
 
-**Requested by:** the per-user-novelai-keys implementation plan (Task 6),
-because several people sharing one instance-wide NovelAI key breaches
-NovelAI's terms of service.
+**Requested by:** the user: "for the API key input for NAI mode, if we're
+hosting a server of it and people are accessing it remotely, make the NAI key
+account specific to avoid breeching NAI's TOS", because several people sharing
+one instance-wide NovelAI key breaches NovelAI's terms of service.
 
 **What changed.** Architecture and the storage/redaction rules are in section
 5. In short: each hosted account now supplies its own NovelAI key
