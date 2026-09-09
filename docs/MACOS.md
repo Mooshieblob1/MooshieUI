@@ -34,6 +34,13 @@ normal memory management. Keep default attention and precision; CUDA-specific
 Sage/Flash attention and FP8 launch overrides are not supported. Individual
 models and optional node packs still need MPS testing.
 
+The initial ARM compatibility run registered all 26 required node classes and
+passed the MPS tensor probe on macOS 15.7.9 with Python 3.11.14 and PyTorch 2.11.0.
+[Runtime evidence](https://github.com/Mooshieblob1/MooshieUI/actions/runs/34410176260)
+is tied to source `7f5e8ea`. DWPose reported CPU fallback in this run; accelerated
+pose preprocessing is not qualified. These results do not establish model
+generation, optional-feature or installed-app acceptance.
+
 ## Candidate validation
 
 The **macOS Native Validation** workflow builds on Apple Silicon, runs Rust tests,

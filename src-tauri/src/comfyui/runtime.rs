@@ -3,6 +3,14 @@
 pub const MACOS_PYTHON: &str = include_str!("../../runtime/macos-python.txt");
 pub const MACOS_CONSTRAINTS: &str = include_str!("../../runtime/macos-constraints.txt");
 
+/// Mac CPU and MPS share the same wheels, so preserve the selected execution mode.
+pub fn set_macos_cpu_mode(args: &mut Vec<String>, cpu: bool) {
+    args.retain(|arg| arg != "--cpu");
+    if cpu {
+        args.push("--cpu".into());
+    }
+}
+
 /// Fail before spawning ComfyUI with options that cannot run on Apple MPS.
 pub fn validate_macos_args(args: &[String]) -> Result<(), String> {
     for arg in args {
@@ -90,6 +98,12 @@ pub async fn verify_python(python: &std::path::Path, require_mps: bool) -> Resul
     if report["architecture"] != "arm64" {
         return Err("Python is not ARM-native. Re-run setup with the Apple Silicon app.".into());
     }
+    if report["python"] != MACOS_PYTHON.trim() {
+        return Err(
+            "The Mac Python version does not match the managed runtime. Re-run setup to repair it."
+                .into(),
+        );
+    }
     for line in MACOS_CONSTRAINTS.lines() {
         if let Some((name, version)) = line.split_once("==") {
             if report["packages"][name] != version {
@@ -108,6 +122,15 @@ pub async fn verify_python(python: &std::path::Path, require_mps: bool) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_cpu_selection_survives_restart_and_can_switch_back_to_metal() {
+        let mut args = vec!["--fp32-vae".into(), "--cpu".into()];
+        set_macos_cpu_mode(&mut args, true);
+        assert_eq!(args, ["--fp32-vae", "--cpu"]);
+        set_macos_cpu_mode(&mut args, false);
+        assert_eq!(args, ["--fp32-vae"]);
+    }
 
     #[test]
     fn mac_rejects_cuda_and_fp8_launch_overrides() {

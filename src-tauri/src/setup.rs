@@ -2558,6 +2558,8 @@ pub async fn run_setup(
         let mut cfg = state.config.write().await;
         cfg.comfyui_path = base.join("comfyui").to_string_lossy().to_string();
         cfg.venv_path = base.join("venv").to_string_lossy().to_string();
+        #[cfg(target_os = "macos")]
+        crate::comfyui::runtime::set_macos_cpu_mode(&mut cfg.extra_args, gpu == "cpu");
         cfg.vram_mode = vram_mode.to_string();
         cfg.attention_backend = attention;
         cfg.network_proxy = net.network_proxy.clone();

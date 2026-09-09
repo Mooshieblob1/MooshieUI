@@ -1498,6 +1498,8 @@ pub async fn start_worker_process(
     worker: &Arc<GpuWorker>,
 ) -> Result<(), AppError> {
     let config = state.config.read().await.clone();
+    #[cfg(target_os = "macos")]
+    super::runtime::validate_macos_args(&config.extra_args)?;
 
     // Deploy custom nodes (same as single-process path)
     if !config.comfyui_path.is_empty() {
@@ -1669,7 +1671,7 @@ pub async fn start_worker_process(
     }
 
     // VRAM mode: worker-specific override > global config (mutually exclusive with --cpu)
-    if !force_cpu {
+    if !force_cpu && !config.extra_args.iter().any(|a| a == "--cpu") {
         let vram_mode = worker
             .vram_mode
             .as_deref()

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import plistlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,6 +34,24 @@ def main():
     signature = output("codesign", "-dv", "--verbose=4", str(app))
     assert "Signature=adhoc" in signature, "App is not ad-hoc signed"
     output("hdiutil", "verify", str(dmg))
+    # Verify the distributed app inside the image as well as the build directory.
+    attachment = subprocess.run(
+        ["hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-plist", str(dmg)],
+        check=True, capture_output=True,
+    )
+    mounts = [entry["mount-point"] for entry in plistlib.loads(attachment.stdout)["system-entities"]
+              if "mount-point" in entry]
+    try:
+        assert len(mounts) == 1, "Expected one mounted installer volume"
+        installed_app = Path(mounts[0]) / app.name
+        assert installed_app.is_dir(), "Installer does not contain the built app"
+        output("codesign", "--verify", "--deep", "--strict", str(installed_app))
+        installed_signature = output("codesign", "-dv", "--verbose=4", str(installed_app))
+        cdhash = re.search(r"^CDHash=(.+)$", signature, re.M).group(1)
+        assert re.search(r"^CDHash=(.+)$", installed_signature, re.M).group(1) == cdhash, "Installer app differs from the build"
+    finally:
+        for mount in mounts:
+            output("hdiutil", "detach", mount)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     with dmg.open("rb") as disk_image:
         digest = hashlib.file_digest(disk_image, "sha256").hexdigest()
@@ -42,6 +61,7 @@ def main():
         "architecture": arch,
         "minimum_macos": info["LSMinimumSystemVersion"],
         "signature": signature,
+        "installer_app_verified": True,
         "dmg_sha256": digest,
         "hardware_tested": False,
     }

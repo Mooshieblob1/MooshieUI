@@ -90,6 +90,8 @@ def main():
     run(args.uv, "pip", "check", "--python", python)
     probe = run(python, runtime / "macos_probe.py", capture_output=True, text=True)
     report = json.loads(probe.stdout)
+    report["source_sha"] = run("git", "-C", root, "rev-parse", "HEAD", capture_output=True, text=True).stdout.strip()
+    report["uv_version"] = run(args.uv, "--version", capture_output=True, text=True).stdout.strip()
     report["comfyui_ref"] = pin
     report["external_node_revisions"] = external_revisions
     report["hardware_qualification"] = args.require_mps

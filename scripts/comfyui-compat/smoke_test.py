@@ -27,9 +27,9 @@ Scope
 Covers the BUNDLED MooshieUI nodes, plus the input signatures of the CORE
 ComfyUI nodes the workflow builder emits by hand. The external ControlNet /
 style-transfer packages (comfyui_controlnet_aux, ComfyUi-Untwisting-RoPE, ...)
-are third-party git repos cloned at runtime; their compatibility is their own
-maintainers' concern and is out of scope here. This limitation is logged, not
-silently skipped.
+are third-party git repos cloned at runtime. Platform checks can install those
+and pass their expected classes with --extra-required-file. Without that option,
+external packs are outside this script's coverage; the scope is logged.
 
 Usage
 -----
