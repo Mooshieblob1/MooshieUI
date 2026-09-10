@@ -268,6 +268,9 @@ fn tmp_path_for(path: &std::path::Path) -> PathBuf {
 /// of the *lowercased raw* username (matching how `auth` stores it, not the
 /// filtered form), giving each raw username its own directory.
 fn sanitize_username(username: &str) -> Option<String> {
+    // Auth treats ASCII case variants as one account, including deletions.
+    // Normalize the directory too so this holds on case-sensitive filesystems.
+    let username = username.to_ascii_lowercase();
     let safe: String = username
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
@@ -275,7 +278,7 @@ fn sanitize_username(username: &str) -> Option<String> {
     if safe.is_empty() {
         return None;
     }
-    let digest = Sha256::digest(username.to_ascii_lowercase().as_bytes());
+    let digest = Sha256::digest(username.as_bytes());
     let suffix = hex::encode(digest);
     Some(format!("{safe}-{}", &suffix[..8]))
 }
@@ -308,7 +311,7 @@ fn load_nai_key_in(
     let ct = base64::engine::general_purpose::STANDARD
         .decode(&sealed.ct)
         .ok()?;
-    open(master, username, &nonce, &ct)
+    open(master, &username.to_ascii_lowercase(), &nonce, &ct)
 }
 
 fn save_nai_key_in(
@@ -327,7 +330,7 @@ fn save_nai_key_in(
     match api_key.map(str::trim).filter(|s| !s.is_empty()) {
         Some(plaintext) => {
             let nonce: [u8; NONCE_LEN] = random_bytes();
-            let ct = seal_with_nonce(master, username, plaintext, &nonce)?;
+            let ct = seal_with_nonce(master, &username.to_ascii_lowercase(), plaintext, &nonce)?;
             file.novelai_api_key = Some(SealedValue {
                 nonce: base64::engine::general_purpose::STANDARD.encode(nonce),
                 ct: base64::engine::general_purpose::STANDARD.encode(&ct),
@@ -352,12 +355,12 @@ fn save_nai_key_in(
     // so there is no unprotected window at all: the rename carries that mode
     // across.
     let tmp_path = tmp_path_for(&path);
+    let mut f = secure_create_options()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
+        .map_err(|e| e.to_string())?;
     let write_result: Result<(), String> = (|| {
-        let mut f = secure_create_options()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-            .map_err(|e| e.to_string())?;
         f.write_all(&bytes).map_err(|e| e.to_string())?;
         f.sync_all().map_err(|e| e.to_string())?;
         drop(f);
@@ -527,6 +530,37 @@ mod tests {
             load_nai_key_in(&root, &KEY, "alice").as_deref(),
             Some("pst-secret-token")
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn username_case_matches_auth_for_storage_and_deletion() {
+        let root = scratch("case-normalization");
+        assert_eq!(
+            secrets_path_in(&root, "Alice"),
+            secrets_path_in(&root, "alice")
+        );
+        save_nai_key_in(&root, &KEY, "Alice", Some("alice-token")).unwrap();
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "ALICE").as_deref(),
+            Some("alice-token")
+        );
+        delete_all_in(&root, "aLiCe").unwrap();
+        assert!(!secrets_path_in(&root, "alice").unwrap().exists());
+        assert!(load_nai_key_in(&root, &KEY, "alice").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_secret_files_are_readable_only_by_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("permissions");
+        for token in ["initial-token", "replacement-token"] {
+            save_nai_key_in(&root, &KEY, "alice", Some(token)).unwrap();
+            let metadata = std::fs::metadata(secrets_path_in(&root, "alice").unwrap()).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

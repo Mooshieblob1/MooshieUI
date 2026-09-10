@@ -718,6 +718,9 @@ account brings its own instead of billing the instance owner:
   restricting their character set, so two distinct accounts such as `bob` and
   `b.o.b` would otherwise filter down to the same `bob` directory and silently
   clobber each other's stored key.
+- Storage paths and encryption bindings use the same ASCII lowercase username
+  as authentication. Deleting an account with different capitalization also
+  removes its credential on case-sensitive filesystems.
 - The master key that encrypts every stored key comes from
   `MOOSHIEUI_SECRET_KEY` (base64 of 32 bytes) if set, otherwise
   `{app_data_dir}/secrets.key`, generated on first use.
