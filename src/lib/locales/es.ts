@@ -2053,6 +2053,7 @@ const es: Record<string, string> = {
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "Clave API",
   "settings.novelai.api_key_desc": "Añade los modelos de imagen de NovelAI a la lista de modelos. Las generaciones se ejecutan en los servidores de NovelAI y gastan sus Anlas.",
+  "settings.novelai.account_key_desc": "Añade los modelos de imagen de NovelAI a la lista de modelos. Las generaciones se ejecutan en los servidores de NovelAI y gastan sus Anlas. La clave pertenece a tu cuenta y se almacena cifrada.",
   "settings.novelai.api_key_placeholder": "Pegue aquí su token API persistente de NovelAI",
   "settings.novelai.api_key_set": "Hay una clave guardada",
   "settings.novelai.api_key_set_hint": "Clave guardada. No se vuelve a mostrar.",

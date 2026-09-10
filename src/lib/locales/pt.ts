@@ -1990,6 +1990,7 @@ const pt: Record<string, string> = {
   "settings.novelai.title": "NovelAI",
   "settings.novelai.api_key": "Chave de API",
   "settings.novelai.api_key_desc": "Adiciona os modelos de imagem da NovelAI à lista de modelos. As gerações são executadas nos servidores da NovelAI e gastam seus Anlas.",
+  "settings.novelai.account_key_desc": "Adiciona os modelos de imagem da NovelAI à lista de modelos. As gerações são executadas nos servidores da NovelAI e gastam seus Anlas. A chave pertence à sua conta e é armazenada de forma criptografada.",
   "settings.novelai.api_key_placeholder": "Cole aqui seu token de API persistente da NovelAI",
   "settings.novelai.api_key_set": "Há uma chave salva",
   "settings.novelai.api_key_set_hint": "Chave salva. Ela não é exibida novamente.",

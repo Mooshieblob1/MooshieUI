@@ -649,19 +649,88 @@ ambiguity, and typographic or CJK quotes avoid it.
 
 ## 5. Security
 
-The NovelAI API key is a user secret and is handled like the existing Civitai
-key:
+The NovelAI API key is a user secret. There are two paths for it depending on
+who is asking, and the rules below apply to the desktop/admin path unless
+stated otherwise.
 
-- Stored in the app config, carried forward by `preserve_secrets()` so a config
-  write that omits it cannot blank it. Clearing is explicit, through
-  `set_novelai_api_key("")`.
+- Desktop app, localhost callers, and admin accounts use the key stored in the
+  app config, carried forward by `preserve_secrets()` so a config write that
+  omits it cannot blank it. Clearing is explicit, through
+  `set_novelai_api_key("")`. This is the same handling the existing Civitai key
+  gets. Regular hosted accounts do not use this path at all; see "Per-account
+  keys" below.
 - Redacted to null in the config JSON sent to browser clients, alongside a
   `novelai_api_key_configured` boolean so the UI can show "key set" without ever
-  receiving the value.
-- Never logged. `NovelAiClient` deliberately does not derive `Debug`.
-- The NovelAI commands are moderator-gated in browser mode. Every NovelAI
-  generation spends the host's real Anlas, so a LAN guest must not be able to
-  bill the person running the instance.
+  receiving the value. For any account that `resolve_username`
+  (`webserver.rs`) names, which includes moderators, that boolean now reports
+  the CALLING ACCOUNT's own key state, not the instance owner's. Admin-role
+  accounts are the deliberate exception: `resolve_username` returns `None` for
+  an admin, so `scrub_nai_key_for_user` never runs on that response at all, and
+  an admin sees the config key exactly as localhost and the desktop app do,
+  including the real key in plain text when `include_secrets = true`. That is
+  by design, since admins are treated as the instance owner. `get_config` used
+  to hand moderators `include_secrets = true`, which meant a moderator received
+  the host's real NovelAI key in plain text; `scrub_nai_key_for_user`
+  (`webserver.rs`) now blanks `novelai_api_key` on that response and substitutes
+  the caller's own `user_secrets::has_nai_key()` result before the payload
+  leaves the server.
+- Moderator settings saves also preserve the owner's NovelAI key, even if a
+  full `update_config` payload supplies a replacement. Account keys can only
+  be changed through `set_novelai_api_key` for the calling account.
+- Never logged. `NovelAiClient` deliberately does not derive `Debug`. The
+  resolved-credential wrapper `NaiCredential` (`novelai/mod.rs`) has a
+  hand-written `Debug` that always prints `NaiCredential(***)`, regardless of
+  which key it holds, so a stray `{:?}` on an enclosing struct cannot leak a
+  key into the ring-buffer log or a diagnostic export.
+- The NovelAI commands are open to any authenticated account; they are no
+  longer moderator-gated. Anonymous (unauthenticated) callers are still
+  rejected before a command is dispatched, same as any other command. What
+  used to gate a LAN guest from billing the host's Anlas is now the key
+  itself: an account with no NovelAI key of its own cannot generate, so it
+  cannot spend anybody's balance but its own. See "Per-account keys" below.
+
+### Per-account keys
+
+A hosted MooshieUI instance serves several people from one process. NovelAI's
+terms of service do not allow several humans to share one API key, so each
+account brings its own instead of billing the instance owner:
+
+- Every account on a hosted server supplies its own NovelAI key, added in
+  Settings > NovelAI. Without one, NovelAI models are absent from the model
+  list, and attempting to generate anyway fails with "No NovelAI API key on
+  this account. Add your own key in Settings." (`novelai::resolve_credential`
+  in `novelai/mod.rs`).
+- Desktop and admin behavior is unchanged: they keep using the key in
+  `config.json`, resolved the same way it always was.
+- Promoting an existing account to `admin` changes which key it uses:
+  `resolve_username` starts returning `None` for it, so it switches to the
+  instance owner's `config.json` key and its own `secrets.json` is left on
+  disk unread. Its NovelAI usage then spends the instance owner's Anlas, not
+  its own subscription. Demoting it back restores its own key, because the
+  file is deliberately not deleted on promotion.
+- Keys are stored at `{app_data_dir}/users/{sanitized}-{8hex}/secrets.json`,
+  encrypted with XChaCha20-Poly1305 and bound to the username as additional
+  authenticated data. The directory name is not the raw username:
+  `sanitize_username` (`src-tauri/src/user_secrets.rs`) filters the username
+  down to alphanumerics, `_` and `-`, then appends a dash and the first 8 hex
+  characters of the SHA-256 of the lowercased raw username. That suffix exists
+  because account creation only lowercases usernames without otherwise
+  restricting their character set, so two distinct accounts such as `bob` and
+  `b.o.b` would otherwise filter down to the same `bob` directory and silently
+  clobber each other's stored key.
+- Storage paths and encryption bindings use the same ASCII lowercase username
+  as authentication. Deleting an account with different capitalization also
+  removes its credential on case-sensitive filesystems.
+- The master key that encrypts every stored key comes from
+  `MOOSHIEUI_SECRET_KEY` (base64 of 32 bytes) if set, otherwise
+  `{app_data_dir}/secrets.key`, generated on first use.
+- On Kubernetes, put `MOOSHIEUI_SECRET_KEY` in a Secret so one volume snapshot
+  does not carry both the master key and the ciphertext it decrypts. Generate
+  one with `openssl rand -base64 32`.
+- Rotating or losing the master key makes every stored key unreadable:
+  decryption fails closed, the same as a corrupt file or a wrong username.
+  Affected users are simply prompted to enter their key again in Settings;
+  nothing else breaks.
 
 ### Director Tool pricing
 
@@ -750,6 +819,47 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-09-10 - Per-account NovelAI keys
+
+**Requested by:** the user: "for the API key input for NAI mode, if we're
+hosting a server of it and people are accessing it remotely, make the NAI key
+account specific to avoid breeching NAI's TOS", because several people sharing
+one instance-wide NovelAI key breaches NovelAI's terms of service.
+
+**What changed.** Architecture and the storage/redaction rules are in section
+5. In short: each hosted account now supplies its own NovelAI key
+(`user_secrets.rs`, encrypted with XChaCha20-Poly1305, keyed by
+`MOOSHIEUI_SECRET_KEY` or a generated `secrets.key`); `novelai::resolve_credential`
+resolves which key pays for a request at the edge, before a prompt id is
+minted; the four NovelAI commands are no longer moderator-gated, so the key
+itself is the only remaining gate; and `scrub_nai_key_for_user` stops a
+moderator's `get_config` response from disclosing the instance owner's real
+key.
+
+**Automated coverage:** credential selection and missing-key rejection,
+cross-account encryption and storage isolation, key clearing and deletion,
+config redaction, moderator config-write protection, and command permissions
+run in `cargo test`. Desktop requests without a key now fail before entering
+the queue, matching hosted requests.
+
+**Live testing still needed:** the UI and paid API flows below require a
+running app and NovelAI account. Unit tests do not call NovelAI's servers.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Desktop (`npm run tauri dev`): Settings > NovelAI | Shows the key input as before |
+| 2 | Desktop: a saved key | Still generates, still shows Anlas, Director Tools still work |
+| 3 | Desktop: the face detailer | Still runs and bills the same key |
+| 4 | Hosted/LAN browser mode, regular (non-moderator) account: Settings > NovelAI | Now visible |
+| 5 | Before adding a key | NovelAI models are absent from the model list |
+| 6 | Generating anyway (if reachable) | Errors with "No NovelAI API key on this account", inline, and leaves nothing stuck in the queue |
+| 7 | Add a key | Models appear, Anlas readout shows YOUR balance, generation works, Director Tools work |
+| 8 | Clear the key (empty save) | Models disappear again |
+| 9 | Cross-account isolation: log in as a second account with no key | NovelAI models are absent, and the Anlas readout does not show account one's balance |
+| 10 | As a moderator account, open Settings > NovelAI | The key field is empty and "A key is saved" reflects the moderator's own key, not the host's |
+| 11 | Delete an account that had a key | `{app_data_dir}/users/{sanitized}-{8hex}/secrets.json` for that account is gone |
+| 12 | Restart the server | Each account's key still works (the master key file persisted) |
 
 ### 2026-09-09 - The NovelAI face detailer
 

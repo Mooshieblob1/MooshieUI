@@ -195,8 +195,9 @@ pub async fn run(
     sink: EventSink,
     prompt_id: String,
     prepared: PreparedAugment,
+    credential: super::NaiCredential,
 ) -> Result<(), AppError> {
-    match run_inner(&state, &sink, &prompt_id, &prepared).await {
+    match run_inner(&state, &sink, &prompt_id, &prepared, &credential).await {
         Ok(()) => Ok(()),
         Err(err) => {
             sink.emit(
@@ -218,6 +219,7 @@ async fn run_inner(
     sink: &EventSink,
     prompt_id: &str,
     prepared: &PreparedAugment,
+    credential: &super::NaiCredential,
 ) -> Result<(), AppError> {
     let PreparedAugment {
         tool,
@@ -227,11 +229,7 @@ async fn run_inner(
     } = prepared;
     let (tool, width, height) = (*tool, *width, *height);
 
-    let api_key = {
-        let config = state.config.read().await;
-        config.novelai_api_key.clone().unwrap_or_default()
-    };
-    let client = NovelAiClient::new(&state.http_client, &api_key)?;
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
     let body = build_request(tool, &params.image, width, height, params);
 
     // The endpoint does not stream, so there is no real progress to report.

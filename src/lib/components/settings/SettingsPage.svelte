@@ -1157,8 +1157,9 @@
       case "paths": return isAdmin;
       case "models":
       case "modelRequests":
-      case "civitai":
-      case "novelai": return canManageServer;
+      case "civitai": return canManageServer;
+      // NovelAI is per-account now: every user manages their own key.
+      case "novelai": return true;
       case "account": return isBrowserMode && (!isAdmin || usesLegacyPassword);
       case "developer": return generation.devModeUnlocked;
       default: return true;
@@ -4025,8 +4026,8 @@
         </section>
         {/if}
 
-        <!-- NovelAI (admin / moderator) -->
-        {#if canManageServer && activeCategory === "novelai"}
+        <!-- NovelAI (per-account key) -->
+        {#if activeCategory === "novelai"}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             <span class="flex items-center gap-2">
@@ -4036,7 +4037,7 @@
           </div>
 
           <div class="px-5 pb-5 space-y-3">
-            <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.api_key_desc')}</p>
+            <p class="text-[10px] text-neutral-500">{locale.t(isAdmin ? 'settings.novelai.api_key_desc' : 'settings.novelai.account_key_desc')}</p>
             <div>
               <label class="text-xs text-neutral-400 block mb-1" for="novelai-api-key">{locale.t('settings.novelai.api_key')}</label>
               <div class="flex gap-2">

@@ -149,6 +149,37 @@ fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) 
     None
 }
 
+/// Blank the instance owner's NovelAI key out of a config payload and replace
+/// the "configured" flag with this account's own answer.
+///
+/// Split out and pure so the redaction is unit-testable: `get_config` hands
+/// moderators `include_secrets = true`, which used to include the host's real
+/// NovelAI token.
+fn scrub_nai_key_for_user(value: &mut serde_json::Value, has_key: bool) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("novelai_api_key".to_string(), serde_json::Value::Null);
+        obj.insert(
+            "novelai_api_key_configured".to_string(),
+            serde_json::json!(has_key),
+        );
+    }
+}
+
+/// A moderator can edit shared settings, but cannot replace the owner's
+/// NovelAI credential through a full-config payload.
+fn preserve_config_secrets_for_role(
+    incoming: &mut config::AppConfig,
+    current: &config::AppConfig,
+    role: UserRole,
+) {
+    config::preserve_secrets(incoming, current);
+    if role != UserRole::Admin {
+        incoming
+            .novelai_api_key
+            .clone_from(&current.novelai_api_key);
+    }
+}
+
 fn query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     let prefix = format!("{}=", name);
     query.split('&').find_map(|p| p.strip_prefix(&prefix))
@@ -251,13 +282,6 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_xai_client",
     "connect_llm_oauth",
     "list_external_llm_models",
-    // NovelAI: the key is the instance owner's and every generation spends
-    // their Anlas, so all four follow `update_config` rather than `generate`.
-    // A LAN guest must not be able to bill the host.
-    "novelai_augment",
-    "novelai_generate",
-    "novelai_subscription",
-    "set_novelai_api_key",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
@@ -2143,10 +2167,19 @@ async fn dispatch_command(
     match command {
         // --- Config ---
         "get_config" => {
-            let config = state.config.read().await;
-            let include_secrets = matches!(caller_role, UserRole::Admin | UserRole::Moderator);
-            crate::config::config_to_client_json(&config, include_secrets)
-                .map_err(|e| e.to_string())
+            let mut value = {
+                let config = state.config.read().await;
+                let include_secrets = matches!(caller_role, UserRole::Admin | UserRole::Moderator);
+                crate::config::config_to_client_json(&config, include_secrets)
+                    .map_err(|e| e.to_string())?
+            };
+            // A named account uses its own NovelAI key, so it must be told
+            // about its own key and never about the host's -- including
+            // moderators, who take the include_secrets branch above.
+            if let Some(user) = username {
+                scrub_nai_key_for_user(&mut value, crate::user_secrets::has_nai_key(user));
+            }
+            Ok(value)
         }
         "update_config" => {
             let mut new_config: crate::config::AppConfig =
@@ -2154,7 +2187,7 @@ async fn dispatch_command(
                     .map_err(|e| format!("Invalid config: {}", e))?;
             config::normalize_config_fields(&mut new_config);
             let mut current = state.config.write().await;
-            config::preserve_secrets(&mut new_config, &current);
+            preserve_config_secrets_for_role(&mut new_config, &current, caller_role);
             config::save_config(&new_config)?;
             *current = new_config;
             Ok(serde_json::json!(null))
@@ -3060,6 +3093,13 @@ async fn dispatch_command(
             // call instead of arriving later as an execution_error.
             crate::novelai::preflight(&params).map_err(|e| e.to_string())?;
 
+            // Whose key pays. Resolved before the id is minted and before the
+            // queue insert, so an account with no key of its own gets an inline
+            // error rather than a queued prompt that can only fail.
+            let credential = crate::novelai::resolve_credential(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+
             let prompt_id = crate::novelai::new_prompt_id();
             let seed = params.seed;
             let user = username.map(|s| s.to_string());
@@ -3086,9 +3126,14 @@ async fn dispatch_command(
                     #[cfg(feature = "desktop")]
                     None,
                 );
-                let result =
-                    crate::novelai::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), params)
-                        .await;
+                let result = crate::novelai::run(
+                    Arc::clone(&bg_state),
+                    sink,
+                    bg_prompt_id.clone(),
+                    params,
+                    credential,
+                )
+                .await;
                 if let Err(err) = &result {
                     log::error!("[nai] generation {bg_prompt_id} failed: {err}");
                 }
@@ -3120,6 +3165,10 @@ async fn dispatch_command(
             let prepared = crate::novelai::augment::PreparedAugment::prepare(params)
                 .map_err(|e| e.to_string())?;
 
+            let credential = crate::novelai::resolve_credential(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+
             let prompt_id = crate::novelai::new_prompt_id();
             let user = username.map(|s| s.to_string());
             log::info!(
@@ -3144,6 +3193,7 @@ async fn dispatch_command(
                     sink,
                     bg_prompt_id.clone(),
                     prepared,
+                    credential,
                 )
                 .await;
                 if let Err(err) = &result {
@@ -3156,7 +3206,10 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "prompt_id": prompt_id }))
         }
         "novelai_subscription" => {
-            let sub = crate::novelai::fetch_subscription(&state)
+            let credential = crate::novelai::resolve_credential(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+            let sub = crate::novelai::fetch_subscription(&state, &credential)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(sub).map_err(|e| e.to_string())
@@ -3164,12 +3217,30 @@ async fn dispatch_command(
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
             let configured = !api_key.is_empty();
-            let snapshot = {
-                let mut config = state.config.write().await;
-                config.novelai_api_key = if configured { Some(api_key) } else { None };
-                config.clone()
-            };
-            crate::config::save_config(&snapshot)?;
+            match username {
+                // A named account writes only its own encrypted store. It can
+                // never reach config, so no guest can read, clobber or clear
+                // the host's key.
+                Some(user) => {
+                    crate::user_secrets::save_nai_key(
+                        user,
+                        if configured {
+                            Some(api_key.as_str())
+                        } else {
+                            None
+                        },
+                    )?;
+                }
+                // Desktop, localhost, admin: the instance owner's key, as before.
+                None => {
+                    let snapshot = {
+                        let mut config = state.config.write().await;
+                        config.novelai_api_key = if configured { Some(api_key) } else { None };
+                        config.clone()
+                    };
+                    crate::config::save_config(&snapshot)?;
+                }
+            }
             Ok(serde_json::json!(configured))
         }
         "generate_controlnet_preprocessor_preview" => {
@@ -6017,6 +6088,12 @@ async fn auth_delete_account_handler(
 
     match state.auth.delete_account(username) {
         Ok(()) => {
+            // Unconditional, unlike the gallery below: `keep_data` preserves a
+            // deleted user's images so re-creating the account restores them,
+            // but a stranded NovelAI token is a credential nobody owns.
+            if let Err(e) = crate::user_secrets::delete_all(username) {
+                log::warn!("Failed to delete stored secrets for '{}': {}", username, e);
+            }
             if !keep_data {
                 // Remove the user's gallery directory
                 if let Some(dir) = user_gallery_dir(Some(username)) {
@@ -7584,5 +7661,86 @@ mod watchdog_tests {
             ),
             WatchdogTick::Stop
         );
+    }
+}
+
+#[cfg(test)]
+mod nai_key_tests {
+    use super::{
+        min_role_for_command, preserve_config_secrets_for_role, scrub_nai_key_for_user, UserRole,
+    };
+    use crate::config::AppConfig;
+
+    #[test]
+    fn moderator_settings_cannot_replace_the_owner_key() {
+        let current = AppConfig {
+            novelai_api_key: Some("owner-token".into()),
+            ..Default::default()
+        };
+        let mut incoming = AppConfig {
+            novelai_api_key: Some("different-token".into()),
+            server_port: 9191,
+            ..Default::default()
+        };
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Moderator);
+        assert_eq!(incoming.novelai_api_key, current.novelai_api_key);
+        assert_eq!(incoming.server_port, 9191);
+    }
+
+    #[test]
+    fn owner_settings_still_accept_an_owner_key() {
+        let current = AppConfig::default();
+        let mut incoming = AppConfig {
+            novelai_api_key: Some("owner-token".into()),
+            ..Default::default()
+        };
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
+        assert_eq!(incoming.novelai_api_key.as_deref(), Some("owner-token"));
+    }
+
+    #[test]
+    fn regular_accounts_can_use_their_own_novelai_credentials() {
+        for command in [
+            "set_novelai_api_key",
+            "novelai_generate",
+            "novelai_augment",
+            "novelai_subscription",
+        ] {
+            assert_eq!(min_role_for_command(command), UserRole::User);
+        }
+    }
+
+    #[test]
+    fn a_named_account_never_sees_the_host_novelai_key() {
+        // Moderators reach get_config with include_secrets = true, so before
+        // per-account keys they received the instance owner's NovelAI token in
+        // plaintext. Any named account, whatever its role, must see only a
+        // boolean, and that boolean must describe its OWN key.
+        let mut value = serde_json::json!({
+            "novelai_api_key": "pst-host-owner-token",
+            "novelai_api_key_configured": true,
+            "server_port": 8188,
+        });
+        scrub_nai_key_for_user(&mut value, false);
+
+        assert_eq!(value["novelai_api_key"], serde_json::Value::Null);
+        assert_eq!(
+            value["novelai_api_key_configured"],
+            serde_json::json!(false)
+        );
+        // Untouched fields survive.
+        assert_eq!(value["server_port"], serde_json::json!(8188));
+    }
+
+    #[test]
+    fn a_named_account_with_its_own_key_is_reported_as_configured() {
+        let mut value = serde_json::json!({
+            "novelai_api_key": "pst-host-owner-token",
+            "novelai_api_key_configured": false,
+        });
+        scrub_nai_key_for_user(&mut value, true);
+
+        assert_eq!(value["novelai_api_key"], serde_json::Value::Null);
+        assert_eq!(value["novelai_api_key_configured"], serde_json::json!(true));
     }
 }
