@@ -136,7 +136,10 @@ pub struct NovelAiFaceDetail {
     #[serde(default = "default_face_strength")]
     pub strength: f64,
     /// Steps for the crop pass. Clamped to 28 on the NovelAI engine so a free
-    /// pass does not silently become a paid one.
+    /// pass does not silently become a paid one. The frontend tracks the main
+    /// steps slider into this field until the user moves the detailer one (see
+    /// `steps_linked` in `NovelAiFaceDetail`, which is UI-only state), so what
+    /// arrives here is always a concrete step count.
     #[serde(default = "default_face_steps")]
     pub steps: u32,
     /// Composite feather in pixels. The effective value is at least a sixth of
@@ -393,7 +396,7 @@ fn default_face_detector() -> String {
 }
 
 fn default_face_threshold() -> f64 {
-    0.5
+    0.4
 }
 
 fn default_face_padding() -> f64 {
@@ -409,9 +412,10 @@ fn default_face_guide_size() -> u32 {
     1024
 }
 
-/// Low enough that img2img reshapes the face without inventing a new one.
+/// High enough to actually redraw a smeared face, low enough that the
+/// identity survives. Tuned by hand against real NovelAI output.
 fn default_face_strength() -> f64 {
-    0.35
+    0.5
 }
 
 /// The free window's ceiling, so the default never costs Anlas.

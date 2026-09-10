@@ -811,24 +811,29 @@ async fn run_inner(
             // the seam feather would blend the repainted face against black
             // wherever the background is transparent.
             log::warn!(
-                "NovelAI {prompt_id}: face pass skipped, it would flatten the                  transparent background"
+                "NovelAI {prompt_id}: face pass skipped, it would flatten the transparent background"
             );
+            face_detail::notify(sink, prompt_id, "skipped", "transparency");
         } else if let [png] = images.as_slice() {
             match face_detail::run_face_pass(state, sink, prompt_id, resolved, &client, png).await {
                 Ok(Some(composite)) => images = vec![composite],
                 Ok(None) => {}
-                Err(err) => log::warn!(
-                    "NovelAI {prompt_id}: face pass could not run ({err}); delivering                      the unmodified image"
-                ),
+                Err(err) => {
+                    log::warn!(
+                        "NovelAI {prompt_id}: face pass could not run ({err}); delivering the unmodified image"
+                    );
+                    face_detail::notify(sink, prompt_id, "failed", "run_failed");
+                }
             }
         } else {
             // Every face is its own NovelAI request, so a batch multiplies the
             // round trips and the Opus allowance draw by the batch size. The
             // single-image limit matches the local pass below.
             log::warn!(
-                "NovelAI {prompt_id}: face pass skipped, it runs on single-image                  generations only ({} returned)",
+                "NovelAI {prompt_id}: face pass skipped, it runs on single-image generations only ({} returned)",
                 images.len()
             );
+            face_detail::notify(sink, prompt_id, "skipped", "batch");
         }
     }
 

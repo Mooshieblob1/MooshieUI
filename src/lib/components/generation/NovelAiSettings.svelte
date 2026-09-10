@@ -165,11 +165,6 @@
           generation.updateNovelAiSettings({ uncond_scale: Number(e.currentTarget.value) })}
       />
     </label>
-    {#if nai.uncond_scale !== 1}
-      <p class="text-[11px] text-amber-400/90">
-        {locale.t("generation.novelai.advanced.uncond_cost")}
-      </p>
-    {/if}
   </div>
 
   <div class="border-t border-neutral-800 pt-3 space-y-2">

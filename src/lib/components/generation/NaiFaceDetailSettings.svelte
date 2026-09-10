@@ -26,6 +26,13 @@
   const isNovelAiEngine = $derived(face.detailer_engine !== "local");
 
   /**
+   * The detailer tracks the main steps slider until the user moves this one,
+   * so the displayed value is resolved rather than read straight off
+   * `face.steps`. Touching either control below pins it and breaks the link.
+   */
+  const steps = $derived(generation.novelAiFaceDetailSteps);
+
+  /**
    * Whether an Opus account covers this pass at all. V5 draws from the timed
    * allowance instead of Opus unlimited, so an empty battery bills like a
    * non-Opus account does.
@@ -151,21 +158,21 @@
       <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>{locale.t('generation.nai_face_detail.steps')}<InfoTip text={locale.t('generation.nai_face_detail.steps_tip')} /></span>
-          <EditableValue value={face.steps} min={1} max={50} step={1} onchange={(v) => generation.updateNovelAiFaceDetail({ steps: v })} />
+          <EditableValue value={steps} min={1} max={50} step={1} onchange={(v) => generation.setNovelAiFaceDetailSteps(v)} />
         </label>
         <input
           type="range"
           min="1"
           max="50"
           step="1"
-          value={face.steps}
-          oninput={(e) => generation.updateNovelAiFaceDetail({ steps: Number(e.currentTarget.value) })}
+          value={steps}
+          oninput={(e) => generation.setNovelAiFaceDetailSteps(Number(e.currentTarget.value))}
           class="w-full accent-indigo-500"
         />
       </div>
     </div>
 
-    {#if isNovelAiEngine && face.steps > 28 && face.anlas_policy === "fit_free"}
+    {#if isNovelAiEngine && steps > 28 && face.anlas_policy === "fit_free"}
       <p class="text-[11px] text-neutral-500">{locale.t('generation.nai_face_detail.steps_clamped')}</p>
     {/if}
 

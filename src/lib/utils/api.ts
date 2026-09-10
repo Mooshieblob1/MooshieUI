@@ -40,6 +40,8 @@ export interface GenerateResponse {
   seed: string;
   queue_position?: number;
   queue_total?: number;
+  /** GPU worker the prompt went to (desktop only; browser mode submits later). */
+  worker_id?: number;
 }
 
 export async function generate(params: GenerationParams): Promise<GenerateResponse> {

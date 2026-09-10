@@ -107,6 +107,7 @@ def main():
         raise RuntimeError("MPS operation failed; hardware qualification cannot pass")
     with (work / "requirements-resolved.txt").open("w") as output:
         run(args.uv, "pip", "freeze", "--python", python, stdout=output)
+    run(python, root / "scripts/comfyui-compat/test_pause_nodes.py", "--comfyui-dir", comfy)
     run(python, root / "scripts/comfyui-compat/smoke_test.py", "--repo-root", root,
         "--comfyui-dir", comfy, "--boot-timeout", "360",
         "--summary-json", work / "node-summary.json", "--extra-required-file", extra_required)

@@ -22,7 +22,8 @@ use crate::comfyui::types::GenerationParams;
 use crate::error::AppError;
 use crate::novelai::client::NovelAiClient;
 use crate::novelai::face_pass::{self, CropPlan};
-use crate::novelai::{build_request, detect, EventSink};
+use crate::novelai::params::NovelAiFaceDetail;
+use crate::novelai::{build_request, detect, EventSink, StreamEvent};
 use crate::state::AppState;
 
 /// Pause between face requests.
@@ -39,6 +40,24 @@ const FACE_GAP: Duration = Duration::from_millis(400);
 /// threading the header through would touch every `ApiError` construction site
 /// in the crate for one call path.
 const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(6);
+
+/// Tell the frontend that the face pass did not do what the panel promised.
+///
+/// Everything this feature can get wrong is deliberately non-fatal: the base
+/// image is already paid for, so a failed or skipped pass still delivers it.
+/// That leaves the logs as the only trace, which is indistinguishable from the
+/// pass having worked silently, so each of those paths also raises a notice.
+/// `reason` is a locale-key suffix, not a sentence.
+pub fn notify(sink: &EventSink, prompt_id: &str, status: &str, reason: &str) {
+    sink.emit(
+        "novelai:face_pass",
+        serde_json::json!({
+            "prompt_id": prompt_id,
+            "status": status,
+            "reason": reason,
+        }),
+    );
+}
 
 /// Repaint every detected face on `png` through NovelAI.
 ///
@@ -73,6 +92,7 @@ pub async fn run_face_pass(
     .await?;
     if faces.is_empty() {
         log::info!("NovelAI {prompt_id}: face pass found no faces");
+        notify(sink, prompt_id, "skipped", "no_faces");
         return Ok(None);
     }
 
@@ -90,7 +110,15 @@ pub async fn run_face_pass(
     });
 
     let total = faces.len();
+    // The progress bar spans every step of every face rather than one tick per
+    // face: a single-face pass would otherwise sit at 0/1 for the whole NovelAI
+    // round trip, which reads as a frozen bar.
+    let steps = crop_steps(&detail);
+    let max_progress = total as u32 * steps;
     let mut painted = 0usize;
+    // Set when the loop gives up early, so the notice after it can say whether
+    // the user is looking at a partial pass or none at all.
+    let mut failure: Option<&'static str> = None;
 
     for (index, face) in faces.iter().enumerate() {
         if state.prompt_queue.is_cancelled(prompt_id) {
@@ -112,13 +140,15 @@ pub async fn run_face_pass(
             continue;
         };
 
+        let node = format!("NovelAI face {}/{}", index + 1, total);
+        let done_before = index as u32 * steps;
         sink.emit(
             "comfyui:progress",
             serde_json::json!({
                 "prompt_id": prompt_id,
-                "value": index,
-                "max": total,
-                "node": format!("NovelAI face {}/{}", index + 1, total),
+                "value": done_before,
+                "max": max_progress,
+                "node": node,
             }),
         );
 
@@ -172,6 +202,7 @@ pub async fn run_face_pass(
             Ok(body) => body,
             Err(err) => {
                 log::warn!("NovelAI {prompt_id}: face pass request rejected ({err})");
+                failure = Some("request_rejected");
                 break;
             }
         };
@@ -180,7 +211,38 @@ pub async fn run_face_pass(
             tokio::time::sleep(FACE_GAP).await;
         }
 
-        let images = match generate_with_retry(client, &body).await {
+        let images = match generate_with_retry(client, &body, |event| {
+            if state.prompt_queue.is_cancelled(prompt_id) {
+                return;
+            }
+            let StreamEvent::Intermediate { image, step, .. } = event else {
+                return;
+            };
+            // The preview is the crop alone, not the whole frame: compositing
+            // each one would mean a full decode and re-encode inside this
+            // synchronous callback, which would stall the stream it is reading.
+            if let Some(temp) = crate::temp_images::save(&image, "png") {
+                sink.emit(
+                    "comfyui:preview",
+                    serde_json::json!({
+                        "temp_filename": temp,
+                        "format": "png",
+                        "prompt_id": prompt_id,
+                    }),
+                );
+            }
+            sink.emit(
+                "comfyui:progress",
+                serde_json::json!({
+                    "prompt_id": prompt_id,
+                    "value": done_before + (step + 1).min(steps),
+                    "max": max_progress,
+                    "node": node,
+                }),
+            );
+        })
+        .await
+        {
             Ok(images) => images,
             Err(err) => {
                 // Stop rather than continue: whatever refused this face (a rate
@@ -190,11 +252,13 @@ pub async fn run_face_pass(
                     "NovelAI {prompt_id}: face {} of {total} failed ({err}); delivering what is done",
                     index + 1
                 );
+                failure = Some("generate_failed");
                 break;
             }
         };
         let Some(result) = images.into_iter().next() else {
             log::warn!("NovelAI {prompt_id}: face {} came back empty", index + 1);
+            failure = Some("empty_result");
             break;
         };
 
@@ -205,11 +269,19 @@ pub async fn run_face_pass(
                     "NovelAI {prompt_id}: face {} could not be read back ({err})",
                     index + 1
                 );
+                failure = Some("readback_failed");
                 break;
             }
         };
         face_pass::composite_face(&mut base, &patch, &plan, detail.feather);
         painted += 1;
+    }
+
+    if let Some(reason) = failure {
+        let status = if painted > 0 { "partial" } else { "failed" };
+        notify(sink, prompt_id, status, reason);
+    } else if painted == 0 {
+        notify(sink, prompt_id, "skipped", "nothing_painted");
     }
 
     if painted == 0 {
@@ -220,13 +292,20 @@ pub async fn run_face_pass(
         "comfyui:progress",
         serde_json::json!({
             "prompt_id": prompt_id,
-            "value": total,
-            "max": total,
+            "value": max_progress,
+            "max": max_progress,
             "node": "NovelAI faces",
         }),
     );
 
-    encode_png(&base).await.map(Some)
+    let composite = encode_png(&base).await?;
+    // The re-encode above dropped NovelAI's own text chunks, and those are what
+    // novelai.net reads when the file is dragged back onto it. Splicing the
+    // originals into the composite keeps the delivered image describing the
+    // generation it came from, and keeps `save_to_gallery_inner` writing those
+    // bytes verbatim instead of embedding a `parameters` chunk NovelAI ignores.
+    let restored = crate::metadata::copy_png_text_chunks(png, &composite);
+    Ok(Some(restored.unwrap_or(composite)))
 }
 
 /// The request for one face crop.
@@ -257,11 +336,7 @@ fn crop_request(
     // Above 28 steps the crop leaves the Opus free window, so a pass the panel
     // called free would quietly start billing. Under `allow_paid` the user has
     // said they are spending anyway.
-    out.steps = if detail.fits_free_window() {
-        detail.steps.min(face_pass::FREE_STEPS).max(1)
-    } else {
-        detail.steps.max(1)
-    };
+    out.steps = crop_steps(&detail);
     // A negative seed means "randomise", and every face should stay random in
     // that case rather than collapsing onto a fixed low number.
     out.seed = if params.seed < 0 {
@@ -287,18 +362,35 @@ fn crop_request(
     out
 }
 
+/// Steps one crop request will run, after the free-window clamp.
+///
+/// Shared with [`crop_request`] so the progress bar is scaled by the same
+/// number the request is actually sent with.
+fn crop_steps(detail: &NovelAiFaceDetail) -> u32 {
+    if detail.fits_free_window() {
+        detail.steps.min(face_pass::FREE_STEPS).max(1)
+    } else {
+        detail.steps.max(1)
+    }
+}
+
 /// One retry, once, on a rate limit.
-async fn generate_with_retry(
+///
+/// Streaming rather than the plain endpoint: it costs the same and it is the
+/// only way the crop shows up in the lightbox while it renders.
+async fn generate_with_retry<F>(
     client: &NovelAiClient<'_>,
     body: &serde_json::Value,
-) -> Result<Vec<Vec<u8>>, AppError> {
-    // The non-streaming endpoint costs exactly the same and there is no
-    // per-step bar to feed for a crop, so the stream buys nothing here.
-    match client.generate(body).await {
+    mut on_event: F,
+) -> Result<Vec<Vec<u8>>, AppError>
+where
+    F: FnMut(StreamEvent),
+{
+    match client.generate_stream(body, &mut on_event).await {
         Err(AppError::ApiError { status: 429, .. }) => {
             log::warn!("NovelAI face pass rate limited; retrying once");
             tokio::time::sleep(RATE_LIMIT_BACKOFF).await;
-            client.generate(body).await
+            client.generate_stream(body, &mut on_event).await
         }
         other => other,
     }

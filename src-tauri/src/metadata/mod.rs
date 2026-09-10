@@ -486,6 +486,86 @@ fn png_text_chunks(info: &png::Info<'_>) -> HashMap<String, String> {
     chunks
 }
 
+/// The 8 bytes every PNG starts with.
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+/// Walk a PNG's chunk list, returning each chunk's type alongside the byte
+/// range of the whole chunk (length field, type, data and CRC).
+///
+/// `None` for anything that is not a structurally sound PNG, so callers can
+/// fall back to leaving the bytes alone rather than producing a broken file.
+fn png_chunk_spans(bytes: &[u8]) -> Option<Vec<([u8; 4], std::ops::Range<usize>)>> {
+    if bytes.len() < 8 || bytes[..8] != PNG_SIGNATURE {
+        return None;
+    }
+    let mut spans = Vec::new();
+    let mut pos = 8usize;
+    while pos + 8 <= bytes.len() {
+        let len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
+        // 12 = the 4-byte length, the 4-byte type and the 4-byte CRC that
+        // bracket the data.
+        let end = pos.checked_add(12)?.checked_add(len)?;
+        if end > bytes.len() {
+            return None;
+        }
+        let mut kind = [0u8; 4];
+        kind.copy_from_slice(&bytes[pos + 4..pos + 8]);
+        let is_end = kind == *b"IEND";
+        spans.push((kind, pos..end));
+        if is_end {
+            break;
+        }
+        pos = end;
+    }
+    Some(spans)
+}
+
+/// Splice `source`'s text chunks into `target`, byte for byte.
+///
+/// The NovelAI face pass repaints pixels, so its result has to be re-encoded,
+/// and a re-encode drops the `Title` / `Description` / `Software` / `Source` /
+/// `Comment` chunks that are the only thing novelai.net reads when an image is
+/// dragged back onto it. Carrying the originals across restores that, and
+/// re-arms the verbatim-preserve branch in `save_to_gallery_inner` so nothing
+/// downstream rewrites them again.
+///
+/// The chunks are copied as raw bytes rather than decoded and re-added: their
+/// CRCs are already correct, and a round trip through the png crate's Latin-1
+/// text would mangle a Japanese prompt that NovelAI wrote as UTF-8.
+///
+/// The stealth-alpha payload cannot be carried across the same way. It is one
+/// sequential bitstream over the whole image, so a repainted rectangle in the
+/// middle destroys everything after it; the text chunks are what survives a
+/// face pass.
+///
+/// Returns `None` when there is nothing to copy, or when either side is not a
+/// valid PNG, which callers read as "keep the bytes you already have".
+pub fn copy_png_text_chunks(source: &[u8], target: &[u8]) -> Option<Vec<u8>> {
+    let mut text = Vec::new();
+    for (kind, span) in png_chunk_spans(source)? {
+        if kind == *b"tEXt" || kind == *b"zTXt" || kind == *b"iTXt" {
+            text.extend_from_slice(&source[span]);
+        }
+    }
+    if text.is_empty() {
+        return None;
+    }
+
+    // Before the first IDAT. Text chunks may sit anywhere between IHDR and
+    // IEND, but the colour-space chunks an encoder writes ahead of the pixel
+    // data must keep their order, and inserting here disturbs none of them.
+    let insert_at = png_chunk_spans(target)?
+        .into_iter()
+        .find(|(kind, _)| *kind == *b"IDAT")
+        .map(|(_, span)| span.start)?;
+
+    let mut out = Vec::with_capacity(target.len() + text.len());
+    out.extend_from_slice(&target[..insert_at]);
+    out.extend_from_slice(&text);
+    out.extend_from_slice(&target[insert_at..]);
+    Some(out)
+}
+
 // ---------------------------------------------------------------------------
 // Stealth alpha encoding (SwarmUI-compatible)
 // ---------------------------------------------------------------------------
@@ -2036,5 +2116,52 @@ mod tests {
             info.utf8_text.is_empty(),
             "iTXt fallback should not be used"
         );
+    }
+
+    /// The NovelAI face pass repaints pixels and therefore re-encodes, which
+    /// drops the chunks novelai.net reads on import. Splicing the originals
+    /// into the composite is what puts them back.
+    #[test]
+    fn text_chunks_splice_into_a_re_encoded_png() {
+        let source = make_novelai_png(8, 8);
+        let composite = make_test_png(8, 8, false);
+        assert!(!png_carries_novelai_metadata(&composite));
+
+        let spliced = copy_png_text_chunks(&source, &composite).unwrap();
+        assert!(png_carries_novelai_metadata(&spliced));
+
+        let decoder = png::Decoder::new(Cursor::new(spliced.as_slice()));
+        let mut reader = decoder.read_info().unwrap();
+        let chunks = png_text_chunks(reader.info());
+        assert_eq!(chunks.get("Software").map(String::as_str), Some("NovelAI"));
+        assert_eq!(
+            chunks.get("Comment").map(String::as_str),
+            Some("{\"seed\": 577536437, \"width\": 8, \"height\": 8}")
+        );
+
+        // The pixels stay the composite's: the source is a metadata donor, not
+        // an image one.
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!(info.color_type, png::ColorType::Rgb);
+
+        // And the app still reads the restored chunks back as NovelAI's.
+        let params = read_png_metadata(&spliced).unwrap().unwrap();
+        assert_eq!(
+            params.get("mooshie_backend").map(String::as_str),
+            Some("novelai")
+        );
+        assert_eq!(params.get("seed").map(String::as_str), Some("577536437"));
+    }
+
+    /// Nothing to copy, or nothing to copy into, must leave the caller with the
+    /// bytes it already had rather than a half-written file.
+    #[test]
+    fn text_chunk_splice_declines_when_there_is_nothing_to_copy() {
+        let source = make_test_png(8, 8, false);
+        let composite = make_test_png(4, 4, false);
+        assert!(copy_png_text_chunks(&source, &composite).is_none());
+        assert!(copy_png_text_chunks(b"not a png at all", &composite).is_none());
+        assert!(copy_png_text_chunks(&make_novelai_png(8, 8), b"nope").is_none());
     }
 }

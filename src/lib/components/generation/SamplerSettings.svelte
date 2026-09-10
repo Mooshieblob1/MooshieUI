@@ -896,11 +896,42 @@
         id="anima-teacache"
         bind:checked={generation.animaTeacacheEnabled}
         onchange={() => generation.saveSettings()}
-        class="w-4 h-4 accent-indigo-500 rounded"
+        disabled={generation.pauseResumeActive}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
       />
-      <label for="anima-teacache" class="text-xs text-neutral-400">
+      <label for="anima-teacache" class="text-xs {generation.pauseResumeActive ? 'text-neutral-600' : 'text-neutral-400'}">
         {locale.t('generation.sampler.anima_teacache_label')}<InfoTip text={locale.t('generation.sampler.anima_teacache_tip')} />
       </label>
+    </div>
+    {#if generation.pauseResumeActive}
+      <p class="text-[11px] text-amber-400/90">{locale.t('generation.pause.teacache_disabled')}</p>
+    {/if}
+  {/if}
+
+  {#if generation.mode === "txt2img" && !generation.isNovelAi}
+    <!-- Pause at step: stop partway so prompt, CFG, sampler or LoRAs can change before the rest of the schedule runs. -->
+    <div use:scrollCapture>
+      <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+        <span>{locale.t('generation.pause.label')}<InfoTip text={locale.t('generation.pause.tip')} /></span>
+        <EditableValue value={generation.pauseAtStep} min={0} max={Math.max(0, generation.steps - 1)} step={1} onchange={(v) => generation.pauseAtStep = v} />
+      </label>
+      <input
+        type="range"
+        bind:value={generation.pauseAtStep}
+        min="0"
+        max={Math.max(0, generation.steps - 1)}
+        step="1"
+        class="w-full accent-amber-500"
+      />
+      {#if generation.pauseAtStep > 0 && generation.effectivePauseAtStep === 0}
+        <p class="mt-1 text-[10px] text-amber-400/90">
+          {locale.t('generation.pause.step_ignored', { min: String(generation.pausedEndStep), max: String(generation.steps) })}
+        </p>
+      {:else if generation.effectivePauseAtStep > 0}
+        <p class="mt-1 text-[10px] text-neutral-500">
+          {locale.t('generation.pause.will_pause', { step: String(generation.effectivePauseAtStep), total: String(generation.steps) })}
+        </p>
+      {/if}
     </div>
   {/if}
 
