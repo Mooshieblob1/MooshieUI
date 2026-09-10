@@ -236,18 +236,18 @@ fn secure_create_options() -> std::fs::OpenOptions {
 }
 
 /// A sibling temp path derived from `path`'s own file name, plus this
-/// process's id and the current time, so a concurrent save (this account
+/// process's id and a random UUID, so a concurrent save (this account
 /// saving twice at once, or another account entirely) cannot collide with it.
 fn tmp_path_for(path: &std::path::Path) -> PathBuf {
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "secrets.json".to_string());
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    path.with_file_name(format!(".{file_name}.{}.{nanos}.tmp", std::process::id()))
+    path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ))
 }
 
 // --- storage ------------------------------------------------------------
@@ -355,8 +355,7 @@ fn save_nai_key_in(
     let write_result: Result<(), String> = (|| {
         let mut f = secure_create_options()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(&tmp_path)
             .map_err(|e| e.to_string())?;
         f.write_all(&bytes).map_err(|e| e.to_string())?;

@@ -674,6 +674,9 @@ stated otherwise.
   (`webserver.rs`) now blanks `novelai_api_key` on that response and substitutes
   the caller's own `user_secrets::has_nai_key()` result before the payload
   leaves the server.
+- Moderator settings saves also preserve the owner's NovelAI key, even if a
+  full `update_config` payload supplies a replacement. Account keys can only
+  be changed through `set_novelai_api_key` for the calling account.
 - Never logged. `NovelAiClient` deliberately does not derive `Debug`. The
   resolved-credential wrapper `NaiCredential` (`novelai/mod.rs`) has a
   hand-written `Debug` that always prints `NaiCredential(***)`, regardless of
@@ -831,8 +834,14 @@ itself is the only remaining gate; and `scrub_nai_key_for_user` stops a
 moderator's `get_config` response from disclosing the instance owner's real
 key.
 
-**Testing needed:** yes, and none of it is covered by `cargo test`, because it
-needs a live NovelAI account and a running server.
+**Automated coverage:** credential selection and missing-key rejection,
+cross-account encryption and storage isolation, key clearing and deletion,
+config redaction, moderator config-write protection, and command permissions
+run in `cargo test`. Desktop requests without a key now fail before entering
+the queue, matching hosted requests.
+
+**Live testing still needed:** the UI and paid API flows below require a
+running app and NovelAI account. Unit tests do not call NovelAI's servers.
 
 | # | Step | Expected |
 |---|------|----------|

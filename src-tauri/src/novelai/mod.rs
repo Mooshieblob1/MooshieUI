@@ -83,15 +83,29 @@ pub async fn resolve_credential(
     state: &Arc<AppState>,
     username: Option<&str>,
 ) -> Result<NaiCredential, AppError> {
+    let host_key = if username.is_none() {
+        state.config.read().await.novelai_api_key.clone()
+    } else {
+        None
+    };
+    select_credential(host_key, username, crate::user_secrets::load_nai_key)
+}
+
+/// Keep account selection testable without touching the live secret store.
+fn select_credential(
+    host_key: Option<String>,
+    username: Option<&str>,
+    load_user_key: impl FnOnce(&str) -> Option<String>,
+) -> Result<NaiCredential, AppError> {
     match username {
-        None => {
-            let key = {
-                let config = state.config.read().await;
-                config.novelai_api_key.clone().unwrap_or_default()
-            };
-            Ok(NaiCredential::new(key))
-        }
-        Some(user) => crate::user_secrets::load_nai_key(user)
+        None => host_key
+            .filter(|key| !key.trim().is_empty())
+            .map(NaiCredential::new)
+            .ok_or_else(|| {
+                AppError::Other("No NovelAI API key configured. Add one in Settings.".into())
+            }),
+        Some(user) => load_user_key(user)
+            .filter(|key| !key.trim().is_empty())
             .map(NaiCredential::new)
             .ok_or_else(|| {
                 AppError::Other(
@@ -1106,6 +1120,39 @@ pub async fn fetch_subscription(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_account_never_falls_back_to_the_owner_key() {
+        for saved in [None, Some(" ".to_string())] {
+            let result = select_credential(Some("owner-token".into()), Some("alice"), |user| {
+                assert_eq!(user, "alice");
+                saved
+            });
+            assert!(result.unwrap_err().to_string().contains("this account"));
+        }
+    }
+
+    #[test]
+    fn a_named_account_uses_its_own_key_even_when_the_owner_has_one() {
+        let credential = select_credential(Some("owner-token".into()), Some("alice"), |user| {
+            assert_eq!(user, "alice");
+            Some("alice-token".into())
+        })
+        .unwrap();
+        assert_eq!(credential.as_str(), "alice-token");
+    }
+
+    #[test]
+    fn owner_requests_use_the_config_key_and_reject_missing_keys() {
+        let credential = select_credential(Some("owner-token".into()), None, |_| {
+            panic!("owner must not read an account's secret store")
+        })
+        .unwrap();
+        assert_eq!(credential.as_str(), "owner-token");
+        for missing in [None, Some(" ".into())] {
+            assert!(select_credential(missing, None, |_| None).is_err());
+        }
+    }
 
     #[test]
     fn a_credential_does_not_print_its_secret() {

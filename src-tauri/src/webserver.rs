@@ -165,6 +165,21 @@ fn scrub_nai_key_for_user(value: &mut serde_json::Value, has_key: bool) {
     }
 }
 
+/// A moderator can edit shared settings, but cannot replace the owner's
+/// NovelAI credential through a full-config payload.
+fn preserve_config_secrets_for_role(
+    incoming: &mut config::AppConfig,
+    current: &config::AppConfig,
+    role: UserRole,
+) {
+    config::preserve_secrets(incoming, current);
+    if role != UserRole::Admin {
+        incoming
+            .novelai_api_key
+            .clone_from(&current.novelai_api_key);
+    }
+}
+
 fn query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     let prefix = format!("{}=", name);
     query.split('&').find_map(|p| p.strip_prefix(&prefix))
@@ -2172,7 +2187,7 @@ async fn dispatch_command(
                     .map_err(|e| format!("Invalid config: {}", e))?;
             config::normalize_config_fields(&mut new_config);
             let mut current = state.config.write().await;
-            config::preserve_secrets(&mut new_config, &current);
+            preserve_config_secrets_for_role(&mut new_config, &current, caller_role);
             config::save_config(&new_config)?;
             *current = new_config;
             Ok(serde_json::json!(null))
@@ -7651,7 +7666,49 @@ mod watchdog_tests {
 
 #[cfg(test)]
 mod nai_key_tests {
-    use super::scrub_nai_key_for_user;
+    use super::{
+        min_role_for_command, preserve_config_secrets_for_role, scrub_nai_key_for_user, UserRole,
+    };
+    use crate::config::AppConfig;
+
+    #[test]
+    fn moderator_settings_cannot_replace_the_owner_key() {
+        let current = AppConfig {
+            novelai_api_key: Some("owner-token".into()),
+            ..Default::default()
+        };
+        let mut incoming = AppConfig {
+            novelai_api_key: Some("different-token".into()),
+            server_port: 9191,
+            ..Default::default()
+        };
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Moderator);
+        assert_eq!(incoming.novelai_api_key, current.novelai_api_key);
+        assert_eq!(incoming.server_port, 9191);
+    }
+
+    #[test]
+    fn owner_settings_still_accept_an_owner_key() {
+        let current = AppConfig::default();
+        let mut incoming = AppConfig {
+            novelai_api_key: Some("owner-token".into()),
+            ..Default::default()
+        };
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
+        assert_eq!(incoming.novelai_api_key.as_deref(), Some("owner-token"));
+    }
+
+    #[test]
+    fn regular_accounts_can_use_their_own_novelai_credentials() {
+        for command in [
+            "set_novelai_api_key",
+            "novelai_generate",
+            "novelai_augment",
+            "novelai_subscription",
+        ] {
+            assert_eq!(min_role_for_command(command), UserRole::User);
+        }
+    }
 
     #[test]
     fn a_named_account_never_sees_the_host_novelai_key() {

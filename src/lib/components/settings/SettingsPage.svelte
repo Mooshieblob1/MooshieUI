@@ -4037,7 +4037,7 @@
           </div>
 
           <div class="px-5 pb-5 space-y-3">
-            <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.api_key_desc')}</p>
+            <p class="text-[10px] text-neutral-500">{locale.t(isAdmin ? 'settings.novelai.api_key_desc' : 'settings.novelai.account_key_desc')}</p>
             <div>
               <label class="text-xs text-neutral-400 block mb-1" for="novelai-api-key">{locale.t('settings.novelai.api_key')}</label>
               <div class="flex gap-2">
