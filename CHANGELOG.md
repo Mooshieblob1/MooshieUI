@@ -1,5 +1,23 @@
 # Changelog
 
+## What's New in v2.3.1
+
+### New features
+- **Pause and continue image generation**: choose **Pause at step** in Text to Image, inspect the preview, then continue with a different prompt, CFG, sampler or LoRAs. A final continuation can change the step count and scheduler. **Paint a correction** opens the paused preview in the inpaint canvas so masked edits can be blended into the remaining generation. Keep the pause to try another ending, or discard it to start fresh. ComfyUI only; upscaling and detail passes wait until sampling finishes. ([#692](https://github.com/Mooshieblob1/MooshieUI/pull/692))
+- **Personal NovelAI keys for hosted accounts**: regular users and moderators can save and manage their own encrypted NovelAI API key. These accounts use their own credentials and never fall back to the host's key. The desktop owner's shared configuration remains separate, and moderators cannot read or replace that owner key through configuration updates. ([#691](https://github.com/Mooshieblob1/MooshieUI/pull/691))
+- **NovelAI Face Detailer**: faces are detected locally and repainted with NovelAI or a local checkpoint. Choose a face prompt and crop-cost policy; each NovelAI crop streams its preview and progress. Face steps follow the main Steps setting until overridden, and notices explain skipped, partial or failed passes. New settings start at Confidence 0.4 and Strength 0.5. ([#688](https://github.com/Mooshieblob1/MooshieUI/pull/688), [#692](https://github.com/Mooshieblob1/MooshieUI/pull/692))
+
+### Fixes and maintenance
+- **NovelAI character references** are fitted to an accepted canvas with letterboxing, avoiding rejected reference requests. ([#687](https://github.com/Mooshieblob1/MooshieUI/pull/687))
+- **NovelAI PNG metadata survives clipboard copying and face detailing**, retaining the original text chunks alongside post-processing information. Importing V5 images ignores the placeholder zero for undesired content strength while preserving meaningful values from older models. ([#689](https://github.com/Mooshieblob1/MooshieUI/pull/689), [#692](https://github.com/Mooshieblob1/MooshieUI/pull/692))
+- **Reliable continuations** keep queued runs' pause histories separate, retain the original seed, apply the correct latent noise scaling for flow models, and preserve DPM2/UniPC noise boundaries. Switching to NovelAI does not carry ComfyUI pause state into a request. ([#692](https://github.com/Mooshieblob1/MooshieUI/pull/692))
+
+### Experimental macOS builds
+- **Native Apple Silicon candidates** use an ARM64 app and managed Python/PyTorch runtime for macOS 14 or later, with Metal checks, conservative unified-memory handling, and guards against unsupported CUDA attention and FP8 settings. Builds use free ad-hoc signing and are not notarized by Apple. ([#690](https://github.com/Mooshieblob1/MooshieUI/pull/690))
+- **Mac installers remain experimental** while physical-Mac installation, real model generation and application-update qualification are pending. Candidate DMGs and checksums are available from the [macOS Native Validation workflow](https://github.com/Mooshieblob1/MooshieUI/actions/workflows/macos-native.yml); stable macOS downloads and automatic updates remain gated. See the [Mac installation and qualification guide](https://github.com/Mooshieblob1/MooshieUI/blob/v2.3.1/docs/MACOS.md).
+
+---
+
 ## What's New in v2.3.0
 
 ### New features
