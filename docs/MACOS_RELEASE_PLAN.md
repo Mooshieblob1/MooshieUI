@@ -4,8 +4,8 @@ Status: implementation complete; physical-Mac qualification pending, 2026-09-10.
 Native CI, managed runtime pins,
 MPS setup verification, packaging, updater collection and publication gating are
 implemented. Local and native Mac build gates pass. See [MACOS.md](MACOS.md) for the
-current candidate and release procedure. Versions remain 2.3.0 until the normal
-2.3.1 release process.
+current candidate and release procedure. Release metadata now targets 2.3.1. Stable Mac publication remains gated until
+physical-Mac acceptance is complete; other platforms can release independently.
 
 ## Automated candidate evidence
 
