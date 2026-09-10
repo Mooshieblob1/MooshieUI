@@ -15,6 +15,9 @@ pub struct GenerateResponse {
     pub prompt_id: String,
     #[serde(serialize_with = "crate::comfyui::types::seed_string::serialize")]
     pub seed: i64,
+    /// GPU worker the prompt was submitted to. A paused generation sends it
+    /// back with the resume so the same process serves the cached latent.
+    pub worker_id: u32,
 }
 
 #[tauri::command]
@@ -150,11 +153,13 @@ pub async fn generate(
     // diffusion model (which would otherwise spill into shared system memory).
     state.free_llm_vram_for_generation().await;
 
-    // Route through GPU manager for multi-GPU distribution
+    // Route through GPU manager for multi-GPU distribution. A resumed run
+    // prefers the worker whose execution cache holds the paused latent.
     let timeout = std::time::Duration::from_secs(300);
+    let preferred_worker = params.resume_stages.last().and_then(|s| s.worker_id);
     let (worker_id, response) = state
         .gpu_manager
-        .submit_prompt(workflow, &state.client_id, timeout)
+        .submit_prompt_preferring(preferred_worker, workflow, &state.client_id, timeout)
         .await?;
 
     // Track the Tauri (host) prompt in the shared queue so LAN users see
@@ -168,6 +173,7 @@ pub async fn generate(
     Ok(GenerateResponse {
         prompt_id: response.prompt_id,
         seed,
+        worker_id,
     })
 }
 

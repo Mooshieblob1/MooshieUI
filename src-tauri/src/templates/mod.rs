@@ -16,7 +16,7 @@ pub mod video_interpolate;
 
 use serde_json::{json, Value};
 
-use crate::comfyui::types::{GenerationParams, PromptSegment};
+use crate::comfyui::types::{BaseSources, GenerationParams, PromptSegment, StageContext};
 
 /// Validate generation parameters before workflow construction.
 ///
@@ -28,6 +28,8 @@ use crate::comfyui::types::{GenerationParams, PromptSegment};
 /// Both the Tauri `generate` command and the LAN web server `generate` route
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
+    validate_pause_resume(params)?;
+
     // Video mode has its own parameter set; validate it and return early so
     // image-only guards (input images, ControlNet, style transfer) never
     // fire on stale image-mode state.
@@ -305,6 +307,139 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     Ok(())
 }
 
+/// Settings that every stage of a paused run must share. The first stage's
+/// latent is already sampled at its resolution and batch size with a given
+/// model, so a later stage cannot change any of these.
+fn pause_locked_settings(params: &GenerationParams) -> [(&'static str, String); 9] {
+    [
+        ("width", params.width.to_string()),
+        ("height", params.height.to_string()),
+        ("batch size", params.batch_size.to_string()),
+        ("checkpoint", params.checkpoint.clone()),
+        ("split model", params.use_split_model.to_string()),
+        (
+            "diffusion model",
+            params.diffusion_model.clone().unwrap_or_default(),
+        ),
+        (
+            "text encoder",
+            params.clip_model.clone().unwrap_or_default(),
+        ),
+        ("VAE", params.vae.clone().unwrap_or_default()),
+        ("model architecture", params.model_architecture.clone()),
+    ]
+}
+
+/// The schedule every stage's pause step indexes into. A stage that pauses
+/// again must keep it; only the stage that finishes the run may switch to
+/// another scheduler or step count, sampling an explicit sigma tail instead.
+fn sampler_discards_penultimate_sigma(sampler: &str) -> bool {
+    // ComfyUI KSampler.calculate_sigmas builds one extra step for these
+    // samplers, then removes the penultimate sigma. Earlier boundaries differ.
+    matches!(
+        sampler,
+        "dpm_2" | "dpm_2_ancestral" | "uni_pc" | "uni_pc_bh2"
+    )
+}
+
+fn pause_schedule_settings(params: &GenerationParams) -> [(&'static str, String); 3] {
+    [
+        ("steps", params.steps.to_string()),
+        ("scheduler", params.scheduler.clone()),
+        (
+            "sampler noise schedule",
+            sampler_discards_penultimate_sigma(&params.sampler_name).to_string(),
+        ),
+    ]
+}
+
+fn check_locked(
+    wanted: &[(&'static str, String)],
+    actual: &[(&'static str, String)],
+) -> Result<(), String> {
+    for ((name, wanted), (_, actual)) in wanted.iter().zip(actual) {
+        if wanted != actual {
+            return Err(format!(
+                "Cannot change the {name} while a generation is paused (paused stage used \"{wanted}\", current is \"{actual}\"). Discard the paused run to change it."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Check a pause request or a resumed run before it is built.
+///
+/// Every stage must stop strictly after the one before it and before the
+/// schedule ends, and must agree with the first stage on the settings its
+/// latent was sampled with (see `pause_locked_settings`). Steps and
+/// scheduler are locked too, except on a final stage that finishes the run.
+fn validate_pause_resume(params: &GenerationParams) -> Result<(), String> {
+    if params.mode != "txt2img" {
+        if !params.resume_stages.is_empty() {
+            return Err(
+                "A paused generation can only be continued in Text to Image mode.".to_string(),
+            );
+        }
+        return Ok(());
+    }
+
+    let first = params
+        .resume_stages
+        .first()
+        .map(|stage| stage.params.as_ref())
+        .unwrap_or(params);
+    let schedule_steps = first.steps;
+    let locked = pause_locked_settings(first);
+    let schedule = pause_schedule_settings(first);
+    let mut prev_end: u32 = 0;
+
+    for (index, stage) in params.resume_stages.iter().enumerate() {
+        let number = index + 1;
+        let stage_params = &stage.params;
+        if stage_params.mode != "txt2img" {
+            return Err(format!(
+                "Paused stage {number} was not a Text to Image generation."
+            ));
+        }
+        let end = stage_params.pause_at_step.ok_or_else(|| {
+            format!("Paused stage {number} has no pause step, so there is nothing to resume from.")
+        })?;
+        if end <= prev_end || end >= schedule_steps {
+            return Err(format!(
+                "Paused stage {number} stopped at step {end}, which must be after step {prev_end} and before the final step ({schedule_steps})."
+            ));
+        }
+        check_locked(&locked, &pause_locked_settings(stage_params))?;
+        check_locked(&schedule, &pause_schedule_settings(stage_params))?;
+        prev_end = end;
+    }
+
+    check_locked(&locked, &pause_locked_settings(params))?;
+    let finishing = params.pause_at_step.is_none();
+    let resuming = !params.resume_stages.is_empty();
+    if !(finishing && resuming) {
+        check_locked(&schedule, &pause_schedule_settings(params))?;
+    } else if params.steps <= prev_end {
+        return Err(format!(
+            "Steps must be greater than {prev_end}, the step the run paused at, so at least one step remains to sample."
+        ));
+    }
+
+    if let Some(pause_at) = params.pause_at_step {
+        if pause_at <= prev_end || pause_at >= schedule_steps {
+            return Err(format!(
+                "Pause step {pause_at} must be after step {prev_end} and before the final step ({schedule_steps})."
+            ));
+        }
+    }
+
+    if !resuming && (params.resume_edit_image.is_some() || params.resume_edit_mask.is_some()) {
+        return Err("There is no paused generation to paint the edit into.".to_string());
+    }
+
+    Ok(())
+}
+
 pub struct WorkflowResult {
     pub workflow: serde_json::Map<String, Value>,
     pub next_id: u32,
@@ -323,6 +458,10 @@ pub struct WorkflowResult {
     /// hires or detailer pass crashes with a tensor size mismatch. `None`
     /// means the chains use `model_source` as usual.
     pub refiner_model_source: Option<(String, u32)>,
+    /// Loader outputs before the LoRA chain, so a later stage of a paused run
+    /// can build its own LoRA chain on the same loaded model. `None` for
+    /// templates that cannot be paused.
+    pub base_sources: Option<BaseSources>,
 }
 
 impl WorkflowResult {
@@ -340,6 +479,8 @@ pub struct ModelLoadResult {
     pub clip_source: (String, u32),
     pub vae_source: (String, u32),
     pub next_id: u32,
+    /// Loader outputs before the LoRA chain, for later stages of a paused run.
+    pub base: BaseSources,
 }
 
 /// Absolute path to use when the active model is stored in a folder that doesn't
@@ -390,7 +531,16 @@ pub fn load_model_nodes(
 ) -> ModelLoadResult {
     let (mut model_source, mut clip_source, mut vae_source);
 
-    if params.model_architecture == "nanosaur" {
+    // A later stage of a paused run reuses the first stage's loader nodes so
+    // the checkpoint is not loaded twice. Only the LoRA chain below is rebuilt,
+    // which is what lets the resumed stage add, drop or reweight LoRAs.
+    let resumed_base = params.stage.as_ref().and_then(|s| s.base.clone());
+
+    if let Some(base) = resumed_base {
+        model_source = base.model;
+        clip_source = base.clip;
+        vae_source = base.vae;
+    } else if params.model_architecture == "nanosaur" {
         // NanoSaurLoader — custom all-in-one loader for Nanosaur models.
         // Outputs: MODEL(0), CLIP(1), VAE(2). Includes its own sampler patch.
         let loader_id = next_id.to_string();
@@ -414,6 +564,11 @@ pub fn load_model_nodes(
         next_id += 1;
 
         return ModelLoadResult {
+            base: BaseSources {
+                model: model_source.clone(),
+                clip: clip_source.clone(),
+                vae: vae_source.clone(),
+            },
             model_source,
             clip_source,
             vae_source,
@@ -536,6 +691,9 @@ pub fn load_model_nodes(
         next_id += 1;
     }
 
+    let base_model = model_source.clone();
+    let base_clip = clip_source.clone();
+
     // LoRA chain
     for lora in &params.loras {
         if lora.name.trim().is_empty() {
@@ -563,8 +721,10 @@ pub fn load_model_nodes(
         next_id += 1;
     }
 
-    // Optional separate VAE override (only for non-split models, split already has its own VAE)
-    if !params.use_split_model {
+    // Optional separate VAE override (only for non-split models, split already has its own VAE).
+    // A resumed stage inherits the first stage's VAE source, override included.
+    let resumed = params.stage.as_ref().is_some_and(|s| s.base.is_some());
+    if !params.use_split_model && !resumed {
         if let Some(ref vae_name) = params.vae {
             if !vae_name.is_empty() {
                 let vae_id = next_id.to_string();
@@ -608,6 +768,11 @@ pub fn load_model_nodes(
     }
 
     ModelLoadResult {
+        base: BaseSources {
+            model: base_model,
+            clip: base_clip,
+            vae: vae_source.clone(),
+        },
         model_source,
         clip_source,
         vae_source,
@@ -629,11 +794,131 @@ pub fn build_workflow(
         return video::build(params, seed, video_metadata_supported);
     }
 
+    if pause_resume_active(params) {
+        return build_paused_workflow(params, seed);
+    }
+
     if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
         return finish_workflow(result, params, seed);
     }
 
+    let result = build_image_stage(params, seed);
+    finish_workflow(result, params, seed)
+}
+
+/// Whether this request pauses partway through sampling or resumes a paused run.
+fn pause_resume_active(params: &GenerationParams) -> bool {
+    params.mode == "txt2img" && (params.pause_at_step.is_some() || !params.resume_stages.is_empty())
+}
+
+/// Settings that cannot take part in a paused run.
+///
+/// Style transfer samples through its own `SamplerCustomAdvanced` graph, which
+/// has no start/end step, and Anima TeaCache keeps a step counter inside the
+/// cached model patch that would carry over from one stage into the next. Both
+/// are switched off for every stage rather than rejected, so a user who pauses
+/// simply gets the plain sampler.
+fn strip_unpausable_settings(params: &mut GenerationParams) {
+    params.style_transfer_enabled = false;
+    params.anima_teacache_enabled = false;
+}
+
+/// Assemble a paused or resumed txt2img run.
+///
+/// Every earlier stage is rebuilt from the parameters it originally ran with,
+/// producing byte-identical nodes with the same IDs, so ComfyUI's execution
+/// cache hands back its latent instead of sampling it again. This request's
+/// settings then become the final stage, sampling from the last cached latent.
+/// Only the final stage is decoded and saved.
+fn build_paused_workflow(params: &GenerationParams, seed: i64) -> Value {
+    let mut combined = serde_json::Map::new();
+    let mut next_id: u32 = 1;
+    let mut start_step: u32 = 0;
+    let mut latent: Option<(String, u32)> = None;
+    let mut base: Option<BaseSources> = None;
+    // The first stage fixes the schedule every pause step indexes into.
+    let first = params
+        .resume_stages
+        .first()
+        .map(|stage| stage.params.as_ref())
+        .unwrap_or(params);
+    // Only the boundary before the final step is needed by the edit/tail
+    // nodes, so the extra schedule step reproduces KSampler's paused sigma
+    // without needing to remove its penultimate entry here.
+    let schedule = Some((
+        first.scheduler.clone(),
+        first.steps + u32::from(sampler_discards_penultimate_sigma(&first.sampler_name)),
+    ));
+
+    for stage in &params.resume_stages {
+        let mut stage_params = (*stage.params).clone();
+        // A stage's own history is already covered by the stages before it.
+        stage_params.resume_stages.clear();
+        strip_unpausable_settings(&mut stage_params);
+        // The frontend never sends `resolved_model_path`; the generate command
+        // fills it in per request. The model cannot change across a paused
+        // run, so the path resolved for this request is the one the stage
+        // was built with, and the loader node must come out identical.
+        if stage_params.resolved_model_path.is_none() {
+            stage_params.resolved_model_path = params.resolved_model_path.clone();
+        }
+        let end_step = stage_params.pause_at_step;
+        stage_params.stage = Some(StageContext {
+            first_id: next_id,
+            start_step,
+            end_step,
+            latent: latent.clone(),
+            base: base.clone(),
+            schedule: schedule.clone(),
+            custom_tail: false,
+        });
+
+        let result = build_image_stage(&stage_params, stage.seed);
+        let mut workflow = result.workflow;
+        // The intermediate was decoded when the stage was first shown; the
+        // resumed graph only needs its latent.
+        workflow.remove(&result.image_output.0);
+        combined.extend(workflow);
+
+        next_id = result.next_id;
+        latent = Some((result.sampler_id, 0));
+        if base.is_none() {
+            base = result.base_sources;
+        }
+        start_step = end_step.unwrap_or(start_step);
+    }
+
+    let mut final_params = params.clone();
+    final_params.resume_stages.clear();
+    strip_unpausable_settings(&mut final_params);
+    // A finishing stage may sample the rest on another scheduler or step
+    // count; validation guarantees that never happens on a stage that pauses.
+    let custom_tail = latent.is_some()
+        && params.pause_at_step.is_none()
+        && (params.scheduler != first.scheduler
+            || params.steps != first.steps
+            || sampler_discards_penultimate_sigma(&params.sampler_name)
+                != sampler_discards_penultimate_sigma(&first.sampler_name));
+    final_params.stage = Some(StageContext {
+        first_id: next_id,
+        start_step,
+        end_step: params.pause_at_step,
+        latent,
+        base,
+        schedule,
+        custom_tail,
+    });
+
+    let mut result = build_image_stage(&final_params, seed);
+    combined.extend(std::mem::take(&mut result.workflow));
+    result.workflow = combined;
+    finish_workflow(result, &final_params, seed)
+}
+
+/// Build one image template plus the model/conditioning patches that every
+/// image mode shares. `finish_workflow` appends the post-process chains.
+fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut result = match params.mode.as_str() {
         "img2img" => img2img::build(params, seed),
         "inpainting" => inpainting::build(params, seed),
@@ -689,12 +974,186 @@ pub fn build_workflow(
         }
     }
 
-    finish_workflow(result, params, seed)
+    // Resumed stage extras (sigma tail, painted edit). Last, because they
+    // read the schedule off the fully patched model the injects above built.
+    inject_resume_stage(&mut result, params, seed);
+
+    result
+}
+
+/// Wire up what a resumed stage needs beyond KSamplerAdvanced's step range.
+///
+/// Both extras need the paused run's schedule as a sigma tensor, rebuilt with
+/// `BasicScheduler` on the fully patched model (the same model the first
+/// stage's sampler saw, so the sigmas match):
+///
+/// - a **painted edit**: the edited preview is loaded, scaled to the run's
+///   size, VAE-encoded and handed to `MooshieResumeEdit`, which noises it to
+///   the paused sigma and blends it into the paused latent under the mask.
+///   The sampler then starts from that blend instead of the paused latent.
+/// - a **custom tail**: `MooshieSigmaTail` turns the paused sigma into a
+///   fresh schedule on this stage's scheduler and remaining step count, and
+///   the template's `SamplerCustom` samples it.
+fn inject_resume_stage(result: &mut WorkflowResult, params: &GenerationParams, seed: i64) {
+    let Some(stage) = params.stage.as_ref() else {
+        return;
+    };
+    let Some(paused_latent) = stage.latent.clone() else {
+        return;
+    };
+    let Some((scheduler, steps)) = stage.schedule.clone() else {
+        return;
+    };
+    let wants_edit = params
+        .resume_edit_image
+        .as_deref()
+        .is_some_and(|name| !name.trim().is_empty());
+    if !wants_edit && !stage.custom_tail {
+        return;
+    }
+
+    let sigmas_id = result.next_id.to_string();
+    result.workflow.insert(
+        sigmas_id.clone(),
+        json!({
+            "class_type": "BasicScheduler",
+            "inputs": {
+                "model": [result.model_source.0.clone(), result.model_source.1],
+                "scheduler": scheduler,
+                "steps": steps,
+                "denoise": 1.0
+            }
+        }),
+    );
+    result.next_id += 1;
+
+    if wants_edit {
+        let load_id = result.next_id.to_string();
+        result.workflow.insert(
+            load_id.clone(),
+            json!({
+                "class_type": "LoadImage",
+                "inputs": {
+                    "image": params.resume_edit_image.as_deref().unwrap_or("")
+                }
+            }),
+        );
+        result.next_id += 1;
+
+        let scale_id = result.next_id.to_string();
+        result.workflow.insert(
+            scale_id.clone(),
+            json!({
+                "class_type": "ImageScale",
+                "inputs": {
+                    "image": [load_id, 0],
+                    "width": params.width,
+                    "height": params.height,
+                    "upscale_method": "lanczos",
+                    "crop": "disabled"
+                }
+            }),
+        );
+        result.next_id += 1;
+
+        let encode_id = result.next_id.to_string();
+        result.workflow.insert(
+            encode_id.clone(),
+            json!({
+                "class_type": "VAEEncode",
+                "inputs": {
+                    "pixels": [scale_id, 0],
+                    "vae": [result.vae_source.0.clone(), result.vae_source.1]
+                }
+            }),
+        );
+        result.next_id += 1;
+
+        let mask_source = params
+            .resume_edit_mask
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .map(|name| {
+                let mask_id = result.next_id.to_string();
+                result.workflow.insert(
+                    mask_id.clone(),
+                    json!({
+                        "class_type": "LoadImageMask",
+                        "inputs": {
+                            "image": name,
+                            "channel": "red"
+                        }
+                    }),
+                );
+                result.next_id += 1;
+                mask_id
+            });
+
+        let blend_id = result.next_id.to_string();
+        let mut inputs = json!({
+            "model": [result.model_source.0.clone(), result.model_source.1],
+            "sigmas": [sigmas_id.clone(), 0],
+            "at_step": stage.start_step,
+            "edited_latent": [encode_id, 0],
+            "paused_latent": [paused_latent.0, paused_latent.1],
+            // Offset so the edit's noise differs from the sampler's own.
+            "seed": (seed as u64).wrapping_add(11)
+        });
+        if let Some(mask_id) = mask_source {
+            inputs["mask"] = json!([mask_id, 0]);
+        }
+        result.workflow.insert(
+            blend_id.clone(),
+            json!({
+                "class_type": "MooshieResumeEdit",
+                "inputs": inputs
+            }),
+        );
+        result.next_id += 1;
+
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["latent_image"] = json!([blend_id, 0]);
+            }
+        }
+    }
+
+    if stage.custom_tail {
+        let tail_id = result.next_id.to_string();
+        result.workflow.insert(
+            tail_id.clone(),
+            json!({
+                "class_type": "MooshieSigmaTail",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "sigmas": [sigmas_id, 0],
+                    "at_step": stage.start_step,
+                    "scheduler": params.scheduler,
+                    "steps": params.steps.saturating_sub(stage.start_step).max(1)
+                }
+            }),
+        );
+        result.next_id += 1;
+
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["sigmas"] = json!([tail_id, 0]);
+            }
+        }
+    }
 }
 
 fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: i64) -> Value {
+    // A stage that stops partway through the schedule produces a half-denoised
+    // preview for the user to look at, not a finished image: upscaling,
+    // face fixing or segment refinement would run on noise. Those chains run
+    // once, on the stage that completes the schedule.
+    let intermediate = params
+        .stage
+        .as_ref()
+        .is_some_and(|stage| stage.end_step.is_some());
     let pre_upscale_image = result.image_output.clone();
-    let final_image = if params.upscale_enabled {
+    let final_image = if params.upscale_enabled && !intermediate {
         upscale::append_upscale_chain(&mut result, params, seed)
     } else {
         result.image_output.clone()
@@ -702,7 +1161,11 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
 
     // Optionally save the base image before upscaling. Skipped in refine-only
     // mode, where the pre-upscale image is just the unchanged input image.
-    if params.upscale_enabled && params.save_pre_upscale_image && !params.refine_only {
+    if params.upscale_enabled
+        && params.save_pre_upscale_image
+        && !params.refine_only
+        && !intermediate
+    {
         let pre_save_id = result.next_id.to_string();
         result.next_id += 1;
         let output_format = match params.output_format.as_str() {
@@ -724,7 +1187,7 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
     }
 
     // Apply face fix (FaceDetailer) after upscale if enabled
-    let final_image = if params.facefix_enabled {
+    let final_image = if params.facefix_enabled && !intermediate {
         facefix::append_facefix_chain(&mut result, params, final_image, seed)
     } else {
         final_image
@@ -732,7 +1195,7 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
 
     // Apply <segment:...> auto-refinement after facefix so face fix results
     // feed into segment detection.
-    let final_image = if !params.detail_segments.is_empty() {
+    let final_image = if !params.detail_segments.is_empty() && !intermediate {
         segment_detail::append_segment_chain(&mut result, params, final_image, seed)
     } else {
         final_image
@@ -1477,5 +1940,450 @@ mod tests {
         assert_eq!(int8_fast_model_type("illustrious"), None);
         assert_eq!(int8_fast_model_type("sd15"), None);
         assert_eq!(int8_fast_model_type("unknown"), None);
+    }
+
+    // ----- pause / resume -----
+
+    /// Plain SDXL checkpoint txt2img params, the simplest graph that can pause.
+    fn pausable_params() -> GenerationParams {
+        serde_json::from_value(json!({
+            "mode": "txt2img",
+            "positive_prompt": "a red fox",
+            "negative_prompt": "blurry",
+            "checkpoint": "sdxl.safetensors",
+            "loras": [],
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "steps": 20,
+            "cfg": 6.0,
+            "seed": "42",
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1,
+            "denoise": 1.0,
+            "upscale_enabled": false,
+            "upscale_method": "latent",
+            "upscale_scale": 2.0,
+            "upscale_denoise": 0.5,
+            "upscale_steps": 10,
+            "upscale_tile_size": 512,
+            "upscale_tiling": false,
+            "use_split_model": false,
+            "model_architecture": "sdxl",
+            "is_sdxl_like": true
+        }))
+        .expect("test params must deserialize")
+    }
+
+    fn nodes_of_class<'a>(
+        workflow: &'a serde_json::Map<String, Value>,
+        class: &str,
+    ) -> Vec<(&'a String, &'a Value)> {
+        let mut nodes: Vec<_> = workflow
+            .iter()
+            .filter(|(_, node)| node["class_type"] == json!(class))
+            .collect();
+        nodes.sort_by_key(|(id, _)| id.parse::<u32>().unwrap_or(u32::MAX));
+        nodes
+    }
+
+    fn resume_stage(params: &GenerationParams, seed: i64) -> crate::comfyui::types::ResumeStage {
+        crate::comfyui::types::ResumeStage {
+            params: Box::new(params.clone()),
+            seed,
+            worker_id: Some(0),
+        }
+    }
+
+    #[test]
+    fn pause_stops_early_and_keeps_leftover_noise() {
+        let mut params = pausable_params();
+        params.pause_at_step = Some(5);
+        // Post-process chains must not run on a half-denoised preview.
+        params.upscale_enabled = true;
+        params.facefix_enabled = true;
+
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().expect("workflow is an object");
+
+        assert!(
+            nodes_of_class(workflow, "KSampler").is_empty(),
+            "a paused run must not use the plain KSampler"
+        );
+        let samplers = nodes_of_class(workflow, "KSamplerAdvanced");
+        assert_eq!(samplers.len(), 1, "one sampler for the first stage");
+        let inputs = &samplers[0].1["inputs"];
+        assert_eq!(inputs["add_noise"], json!("enable"));
+        assert_eq!(inputs["start_at_step"], json!(0));
+        assert_eq!(inputs["end_at_step"], json!(5));
+        assert_eq!(
+            inputs["steps"],
+            json!(20),
+            "schedule is built from the full step count"
+        );
+        assert_eq!(inputs["return_with_leftover_noise"], json!("enable"));
+        assert_eq!(inputs["noise_seed"], json!(42));
+
+        assert_eq!(nodes_of_class(workflow, "VAEDecode").len(), 1);
+        assert_eq!(nodes_of_class(workflow, "MooshieSaveImage").len(), 1);
+        assert!(
+            nodes_of_class(workflow, "FaceDetailer").is_empty()
+                && nodes_of_class(workflow, "LatentUpscaleBy").is_empty()
+                && nodes_of_class(workflow, "ImageScaleBy").is_empty(),
+            "upscale and face fix wait for the stage that finishes the schedule"
+        );
+    }
+
+    #[test]
+    fn resume_rebuilds_the_paused_stage_verbatim_and_samples_the_rest() {
+        let mut first = pausable_params();
+        first.pause_at_step = Some(5);
+        let paused = build_workflow(&first, 42, false);
+        let paused = paused.as_object().unwrap();
+        let paused_sampler_id = nodes_of_class(paused, "KSamplerAdvanced")[0].0.clone();
+        let paused_decode_id = nodes_of_class(paused, "VAEDecode")[0].0.clone();
+        let paused_save_id = nodes_of_class(paused, "MooshieSaveImage")[0].0.clone();
+
+        // The user changes the prompt, CFG, sampler and adds a LoRA before continuing.
+        let mut second = pausable_params();
+        second.positive_prompt = "a red fox wearing a crown".to_string();
+        second.cfg = 4.0;
+        second.sampler_name = "dpmpp_2m".to_string();
+        second.loras = vec![crate::comfyui::types::LoraParam {
+            name: "crown.safetensors".to_string(),
+            strength_model: 0.8,
+            strength_clip: 0.8,
+        }];
+        second.seed = 7;
+        second.resume_stages = vec![resume_stage(&first, 42)];
+        validate_generation_params(&second).expect("resume with unlocked changes is valid");
+
+        let resumed = build_workflow(&second, 7, false);
+        let resumed = resumed.as_object().unwrap();
+
+        // Every node of the paused stage except its decode and save comes back
+        // byte-identical under the same ID, which is what lets ComfyUI's
+        // execution cache serve the latent instead of sampling it again.
+        for (id, node) in paused {
+            if *id == paused_decode_id || *id == paused_save_id {
+                continue;
+            }
+            assert_eq!(
+                resumed.get(id),
+                Some(node),
+                "paused-stage node {id} must be rebuilt unchanged"
+            );
+        }
+        assert!(
+            resumed
+                .get(&paused_decode_id)
+                .is_none_or(|n| n["class_type"] != json!("VAEDecode")),
+            "the intermediate is not decoded again on resume"
+        );
+
+        let samplers = nodes_of_class(resumed, "KSamplerAdvanced");
+        assert_eq!(samplers.len(), 2, "paused stage plus the resumed stage");
+        let (_, second_sampler) = samplers[1];
+        let inputs = &second_sampler["inputs"];
+        assert_eq!(
+            inputs["add_noise"],
+            json!("disable"),
+            "noise was added by the first stage"
+        );
+        assert_eq!(inputs["start_at_step"], json!(5));
+        assert_eq!(inputs["end_at_step"], json!(10000));
+        assert_eq!(inputs["return_with_leftover_noise"], json!("disable"));
+        assert_eq!(inputs["latent_image"], json!([paused_sampler_id, 0]));
+        assert_eq!(inputs["cfg"], json!(4.0));
+        assert_eq!(inputs["sampler_name"], json!("dpmpp_2m"));
+        assert_eq!(inputs["noise_seed"], json!(7));
+
+        // The new prompt feeds the resumed sampler only.
+        let positive_id = inputs["positive"][0].as_str().unwrap();
+        assert_eq!(
+            resumed[positive_id]["inputs"]["text"],
+            json!("a red fox wearing a crown")
+        );
+
+        // The checkpoint is loaded once; the resumed stage's LoRA chain starts
+        // from the first stage's loader outputs.
+        let loaders = nodes_of_class(resumed, "CheckpointLoaderSimple");
+        assert_eq!(loaders.len(), 1, "one checkpoint load for the whole run");
+        let loras = nodes_of_class(resumed, "LoraLoader");
+        assert_eq!(loras.len(), 1);
+        assert_eq!(loras[0].1["inputs"]["model"], json!([loaders[0].0, 0]));
+        assert_eq!(
+            loras[0].1["inputs"]["lora_name"],
+            json!("crown.safetensors")
+        );
+        assert_eq!(inputs["model"], json!([loras[0].0, 0]));
+
+        assert_eq!(nodes_of_class(resumed, "VAEDecode").len(), 1);
+        assert_eq!(nodes_of_class(resumed, "MooshieSaveImage").len(), 1);
+    }
+
+    #[test]
+    fn resume_can_pause_again_later_in_the_schedule() {
+        let mut first = pausable_params();
+        first.pause_at_step = Some(5);
+        let mut second = pausable_params();
+        second.pause_at_step = Some(12);
+        second.resume_stages = vec![resume_stage(&first, 42)];
+        let mut third = pausable_params();
+        third.resume_stages = vec![resume_stage(&first, 42), resume_stage(&second, 42)];
+        validate_generation_params(&third).expect("ascending pause steps are valid");
+
+        let workflow = build_workflow(&third, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        let ranges: Vec<(u64, u64)> = nodes_of_class(workflow, "KSamplerAdvanced")
+            .iter()
+            .map(|(_, n)| {
+                (
+                    n["inputs"]["start_at_step"].as_u64().unwrap(),
+                    n["inputs"]["end_at_step"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(ranges, vec![(0, 5), (5, 12), (12, 10000)]);
+        assert_eq!(nodes_of_class(workflow, "VAEDecode").len(), 1);
+    }
+
+    #[test]
+    fn pause_validation_rejects_bad_steps_and_locked_changes() {
+        let mut params = pausable_params();
+        params.pause_at_step = Some(0);
+        assert!(
+            validate_generation_params(&params).is_err(),
+            "pause at 0 is no pause"
+        );
+        params.pause_at_step = Some(20);
+        assert!(
+            validate_generation_params(&params).is_err(),
+            "pause at the last step is no pause"
+        );
+        params.pause_at_step = Some(19);
+        assert!(validate_generation_params(&params).is_ok());
+
+        let mut first = pausable_params();
+        first.pause_at_step = Some(5);
+
+        let mut same_step = pausable_params();
+        same_step.pause_at_step = Some(5);
+        same_step.resume_stages = vec![resume_stage(&first, 42)];
+        assert!(
+            validate_generation_params(&same_step).is_err(),
+            "a second pause must come after the first"
+        );
+
+        // Steps may change on the stage that finishes the run (it samples a
+        // sigma tail), but not on one that pauses again.
+        let mut changed_steps = pausable_params();
+        changed_steps.steps = 30;
+        changed_steps.resume_stages = vec![resume_stage(&first, 42)];
+        assert!(validate_generation_params(&changed_steps).is_ok());
+        changed_steps.pause_at_step = Some(12);
+        let err = validate_generation_params(&changed_steps).unwrap_err();
+        assert!(
+            err.contains("steps"),
+            "error names the locked setting: {err}"
+        );
+
+        let mut changed_size = pausable_params();
+        changed_size.width = 768;
+        changed_size.resume_stages = vec![resume_stage(&first, 42)];
+        assert!(validate_generation_params(&changed_size).is_err());
+
+        let mut wrong_mode = pausable_params();
+        wrong_mode.mode = "img2img".to_string();
+        wrong_mode.input_image = Some("in.png".to_string());
+        wrong_mode.resume_stages = vec![resume_stage(&first, 42)];
+        assert!(validate_generation_params(&wrong_mode).is_err());
+    }
+
+    #[test]
+    fn pause_switches_off_teacache_and_style_transfer() {
+        let mut params = pausable_params();
+        params.model_architecture = "anima".to_string();
+        params.is_sdxl_like = false;
+        params.anima_teacache_enabled = true;
+        params.style_transfer_enabled = true;
+        params.style_reference_image = Some("ref.png".to_string());
+        params.pause_at_step = Some(5);
+
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+        assert!(
+            nodes_of_class(workflow, "SamplerCustomAdvanced").is_empty(),
+            "style transfer's own sampler graph must not be used"
+        );
+        assert_eq!(nodes_of_class(workflow, "KSamplerAdvanced").len(), 1);
+    }
+
+    #[test]
+    fn full_run_without_pause_still_uses_plain_ksampler() {
+        let params = pausable_params();
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert_eq!(nodes_of_class(workflow, "KSampler").len(), 1);
+        assert!(nodes_of_class(workflow, "KSamplerAdvanced").is_empty());
+    }
+
+    #[test]
+    fn finishing_stage_can_change_scheduler_and_steps_via_sigma_tail() {
+        let mut first = pausable_params();
+        first.pause_at_step = Some(5);
+
+        let mut last = pausable_params();
+        last.scheduler = "karras".to_string();
+        last.steps = 30;
+        last.sampler_name = "dpmpp_2m".to_string();
+        last.resume_stages = vec![resume_stage(&first, 42)];
+        validate_generation_params(&last).expect("finishing stage may change the schedule");
+
+        let workflow = build_workflow(&last, 42, false);
+        let workflow = workflow.as_object().unwrap();
+
+        // The paused stage still indexes the original schedule.
+        let advanced = nodes_of_class(workflow, "KSamplerAdvanced");
+        assert_eq!(advanced.len(), 1);
+        assert_eq!(advanced[0].1["inputs"]["end_at_step"], json!(5));
+        assert_eq!(advanced[0].1["inputs"]["scheduler"], json!("normal"));
+
+        // The finishing stage samples an explicit tail from the paused sigma.
+        let custom = nodes_of_class(workflow, "SamplerCustom");
+        assert_eq!(custom.len(), 1);
+        let inputs = &custom[0].1["inputs"];
+        assert_eq!(inputs["add_noise"], json!(false));
+        assert_eq!(inputs["latent_image"], json!([advanced[0].0, 0]));
+        let select_id = inputs["sampler"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[select_id]["inputs"]["sampler_name"],
+            json!("dpmpp_2m")
+        );
+        let tail_id = inputs["sigmas"][0].as_str().unwrap();
+        let tail = &workflow[tail_id];
+        assert_eq!(tail["class_type"], json!("MooshieSigmaTail"));
+        assert_eq!(tail["inputs"]["at_step"], json!(5));
+        assert_eq!(tail["inputs"]["scheduler"], json!("karras"));
+        assert_eq!(
+            tail["inputs"]["steps"],
+            json!(25),
+            "30 total minus the 5 already sampled"
+        );
+        let sigmas_id = tail["inputs"]["sigmas"][0].as_str().unwrap();
+        let sigmas = &workflow[sigmas_id];
+        assert_eq!(sigmas["class_type"], json!("BasicScheduler"));
+        assert_eq!(sigmas["inputs"]["scheduler"], json!("normal"));
+        assert_eq!(
+            sigmas["inputs"]["steps"],
+            json!(20),
+            "the paused run's own schedule"
+        );
+        assert_eq!(
+            nodes_of_class(workflow, "VAEDecode")[0].1["inputs"]["samples"],
+            json!([custom[0].0, 0])
+        );
+    }
+
+    #[test]
+    fn schedule_change_is_rejected_on_a_stage_that_pauses_again() {
+        let mut first = pausable_params();
+        first.pause_at_step = Some(5);
+
+        let mut again = pausable_params();
+        again.scheduler = "karras".to_string();
+        again.pause_at_step = Some(12);
+        again.resume_stages = vec![resume_stage(&first, 42)];
+        let err = validate_generation_params(&again).unwrap_err();
+        assert!(err.contains("scheduler"), "{err}");
+
+        let mut too_few = pausable_params();
+        too_few.steps = 5;
+        too_few.resume_stages = vec![resume_stage(&first, 42)];
+        assert!(
+            validate_generation_params(&too_few).is_err(),
+            "nothing left to sample"
+        );
+    }
+
+    #[test]
+    fn painted_edit_is_renoised_and_blended_before_resuming() {
+        let mut first = pausable_params();
+        first.pause_at_step = Some(8);
+
+        let mut last = pausable_params();
+        last.resume_edit_image = Some("paused_edit.png".to_string());
+        last.resume_edit_mask = Some("canvas_mask.png".to_string());
+        last.resume_stages = vec![resume_stage(&first, 42)];
+        validate_generation_params(&last).expect("edit on a resumed run is valid");
+
+        let workflow = build_workflow(&last, 42, false);
+        let workflow = workflow.as_object().unwrap();
+
+        let blend = nodes_of_class(workflow, "MooshieResumeEdit");
+        assert_eq!(blend.len(), 1);
+        let inputs = &blend[0].1["inputs"];
+        assert_eq!(
+            inputs["seed"],
+            json!(53),
+            "edit noise uses the resolved workflow seed"
+        );
+        assert_eq!(inputs["at_step"], json!(8));
+        let samplers = nodes_of_class(workflow, "KSamplerAdvanced");
+        assert_eq!(inputs["paused_latent"], json!([samplers[0].0, 0]));
+        assert_eq!(
+            samplers[1].1["inputs"]["latent_image"],
+            json!([blend[0].0, 0]),
+            "the resumed sampler starts from the blend"
+        );
+        let encode_id = inputs["edited_latent"][0].as_str().unwrap();
+        assert_eq!(workflow[encode_id]["class_type"], json!("VAEEncode"));
+        let scale_id = workflow[encode_id]["inputs"]["pixels"][0].as_str().unwrap();
+        assert_eq!(workflow[scale_id]["inputs"]["width"], json!(1024));
+        let load_id = workflow[scale_id]["inputs"]["image"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[load_id]["inputs"]["image"],
+            json!("paused_edit.png")
+        );
+        let mask_id = inputs["mask"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[mask_id]["inputs"]["image"],
+            json!("canvas_mask.png")
+        );
+        let sigmas_id = inputs["sigmas"][0].as_str().unwrap();
+        assert_eq!(workflow[sigmas_id]["class_type"], json!("BasicScheduler"));
+
+        // An edit with nothing paused is refused rather than silently dropped.
+        let mut orphan = pausable_params();
+        orphan.resume_edit_image = Some("paused_edit.png".to_string());
+        assert!(validate_generation_params(&orphan).is_err());
+    }
+
+    #[test]
+    fn resume_preserves_dpm2_and_unipc_noise_boundaries() {
+        for sampler in ["dpm_2", "dpm_2_ancestral", "uni_pc", "uni_pc_bh2"] {
+            let mut first = pausable_params();
+            first.sampler_name = sampler.into();
+            first.pause_at_step = Some(8);
+            let mut last = pausable_params();
+            last.resume_stages = vec![resume_stage(&first, 42)];
+            last.resume_edit_image = Some("edit.png".into());
+            validate_generation_params(&last).expect("finishing can change sampler schedules");
+            let workflow = build_workflow(&last, 42, false);
+            let workflow = workflow.as_object().unwrap();
+            let schedulers = nodes_of_class(workflow, "BasicScheduler");
+            assert_eq!(schedulers[0].1["inputs"]["steps"], json!(first.steps + 1));
+            assert_eq!(nodes_of_class(workflow, "SamplerCustom").len(), 1);
+            assert_eq!(nodes_of_class(workflow, "MooshieSigmaTail").len(), 1);
+
+            last.pause_at_step = Some(12);
+            assert!(
+                validate_generation_params(&last).is_err(),
+                "an intermediate pause must retain the original noise schedule"
+            );
+            last.sampler_name = sampler.into();
+            validate_generation_params(&last).expect("same schedule can pause again");
+        }
     }
 }

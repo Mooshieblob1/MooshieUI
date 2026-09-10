@@ -109,6 +109,20 @@
 
   const appVersion = __APP_VERSION__ ?? "dev";
   const COMFYUI_OUTDATED_NOTIF_TITLE = "notifications.comfyui_outdated.title";
+  // The NovelAI face pass never fails a generation (the base image is already
+  // paid for), so several distinct backend reasons collapse onto the handful
+  // of things a user can actually do something about.
+  const NAI_FACE_PASS_BODIES: Record<string, string> = {
+    no_faces: "no_faces",
+    nothing_painted: "nothing_painted",
+    transparency: "transparency",
+    batch: "batch",
+    run_failed: "run_failed",
+    request_rejected: "run_failed",
+    generate_failed: "generate_failed",
+    empty_result: "generate_failed",
+    readback_failed: "generate_failed",
+  };
 
   /**
    * Refresh the installed-vs-pinned ComfyUI version and, if it is still behind,
@@ -2735,6 +2749,16 @@
         const node = data.node ?? progress.currentNode;
         progress.updateProgress(data.value, data.max, node);
       }),
+      ipcListen("novelai:face_pass", (event: any) => {
+        const data = event.payload;
+        const status = data?.status === "skipped" || data?.status === "partial" ? data.status : "failed";
+        const body = NAI_FACE_PASS_BODIES[data?.reason] ?? "run_failed";
+        notifications.addLocalNotification({
+          title: locale.t(`notifications.nai_face_pass.${status}_title`),
+          body: locale.t(`notifications.nai_face_pass.${body}`),
+          kind: status === "skipped" ? "info" : "warning",
+        });
+      }),
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
         if (data.prompt_id && data.position != null && data.total != null) {
@@ -3101,6 +3125,14 @@
               if (tempFn) progress.registerPromptOutput(promptId, tempFn);
             }
             pendingOutputImages.delete(promptId);
+
+            // A run that stopped partway through its schedule waits for the
+            // user to adjust settings and continue it. The half-denoised image
+            // still lands in the preview and gallery below so there is
+            // something to judge the pause point by.
+            if (item.params?.pause_at_step && item.params.mode === "txt2img" && images.length > 0) {
+              generation.recordPausedStage(item.params, promptId, item.workerId);
+            }
 
             if (images.length === 0) {
               // The output_image event was dropped or its fetch failed — try

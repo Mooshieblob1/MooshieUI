@@ -260,6 +260,7 @@ mod tests {
             vae_source: ("0".to_string(), 2),
             sampler_id: "1".to_string(),
             refiner_model_source: None,
+            base_sources: None,
         }
     }
 

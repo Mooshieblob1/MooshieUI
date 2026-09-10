@@ -145,7 +145,6 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
       ["sampler", "sampler"],
       ["noise_schedule", "scheduler"],
       ["cfg_rescale", "mooshie_novelai_cfg_rescale"],
-      ["uncond_scale", "mooshie_novelai_uncond_scale"],
       ["dynamic_thresholding", "mooshie_novelai_dynamic_thresholding"],
       // NovelAI records both toggles as it ran them. The quality tags and the
       // preset text are folded into the captured prompt and UC as well; the
@@ -161,6 +160,15 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
     for (const [naiKey, internal] of direct) {
       const value = scalar(comment[naiKey]);
       if (value !== undefined) params[internal] = value;
+    }
+
+    // V5's recorded zero is a placeholder. Preserve real zero values from
+    // older models and images with no known version. Mirrored in the Rust reader.
+    const uncondScale = scalar(comment.uncond_scale);
+    const isV5 = modelIdFromSource(chunks.Source ?? "") === "nai-diffusion-5-full";
+    if (uncondScale !== undefined && uncondScale.trim() !== "" &&
+        Number.isFinite(Number(uncondScale)) && !(isV5 && Number(uncondScale) === 0)) {
+      params.mooshie_novelai_uncond_scale = uncondScale;
     }
 
     const width = scalar(comment.width);

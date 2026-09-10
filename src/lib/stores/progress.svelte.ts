@@ -11,6 +11,8 @@ export interface QueuedPrompt {
   startedAt?: number;
   /** Total wall-clock generation time in ms (computed in completePrompt). */
   durationMs?: number;
+  /** GPU worker the prompt ran on, when the backend reported it. */
+  workerId?: number;
 }
 
 class ProgressStore {
@@ -162,6 +164,19 @@ class ProgressStore {
     return this.activePrompt?.params?.refine_only === true && this.samplingPass >= 1;
   }
 
+  /**
+   * The NovelAI face pass, parsed out of the node label it reports under.
+   *
+   * The progress protocol carries one free-text node name, so the backend
+   * (`novelai/face_detail.rs`) encodes the face counter into it. Every other
+   * node name is a bare ComfyUI node id and is never shown.
+   */
+  get faceDetailPass(): { index: number; count: number } | null {
+    const match = /^NovelAI face (\d+)\/(\d+)$/.exec(this.currentNode ?? "");
+    if (!match) return null;
+    return { index: Number(match[1]), count: Number(match[2]) };
+  }
+
   get lastParams(): GenerationParams | null {
     return this.activePrompt?.params ?? null;
   }
@@ -246,6 +261,13 @@ class ProgressStore {
         ? locale.t("progress.applying_style_reference_queued", { count: String(queuedSuffix) })
         : locale.t("progress.applying_style_reference");
     }
+    const facePass = this.faceDetailPass;
+    if (facePass) {
+      return locale.t("progress.detailing_face", {
+        index: String(facePass.index),
+        count: String(facePass.count),
+      });
+    }
     if (this.isUpscalePhase) {
       return this.queueCount > 1
         ? locale.t("progress.upscaling_queued", { count: String(queuedSuffix) })
@@ -294,6 +316,9 @@ class ProgressStore {
       this._lastProgressNode = node;
       this.samplingPass += 1;
     }
+    // Kept so `phaseLabel` can name the pass. `comfyui:executing` also sets
+    // this, and its node ids are never rendered.
+    if (node) this.currentNode = node;
     this.currentStep = step;
     this.totalSteps = max;
   }
@@ -330,6 +355,7 @@ class ProgressStore {
     wasUpscaled: boolean = false,
     mode: GenerationMode = "txt2img",
     params: GenerationParams | null = null,
+    workerId?: number,
   ) {
     const existingIdx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
     if (existingIdx >= 0) {
@@ -344,6 +370,7 @@ class ProgressStore {
         // or a prior enqueue). If unset, stamp it now so the reconciler's 30s
         // activity guard has a valid baseline.
         enqueuedAt: existing.enqueuedAt ?? Date.now(),
+        workerId: workerId ?? existing.workerId,
       };
       this.pendingPrompts = next;
       return;
@@ -356,6 +383,7 @@ class ProgressStore {
         wasUpscaled,
         params: params!,
         enqueuedAt: Date.now(),
+        workerId,
       },
     ];
   }

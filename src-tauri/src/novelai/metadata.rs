@@ -117,7 +117,6 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
 
         let extras: &[(&str, &str)] = &[
             ("cfg_rescale", "mooshie_novelai_cfg_rescale"),
-            ("uncond_scale", "mooshie_novelai_uncond_scale"),
             (
                 "dynamic_thresholding",
                 "mooshie_novelai_dynamic_thresholding",
@@ -130,6 +129,19 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
         for &(nai_key, internal) in extras {
             if let Some(value) = comment.get(nai_key).and_then(string_of) {
                 params.insert(internal.into(), value);
+            }
+        }
+
+        // V5's recorded zero is a placeholder. Preserve real zero values from
+        // older models and images with no known version. Mirrored in the TS reader.
+        let is_v5 = chunks.get("Source").and_then(|s| model_id_from_source(s))
+            == Some("nai-diffusion-5-full");
+        if let Some(value) = comment.get("uncond_scale").and_then(string_of) {
+            if value
+                .parse::<f64>()
+                .is_ok_and(|n| n.is_finite() && !(is_v5 && n == 0.0))
+            {
+                params.insert("mooshie_novelai_uncond_scale".into(), value);
             }
         }
 
@@ -295,6 +307,32 @@ fn model_id_from_source(source: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_v5_zero_uncond_scale_is_a_placeholder() {
+        for source in [
+            "NovelAI Diffusion V5 00000000",
+            "NovelAI Diffusion V4 4F49EC75",
+            "",
+        ] {
+            for value in ["0", "1", "0.5", "NaN", "Infinity", "invalid"] {
+                let comment = serde_json::json!({"uncond_scale": value}).to_string();
+                let metadata = parse_chunks(&chunks(&[
+                    ("Software", "NovelAI"),
+                    ("Source", source),
+                    ("Comment", &comment),
+                ]))
+                .unwrap();
+                let expected =
+                    matches!(value, "0" | "1" | "0.5") && !(source.contains("V5") && value == "0");
+                assert_eq!(
+                    metadata.contains_key("mooshie_novelai_uncond_scale"),
+                    expected,
+                    "source={source}, value={value}"
+                );
+            }
+        }
+    }
 
     fn chunks(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

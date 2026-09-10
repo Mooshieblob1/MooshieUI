@@ -484,6 +484,80 @@ pub struct GenerationParams {
     /// NovelAI model.
     #[serde(default)]
     pub novelai: Option<crate::novelai::params::NovelAiParams>,
+    // --- Pause / resume (txt2img only) ---
+    /// Stop sampling after this many steps and return the latent with its
+    /// leftover noise, so a later request can resume from it. `None` runs the
+    /// full schedule. Only honoured in txt2img mode.
+    #[serde(default)]
+    pub pause_at_step: Option<u32>,
+    /// Earlier stages of a paused run, oldest first. Each is rebuilt with
+    /// identical node IDs so ComfyUI's execution cache serves its latent
+    /// instead of sampling it again; this request's own settings sample the
+    /// remaining steps on top of the last stage's latent.
+    #[serde(default)]
+    pub resume_stages: Vec<ResumeStage>,
+    /// ComfyUI input filename of the paused preview with the user's changes
+    /// painted on it. Encoded, noised back to the paused noise level and
+    /// blended into the paused latent under `resume_edit_mask` before the
+    /// remaining steps run. Ignored unless `resume_stages` is non-empty.
+    #[serde(default)]
+    pub resume_edit_image: Option<String>,
+    /// Mask (white = take the edit) for `resume_edit_image`. Without it the
+    /// whole latent is replaced by the edit.
+    #[serde(default)]
+    pub resume_edit_mask: Option<String>,
+    /// Filled in by `templates::build_workflow` while assembling one stage of
+    /// a paused run. Never sent by the frontend.
+    #[serde(skip)]
+    pub stage: Option<StageContext>,
+}
+
+/// One completed stage of a paused txt2img run.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResumeStage {
+    /// The exact parameters that stage was generated with (its own
+    /// `pause_at_step` marks where it stopped).
+    pub params: Box<GenerationParams>,
+    /// The resolved seed that stage sampled with.
+    #[serde(with = "seed_string")]
+    pub seed: i64,
+    /// GPU worker that ran the stage, when known. The resume prefers it so
+    /// the cached latent is on the same ComfyUI process.
+    #[serde(default)]
+    pub worker_id: Option<u32>,
+}
+
+/// Model/CLIP/VAE outputs of a stage's loader nodes, before any LoRA is
+/// applied. Later stages start their own LoRA chain from these so the
+/// checkpoint is loaded once for the whole run.
+#[derive(Debug, Clone)]
+pub struct BaseSources {
+    pub model: (String, u32),
+    pub clip: (String, u32),
+    pub vae: (String, u32),
+}
+
+/// Where one stage of a paused run sits in the sampling schedule.
+#[derive(Debug, Clone, Default)]
+pub struct StageContext {
+    /// First node ID this stage may allocate.
+    pub first_id: u32,
+    /// Step the stage starts sampling at (0 for the first stage).
+    pub start_step: u32,
+    /// Step the stage stops at, or `None` to finish the schedule.
+    pub end_step: Option<u32>,
+    /// Latent output of the previous stage's sampler, or `None` to start from
+    /// an empty latent.
+    pub latent: Option<(String, u32)>,
+    /// Loader outputs of the first stage, or `None` to emit loaders.
+    pub base: Option<BaseSources>,
+    /// Scheduler and step count the run's schedule was built with (the first
+    /// stage's), which every stage's `start_step`/`end_step` index into.
+    pub schedule: Option<(String, u32)>,
+    /// This stage finishes the run on a different scheduler or step count
+    /// than `schedule`: it samples an explicit sigma tail with SamplerCustom
+    /// instead of indexing the original schedule with KSamplerAdvanced.
+    pub custom_tail: bool,
 }
 
 fn default_int8_fast_convrot() -> bool {

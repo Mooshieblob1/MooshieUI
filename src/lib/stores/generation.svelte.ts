@@ -68,6 +68,7 @@ import type {
   NovelAiVibeEncoding,
   RegionalPromptSelection,
   RegionalPromptStrategy,
+  ResumeStage,
   VideoAspectRatio,
   VideoVariant,
 } from "../types/index.js";
@@ -175,14 +176,16 @@ export function createDefaultNovelAiFaceDetail(): NovelAiFaceDetail {
     enabled: false,
     detailer_engine: "novelai",
     detector_model: "Anzhc Face seg 640 v4 y11n.pt",
-    threshold: 0.5,
+    threshold: 0.4,
     padding: 1.5,
     max_faces: 3,
     // 1024 puts a square crop exactly on the free window's one-megapixel edge.
     guide_size: 1024,
-    strength: 0.35,
-    // The free window's step ceiling, so the default never costs Anlas.
+    strength: 0.5,
+    // Only consulted once the user unlinks; until then the detailer follows the
+    // main steps slider. The free window's ceiling, so it never costs Anlas.
     steps: 28,
+    steps_linked: true,
     feather: 20,
     prompt_mode: "auto",
     custom_prompt: "",
@@ -217,6 +220,18 @@ export function createNovelAiCharacter(): NovelAiCharacter {
   };
 }
 
+/** A completed stage of the run currently paused (see `GenerationStore.pausedStages`). */
+export interface PausedStage {
+  /** Params the stage was submitted with, minus its own resume history. */
+  params: GenerationParams;
+  /** Resolved seed the stage sampled with. */
+  seed: string;
+  /** Prompt that produced the stage, for reference. */
+  promptId: string;
+  /** GPU worker that ran it, when known. */
+  workerId?: number;
+}
+
 export interface GenerationToParamsOptions {
   fixedPresetChoices?: ReadonlyMap<string, string>;
   /** When false, positive_regions is omitted (regional inpaint chain). */
@@ -243,6 +258,8 @@ export interface GenerationToParamsOptions {
       | "positive_prompt"
       | "denoise"
       | "differential_diffusion"
+      | "resume_edit_image"
+      | "resume_edit_mask"
     >
   >;
 }
@@ -673,13 +690,57 @@ class GenerationStore {
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
   scheduler = $state("sgm_uniform");
-  steps = $state(20);
+  #steps = $state(20);
+
+  /**
+   * Sampling steps for the main image.
+   *
+   * An accessor rather than a plain field so the NovelAI face detailer can
+   * follow it: the detailer mirrors this value, and a hand-set detailer count
+   * is an override that lasts only until this one next moves. Writing the
+   * re-link here rather than at each call site means every writer gets it for
+   * free (the slider, a preset, a metadata import, the NovelAI checkpoint
+   * defaults), with no effect to fire and no mirrored state to drift.
+   */
+  get steps(): number {
+    return this.#steps;
+  }
+
+  set steps(value: number) {
+    if (value === this.#steps) return;
+    this.#steps = value;
+    // At most one settings write per override, not one per slider tick:
+    // `steps_linked` goes back to true on the first move and stays there until
+    // the detailer's own slider is dragged again.
+    if (!this.novelaiSettings.face_detail.steps_linked) {
+      this.updateNovelAiFaceDetail({ steps_linked: true });
+    }
+  }
   cfg = $state(1.4);
   // Decimal string ("-1" = random): 63-bit seeds exceed JS's safe-integer range.
   seed = $state("-1");
   width = $state(512);
   height = $state(512);
   batchSize = $state(1);
+  /**
+   * Stop the next txt2img run after this many steps (0 = run to the end).
+   * Deliberately not persisted: a pause is a one-off action, and a pause step
+   * surviving a restart would silently truncate the next session's first image.
+   */
+  pauseAtStep = $state(0);
+  /**
+   * Completed stages of the run currently paused, oldest first. Non-empty
+   * means the next Generate continues that run from the last stage's latent
+   * with whatever prompt, CFG, sampler and LoRAs are set now. In memory only:
+   * the latents live in ComfyUI's execution cache, which a restart clears.
+   */
+  pausedStages = $state<PausedStage[]>([]);
+  /**
+   * The paused preview has been sent to the inpaint canvas so corrections
+   * can be painted into it. While set, Generate in inpainting mode continues
+   * the paused run with the painted image instead of starting an inpaint.
+   */
+  pausedEditArmed = $state(false);
   denoise = $state(0.7);
   inputImage = $state<string | null>(null);
   maskImage = $state<string | null>(null);
@@ -1038,6 +1099,9 @@ class GenerationStore {
 
     this._mode = mode;
     this.applyModeToggleState(this.modeToggles[mode] ?? defaultModeToggleState());
+    // Leaving the inpaint canvas abandons the painted edit; the paused run
+    // itself stays until discarded.
+    if (mode !== "inpainting") this.pausedEditArmed = false;
   }
 
   readPromptBucket(): PromptBucket {
@@ -1972,6 +2036,28 @@ class GenerationStore {
     this.updateNovelAiSettings({
       face_detail: { ...this.novelaiSettings.face_detail, ...patch },
     });
+  }
+
+  /**
+   * Steps the face detailer actually runs at.
+   *
+   * Resolved on read rather than mirrored into `face_detail.steps` by an
+   * effect, so there is no duplicated state to drift out of sync.
+   * `setNovelAiFaceDetailSteps` breaks the link and the `steps` setter restores
+   * it, which makes a hand-set detailer count an override of the current main
+   * value rather than a permanent divorce from it.
+   */
+  get novelAiFaceDetailSteps(): number {
+    const face = this.novelaiSettings.face_detail;
+    return face.steps_linked ? this.steps : face.steps;
+  }
+
+  /**
+   * Pin the detailer's steps to an explicit value, overriding the main slider
+   * until that slider next moves. Only the detailer's own controls call this.
+   */
+  setNovelAiFaceDetailSteps(steps: number) {
+    this.updateNovelAiFaceDetail({ steps, steps_linked: false });
   }
 
   /**
@@ -3168,6 +3254,10 @@ class GenerationStore {
       this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
     return {
       ...this.novelaiSettings,
+      face_detail: {
+        ...this.novelaiSettings.face_detail,
+        steps: this.novelAiFaceDetailSteps,
+      },
       characters,
       model: this.checkpoint,
       action,
@@ -3203,6 +3293,76 @@ class GenerationStore {
       };
     });
     return { characters, inlineIds };
+  }
+
+  /** Step the paused run stopped at, or 0 when nothing is paused. */
+  get pausedEndStep(): number {
+    const last = this.pausedStages[this.pausedStages.length - 1];
+    return last?.params.pause_at_step ?? 0;
+  }
+
+  get isPaused(): boolean {
+    return this.pausedStages.length > 0;
+  }
+
+  /**
+   * Whether the next generation pauses or resumes. Style transfer and Anima
+   * TeaCache are switched off for such runs (see `toParams`).
+   */
+  get pauseResumeActive(): boolean {
+    return this.resumeAppliesToMode && (this.isPaused || this.effectivePauseAtStep > 0);
+  }
+
+  /**
+   * Whether the current mode takes part in pause and resume: txt2img always,
+   * inpainting only while it is being used to paint a correction into the
+   * paused preview.
+   */
+  get resumeAppliesToMode(): boolean {
+    return !this.isNovelAi && (
+      this._mode === "txt2img" || (this._mode === "inpainting" && this.isPaused && this.pausedEditArmed)
+    );
+  }
+
+  /**
+   * The pause step the next request will actually send: it has to fall after
+   * the step a paused run stopped at and before the schedule ends, otherwise
+   * it is dropped and the run completes.
+   */
+  get effectivePauseAtStep(): number {
+    const step = Math.floor(this.pauseAtStep);
+    if (!Number.isFinite(step) || step <= this.pausedEndStep || step >= this.steps) return 0;
+    return step;
+  }
+
+  /**
+   * Remember a stage that just finished sampling partway so the next Generate
+   * continues it. Called from the completion handler with the params the
+   * stage was submitted with (seed already resolved by the backend).
+   */
+  recordPausedStage(params: GenerationParams, promptId: string, workerId?: number) {
+    if (isNovelAiModel(params.checkpoint) || params.mode !== "txt2img" || !params.pause_at_step) return;
+    // Queued runs may finish after another run has changed the panel's history.
+    // Reconstruct this request's lineage instead of appending to unrelated stages.
+    const { resume_stages: history = [], ...stageParams } = params;
+    this.pausedStages = [
+      ...history.map((stage): PausedStage => ({
+        params: stage.params,
+        seed: stage.seed,
+        promptId: "",
+        workerId: stage.worker_id ?? undefined,
+      })),
+      { params: stageParams, seed: params.seed, promptId, workerId },
+    ];
+    // A pause is a one-off: the resume runs to the end unless a new, later
+    // pause step is chosen.
+    this.pauseAtStep = 0;
+  }
+
+  /** Forget the paused run; the next Generate starts a fresh image. */
+  discardPausedRun() {
+    this.pausedStages = [];
+    this.pausedEditArmed = false;
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
@@ -3283,7 +3443,9 @@ class GenerationStore {
     // stores the resolved (expanded) prompt so regenerating always reproduces.
     const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
     const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
-    const seedSource = options.seed ?? this.seed;
+    const seedSource = this.resumeAppliesToMode && this.isPaused
+      ? this.pausedStages[0].seed
+      : options.seed ?? this.seed;
     const numericSeed = parseInt(seedSource, 10);
     const rngSeed: number =
       !isNaN(numericSeed) && numericSeed !== -1
@@ -3663,7 +3825,28 @@ class GenerationStore {
       // Null for every local generation, so the backend's NovelAI branch is
       // never reachable from one.
       novelai: this.novelAiParams(novelAiCharacters.characters),
+      pause_at_step: this.resumeAppliesToMode && this.effectivePauseAtStep > 0
+        ? this.effectivePauseAtStep
+        : null,
+      resume_stages: this.resumeAppliesToMode && this.isPaused
+        ? this.pausedStages.map(
+            (stage): ResumeStage => ({
+              params: stage.params,
+              seed: stage.seed,
+              worker_id: stage.workerId ?? null,
+            }),
+          )
+        : [],
     };
+
+    // Style transfer samples through its own graph with no start/end step,
+    // and Anima TeaCache carries a step counter across stages, so neither can
+    // take part in a paused run. The backend drops them too; clearing them
+    // here keeps the sent params honest about what will run.
+    if (params.pause_at_step != null || (params.resume_stages?.length ?? 0) > 0) {
+      params.style_transfer_enabled = false;
+      params.anima_teacache_enabled = false;
+    }
 
     if (options.overrides) {
       Object.assign(params, options.overrides);

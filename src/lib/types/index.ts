@@ -182,6 +182,15 @@ export interface NovelAiFaceDetail {
   strength: number;
   /** Clamped to 28 on the NovelAI engine so a free pass stays free. */
   steps: number;
+  /**
+   * While true the detailer follows the main steps slider and `steps` is
+   * ignored. Moving the detailer slider clears it and pins `steps`; moving the
+   * main slider sets it again, so the pin is an override of the current main
+   * value rather than a permanent one. UI-only state: `novelAiParams()`
+   * resolves it away, so Rust always receives a concrete `steps` and has no
+   * matching field.
+   */
+  steps_linked: boolean;
   /** At least a sixth of the crop's short side, whatever is set here. */
   feather: number;
   /** "auto" | "generic" | "custom". */
@@ -491,6 +500,27 @@ export interface GenerationParams {
   /** Present only for NovelAI generations; its presence is not the backend
    *  switch, `checkpoint` naming a NovelAI model is. */
   novelai?: NovelAiParams | null;
+  /** Stop sampling after this many steps and keep the leftover noise so the
+   *  run can be resumed. Null runs the full schedule. txt2img only. */
+  pause_at_step?: number | null;
+  /** Earlier stages of a paused run, oldest first. The backend rebuilds them
+   *  with identical node IDs so ComfyUI serves their latents from cache. */
+  resume_stages?: ResumeStage[];
+  /** ComfyUI input filename of the paused preview with corrections painted on
+   *  it; blended into the paused latent at the paused noise level on resume. */
+  resume_edit_image?: string | null;
+  /** Mask for `resume_edit_image` (white = take the edit). */
+  resume_edit_mask?: string | null;
+}
+
+/** One completed stage of a paused txt2img run, as sent back on resume. */
+export interface ResumeStage {
+  /** The exact params that stage ran with; its own `pause_at_step` marks where it stopped. */
+  params: GenerationParams;
+  /** Resolved seed that stage sampled with (decimal string, like `GenerationParams.seed`). */
+  seed: string;
+  /** GPU worker that ran the stage, so the resume can target the same execution cache. */
+  worker_id?: number | null;
 }
 
 export interface OutputImage {
