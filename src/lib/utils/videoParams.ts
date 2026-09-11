@@ -127,10 +127,11 @@ export function computeH3Dimensions(
 }
 
 /**
- * Resident VRAM of the H3 DiT, guessed from the quantisation marker in its
+ * Fully resident VRAM of the H3 DiT, guessed from the quantisation marker in its
  * filename. The published stacks are NVFP4 (~12.5 GB), int8_convrot (~21 GB),
  * fp8_scaled (~22 GB) and bf16 (~32 GB); an unrecognised name assumes
- * int8_convrot, the widest-compatibility default.
+ * int8_convrot, the widest-compatibility default. This does not model partial
+ * loading or CPU offloading and is not a minimum GPU capacity.
  */
 export function estimateH3ModelGb(filename: string | null | undefined): number {
   const name = (filename ?? "").toLowerCase();
@@ -171,7 +172,9 @@ export function isH3HighVramHarmful(
 }
 
 /**
- * Rough VRAM ceiling for a given pixel/frame budget. Measured envelope: a
+ * Rough VRAM estimate without CPU offloading for a given pixel/frame budget.
+ * It is not measured usage or a minimum requirement; custom model recipes and
+ * partial loading can use substantially less VRAM. Measured envelope: a
  * 124-frame 1344x768 generation fits in 24 GB while 362 frames at the same size
  * OOMs, so budget scales with pixels x frames on top of the resident model.
  * Returns gigabytes, deliberately conservative — this only drives a warning.
