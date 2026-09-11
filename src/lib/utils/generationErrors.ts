@@ -1,5 +1,3 @@
-import { isStyleTransferExecutionError } from "./styleTransferNodes.js";
-
 /**
  * Result of classifying a ComfyUI generation/execution failure into a
  * user-actionable message. Callers translate `messageKey` with `locale.t`.
@@ -75,10 +73,12 @@ function extract(input: ErrorInput): Extracted {
  * error, e.g. `ckpt_name: 'sih-v1.5.safetensors' not in [...]` -> the filename.
  */
 function extractMissingModel(raw: string): string | undefined {
-  const m = raw.match(/(\w+):\s*'([^']+)'\s+not in/i);
-  if (m) return m[2];
+  // Only model-file inputs identify missing models. Enum settings such as
+  // lora_mode and weight_dtype can fail the same ComfyUI validation.
+  const m = raw.match(/\b(?:ckpt_name|vae_name|lora_name|control_net_name|unet_name|clip_name\d*|model_name|upscale_model):\s*'([^']+)'\s+not in/i);
+  if (m) return m[1];
   // Also handle the node_errors JSON `details` form without quotes.
-  const m2 = raw.match(/(?:ckpt_name|vae_name|lora_name|control_net_name|unet_name|clip_name|model_name|upscale_model)[^A-Za-z0-9]+([^'"\r\n,;]+?\.(?:safetensors|ckpt|pt|pth|bin|gguf))/i);
+  const m2 = raw.match(/\b(?:ckpt_name|vae_name|lora_name|control_net_name|unet_name|clip_name\d*|model_name|upscale_model):\s*([^'"\r\n,;]+?\.(?:safetensors|ckpt|pt|pth|bin|gguf))\s+not in/i);
   if (m2) return m2[1].trim();
   return undefined;
 }
@@ -135,6 +135,16 @@ function extractMissingNode(raw: string): string | undefined {
     raw.match(/'?([\w.\-]+)'?\s+is not (?:installed|registered|a recognized node)/i) ||
     raw.match(/cannot find (?:the )?node[: ]+'?([\w.\-]+)'?/i);
   return m ? m[1] : undefined;
+}
+
+function isStyleTransferExecutionError(rawErr: string): boolean {
+  const lower = rawErr.toLowerCase();
+  return (
+    lower.includes("rfinversion") ||
+    lower.includes("untwistingrope") ||
+    lower.includes("imagescaletototalpixelsx") ||
+    lower.includes("missing_style_transfer_nodes")
+  );
 }
 
 /**
@@ -195,14 +205,14 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     return { messageKey: "generation.error.vae_incompatible", durationMs: ACTIONABLE_MS };
   }
 
-  // 5. A selected model file is no longer available to ComfyUI (renamed, moved,
-  // or the validation cache is stale).
-  if (
+  // 5. Only identify a missing model when validation names a model-file input.
+  // Other validation failures must retain their actual setting/error detail.
+  const isValidationError =
     haystack.includes("value_not_in_list") ||
     haystack.includes("value not in list") ||
     haystack.includes("prompt_outputs_failed_validation") ||
-    haystack.includes("not in list")
-  ) {
+    haystack.includes("not in list");
+  if (isValidationError) {
     const model = extractMissingModel(raw);
     if (model) {
       return {
@@ -211,7 +221,6 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
         durationMs: ACTIONABLE_MS,
       };
     }
-    return { messageKey: "generation.error.model_not_found_generic", durationMs: ACTIONABLE_MS };
   }
 
   // 6. A required custom node isn't installed.
@@ -314,8 +323,10 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
 
   // 10. Generic fallback. If we have any exception message, show it rather than
   // a bare "Generation failed".
-  if (typeof input === "object" && input) {
-    const detail = asText(input.exception_message) || asText(input.error);
+  if ((typeof input === "object" && input) || (typeof input === "string" && isValidationError)) {
+    const detail = typeof input === "string"
+      ? input
+      : asText(input.exception_message) || asText(input.error);
     const trimmed = detail.trim();
     if (trimmed && !trimmed.startsWith("{") && trimmed.length <= 200) {
       return {

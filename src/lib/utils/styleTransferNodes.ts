@@ -21,13 +21,3 @@ export async function checkStyleTransferNodesReady(): Promise<boolean> {
   ]);
   return untwisting && scaleImage;
 }
-
-export function isStyleTransferExecutionError(rawErr: string): boolean {
-  const lower = rawErr.toLowerCase();
-  return (
-    lower.includes("rfinversion") ||
-    lower.includes("untwistingrope") ||
-    lower.includes("imagescaletototalpixelsx") ||
-    lower.includes("missing_style_transfer_nodes")
-  );
-}

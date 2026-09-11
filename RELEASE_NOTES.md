@@ -1,3 +1,14 @@
+## What's New in v2.3.3
+
+### Fixes and maintenance
+- **Animadex search includes less common characters**: results with fewer than 50 posts are no longer hidden, while duplicate aliases are still combined.
+- **Character insertion preserves the scene**: inserting a character no longer automatically adds another girl or changes the composition. Replace character keeps existing subject counts and composition tags; Add character still explicitly increases the girl count. Appearance tags no longer introduce conflicting counts or solo tags.
+- **INT8-Fast generation starts with a valid LoRA mode**: the loader now uses its supported default instead of a value that caused prompt validation to fail. Rejected sampler, quantization and other settings show the actual validation detail instead of incorrectly reporting a missing model.
+- **Custom video sampling reflects Turbo behavior**: while Turbo LoRA is enabled, the Sampler and Scheduler controls show Turbo sampler and simple and are disabled. Turning Turbo off restores access to the saved sampler and scheduler.
+- **Video memory guidance is clearer**: VRAM estimates now explain that they assume no CPU offloading and are not minimum GPU requirements. Custom models, system RAM and memory settings can change actual usage. Updated help text is included in all supported languages.
+
+---
+
 ## What's New in v2.3.2
 
 ### Fixes and maintenance

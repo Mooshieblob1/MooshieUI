@@ -612,7 +612,7 @@ pub fn load_model_nodes(
                     "model_type": model_type,
                     "on_the_fly_quantization": false,
                     "enable_convrot": params.int8_fast_convrot,
-                    "lora_mode": "default"
+                    "lora_mode": "None"
                 }
             })
         } else {
@@ -1846,6 +1846,14 @@ mod tests {
             node["inputs"]["on_the_fly_quantization"],
             json!(false),
             "on_the_fly_quantization must be false for pre-quantized files"
+        );
+        // OTUNetLoaderW8A8.INPUT_TYPES accepts None/Stochastic/Dynamic.
+        // "default" is valid for weight_dtype, but rejects the entire prompt
+        // when used as lora_mode (issue #647).
+        assert_eq!(
+            node["inputs"]["lora_mode"],
+            json!("None"),
+            "Use the INT8-Fast loader's default LoRA mode"
         );
     }
 

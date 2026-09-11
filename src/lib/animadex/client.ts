@@ -13,7 +13,6 @@ function apiUrl(path: string): string {
   return `${ANIMADEX_ORIGIN}api/characters${path}`;
 }
 
-const SEARCH_MIN_POST_COUNT = 50;
 const RESPONSE_CACHE_TTL_MS = 45_000;
 const responseCache = new Map<string, { fetchedAt: number; data: unknown }>();
 
@@ -115,7 +114,6 @@ function shouldReplaceCharacter(next: AnimadexCharacter, prev: AnimadexCharacter
 function normalizeSearchResults(results: AnimadexCharacter[]): AnimadexCharacter[] {
   const deduped = new Map<string, AnimadexCharacter>();
   for (const row of results) {
-    if ((row.count ?? 0) < SEARCH_MIN_POST_COUNT) continue;
     const key = normalizedCharacterKey(row);
     const existing = deduped.get(key);
     if (!existing || shouldReplaceCharacter(row, existing)) {

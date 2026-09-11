@@ -275,7 +275,7 @@
    * fits. `null` while the hardware probe has not answered.
    */
   const usableVramGb = $derived(h3UsableVramGb(detectedVramGb));
-  const requiredVramGb = $derived(
+  const estimatedVramGb = $derived(
     estimateH3VramGb(
       dimensions.width,
       dimensions.height,
@@ -284,7 +284,7 @@
       vramOptions,
     ),
   );
-  const vramVerdict = $derived(assessH3Vram(requiredVramGb, usableVramGb));
+  const vramVerdict = $derived(assessH3Vram(estimatedVramGb, usableVramGb));
   /**
    * The pixel budget that would fit comfortably, offered only when it is not
    * the one already selected - repeating the current value back reads as a
@@ -1091,11 +1091,9 @@
     />
   </div>
 
-  <!-- VRAM assessment. Two tiers off one estimate: sky when the pass fits with
-       little headroom left (slower, because weights start moving over PCIe),
-       amber when it likely does not fit. Both are advice, not warnings - the
-       estimate is a model, the user's card is the authority, and generation is
-       never blocked either way. -->
+  <!-- This estimates the model and frame budget without CPU offloading, not a
+       minimum card size or measured free memory. Custom stacks can run below
+       this estimate. Both tiers are advisory and never block generation. -->
   {#if vramVerdict === "tight" || vramVerdict === "over"}
     <div class="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs {vramBannerClass}">
       <svg
@@ -1121,7 +1119,7 @@
             {
               detected: (detectedVramGb ?? 0).toFixed(1),
               usable: (usableVramGb ?? 0).toFixed(1),
-              required: requiredVramGb.toFixed(1),
+              required: estimatedVramGb.toFixed(1),
             },
           )}
         </span>
@@ -1800,17 +1798,23 @@
           </label>
           <select
             id="custom-sampler"
-            value={generation.videoSampler ?? ""}
+            value={generation.videoTurboEnabled ? "__turbo__" : generation.videoSampler ?? ""}
+            disabled={generation.videoTurboEnabled}
+            aria-describedby={generation.videoTurboEnabled ? "custom-turbo-sampling-hint" : undefined}
             onchange={(e) => {
               generation.videoSampler = (e.currentTarget as HTMLSelectElement).value || null;
               generation.saveSettings();
             }}
-            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <option value="">{locale.t("generation.video.custom_sampler_default")}</option>
-            {#each [...new Set([...models.samplers, "euler", "res_multistep"])] as s (s)}
-              <option value={s}>{s}</option>
-            {/each}
+            {#if generation.videoTurboEnabled}
+              <option value="__turbo__">{locale.t("generation.video.custom_sampler_turbo")}</option>
+            {:else}
+              <option value="">{locale.t("generation.video.custom_sampler_default")}</option>
+              {#each [...new Set([...models.samplers, "euler", "res_multistep"])] as s (s)}
+                <option value={s}>{s}</option>
+              {/each}
+            {/if}
           </select>
         </div>
 
@@ -1821,19 +1825,30 @@
           </label>
           <select
             id="custom-scheduler"
-            value={generation.videoScheduler ?? ""}
+            value={generation.videoTurboEnabled ? "simple" : generation.videoScheduler ?? ""}
+            disabled={generation.videoTurboEnabled}
+            aria-describedby={generation.videoTurboEnabled ? "custom-turbo-sampling-hint" : undefined}
             onchange={(e) => {
               generation.videoScheduler = (e.currentTarget as HTMLSelectElement).value || null;
               generation.saveSettings();
             }}
-            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <option value="">{locale.t("generation.video.custom_scheduler_default")}</option>
-            {#each [...new Set([...models.schedulers, "simple", "beta", "normal"])] as s (s)}
-              <option value={s}>{s}</option>
-            {/each}
+            {#if generation.videoTurboEnabled}
+              <option value="simple">simple</option>
+            {:else}
+              <option value="">{locale.t("generation.video.custom_scheduler_default")}</option>
+              {#each [...new Set([...models.schedulers, "simple", "beta", "normal"])] as s (s)}
+                <option value={s}>{s}</option>
+              {/each}
+            {/if}
           </select>
         </div>
+        {#if generation.videoTurboEnabled}
+          <p id="custom-turbo-sampling-hint" class="text-[11px] text-neutral-400">
+            {locale.t("generation.video.custom_turbo_sampling_hint")}
+          </p>
+        {/if}
       </div>
     {:else}
       <div class="space-y-1">

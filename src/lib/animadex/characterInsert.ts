@@ -3,7 +3,7 @@ import { DEFAULT_ANIMA_POSITIVE_QUALITY } from "../stores/generation.svelte.js";
 
 export type CharacterTagLevel = "name" | "name_copyright" | "all";
 
-export type CharacterInsertMode = "add" | "replace";
+export type CharacterInsertMode = "insert" | "add" | "replace";
 
 const GIRL_COUNT_ORDER = ["1girl", "2girls", "3girls", "4girls", "5girls", "6+girls"] as const;
 
@@ -62,6 +62,10 @@ function normalizeTag(tag: string): string {
 
 function tagKey(tag: string): string {
   return normalizeTag(tag).replace(/ /g, "_");
+}
+
+function isSubjectCountTag(tag: string): boolean {
+  return /^\d+\+?(?:girls?|boys?|others?)$/.test(normalizeTag(tag));
 }
 
 /** Split positive prompt on commas (same convention as artist insert). */
@@ -349,6 +353,8 @@ function partsToRemoveOnReplace(
 
   for (const p of analysis.parts) {
     const n = normalizeTag(p);
+    // Counts and composition describe the scene, not the character being replaced.
+    if (isSubjectCountTag(p) || COMPOSITION_TAGS.has(n)) continue;
     if (nameKeys.has(n) || nameKeys.has(tagKey(p))) {
       remove.add(p);
       continue;
@@ -367,6 +373,7 @@ function partsToRemoveOnReplace(
   }
 
   for (const p of analysis.characterParts) {
+    if (isSubjectCountTag(p) || COMPOSITION_TAGS.has(normalizeTag(p))) continue;
     remove.add(p);
   }
 
@@ -390,11 +397,10 @@ export function applyCharacterInsert(
   if (mode === "replace") {
     const remove = partsToRemoveOnReplace(analysis, character);
     parts = parts.filter((p) => !remove.has(p));
-    parts = parts.filter((p) => normalizeTag(p) !== "solo");
     if (level !== "name" && copyright) {
       parts = replaceCopyrightPart(parts, analysis.detectedCopyrightPart, newCopyrightSlug);
     }
-  } else {
+  } else if (mode === "add") {
     parts = bumpGirlCount(parts);
     parts = ensureCompositionForAdd(parts);
     if (level !== "name" && analysis.detectedCopyrightPart) {
@@ -402,11 +408,16 @@ export function applyCharacterInsert(
     }
   }
 
-  if (parts.length === 0 && !analysis.girlCountTag) {
-    parts = ["1girl", "solo"];
-  }
+  // Keep existing scene composition (or the explicit Add result) authoritative.
+  // A character's appearance tags often include 1girl and must not contradict it.
+  const hasSubjectCount = parts.some(isSubjectCountTag);
+  const hasComposition = parts.some((p) => COMPOSITION_TAGS.has(normalizeTag(p)));
+  const characterParts = insertParts.filter((p) =>
+    !(hasSubjectCount && isSubjectCountTag(p)) &&
+    !((hasSubjectCount || hasComposition) && COMPOSITION_TAGS.has(normalizeTag(p))),
+  );
 
-  return joinPromptParts([...insertParts, ...parts]);
+  return joinPromptParts([...characterParts, ...parts]);
 }
 
 export function previewGirlCountAfterAdd(analysis: PromptCharacterAnalysis): string {

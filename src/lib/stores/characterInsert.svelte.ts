@@ -10,6 +10,8 @@ import {
 } from "../animadex/characterInsert.js";
 import { generation } from "./generation.svelte.js";
 
+export type { CharacterTagLevel } from "../animadex/characterInsert.js";
+
 export type CharacterInsertStep = "pick_tags" | "pick_action" | "duplicate";
 
 export type CharacterInsertPending = {
@@ -38,7 +40,7 @@ class CharacterInsertStore {
       this.pending = { ...p, tagLevel: level, step: "pick_action" };
       return;
     }
-    this.apply(level, "add");
+    this.apply(level, "insert");
   }
 
   apply(level: CharacterTagLevel, mode: CharacterInsertMode): void {
