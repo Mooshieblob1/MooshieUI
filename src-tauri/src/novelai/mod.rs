@@ -11,6 +11,7 @@ pub mod client;
 pub mod detect;
 pub mod face_detail;
 pub mod face_pass;
+mod local_refine;
 pub mod metadata;
 pub mod models;
 pub mod params;
@@ -796,11 +797,45 @@ async fn run_inner(
         return Ok(RunOutcome::Completed);
     }
 
-    // The NovelAI face pass, before any local hand-off: the local upscale ends
-    // this function by handing the image to ComfyUI, so a face pass after it
-    // would have nothing left to run on. Same failure policy as below, and for
-    // the same reason: the base image is already paid for.
     let mut images = images;
+    // The free local pass. NovelAI has already been paid for these pixels, so
+    // any failure here falls back to delivering the image untouched rather
+    // than surfacing an error the user would read as "my Anlas bought nothing".
+    if crate::templates::upscale_standalone::is_requested(params) {
+        if transparency_requested(params) {
+            // The local pass loads the image through ComfyUI's `LoadImage`,
+            // whose IMAGE output is RGB: the alpha the user paid V5 for would
+            // come back flattened onto black. Keeping the original is the only
+            // outcome that honours the toggle.
+            log::warn!(
+                "NovelAI {prompt_id}: local post-process skipped, it would flatten                  the transparent background"
+            );
+        } else if let [png] = images.as_slice() {
+            match run_local_post_process(state, sink, prompt_id, params, png).await {
+                Ok(Some(refined)) => images = vec![refined],
+                Ok(None) => return Ok(RunOutcome::HandedOff),
+                Err(err) => log::warn!(
+                    "NovelAI {prompt_id}: local post-process failed ({err});                      delivering the unmodified image"
+                ),
+            }
+        } else {
+            // One ComfyUI prompt maps to one alias and one GPU worker, so a
+            // multi-image NovelAI batch has no safe single-prompt post-process
+            // to hand off to. Delivering the batch untouched beats leaking a
+            // worker or ending the frontend's progress after the first image.
+            log::warn!(
+                "NovelAI {prompt_id}: local post-process skipped, it runs on                  single-image generations only ({} returned)",
+                images.len()
+            );
+        }
+    }
+
+    if state.prompt_queue.is_cancelled(prompt_id) {
+        state.prompt_queue.cleanup_alias(prompt_id);
+        return Ok(RunOutcome::Completed);
+    }
+
+    // Detail the final local result, so refinement cannot repaint the finished faces.
     if params
         .novelai
         .as_ref()
@@ -828,7 +863,7 @@ async fn run_inner(
         } else {
             // Every face is its own NovelAI request, so a batch multiplies the
             // round trips and the Opus allowance draw by the batch size. The
-            // single-image limit matches the local pass below.
+            // single-image limit matches the local pass above.
             log::warn!(
                 "NovelAI {prompt_id}: face pass skipped, it runs on single-image generations only ({} returned)",
                 images.len()
@@ -840,37 +875,6 @@ async fn run_inner(
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);
         return Ok(RunOutcome::Completed);
-    }
-
-    // The free local pass. NovelAI has already been paid for these pixels, so
-    // any failure here falls back to delivering the image untouched rather
-    // than surfacing an error the user would read as "my Anlas bought nothing".
-    if crate::templates::upscale_standalone::is_requested(params) {
-        if transparency_requested(params) {
-            // The local pass loads the image through ComfyUI's `LoadImage`,
-            // whose IMAGE output is RGB: the alpha the user paid V5 for would
-            // come back flattened onto black. Keeping the original is the only
-            // outcome that honours the toggle.
-            log::warn!(
-                "NovelAI {prompt_id}: local post-process skipped, it would flatten                  the transparent background"
-            );
-        } else if let [png] = images.as_slice() {
-            match run_local_post_process(state, sink, prompt_id, params, png).await {
-                Ok(()) => return Ok(RunOutcome::HandedOff),
-                Err(err) => log::warn!(
-                    "NovelAI {prompt_id}: local post-process could not start ({err});                      delivering the unmodified image"
-                ),
-            }
-        } else {
-            // One ComfyUI prompt maps to one alias and one GPU worker, so a
-            // multi-image NovelAI batch has no safe single-prompt post-process
-            // to hand off to. Delivering the batch untouched beats leaking a
-            // worker or ending the frontend's progress after the first image.
-            log::warn!(
-                "NovelAI {prompt_id}: local post-process skipped, it runs on                  single-image generations only ({} returned)",
-                images.len()
-            );
-        }
     }
 
     for image in &images {
@@ -931,22 +935,22 @@ async fn run_upscale(
     Ok(RunOutcome::Completed)
 }
 
-/// Hand the finished NovelAI image to the local ComfyUI upscale/face-fix chain.
+/// Run the local ComfyUI upscale/face-fix chain.
 ///
-/// On success the generation continues under the *same* prompt id: the
-/// ComfyUI prompt is alias-bound to it, so the websocket re-emits its progress,
-/// previews, output image and terminal `executing { node: null }` against the
-/// id the frontend is already tracking.
+/// With NovelAI faces enabled, collect the result privately and return it for
+/// the face stage. Otherwise keep the normal websocket handoff (`Ok(None)`).
 ///
-/// Returning `Err` means nothing was submitted and the caller should deliver
-/// the NovelAI image as-is.
+/// Both paths continue under the same frontend prompt id. Only the ordinary
+/// handoff binds an alias and lets ComfyUI finish the whole generation.
+///
+/// Any failure falls back to the paid NovelAI image.
 async fn run_local_post_process(
     state: &Arc<AppState>,
     sink: &EventSink,
     prompt_id: &str,
     params: &GenerationParams,
     png: &[u8],
-) -> Result<(), AppError> {
+) -> Result<Option<Vec<u8>>, AppError> {
     // Paid work first. If the user asked to keep the pre-upscale image, it is
     // delivered before the local pass is even submitted, so a crash, a GPU
     // OOM or a closed app between here and ComfyUI's output still leaves the
@@ -960,7 +964,12 @@ async fn run_local_post_process(
         .upload_image_from_bytes(png.to_vec(), filename)
         .await?;
 
-    let mut derived = crate::templates::upscale_standalone::build_params(params, &upload.name)
+    let input_name = if upload.subfolder.is_empty() {
+        upload.name
+    } else {
+        format!("{}/{}", upload.subfolder, upload.name)
+    };
+    let mut derived = crate::templates::upscale_standalone::build_params(params, &input_name)
         .ok_or_else(|| AppError::Other("Local post-process is not applicable".into()))?;
     // The local model lives in a folder that does not match what it is (a
     // split-file model in checkpoints/, or a full checkpoint in
@@ -1047,7 +1056,22 @@ async fn run_local_post_process(
         derived.facefix_steps,
         derived.facefix_denoise,
     );
+    let collect = params
+        .novelai
+        .as_ref()
+        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine());
+    if collect {
+        // NAI accepts PNG. Keep the intermediate lossless and avoid JXL/WebP
+        // conversion followed immediately by another decode for face crops.
+        derived.output_format = "png".into();
+        derived.output_bit_depth = "8bit".into();
+    }
     let workflow = crate::templates::build_workflow(&derived, params.seed, false);
+    if collect {
+        let refined = local_refine::run(state, sink, prompt_id, workflow).await?;
+        let restored = crate::metadata::copy_png_text_chunks(png, &refined);
+        return Ok(Some(restored.unwrap_or(refined)));
+    }
 
     let timeout = std::time::Duration::from_secs(300);
     let (worker_id, response) = state
@@ -1078,7 +1102,7 @@ async fn run_local_post_process(
     }
     state.broadcast_queue_positions();
 
-    Ok(())
+    Ok(None)
 }
 
 /// Feed NovelAI PNG bytes through the existing output-image pipeline.

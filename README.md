@@ -1,6 +1,7 @@
 # MooshieUI
 
-MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that runs in two modes:
+MooshieUI is a beginner-friendly interface for image and video generation through [ComfyUI](https://github.com/comfyanonymous/ComfyUI), with optional image generation through the **NovelAI API** using your own key. It runs in two modes:
+
 - **Desktop app** via Tauri (Windows/Linux; [native Apple Silicon macOS candidates](docs/MACOS.md))
 - **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile UI)
 
@@ -33,35 +34,47 @@ Full guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/Moosh
 
 | Guide | Covers |
 |-------|--------|
-| [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) | Desktop, Docker, remote/cloud ComfyUI, macOS source build |
-| [Generation Basics](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics) | Modes, generation controls, dimensions |
-| [Prompting Guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide) | Autocomplete, presets, wildcards, interrogation |
-| [Prompt Assistant](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompt-Assistant) | LLM-assisted prompt building |
+| [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) | Desktop, Docker, remote/cloud ComfyUI, Apple Silicon candidates |
+| [Generation Basics](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics) | Image modes, pause/continue, queue, dimensions and guidance |
+| [NovelAI Backend](https://github.com/Mooshieblob1/MooshieUI/wiki/NovelAI-Backend) | Personal API keys, characters, references, costs, face detailing and Director Tools |
+| [Video Generation](https://github.com/Mooshieblob1/MooshieUI/wiki/Video-Generation) | MiniMax H3, model stacks, timeline, interpolation, playback and export |
+| [Image Edit Mode](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Edit-Mode) | Qwen Image Edit, Flux Kontext and Anima ReStyler |
+| [Prompting Guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide) | Prompt Chunks, random syntax, Artist Styles, Style Creator and interrogation |
+| [Prompt Assistant](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompt-Assistant) | Local or external LLM-assisted prompt building |
 | [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub) | Supported architectures, auto-detection, downloads |
 | [Upscaling & Face Fix](https://github.com/Mooshieblob1/MooshieUI/wiki/Upscaling-and-Face-Fix) | Tiled diffusion, guidance nodes, face fix |
 | [ControlNet & Style Transfer](https://github.com/Mooshieblob1/MooshieUI/wiki/ControlNet-and-Style-Transfer) | ControlNet and reference/style transfer |
 | [Inpainting & the Canvas Editor](https://github.com/Mooshieblob1/MooshieUI/wiki/Inpainting-and-the-Canvas-Editor) | Mask painting and selective edits |
 | [Compare Grid](https://github.com/Mooshieblob1/MooshieUI/wiki/Compare-Grid) | XYZ parameter sweeps |
+| [Image Comparison](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Comparison) | Slider, fade, difference and side-by-side comparison |
 | [Gallery & Metadata](https://github.com/Mooshieblob1/MooshieUI/wiki/Gallery-and-Metadata) | Persistent gallery, metadata import/remix |
 | [Server, LAN & Multi-User](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User) | Self-hosting, roles, auth, mobile |
 | [Settings & Accessibility](https://github.com/Mooshieblob1/MooshieUI/wiki/Settings-and-Accessibility) | Persistence, i18n, accessibility |
 | [FAQ](https://github.com/Mooshieblob1/MooshieUI/wiki/FAQ) | Common questions |
 
+Technical references and project planning documents are indexed in [docs/README.md](docs/README.md).
+
 ---
 
 ## ✨ Highlights
 
-- **Three generation modes** - text to image, image to image, and inpainting with a built-in canvas/mask editor; settings carry over between modes.
-- **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
-- **Smart model detection** - 20+ architectures (SD 1.5, SDXL, Illustrious/NoobAI, Pony, SD3/3.5, the Flux family, Chroma, Z-Image, Wan, Qwen, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Anima, Mugen, Nanosaur) identified by SHA256 hash, each with auto-applied sampler/scheduler/CFG presets.
-- **Tiled-diffusion upscaling** - MultiDiffusion/SpotDiffusion with anti-hallucination guidance nodes, one-click upscale, and YOLOv8 face fix.
-- **Compare Grid (XYZ)** - per-cell parameter sweeps stitched into a single labelled image.
-- **Real-time feedback** - live latent previews, progress phases, and cancel, streamed over WebSocket.
-- **Gallery & metadata** - persistent SQLite-backed gallery; drag a PNG back in to restore its settings (SwarmUI/A1111 metadata + stealth alpha).
-- **Self-hostable** - headless web server with roles, per-user galleries, auth, and a dedicated mobile layout.
-- **11 languages** - 2,000+ translation keys with full locale parity, switchable without restart.
+> **v2.3.2:** NovelAI face detailing follows the local refiner, with each face crop resized to fit within 1024×1024 before repainting. See the [face detailer guide](docs/NOVELAI.md#31-the-novelai-face-detailer).
 
-See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for the full feature reference.
+- **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext and Anima ReStyler.
+- **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
+- **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, Turbo LoRA, TeaCache, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
+- **Pause and continue** - pause ComfyUI text-to-image sampling, inspect a preview, change prompts or sampling settings, or paint a masked correction before continuing. Keep a pause to try different endings.
+- **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
+- **Smart model detection** - 20+ architectures identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
+- **Prompt and style tools** - autocomplete, Prompt Chunks and wildcards, seeded random prompt syntax, scheduling, regional prompts, a local or external Prompt Assistant, and Style Creator rounds for discovering artist combinations.
+- **Refinement and references** - MultiDiffusion/SpotDiffusion upscaling, SeedVR2 restoration, face detailing, ControlNet, IP-Adapter/Flux Redux style references, sampler guidance and the SDXL DMD2 preset.
+- **Compare Grid (XYZ)** - per-cell parameter sweeps stitched into a single labelled image.
+- **Queue and feedback** - reorder or cancel pending jobs, interrupt a run, watch previews and progress, and opt into completion notifications.
+- **Gallery & metadata** - SQLite-backed image and video gallery, manual save mode, generation times and A/B comparison; import SwarmUI, A1111 and NovelAI settings, with original NovelAI PNG metadata preserved when copying.
+- **Self-hostable** - headless web server with roles, per-user galleries, auth, and a dedicated mobile layout.
+- **12 languages** - English, German, Spanish, French, Italian, Japanese, Korean, Polish, Portuguese, Russian, Simplified Chinese and Traditional Chinese, switchable without restart.
+
+Controls depend on the selected backend and model. NovelAI offers the three standard image modes; Image Edit, video, and pause/continue use ComfyUI. See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for each feature's requirements.
 
 ---
 
@@ -73,18 +86,25 @@ See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for the full feat
 2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required.
 3. Start generating; ComfyUI launches automatically.
 
-> ~5–10 GB disk, 5–15 minutes on first launch. macOS, Docker, and remote/cloud ComfyUI setups are covered in [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation).
+> Allow roughly 5–10 GB for the runtime, plus space for model downloads; first setup typically takes 5–15 minutes depending on your connection. GPU support varies by platform, including an allowlisted AMD Windows preview. See [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) for details.
+
+### Generate with NovelAI
+
+Save your API key in **Settings > NovelAI**, then select a NovelAI model in the model picker. The generation page adapts to that backend and shows an estimated Anlas cost before submission. Local upscaling and face detection still need a running ComfyUI; NovelAI requests use your account's subscription and balance. See [NovelAI Backend](https://github.com/Mooshieblob1/MooshieUI/wiki/NovelAI-Backend).
 
 ### Self-host (Docker)
 
 ```bash
-cp .env.example .env   # optional: credentials/ports
+cp .env.example .env
+# Edit .env: set MOOSHIEUI_ADMIN_USER and a strong MOOSHIEUI_ADMIN_PASS before first launch.
 docker compose up -d --build
 ```
 
-Open `http://localhost:3200` (or your configured `MOOSHIEUI_PORT`). Full server/LAN/multi-user setup: [Server, LAN & Multi-User](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User).
+Open `http://localhost:3200` (or the host port set by `MOOSHIEUI_PORT`) and sign in with the initial admin account. Empty passwords and `changeme` are not accepted for account creation. The supplied Docker stack targets NVIDIA GPUs and requires GPU support in Docker; it is separate from the desktop wizard's AMD/Intel setup. Full server/LAN/multi-user setup: [Server, LAN & Multi-User](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User).
 
 ### Build from source
+
+Use Node.js 22.12+ or 24+, stable Rust, and the platform's Tauri v2 build prerequisites. See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and both Rust build targets.
 
 ```bash
 git clone https://github.com/Mooshieblob1/MooshieUI.git
@@ -99,10 +119,10 @@ npm run tauri build    # production build
 ## 🏗️ How it works
 
 1. You adjust settings in the Svelte UI.
-2. On Generate, settings go to the Rust backend via the IPC bridge (`ipcInvoke()` on desktop, HTTP/SSE in browser mode).
-3. Rust builds a ComfyUI workflow JSON from templates - no node graph exposed.
-4. The workflow is submitted to ComfyUI's `/prompt` API.
-5. WebSocket streams progress and previews back to the UI in real time.
+2. On Generate, `ipcInvoke()` sends settings to Rust through Tauri IPC on desktop or HTTP in browser mode; `ipcListen()` receives events through Tauri or SSE.
+3. Rust builds an image/video ComfyUI workflow from templates, or a NovelAI image request using the selected account's key.
+4. ComfyUI workflows go to its `/prompt` API; NovelAI requests go to its image API. Optional local post-processing sends returned NovelAI images through ComfyUI.
+5. ComfyUI WebSocket events and NovelAI streaming responses feed the shared progress, preview and gallery pipeline.
 
 MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance, an SDXL↔Flux2 VAE adapter, Nanosaur DiT support, and face fix) that are auto-installed into ComfyUI. Details live in [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub). The tiled diffusion node is also available as a standalone ComfyUI custom node: [ComfyUI-MooshieTiledDiffusion](https://github.com/Mooshieblob1/ComfyUI-MooshieTiledDiffusion).
 
@@ -116,10 +136,11 @@ MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance,
 | Runtime | Tauri desktop app + axum headless web server |
 | State | Svelte 5 runes - class-based singleton stores |
 | Persistence | Tauri Store (JSON) + SQLite (`rusqlite`) |
-| ComfyUI transport | REST + WebSocket via Rust (reqwest, tokio-tungstenite) |
+| Generation transport | ComfyUI REST/WebSocket and NovelAI HTTP/streaming through Rust |
+| Prompt Assistant | Local llama.cpp or configured external LLM endpoint |
 | Inference | ONNX Runtime (`ort`) for WD v3 image interrogation |
 | Autocomplete | Danbooru + Anima tag databases (~140k tags) |
-| i18n | 11 languages, 2,000+ keys, runtime switching |
+| i18n | 12 languages, checked key/placeholder parity, runtime switching |
 | Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
 
 ---
@@ -176,7 +197,7 @@ MooshieUI stands on the shoulders of a huge amount of open-source work. Sincere 
 
 ### Core foundations
 
-- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** (comfyanonymous) - the diffusion backend that powers all generation. MooshieUI would not exist without it.
+- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** (comfyanonymous) - the local image/video backend and optional post-processing for NovelAI output. MooshieUI would not exist without it.
 - **[Tauri](https://tauri.app/)** - the Rust desktop app framework, plus its store, shell, dialog, fs, clipboard, updater, and process plugins.
 - **[Svelte](https://svelte.dev/)**, **[Tailwind CSS](https://tailwindcss.com/)**, **[Vite](https://vite.dev/)**, and **[TypeScript](https://www.typescriptlang.org/)** - the frontend stack.
 - **[PyTorch](https://pytorch.org/)** - the ML framework behind ComfyUI inference.
@@ -225,6 +246,7 @@ Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 - **[Hugging Face](https://huggingface.co/)** - hosting for nearly every model MooshieUI downloads.
 - **[Danbooru](https://danbooru.donmai.us/)** and **[Gelbooru](https://gelbooru.com/)** - the tag taxonomies behind autocomplete (~140k tags; Gelbooru-derived Anima list curated by [BetaDoggo](https://huggingface.co/BetaDoggo)).
 - **[Animadex](https://animadex.net/)** - the character and LoRA database integration.
+- **[NovelAI](https://novelai.net/)** - the optional hosted image-generation backend, enhancement passes and Director Tools.
 - **[Photopea](https://www.photopea.com/)** - the embedded full image editor.
 - **GitHub** and **Cloudflare** - code hosting, CI/CD, releases, and the CDN behind the artist gallery.
 

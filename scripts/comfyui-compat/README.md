@@ -1,7 +1,7 @@
 # ComfyUI custom-node compatibility check
 
 MooshieUI pins ComfyUI to a release tag (`COMFYUI_REF` in
-[`src-tauri/src/setup.rs`](../../src-tauri/src/setup.rs)). Fresh installs and the
+[`src-tauri/src/comfyui_version.rs`](../../src-tauri/src/comfyui_version.rs)). Managed desktop installs and the
 in-app updater both target that tag. Bumping the pin is usually safe for the app
 itself, but ComfyUI's internal refactors can break MooshieUI's **bundled custom
 nodes**, which import deep ComfyUI internals (`comfy.sample`, `comfy.samplers`,
@@ -12,25 +12,29 @@ import breaks, the node silently fails to register and disappears from
 `smoke_test.py` is the checker for that. It reproduces what the app does at
 runtime (`ensure_mooshie_nodes` in `src-tauri/src/comfyui/nodes.rs`): deploy the
 bundled nodes into a ComfyUI checkout, start ComfyUI in CPU mode, and assert
-every required node class appears in `/object_info`.
+every required bundled node class appears in `/object_info`. It also checks
+selected core-node input signatures used by the workflow templates.
 
 ## What it verifies
 
 The required node classes and the `ultralytics` pin are parsed from
 `src-tauri/src/comfyui/nodes.rs` (single source of truth), so the test never
-drifts from the app. Today that is:
+drifts from the app. The current list includes image/video output, face
+detection/detailing, segment refinement, guidance, path-based model loading,
+Nanosaur, tiled diffusion, Anima TeaCache and pause/resume nodes. Read
+`REQUIRED_MOOSHIE_NODE_CLASSES` for the exact list rather than copying it here.
 
-`MooshieSaveImage`, `MooshieFaceDetailer`, `MooshieSegmentDetailer`,
-`MooshieSoftGuidance`, `MooshieSmartGuidance`, `NanoSaurLoader`,
-`ApplyTiledDiffusion`.
+The core checks currently cover `ModelPatchLoader` and `AnimaLLLiteApply`,
+including the input names wired by the Anima ControlNet workflow. A registered
+class with incompatible inputs also fails the check.
 
 ## Scope and limitations
 
-- **Bundled MooshieUI nodes only.** The external ControlNet and style-transfer
-  packages (`comfyui_controlnet_aux`, `ComfyUi-Untwisting-RoPE`, ...) are
-  third-party git repos cloned at runtime; their compatibility is their own
-  maintainers' concern and is out of scope here. The script logs this rather
-  than silently skipping it.
+- **External packs need explicit coverage.** ControlNet and style-transfer
+  packages (`comfyui_controlnet_aux`, `ComfyUi-Untwisting-RoPE`, ...) are not
+  installed by this script. Platform checks can install them first and pass
+  `--extra-required-file path/to/classes.json`, a JSON list of expected class
+  names. Without that option, those packs are outside the check's coverage.
 - It checks **registration**, not generation. A node that registers can still
   misbehave at inference time; this catches import/registration breakage, which
   is the common failure mode for ComfyUI version bumps.
@@ -39,7 +43,7 @@ drifts from the app. Today that is:
 
 ```bash
 # 1. Get a ComfyUI checkout at the version you want to test:
-git clone --depth=1 --branch v0.26.0 https://github.com/comfyanonymous/ComfyUI.git comfyui-target
+git clone --depth=1 --branch v0.34.0 https://github.com/comfyanonymous/ComfyUI.git comfyui-target
 
 # 2. Install deps into the active Python env (CPU torch is fine):
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
@@ -50,7 +54,11 @@ pip install ultralytics==8.4.75
 python scripts/comfyui-compat/smoke_test.py --comfyui-dir comfyui-target
 ```
 
-Exit code `0` = all required bundled nodes registered. `1` = at least one failed
+The example uses the v2.3.1 app's pin. Read `COMFYUI_REF` when testing another
+release, or supply the candidate tag you are evaluating. Add
+`--summary-json error-logs/comfyui-compat.json` to retain the structured result.
+
+Exit code `0` = required registration and core-input checks passed. `1` = a check failed
 (the ComfyUI log tail is printed, and the full log is at
 `comfyui-target/comfyui-smoke.log`).
 
@@ -69,7 +77,7 @@ runs this weekly (and on demand via "Run workflow"):
    result and a link to the smoke-test run go in the PR body.
 
 If the smoke test fails, the run goes red and no PR is opened: that newer ComfyUI
-release would break the bundled nodes and needs code changes first.
+release needs investigation before the pin is advanced.
 
 ### No secrets or API keys
 

@@ -1,9 +1,13 @@
 # Style Reference
 
-Style reference lets you upload a reference image and apply its style to any
-generation. Colors, textures, and composition are influenced without replacing
+Style Reference lets you upload a reference image for ComfyUI txt2img, img2img
+or inpainting with a supported model family. Colors, textures, and composition are influenced without replacing
 the text prompt. The implementation selects the correct technique for the active
 model family automatically.
+
+This is separate from Anima's RFInversion Style Transfer panel, Anima ReStyler
+in Image Edit mode, and NovelAI's model-specific Vibe Transfer/Precise Reference.
+See the [wiki comparison](https://github.com/Mooshieblob1/MooshieUI/wiki/ControlNet-and-Style-Transfer).
 
 ## Supported model families
 
@@ -49,8 +53,10 @@ Place files in the paths shown, relative to your ComfyUI root.
 **models/clip_vision/**
 
 - `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors`
-  Download from h94/IP-Adapter (image_encoder folder):
-  https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
+  Download [model.safetensors from h94/IP-Adapter](https://huggingface.co/h94/IP-Adapter/blob/main/models/image_encoder/model.safetensors)
+  and rename it to `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors` in
+  `models/clip_vision/`. The upstream filename differs from the filename the
+  ComfyUI IP-Adapter loader expects.
 
 ### SDXL / Illustrious / Pony (IP-Adapter Plus)
 
@@ -88,7 +94,7 @@ ComfyUI nodes.
 - Workflow templates: `src-tauri/src/templates/style_ref.rs`
 - Generation params: `style_ref_enabled`, `style_ref_image`, `style_ref_strength`,
   `style_ref_weight_type`, `style_ref_start`, `style_ref_end`
-- IP-Adapter lazy install follows the same pattern as INT8-Fast (ComfyUI-GGUF):
+- IP-Adapter lazy install follows the optional-node installation pattern:
   verified by checking for the `IPAdapterUnifiedLoader` class in the ComfyUI
   object info endpoint.
 - Model categories `style_models`, `ipadapter`, and `clip_vision` are registered

@@ -21,7 +21,7 @@ use crate::state::AppState;
 /// come from our own localhost/LAN ComfyUI, so we lift both limits to a generous
 /// 1 GiB (covers up to ~8K 16-bit RGBA with headroom) while still bounding
 /// allocation against a runaway length header.
-fn comfyui_ws_config() -> WebSocketConfig {
+pub(crate) fn comfyui_ws_config() -> WebSocketConfig {
     const LIMIT: usize = 1 << 30; // 1 GiB
     WebSocketConfig::default()
         .max_message_size(Some(LIMIT))

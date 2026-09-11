@@ -1,9 +1,28 @@
 # Metadata carriers
 
 Where MooshieUI puts generation parameters in each output format, and what
-survives which transport. The payload is always the same SwarmUI-shaped JSON
-that `metadata::format_swarmui_json()` produces, so one reader handles all of
-it.
+survives which transport. MooshieUI's own parameter payload is the SwarmUI-shaped
+JSON produced by `metadata::format_swarmui_json()`. NovelAI PNGs additionally
+carry their original provider metadata, described below.
+
+## NovelAI PNG metadata
+
+NovelAI uses `Software`, `Source`, `Description` and a JSON `Comment` chunk.
+MooshieUI reads those through `novelai/metadata.rs` and preserves original PNG
+text chunks through gallery saving, clipboard copying and NovelAI face-detail
+compositing. Post-processing information can accompany the original metadata;
+the original source parameters alone do not describe every later edit.
+
+On desktop, copying a newly generated NovelAI image waits for its gallery save
+when needed so the saved PNG can supply the original chunks. Browser clipboard
+behavior also depends on the browser and the application receiving the paste.
+Importing a V5 image ignores its placeholder zero for undesired-content strength;
+a meaningful zero from older models can still be restored.
+
+These guarantees concern the preserved PNG path, not arbitrary re-encoding by
+external editors or messaging services. See [NovelAI backend](NOVELAI.md) for
+the integration and [Gallery and Metadata](https://github.com/Mooshieblob1/MooshieUI/wiki/Gallery-and-Metadata)
+for user-facing import/export instructions.
 
 ## What is written
 

@@ -9,8 +9,8 @@
 //! Why img2img on a Rust-side crop rather than NovelAI infill: infill switches
 //! to the model's inpainting variant, and V5 Curated has none of its own, so a
 //! masked face pass would be painted by a different model than the image it is
-//! fixing. Cropping locally and blending locally keeps every pixel in the frame
-//! from the same model.
+//! fixing. Cropping locally and blending locally keeps the face repaint on the
+//! selected NovelAI model, even after a local refiner pass.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -109,64 +109,41 @@ pub async fn run_face_pass(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let total = faces.len();
-    // The progress bar spans every step of every face rather than one tick per
-    // face: a single-face pass would otherwise sit at 0/1 for the whole NovelAI
-    // round trip, which reads as a frozen bar.
+    let plans: Vec<_> = faces
+        .iter()
+        .filter_map(|face| {
+            face_pass::plan_crop(
+                face,
+                image_w,
+                image_h,
+                detail.padding,
+                detail.guide_size,
+                detail.fits_free_window(),
+            )
+        })
+        .collect();
+    let total = plans.len();
     let steps = crop_steps(&detail);
-    let max_progress = total as u32 * steps;
+    let max_progress = (total as u32).saturating_mul(steps);
     let mut painted = 0usize;
-    // Set when the loop gives up early, so the notice after it can say whether
-    // the user is looking at a partial pass or none at all.
     let mut failure: Option<&'static str> = None;
 
-    for (index, face) in faces.iter().enumerate() {
+    for (index, plan) in plans.iter().enumerate() {
         if state.prompt_queue.is_cancelled(prompt_id) {
             break;
         }
-
-        let Some(plan) = face_pass::plan_crop(
-            face,
-            image_w,
-            image_h,
-            detail.padding,
-            detail.guide_size,
-            detail.fits_free_window(),
-        ) else {
-            log::debug!(
-                "NovelAI {prompt_id}: face {} is too small to repaint",
-                index + 1
-            );
-            continue;
-        };
-
-        let node = format!("NovelAI face {}/{}", index + 1, total);
-        let done_before = index as u32 * steps;
-        sink.emit(
-            "comfyui:progress",
-            serde_json::json!({
-                "prompt_id": prompt_id,
-                "value": done_before,
-                "max": max_progress,
-                "node": node,
-            }),
-        );
-
         let crop = image::imageops::crop_imm(&base, plan.x, plan.y, plan.w, plan.h).to_image();
         let sent = match resize_rgba(crop, plan.req_w, plan.req_h).await {
             Ok(img) => img,
             Err(err) => {
-                log::warn!(
-                    "NovelAI {prompt_id}: face {} could not be cropped ({err})",
-                    index + 1
-                );
-                continue;
+                log::warn!("NovelAI {prompt_id}: face crop failed ({err})");
+                failure = Some("readback_failed");
+                break;
             }
         };
-
         let tags = tagger_tags(state, DynamicImage::ImageRgba8(sent.clone()), &detail).await;
         let character =
-            face_pass::nearest_character(&nai.characters, nai.use_coords, &plan, image_w, image_h);
+            face_pass::nearest_character(&nai.characters, nai.use_coords, plan, image_w, image_h);
         let (prompt, tier) = face_pass::build_face_prompt(
             &detail,
             &params.positive_prompt,
@@ -174,109 +151,104 @@ pub async fn run_face_pass(
             &tags,
         );
         log::info!(
-            "NovelAI {prompt_id}: face {}/{total} {}x{} ({:?}) {}",
+            "NovelAI {prompt_id}: face {}/{total} {}x{} -> {}x{}, prompt {:?}",
             index + 1,
+            plan.w,
+            plan.h,
             plan.req_w,
             plan.req_h,
-            tier,
-            if plan.is_free(detail.steps) {
-                "free"
-            } else {
-                "costs Anlas"
-            }
+            tier
         );
-
+        let node = format!("NovelAI face {}/{total}", index + 1);
+        let done_before = index as u32 * steps;
+        sink.emit(
+            "comfyui:progress",
+            serde_json::json!({
+                "prompt_id": prompt_id, "value": done_before, "max": max_progress, "node": node,
+            }),
+        );
         let encoded = match encode_png(&sent).await {
             Ok(bytes) => base64::engine::general_purpose::STANDARD.encode(&bytes),
             Err(err) => {
-                log::warn!(
-                    "NovelAI {prompt_id}: face {} could not be encoded ({err})",
-                    index + 1
-                );
-                continue;
-            }
-        };
-
-        let crop_params = crop_request(params, &plan, &prompt, encoded, index);
-        let body = match build_request(&crop_params) {
-            Ok(body) => body,
-            Err(err) => {
-                log::warn!("NovelAI {prompt_id}: face pass request rejected ({err})");
+                log::warn!("NovelAI {prompt_id}: crop encode failed ({err})");
                 failure = Some("request_rejected");
                 break;
             }
         };
-
+        let crop_params = crop_request(params, plan, &prompt, encoded, index);
+        let body = match build_request(&crop_params) {
+            Ok(body) => body,
+            Err(err) => {
+                log::warn!("NovelAI {prompt_id}: face request rejected ({err})");
+                failure = Some("request_rejected");
+                break;
+            }
+        };
         if index > 0 {
             tokio::time::sleep(FACE_GAP).await;
         }
-
-        let images = match generate_with_retry(client, &body, |event| {
-            if state.prompt_queue.is_cancelled(prompt_id) {
-                return;
-            }
-            let StreamEvent::Intermediate { image, step, .. } = event else {
-                return;
-            };
-            // The preview is the crop alone, not the whole frame: compositing
-            // each one would mean a full decode and re-encode inside this
-            // synchronous callback, which would stall the stream it is reading.
-            if let Some(temp) = crate::temp_images::save(&image, "png") {
+        if state.prompt_queue.is_cancelled(prompt_id) {
+            break;
+        }
+        let images = match generate_with_retry(
+            client,
+            &body,
+            || state.prompt_queue.is_cancelled(prompt_id),
+            |event| {
+                if state.prompt_queue.is_cancelled(prompt_id) {
+                    return;
+                }
+                let StreamEvent::Intermediate { image, step, .. } = event else {
+                    return;
+                };
+                if let Some(temp) = crate::temp_images::save(&image, "png") {
+                    sink.emit(
+                        "comfyui:preview",
+                        serde_json::json!({
+                            "temp_filename": temp, "format": "png", "prompt_id": prompt_id,
+                        }),
+                    );
+                }
                 sink.emit(
-                    "comfyui:preview",
+                    "comfyui:progress",
                     serde_json::json!({
-                        "temp_filename": temp,
-                        "format": "png",
-                        "prompt_id": prompt_id,
+                        "prompt_id": prompt_id, "value": done_before + (step + 1).min(steps),
+                        "max": max_progress, "node": node,
                     }),
                 );
-            }
-            sink.emit(
-                "comfyui:progress",
-                serde_json::json!({
-                    "prompt_id": prompt_id,
-                    "value": done_before + (step + 1).min(steps),
-                    "max": max_progress,
-                    "node": node,
-                }),
-            );
-        })
+            },
+        )
         .await
         {
             Ok(images) => images,
             Err(err) => {
-                // Stop rather than continue: whatever refused this face (a rate
-                // limit, an empty allowance, a network drop) will refuse the
-                // next one too, and the faces already done are worth keeping.
-                log::warn!(
-                    "NovelAI {prompt_id}: face {} of {total} failed ({err}); delivering what is done",
-                    index + 1
-                );
+                log::warn!("NovelAI {prompt_id}: {node} failed ({err}); keeping completed work");
                 failure = Some("generate_failed");
                 break;
             }
         };
+        if state.prompt_queue.is_cancelled(prompt_id) {
+            break;
+        }
         let Some(result) = images.into_iter().next() else {
-            log::warn!("NovelAI {prompt_id}: face {} came back empty", index + 1);
             failure = Some("empty_result");
             break;
         };
-
         let patch = match decode_and_fit(result, plan.w, plan.h).await {
             Ok(patch) => patch,
             Err(err) => {
-                log::warn!(
-                    "NovelAI {prompt_id}: face {} could not be read back ({err})",
-                    index + 1
-                );
+                log::warn!("NovelAI {prompt_id}: {node} readback failed ({err})");
                 failure = Some("readback_failed");
                 break;
             }
         };
-        face_pass::composite_face(&mut base, &patch, &plan, detail.feather);
+        face_pass::composite_face(&mut base, &patch, plan, detail.feather);
         painted += 1;
     }
 
+    if state.prompt_queue.is_cancelled(prompt_id) {
+        return Ok(None);
+    }
     if let Some(reason) = failure {
         let status = if painted > 0 { "partial" } else { "failed" };
         notify(sink, prompt_id, status, reason);
@@ -381,6 +353,7 @@ fn crop_steps(detail: &NovelAiFaceDetail) -> u32 {
 async fn generate_with_retry<F>(
     client: &NovelAiClient<'_>,
     body: &serde_json::Value,
+    cancelled: impl Fn() -> bool,
     mut on_event: F,
 ) -> Result<Vec<Vec<u8>>, AppError>
 where
@@ -390,6 +363,9 @@ where
         Err(AppError::ApiError { status: 429, .. }) => {
             log::warn!("NovelAI face pass rate limited; retrying once");
             tokio::time::sleep(RATE_LIMIT_BACKOFF).await;
+            if cancelled() {
+                return Err(AppError::Other("NovelAI face pass cancelled".into()));
+            }
             client.generate_stream(body, &mut on_event).await
         }
         other => other,
@@ -574,6 +550,53 @@ mod tests {
         assert_eq!((out.width, out.height), (1024, 1024));
         assert_eq!(out.input_image.as_deref(), Some("AAAA"));
         assert!(out.mask_image.is_none());
+    }
+
+    #[test]
+    fn oversized_face_requests_are_capped_and_never_recurse() {
+        let mut params = params();
+        let detail = &mut params.novelai.as_mut().unwrap().face_detail;
+        detail.guide_size = 2048;
+        detail.anlas_policy = "allow_paid".into();
+        let face = crate::templates::face_detect::FaceBox {
+            x1: 0,
+            y1: 0,
+            x2: 2048,
+            y2: 2048,
+            confidence: 0.99,
+        };
+        let plan = face_pass::plan_crop(
+            &face,
+            2048,
+            2048,
+            detail.padding,
+            detail.guide_size,
+            detail.fits_free_window(),
+        )
+        .unwrap();
+        let request = crop_request(&params, &plan, "blue eyes, portrait", "AAAA".into(), 0);
+        assert_eq!(
+            (request.width, request.height, request.batch_size),
+            (1024, 1024, 1)
+        );
+        assert_eq!(request.steps, 40);
+        let nai = request.novelai.unwrap();
+        assert!(!nai.local_post_process && !nai.face_detail.enabled);
+    }
+
+    #[test]
+    fn saved_experimental_tile_settings_are_ignored() {
+        let detail: NovelAiFaceDetail = serde_json::from_value(serde_json::json!({
+            "enabled": true, "guide_size": 768,
+            "tile_large_faces": true, "tile_size": 1024, "tile_overlap": 128,
+        }))
+        .unwrap();
+        assert!(detail.enabled);
+        assert_eq!(detail.guide_size, 768);
+        let saved = serde_json::to_value(detail).unwrap();
+        for key in ["tile_large_faces", "tile_size", "tile_overlap"] {
+            assert!(saved.get(key).is_none());
+        }
     }
 
     #[test]

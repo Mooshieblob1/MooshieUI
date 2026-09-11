@@ -8,7 +8,7 @@ For architecture and agent-specific conventions, see [AGENTS.md](AGENTS.md). For
 
 ## 1. Fork, clone, and develop
 
-Follow [Development Setup](README.md#development-setup-all-platforms) in the README:
+Follow [Build from source](README.md#build-from-source) and the prerequisites in [CONTRIBUTING.md](CONTRIBUTING.md):
 
 ```bash
 git clone https://github.com/<your-user>/MooshieUI.git
@@ -44,22 +44,24 @@ This enables `.githooks/pre-commit` (Unicode steganography, tampered git dates, 
 
 ## 3. Validate before you open a PR
 
-There is no frontend test suite (no Vitest/Jest). Rust has ~128 `#[test]` fns covering pure logic. Run the checks that match your changes:
+There is no frontend test suite (no Vitest/Jest). Rust has unit tests covering pure logic. Run the checks that match your changes:
 
 | If you changed… | Run |
 |-----------------|-----|
 | Svelte, stores, TypeScript, `package.json` | `npm run build` (expect `✓ built in` at the end) |
 | Rust (`src-tauri/`) | `cargo check --manifest-path src-tauri/Cargo.toml` |
+| Rust shared with the headless server | Also `cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server` |
 | Rust logic with test coverage | `cargo test --manifest-path src-tauri/Cargo.toml` (see note below) |
 | Rust formatting | `cd src-tauri && cargo fmt --check` |
 | Locale files (`src/lib/locales/*.ts`) | Ensure every locale has the same keys and `{placeholders}` as `en.ts` |
+| Documentation only | Check behavior against current code and release notes; verify local links and wiki page/section targets |
 
 The Rust suite is green on `main`. If `cargo test` fails, treat it as a regression from your change, not a known issue.
 
 ### Conventions (high-signal)
 
 - **Dual-mode IPC:** All backend calls use `ipcInvoke()` / `ipcListen()` in `src/lib/utils/ipc.ts` — never raw Tauri `invoke()` / `listen()` (browser mode breaks silently).
-- **Gallery images:** Stored as JXL on disk; use `loadGalleryImageDisplay()` / `loadGalleryImagePng()` — do not read gallery files directly in the UI.
+- **Gallery images:** May be PNG, JXL or WebP; use `loadGalleryImageDisplay()` / `loadGalleryImagePng()` for the requested representation — do not read gallery files directly in the UI. Videos use their own output/export path.
 - **Svelte 5:** No `<style>` blocks; use `onclick` not `on:click`; state stores use `.svelte.ts` and runes, not `svelte/store`.
 - **New Tauri commands:** Return `Result<T, AppError>` and add a matching `ipcInvoke` wrapper in `src/lib/utils/api.ts`.
 

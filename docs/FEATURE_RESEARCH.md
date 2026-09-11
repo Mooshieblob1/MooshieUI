@@ -1,5 +1,11 @@
 # MooshieUI — Novel Feature Research Shortlist
 
+> Historical research snapshot, not a current feature/support matrix. Several
+> gaps below have since shipped, including Compare Grid, scheduling, regional
+> prompts, prompt assistance and bulk CivitAI scans. See the
+> [current roadmap status](ROADMAP-2026-gaps.md), [README](../README.md) and
+> [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for available features.
+
 **Constraints**: Research only. Mixed audience. 12 GB+ VRAM baseline. Local/offline-first. Desktop (Tauri) advantages welcome.
 
 **Exclusion list** (previously rejected concept families): aesthetic scoring filters, denoise-step live preview strips, generic analytics dashboards, CLIP semantic image search, character identity vaults, IP-Adapter moodboards, auto-negative prompt generators, semantic AI brush canvas, prompt divergence trees.
