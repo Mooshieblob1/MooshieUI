@@ -1,14 +1,16 @@
 # macOS (Apple Silicon)
 
-Native macOS installers are being qualified for the 2.3.1 release. Candidate
-builds are experimental until the physical-Mac checks below have passed. Intel
+As of v2.3.1, native macOS installers remain experimental candidates until
+the physical-Mac checks below have passed. Stable macOS downloads and automatic
+updates remain gated. Intel
 Macs can use MooshieUI in a browser connected to a remote server; the native
 local-generation runtime targets Apple Silicon.
 
 ## Installation
 
-Use macOS 14 or later and download the `_aarch64.dmg` from the release or candidate
-build. Compare its SHA-256 with the accompanying `SHA256SUMS` before installing:
+Use macOS 14 or later. Open a successful [macOS Native Validation run](https://github.com/Mooshieblob1/MooshieUI/actions/workflows/macos-native.yml)
+and download its `macos-candidate` artifact (GitHub sign-in required). Extract
+the `_aarch64.dmg` and compare its SHA-256 with the accompanying `SHA256SUMS` before installing:
 
 ```sh
 shasum -a 256 MooshieUI_2.3.1_aarch64.dmg

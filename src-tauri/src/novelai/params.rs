@@ -129,7 +129,7 @@ pub struct NovelAiFaceDetail {
     /// 0 means every detection.
     #[serde(default = "default_face_max_faces")]
     pub max_faces: u32,
-    /// Long side the crop is scaled to before repainting.
+    /// Long side the crop is scaled to before repainting; capped at 1024 on NovelAI.
     #[serde(default = "default_face_guide_size")]
     pub guide_size: u32,
     /// img2img strength for the crop pass.
@@ -152,8 +152,8 @@ pub struct NovelAiFaceDetail {
     /// Used verbatim when `prompt_mode` is `custom`.
     #[serde(default)]
     pub custom_prompt: String,
-    /// `fit_free` downscales crops to stay inside the Opus free window;
-    /// `allow_paid` sends them at native size.
+    /// `fit_free` caps request pixels/steps at the Opus window;
+    /// `allow_paid` allows the requested steps above that window.
     #[serde(default = "default_anlas_policy")]
     pub anlas_policy: String,
     /// General-tag confidence floor for the tagger run on the crop. Higher

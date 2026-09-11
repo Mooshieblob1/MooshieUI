@@ -177,10 +177,11 @@ export interface NovelAiFaceDetail {
   padding: number;
   /** 0 means every detection. */
   max_faces: number;
-  /** Long side the crop is scaled to before repainting. */
+  /** Long side the crop is scaled to; capped at 1024 on NovelAI. */
   guide_size: number;
+  /** img2img strength for the face crop. */
   strength: number;
-  /** Clamped to 28 on the NovelAI engine so a free pass stays free. */
+  /** Clamped to 28 on NovelAI under the fit_free policy. */
   steps: number;
   /**
    * While true the detailer follows the main steps slider and `steps` is

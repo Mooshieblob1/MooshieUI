@@ -1,5 +1,15 @@
 # Changelog
 
+## What's New in v2.3.2
+
+### Fixes and maintenance
+- **NovelAI face detailing runs after the local refiner**: when local refinement or upscaling is enabled, faces are detected and repainted on the refined image, so the refiner no longer overwrites the finished face pass.
+- **Oversized faces use one bounded crop**: face crops are resized to fit within 1024×1024 before the NovelAI request, then resized back and blended into their original area. Small faces still use Guide Size. The ceiling applies to imported settings and Allow paid crops; there is no tiled face pass.
+- **More reliable post-processing**: the refiner keeps progress within the same generation and releases its GPU worker before face detailing. Failed face requests preserve the refined image and completed faces, and cancellation stops further requests. Cost-policy help now explains that Opus size/step limits still depend on the account and remaining allowance.
+- **Documentation refresh**: the README, feature guides and wiki now describe current generation modes, pause/continue, NovelAI, style references, metadata handling and setup. Apple Silicon builds remain experimental pending physical-Mac qualification.
+
+---
+
 ## What's New in v2.3.1
 
 ### New features

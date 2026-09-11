@@ -361,8 +361,10 @@ impl GpuManager {
         }
     }
 
-    /// Actually POST the prompt to a specific worker.
-    async fn do_submit(
+    /// POST to a worker the caller has already reserved with `try_reserve`.
+    /// Private result collectors connect their websocket before this call so
+    /// even an immediately completed workflow cannot outrun the listener.
+    pub(crate) async fn do_submit(
         &self,
         worker: &Arc<GpuWorker>,
         workflow: serde_json::Value,

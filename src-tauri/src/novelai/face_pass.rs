@@ -138,8 +138,9 @@ fn fit_into_free_window(width: u32, height: u32) -> (u32, u32) {
 /// `None` means the face is not worth detailing: a crop under 8 px on a side
 /// carries no detail to improve and would only cost a round trip.
 ///
-/// `fit_free` is the `fit_free` Anlas policy. Under `allow_paid` the crop goes
-/// out at its natural size and the caller warns about the cost.
+/// Requests fit within 1024x1024, including under `allow_paid`. The original
+/// crop rectangle is retained for resizing and compositing the result back.
+/// `fit_free` additionally applies the Opus pixel limit.
 pub fn plan_crop(
     face: &FaceBox,
     image_w: u32,
@@ -177,8 +178,10 @@ pub fn plan_crop(
 
     // Scale the long side to `guide_size`. This deliberately runs in both
     // directions: a small face is enlarged so NovelAI has pixels to work with,
-    // a large one is reduced so it stays inside the free window.
-    let scale = f64::from(guide_size.max(DIMENSION_STEP)) / f64::from(w.max(h));
+    // a large one is reduced. Clamp imported settings too: allowing paid
+    // steps must not turn a close-up face into a larger request.
+    let guide_size = guide_size.clamp(DIMENSION_STEP, 1024);
+    let scale = f64::from(guide_size) / f64::from(w.max(h));
     let req_w = snap_nearest((f64::from(w) * scale).round() as u32);
     let req_h = snap_nearest((f64::from(h) * scale).round() as u32);
     let (req_w, req_h) = if fit_free {
@@ -512,10 +515,39 @@ mod tests {
     }
 
     #[test]
-    fn allow_paid_sends_the_crop_at_its_natural_size() {
-        let plan = plan_crop(&face(400, 400, 1130, 1130), 1664, 2432, 1.5, 1536, false).unwrap();
-        assert_eq!((plan.req_w, plan.req_h), (1536, 1536));
-        assert!(!plan.is_free(28));
+    fn oversized_faces_keep_the_source_rectangle_but_cap_both_request_dimensions() {
+        for fit_free in [true, false] {
+            for guide_size in [1024, 1536, u32::MAX] {
+                let plan = plan_crop(
+                    &face(400, 400, 1600, 1600),
+                    2048,
+                    2048,
+                    1.5,
+                    guide_size,
+                    fit_free,
+                )
+                .unwrap();
+                assert_eq!((plan.x, plan.y, plan.w, plan.h), (100, 100, 1800, 1800));
+                assert_eq!((plan.req_w, plan.req_h), (1024, 1024));
+                assert!(plan.is_free(28));
+            }
+        }
+    }
+
+    #[test]
+    fn oversized_edge_crops_preserve_aspect_ratio_on_the_request_grid() {
+        for fit_free in [true, false] {
+            let plan = plan_crop(&face(0, 0, 512, 2048), 512, 2048, 1.0, 2048, fit_free).unwrap();
+            assert_eq!((plan.w, plan.h), (512, 2048));
+            assert_eq!((plan.req_w, plan.req_h), (256, 1024));
+        }
+    }
+
+    #[test]
+    fn a_lower_guide_size_still_controls_the_face_request() {
+        let plan = plan_crop(&face(400, 400, 1600, 1600), 2048, 2048, 1.5, 768, false).unwrap();
+        assert_eq!((plan.w, plan.h), (1800, 1800));
+        assert_eq!((plan.req_w, plan.req_h), (768, 768));
     }
 
     #[test]

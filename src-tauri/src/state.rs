@@ -315,6 +315,11 @@ impl PromptQueue {
         self.worker_map.read().unwrap().get(prompt_id).copied()
     }
 
+    /// A multi-stage prompt has finished its local GPU stage but remains queued.
+    pub fn clear_worker(&self, prompt_id: &str) {
+        self.worker_map.write().unwrap().remove(prompt_id);
+    }
+
     /// Snapshot of the worker_map (prompt_id → worker_id) for read-only inspection.
     pub fn worker_map_snapshot(&self) -> HashMap<String, u32> {
         self.worker_map.read().unwrap().clone()

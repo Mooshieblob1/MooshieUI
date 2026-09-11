@@ -2,9 +2,10 @@
 
 MooshieUI supports Dynamic-Prompts-compatible alternation syntax in both the
 positive and negative prompt boxes.  Each time you generate, the expander
-resolves every alternation block before the prompt reaches the ComfyUI
-workflow.  The gallery stores the resolved prompt, so regenerating from
-metadata always reproduces the exact same image.
+resolves every alternation block before the prompt reaches ComfyUI or
+NovelAI. The gallery stores the resolved prompt, so importing its metadata
+restores the selected text without rerolling it. Identical pixels also depend
+on the model, settings and runtime; metadata alone is not a guarantee.
 
 ## Basic alternation
 
@@ -12,8 +13,8 @@ Pick one option at random:
 
     {red|green|blue} car
 
-Every generate click rolls fresh, deterministically seeded from your seed
-value so the same seed always picks the same option.
+Each submission resolves the template using the generation seed. The same
+template and fixed seed pick the same options; seed -1 chooses a new seed.
 
 ## Picking multiple options
 

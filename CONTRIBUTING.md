@@ -6,13 +6,32 @@ staying in scope.
 
 ## Setup
 
+Use Node.js 22.12+ or 24+, stable Rust, and the Tauri v2 prerequisites for your
+platform. The locked Svelte Vite plugin requires Node `^20.19 || ^22.12 || >=24`;
+Node 18 is not supported by the current frontend toolchain. Installation and
+experimental Mac scope are covered in the [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation)
+and [Mac guide](docs/MACOS.md).
+
 ```bash
 npm install
 npm run tauri dev     # full desktop dev (Vite hot-reload)
 npm run dev           # frontend only
 ```
 
-Rust checks (if you touch `src-tauri/`): `cargo check --manifest-path src-tauri/Cargo.toml`, and `cargo fmt` + `cargo clippy` from `src-tauri/`.
+Rust has two build targets. If you touch `src-tauri/`, check both so a desktop-only
+Tauri reference does not break the headless server:
+
+```bash
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo clippy --manifest-path src-tauri/Cargo.toml
+```
+
+There is no frontend test framework. For documentation-only changes, review the
+documented behavior against the code and validate links; a native build is not
+needed unless executable code or build configuration also changes.
 
 ## Before you open a PR
 
@@ -72,6 +91,11 @@ changes are declined regardless of quality.
 - Styling is Tailwind only. No `<style>` blocks in `.svelte` files.
 - Use `onclick`, not the legacy `on:click`.
 - Rust `#[tauri::command]` functions return `Result<T, AppError>`.
+- Shared Rust modules must gate Tauri imports, parameters and call sites with
+  `#[cfg(feature = "desktop")]`.
+- Document user-facing changes in the [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki)
+  and relevant repository guides. The wiki is a separate repository; see the
+  [documentation maintenance notes](docs/README.md#keeping-documentation-current).
 
 ## What CI checks and how to fix each
 

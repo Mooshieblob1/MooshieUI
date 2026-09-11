@@ -6,24 +6,27 @@ open an issue with the feature template and ask.
 
 ## What MooshieUI is
 
-- A desktop (Tauri) and browser front-end for running local image and video
-  generation through ComfyUI, focused on a fast, friendly, single-user
-  experience.
+- A desktop (Tauri) and browser front-end for image and video generation
+  through local or remote ComfyUI, with optional NovelAI image generation
+  using the user's own API key.
 - A polished UI over generation workflows: prompt building, generation
   settings, gallery management, model hub, and related in-app tooling.
 - Video generation on the same footing as images: shot planning through the
   timeline director, playback, frame interpolation, and clip export. The
   timeline is a shot list that feeds a ComfyUI graph, not a node editor.
-- Cross-platform (Windows, macOS, Linux) and dual-mode (native desktop app and
-  an embedded browser server), sharing one codebase.
+- Self-hosting with LAN accounts, roles, per-user galleries and configured GPU
+  workers. Regular users and moderators manage their own NovelAI credentials.
+- Windows/Linux releases and experimental Apple Silicon macOS candidates,
+  with native desktop and embedded browser-server modes sharing one codebase.
+  See [Mac support status](docs/MACOS.md).
 - Localized (i18n across all supported locales) and accessible (a11y).
 
 ## What MooshieUI is not
 
 - Not a ComfyUI replacement or a general node-graph editor. It orchestrates
   ComfyUI; it does not reimplement it.
-- Not a multi-tenant or hosted SaaS product. It targets a single user's machine
-  (or their own self-hosted browser instance).
+- Not an operated hosted SaaS service. Users run their own desktop or server;
+  the existing multi-user self-hosting features are part of that scope.
 - Not a model training or dataset-management tool.
 - Not a general-purpose image editor beyond the specific in-app editing features
   already shipped.

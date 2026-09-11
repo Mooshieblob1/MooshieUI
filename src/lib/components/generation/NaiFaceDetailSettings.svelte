@@ -75,6 +75,7 @@
       onclick={() => generation.updateNovelAiFaceDetail({ enabled: !face.enabled })}
       role="switch"
       aria-checked={face.enabled}
+      aria-label={locale.t('generation.nai_face_detail.title')}
     >
       <span
         class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {face.enabled ? 'translate-x-5' : ''}"

@@ -2,7 +2,11 @@
 
 MooshieUI can generate through the NovelAI image API as a second backend
 alongside ComfyUI. This document records what the integration is and why it is
-built the way it is. It is the design rationale, not a task list.
+built the way it is. Sections 1–6 describe the current source implementation; section 7
+retains dated development/test history, including behavior later superseded.
+**Since v2.3.2:** NovelAI face detailing runs after the local refiner and enforces
+a 1024×1024 face-request ceiling.
+For setup and everyday use, see the [NovelAI wiki guide](https://github.com/Mooshieblob1/MooshieUI/wiki/NovelAI-Backend).
 
 ## 1. What the user gets
 
@@ -14,7 +18,10 @@ built the way it is. It is the design rationale, not a task list.
 4. NovelAI inpainting and img2img replace ComfyUI's while in NovelAI mode.
 5. A free local upscale, so a paid image can be enlarged without spending
    Anlas. Anima at denoise 0.15 to 0.2 is the suggested refiner.
-6. FaceFix, also as a free local pass.
+6. A dedicated NovelAI Face Detailer: local detection followed by either NovelAI
+   crop repainting (subject to Anlas/allowance limits) or a local checkpoint pass.
+   NovelAI detailing follows the enabled local refiner. Oversized face crops
+   are downscaled to fit within 1024×1024 before repainting.
 7. Anlas remaining, Opus subscription status and the Opus generation
    allowance bar, in the Settings NovelAI section. An option there also pins a
    compact version of the same readout to the generation page, directly above
@@ -27,6 +34,11 @@ built the way it is. It is the design rationale, not a task list.
     the configured LLM, staged behind a review diff. Up to four reference
     images can be attached to that rewrite, so a look the user cannot word can
     be shown instead of described.
+11. Personal encrypted API keys for hosted users and moderators. Desktop and
+    admin accounts use the owner's config key; named accounts never fall back
+    to it. See section 5.
+12. Style Creator rounds using NovelAI, with sequential candidate generation
+    and an estimated per-round Anlas cost. See the [Style Creator guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide#style-creator).
 
 NovelAI's recommended sampling defaults are applied when a NovelAI model is
 selected: 23 steps, guidance 7.0, Euler Ancestral, Karras, CFG rescale 0.
@@ -41,22 +53,32 @@ The client is Rust, not JavaScript. It lives in `src-tauri/src/novelai/`:
 | `params.rs` | `NovelAiParams` and its sub-structs (characters, vibes, director references, coordinates) |
 | `payload.rs` | Builds the request body NovelAI expects |
 | `response.rs` | ZIP image unpacking, msgpack stream decoding, the subscription shape |
-| `client.rs` | The three HTTP calls and their status-code mapping |
+| `client.rs` | Generation, streaming, subscription, vibe encoding, upscale and augmentation HTTP calls |
 | `mod.rs` | Orchestration: prompt ids, the event sink, `run()`, image delivery |
+| `detect.rs`, `face_detail.rs`, `face_pass.rs` | Local face detection, sequential crop repainting, geometry and compositing |
+| `local_refine.rs` | Private ComfyUI result collection before the NovelAI face stage |
+| `metadata.rs`, `reference_canvas.rs` | NovelAI metadata import and reference-image letterboxing |
+| `augment.rs` | Director Tools request preparation |
 
-Endpoints:
+Endpoints used by the integration include:
 
 - `https://image.novelai.net/ai/generate-image`
 - `https://image.novelai.net/ai/generate-image-stream`
 - `https://image.novelai.net/user/subscription`
+- `https://image.novelai.net/ai/encode-vibe`
+- `https://api.novelai.net/ai/upscale`
+- `https://image.novelai.net/ai/augment-image`
 
-All three are on the image host. The subscription record used to be served
+Generation, subscription, vibe encoding and Director Tools use the image host;
+the dedicated upscaler still uses `api.novelai.net`. The subscription record used to be served
 from `api.novelai.net`, which now answers with 400 "Please refresh
 NovelAI.net. If using a third-party tool, update to the image URL."
 
 Keeping the client in Rust means one code path serves both the desktop app and
-browser mode, the API key never leaves the backend, and generation reuses the
+browser mode, outbound API calls carry credentials from the backend, and generation reuses the
 existing event, image and queue plumbing rather than duplicating it.
+The Settings UI does not redisplay a saved token, but trusted admin config
+reads can include the owner's key; see section 5 for the access boundary.
 
 ### 2.1 NovelAI reuses the ComfyUI event contract
 
@@ -85,9 +107,9 @@ duplicating any of it.
 ### 2.3 NovelAI is deliberately outside the ComfyUI fair queue
 
 A NovelAI request uses no local GPU, so it does not compete for a worker slot
-and does not take one. It still creates a queue entry and can still bind an
-alias, which is what lets the optional local post-process report as a single
-generation.
+and does not take one. It still creates a queue entry. Optional local stages
+reserve a GPU worker; they either bind an alias for the usual final handoff or
+collect the refiner image privately before continuing with NovelAI faces.
 
 ### 2.4 Paid work is never silently lost
 
@@ -99,8 +121,10 @@ Anlas is real money, so every failure mode degrades rather than discards:
 - `normalise_action()` degrades `infill` to `img2img` to `generate` when the
   required image or mask is missing, so a malformed request never burns Anlas on
   a guaranteed 400.
-- If the free local post-process cannot start, the NovelAI image is delivered
-  unmodified with a warning rather than lost.
+- If the local post-process cannot start, the NovelAI image remains available
+  for face detailing or final delivery. With a following NovelAI face stage,
+  refiner execution failures also fall back to this image. A face-stage failure
+  retains the refined image and any successfully completed face work.
 
 ### 2.5 Precise Reference and vibe transfer are mutually exclusive
 
@@ -244,8 +268,9 @@ schedule, and labels CFG as Guidance.
 Going the other way, ComfyUI controls with no NovelAI counterpart are hidden
 rather than left to silently do nothing: ControlNet, Style Transfer, LoRAs,
 VAE, the denoise slider, Differential Diffusion and the grow-mask slider.
-FaceFix and Upscale stay visible on purpose, because in NovelAI mode they drive
-the free local post-process pass (section 3).
+Upscale remains available for the local post-process pass. The normal FaceFix
+panel is replaced by NovelAI Face Detailer, whose engine determines whether
+repainting uses NovelAI or a local checkpoint (section 3).
 
 ### 2.10 Vibe transfer is a two-step flow on V4 and later
 
@@ -490,9 +515,13 @@ Two details make it work:
   `local_negative_prompt` overrides, for a caller that wants the local pass to
   run on different text; when they are null the top-level prompt is used.
 
-Both stages report as one generation: the ComfyUI prompt is alias-bound to the
-NovelAI prompt id, so the websocket re-emits its progress, previews, output
-image and terminal event under the id the frontend is already tracking.
+All stages report as one generation. With NovelAI face detailing enabled, the
+local refiner uses a private ComfyUI websocket connected before submission. It
+relays progress/previews under the original NovelAI prompt id and returns its
+lossless PNG to the face stage. Its output and terminal events stay private,
+and its GPU worker is released without finishing the NovelAI queue entry.
+Without a following NovelAI face stage, the usual alias-bound ComfyUI
+handoff continues to publish the final image and completion.
 
 **Known limitation: the local pass runs on single-image generations only.** One
 ComfyUI prompt maps to one alias and one GPU worker, and the first terminal
@@ -507,8 +536,8 @@ logged. Generating one image at a time is the way to get the free upscale today.
 
 The local pass above fixes faces with a *different* model than the one that drew
 the image, which is exactly the thing NovelAI users notice. The NovelAI face
-detailer keeps detection local and sends the repaint back to NovelAI, so every
-pixel in the frame comes from one model.
+detailer keeps detection local and sends the repaint back to the selected
+NovelAI model, including when a local checkpoint refined the image first.
 
 It lives in its own panel (`NaiFaceDetailSettings.svelte`), sibling to the
 NovelAI panel, visible only in NovelAI mode, and it **replaces** the FaceFix
@@ -516,8 +545,9 @@ panel there. Its settings are `novelai.face_detail.*`, never the persisted
 `facefix_*` values, which belong to local mode and would otherwise drive a pass
 the user cannot see.
 
-**The pipeline**, per single-image generation, after the base render and before
-any local upscale handoff:
+**The pipeline**, per single-image generation: base render → enabled local
+refiner/upscale → NovelAI face detection and repainting → final output. Without
+a local pass, face detailing operates directly on the base render.
 
 1. **Detect locally.** A detect-only ComfyUI graph (`templates/face_detect.rs`)
    runs `LoadImage` into the new `MooshieFaceDetect` node, which returns
@@ -527,13 +557,16 @@ any local upscale handoff:
    submits and polls history for the result.
 2. **Plan the crop in Rust.** `face_pass::plan_crop` squares up the box,
    applies the padding multiplier, clamps to the image, snaps to 64 and decides
-   the request size against the free window.
+   the request size using Guide Size, capped within 1024×1024. The source
+   rectangle is retained so the result can be resized back to the same area.
 3. **Build the face prompt.** Never the full positive prompt. See below.
 4. **img2img on the same model**, one request per face, `n_samples = 1`,
-   steps clamped to `FREE_STEPS`, `seed + 2 + i`.
+   steps capped at `FREE_STEPS` for `fit_free`, or the requested detailer steps
+   for `allow_paid`, and `seed + 2 + i`. Each crop streams preview and progress.
 5. **Composite in Rust.** `face_pass::composite_face` does a cosine-ramp
-   feathered alpha blend with a floor of `min(h, w) / 6`. Each face crops from
-   the running composite, so overlapping faces behave.
+   feathered alpha blend with a floor of `min(h, w) / 6`. Each result is first
+   resized to its original crop dimensions. Each face crops from the running
+   composite, preserving the final image dimensions.
 
 **Why img2img and not infill.** Infill switches to the model's
 `inpainting_id`. V5 Curated has no inpainting model of its own and borrows 4.5
@@ -545,21 +578,36 @@ buys no better seam than the pixel-space feather and costs the same.
 **The free window is mirrored in Rust.** `face_pass::FREE_PIXELS` (1 MP) and
 `FREE_STEPS` (28) are a deliberate duplicate of `OPUS_FREE_PIXELS` /
 `OPUS_FREE_STEPS` in `src/lib/utils/novelaiCost.ts`, because the runtime
-decision (downscale or send at full size) happens in Rust while the cost badge
+decision (guide sizing and step limits) happens in Rust while the cost badge
 is computed in the frontend. A unit test pins the constants; change one side and
 change the other.
 
-`anlas_policy` decides what happens when a crop does not fit:
+`anlas_policy` controls the face-request step limit:
 
-- `fit_free` (default): scale the crop down so the request lands inside the
-  window, send, scale the result back. Never spends Anlas on Opus.
-- `allow_paid`: send at native crop size for more face detail, and pay per face.
+- `fit_free` (default): cap steps at 28 as well as fitting the size window. The crop is covered only when the account
+  and model have an available free allowance; an exhausted V5 allowance still costs Anlas.
+- `allow_paid`: retain the requested detailer steps, including values above 28.
+  Crops still use Guide Size with a hard 1024×1024 ceiling, even under this
+  policy; it does not send a large face at native dimensions.
 
-Crops routinely exceed 1 MP on upscaled images: an 832x1216 render at 2x is
-1664x2432, where a face 30% of frame height produces a 1152 px crop at padding
-1.5, which is 1.33 MP. The panel warns whenever upscale is on or the output is
-already over 1 MP, and separately when the account is not Opus (every face pass
-is billed) or the V5 allowance is empty.
+**Oversized faces.** A padded face crop wider or taller than 1024 px is
+downscaled for one NovelAI img2img request, then the result is resized back and
+feathered into the original area. Guide Size still controls the working
+resolution; smaller guide settings remain valid and small faces are enlarged
+as before. The 1024×1024 ceiling also applies to imported settings above 1024
+and to `allow_paid`. Aspect ratio is maintained subject to the 64 px request
+grid. There is no tiled face pass.
+
+Large source crops are possible after upscaling or in close-ups. For example,
+a 768 px face at padding 1.5 produces a 1152 px crop; only its working copy is
+reduced. Close-ups are still processed when face detailing is enabled; users
+can turn it off when the original face already looks good.
+
+Each face consumes its own model allowance or Anlas. The Generate button's
+base estimate excludes these detector-dependent requests. Fitting the size
+and step limits does not guarantee free use on every plan or with an exhausted
+allowance. Completed faces remain in a partial result if a later request fails;
+cancellation stops further requests and suppresses final output.
 
 **The face prompt** comes from three sources merged, in priority order:
 
@@ -601,6 +649,13 @@ crop in Rust for the tagger to read.
 
 **Same limits as the local pass:** single-image generations only, and skipped
 while Transparent BG is on, since the crop path flattens alpha.
+
+Skipped, failed and partially completed face passes emit notices; completed
+crops remain in a partial result. Face steps follow the main Steps setting
+until explicitly overridden, and changing main Steps synchronizes them again.
+New face-detail settings use confidence 0.4 and strength 0.5. Compositing
+preserves the original NovelAI PNG text chunks together with post-processing
+information, as does copying the saved PNG to the clipboard.
 
 ## 4. Prompt syntax
 
@@ -691,11 +746,11 @@ stated otherwise.
 
 ### Per-account keys
 
-A hosted MooshieUI instance serves several people from one process. NovelAI's
-terms of service do not allow several humans to share one API key, so each
-account brings its own instead of billing the instance owner:
+A hosted MooshieUI instance can serve several accounts from one process.
+Credential selection keeps regular users' and moderators' requests on their
+own account instead of billing the instance owner:
 
-- Every account on a hosted server supplies its own NovelAI key, added in
+- Every regular user and moderator supplies their own NovelAI key, added in
   Settings > NovelAI. Without one, NovelAI models are absent from the model
   list, and attempting to generate anyway fails with "No NovelAI API key on
   this account. Add your own key in Settings." (`novelai::resolve_credential`
@@ -808,17 +863,20 @@ does not mistake them for verified behaviour.
 `fetch_subscription` logs them at debug level, so a field NovelAI adds later
 shows up rather than being silently dropped.
 
-Confirmed since the first draft, and no longer guesses: the four V5 model ids
-and their inpainting variants, the subscription host, the `usage` field names
+Confirmed since the first draft, and no longer guesses: the four offered model ids
+and the configured inpainting mappings, the subscription host, the `usage` field names
 and the direction of `percent`, the streaming protocol, and that
 `normalize_reference_strength_multiple` is inert server side (see section
 2.10).
 
-## 7. Manual test checklist
+<a id="7-manual-test-checklist"></a>
 
-Nothing in this backend is covered by an automated test that touches NovelAI's
-servers, so every phase that ships is followed by a hand-test pass recorded
-here, newest first. Each entry says plainly whether testing is needed at all.
+## 7. Historical manual test checklists
+
+The following dated entries preserve implementation notes and proposed manual
+checks. They are not evidence that every listed check was run, and some describe
+behavior that later releases changed. Use sections 1–6 and the wiki for current
+behavior. Automated tests cover local logic, not live NovelAI account requests.
 
 ### 2026-09-10 - Per-account NovelAI keys
 
