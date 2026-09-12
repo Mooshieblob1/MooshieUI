@@ -389,7 +389,11 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         let mut inputs = serde_json::Map::new();
         inputs.insert("clip".to_string(), json!([clip_id.as_str(), 0]));
         inputs.insert("vae".to_string(), json!([vae_id.as_str(), 0]));
-        inputs.insert("audio_vae".to_string(), json!([audio_vae_id.as_str(), 0]));
+        // `audio_vae` is optional on the node since ComfyUI v0.35.0 and only
+        // encodes reference audio. This path never wires `ref_audios` or
+        // `ref_videos`, so the socket stays unconnected; the audio VAE loader
+        // still feeds `VAEDecodeAudio` below. (The Director path keeps it: its
+        // timeline can carry audio cues.)
         inputs.insert("prompt".to_string(), json!(params.positive_prompt));
         inputs.insert("width".to_string(), json!(width));
         inputs.insert("height".to_string(), json!(height));
@@ -890,7 +894,10 @@ mod tests {
         let workflow = build(&params, 1, false);
         assert!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").is_empty());
         let h3 = nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo")[0];
-        assert!(h3["inputs"]["audio_vae"].is_array());
+        assert!(h3["inputs"]["vae"].is_array());
+        // No reference audio can reach this node, so the optional audio VAE
+        // socket is left unconnected; the decode chain still owns the loader.
+        assert!(h3["inputs"].get("audio_vae").is_none());
         assert_eq!(h3["inputs"]["ref_image_size"], json!("match"));
         assert!(h3["inputs"]["ref_images.ref_image_0"].is_array());
         assert!(h3["inputs"]["ref_images.ref_image_1"].is_array());

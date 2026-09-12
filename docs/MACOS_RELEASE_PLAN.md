@@ -69,9 +69,9 @@ qualification is tracked separately below.
 | Optional native tools | [interrogator.rs](../src-tauri/src/interrogator.rs) selects macOS ARM ONNX Runtime; [prompt_assistant/server.rs](../src-tauri/src/prompt_assistant/server.rs) selects macOS ARM llama.cpp and Metal. | Test actual downloads, executable modes, dynamic library loading, tagging, prompt assistance, and video codecs in the installed app. |
 | ComfyUI compatibility | [comfyui-compat.yml](../.github/workflows/comfyui-compat.yml) tests node registration on Linux CPU with Python 3.12. Setup normally installs Python 3.11. | Add macOS ARM installation/import coverage using the production runtime versions. Extend compatibility validation to preserve the Mac support claim when ComfyUI is updated. |
 
-The current ComfyUI pin is `v0.34.0` in
+The current ComfyUI pin is `v0.35.0` in
 [comfyui_version.rs](../src-tauri/src/comfyui_version.rs). Its
-[device management](https://github.com/Comfy-Org/ComfyUI/blob/v0.34.0/comfy/model_management.py)
+[device management](https://github.com/Comfy-Org/ComfyUI/blob/v0.35.0/comfy/model_management.py)
 already selects `torch.device("mps")` and shared-memory handling when available.
 MooshieUI should use this existing backend and validate the resulting behavior.
 
