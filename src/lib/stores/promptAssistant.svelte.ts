@@ -18,6 +18,8 @@ import {
   callExternalLlm,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
+import { cleanMusicWritingResponse, musicWritingProblems, musicWritingRequest } from "../utils/yue2Skill.js";
+import type { MusicWritingContext, MusicWritingTask } from "../utils/yue2Skill.js";
 import {
   H3_MAX_TOKENS,
   h3RetryInstruction,
@@ -308,6 +310,27 @@ class PromptAssistantStore {
     } finally {
       unlisten();
       this.stage = null;
+    }
+  }
+
+  /** Inject YuE2's writing skill through the existing desktop/server LLM route. */
+  async writeForMusic(task: MusicWritingTask, context: MusicWritingContext): Promise<string> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = musicWritingRequest(task, context);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let prompt = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const text = cleanMusicWritingResponse(await callExternalLlm(request.system, prompt, request.maxTokens));
+          const problems = musicWritingProblems(text, task, context.maxDuration);
+          if (problems.length === 0) return text;
+          prompt = `${request.prompt}\n\nThe previous attempt did not satisfy the writing contract. Write a fresh corrected result:\n${problems.join("\n")}`;
+        }
+        throw new Error("invalid_music_writing");
+      });
+    } finally {
+      this.isGenerating = false;
     }
   }
 

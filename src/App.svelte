@@ -5,6 +5,8 @@
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
+  import MusicPage from "./lib/components/music/MusicPage.svelte";
+  import MusicBottomPlayer from "./lib/components/music/MusicBottomPlayer.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import GalleryPage from "./lib/components/gallery/GalleryPage.svelte";
   import CompareViewer from "./lib/components/gallery/CompareViewer.svelte";
@@ -24,6 +26,7 @@
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
+  import { music } from "./lib/stores/music.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
@@ -172,7 +175,7 @@
   const FETCH_TIMEOUT_MS = 45_000;
   const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
   const GENERATION_DONE_TOAST_EXIT_MS = 220;
-  type PrimaryPage = "generate" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
+  type PrimaryPage = "generate" | "music" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
   type GenerationDoneToast = {
     id: number;
     imageUrl: string;
@@ -2644,6 +2647,7 @@
   }
 
   let autoStartEnabled = $state(true); // will be read from config
+  let managedComfyui = $state(false);
 
   /**
    * Manual save mode is owned by the frontend store. Rust only keeps a mirror
@@ -2676,6 +2680,7 @@
       applyTheme(cfg);
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
+      managedComfyui = cfg.server_mode === "autolaunch";
       comfyServerUrl = cfg.server_url || `http://127.0.0.1:${cfg.server_port ?? 8188}`;
     } catch {
       // Config not ready yet, defaults are fine
@@ -2683,6 +2688,7 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    void music.loadLibrary();
     await syncManualSaveModeToConfig();
 
     // Browser/LAN mode: pull the server-side preference snapshot (or seed it
@@ -2711,6 +2717,10 @@
       }),
       ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
+        // A healthy server is connected even before its first checkpoint is
+        // downloaded. Music setup must work on a fresh managed installation.
+        connection.connected = true;
+        void music.refresh();
         // Unlock here too: with zero installed checkpoints connection.connected
         // is never set, so the connection handler above would never fire.
         startup.locked = false;
@@ -2737,6 +2747,7 @@
       }),
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
+        if (music.handleEvent("progress", data)) return;
         if (!progress.isGenerating) return;
         lastProgressEventAt = Date.now();
         // Filter by prompt_id — reject events for other users' prompts
@@ -2749,6 +2760,9 @@
         const node = data.node ?? progress.currentNode;
         progress.updateProgress(data.value, data.max, node);
       }),
+      ...["execution_start", "execution_cached", "progress_state", "execution_interrupted"].map((type) =>
+        ipcListen(`comfyui:${type}`, (event: any) => { music.handleEvent(type, event.payload); }),
+      ),
       ipcListen("novelai:face_pass", (event: any) => {
         const data = event.payload;
         const status = data?.status === "skipped" || data?.status === "partial" ? data.status : "failed";
@@ -2761,6 +2775,11 @@
       }),
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
+        if (data.kind === "music" || (data.prompt_id && music.isMusicPrompt(data.prompt_id))) {
+          if (data.prompt_id) music.rememberPrompt(data.prompt_id);
+          music.handleEvent("queue", data);
+          return;
+        }
         if (data.prompt_id && data.position != null && data.total != null) {
           // Restore the prompt to pendingPrompts if this is an initial burst after
           // a page refresh (the in-memory queue was lost but the server still has it).
@@ -3092,6 +3111,7 @@
       }),
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
+        if (music.handleEvent("executing", data)) return;
         console.log("Executing event:", data);
         // Ignore prompts not in our queue
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
@@ -3165,8 +3185,9 @@
         }
       }),
       ipcListen("comfyui:execution_error", (event: any) => {
-        console.error("Execution error:", event.payload);
         const data = event.payload;
+        if (music.handleEvent("execution_error", data)) return;
+        console.error("Execution error:", event.payload);
         // Classify the failure into an actionable message. The raw ComfyUI
         // desktop payload exposes exception_message/exception_type/node_type/
         // traceback (no top-level `error`), so pass the whole payload, not just
@@ -3209,8 +3230,9 @@
           compare.clearGridBatch();
         }
       }),
-      ipcListen("comfyui:execution_success", (_event: any) => {
-        // Success handled via executing node=null
+      ipcListen("comfyui:execution_success", (event: any) => {
+        music.handleEvent("execution_success", event.payload);
+        // Image success is handled via executing node=null.
       }),
     ]);
 
@@ -3347,7 +3369,7 @@
     // happened to find the button in Settings. The app is already
     // interaction-locked here, so the update just extends the startup lock
     // rather than interrupting anything.
-    if (autoStartEnabled) {
+    if (autoStartEnabled && managedComfyui) {
       try {
         await comfyuiUpdate.refresh();
         if (comfyuiUpdate.shouldAutoUpdate) {
@@ -3382,6 +3404,8 @@
           try {
             await models.refresh();
             console.log("Models loaded (already running):", models.checkpoints);
+            connection.connected = true;
+            void music.refresh();
             if (models.checkpoints.length > 0) {
               connection.connected = true;
               generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
@@ -3578,7 +3602,8 @@
     onTabChange={(tab) => (mobileCurrentTab = tab)}
   />
 {:else}
-<div class="flex h-full bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
+<div class="flex h-full flex-col bg-neutral-950">
+<div class="flex min-h-0 flex-1 bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
   <svg style="display: none">
     <defs>
@@ -3655,6 +3680,14 @@
         </div>
       {/if}
     </div>
+    <button
+      class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'music' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+      onclick={() => (currentPage = "music")}
+      title={locale.t("nav.music")}
+      aria-label={locale.t("nav.music")}
+    >
+      <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></svg>
+    </button>
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'gallery'
@@ -3951,6 +3984,8 @@
     {/if}
     {#if currentPage === "generate"}
       <GenerationPage />
+    {:else if currentPage === "music"}
+      <MusicPage {userRole} />
     {:else if currentPage === "gallery"}
       <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} />
     {:else if currentPage === "modelhub"}
@@ -3968,6 +4003,8 @@
     {/if}
     </div>
   </main>
+</div>
+<MusicBottomPlayer onOpen={() => { music.view = "generate"; currentPage = "music"; }} />
 </div>
 {/if}
 

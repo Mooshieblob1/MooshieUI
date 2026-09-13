@@ -3,7 +3,7 @@
   import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
 
-export type MobileTab = "generate" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
+export type MobileTab = "generate" | "music" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
 
   interface Props {
     current: MobileTab;
@@ -17,6 +17,7 @@ export type MobileTab = "generate" | "gallery" | "modelhub" | "artists" | "chara
     (
       [
         { id: "generate", labelKey: "nav.generate" },
+        { id: "music", labelKey: "nav.music" },
         { id: "gallery", labelKey: "nav.gallery" },
         ...(showModelhub ? [{ id: "modelhub", labelKey: "nav.modelhub" }] : []),
         { id: "artists", labelKey: "nav.artists" },
@@ -29,6 +30,7 @@ export type MobileTab = "generate" | "gallery" | "modelhub" | "artists" | "chara
   function tabLabel(id: MobileTab, labelKey: string): string {
     const fallback: Record<MobileTab, string> = {
       generate: "Generate",
+      music: "Music",
       gallery: "Gallery",
       modelhub: "Models",
       artists: "Artists",
@@ -41,7 +43,7 @@ export type MobileTab = "generate" | "gallery" | "modelhub" | "artists" | "chara
 </script>
 
 <nav
-  class="shrink-0 flex items-stretch gap-0.5 bg-neutral-950/95 backdrop-blur border-t border-neutral-800 px-1 pt-1 pb-[max(env(safe-area-inset-bottom),0.25rem)] tap-highlight-none"
+  class="shrink-0 flex items-stretch gap-0.5 overflow-x-auto bg-neutral-950/95 backdrop-blur border-t border-neutral-800 px-1 pt-1 pb-[max(env(safe-area-inset-bottom),0.25rem)] tap-highlight-none"
 >
   {#each tabs as tab}
     {@const active = current === tab.id}
@@ -55,6 +57,8 @@ export type MobileTab = "generate" | "gallery" | "modelhub" | "artists" | "chara
       <span class="w-5 h-5 flex items-center justify-center">
         {#if tab.id === "generate"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        {:else if tab.id === "music"}
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></svg>
         {:else if tab.id === "gallery"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
         {:else if tab.id === "modelhub"}

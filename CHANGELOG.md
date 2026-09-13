@@ -1,5 +1,20 @@
 # Changelog
 
+## What's New in v2.3.4
+
+### Music studio
+- **Generate songs with YuE2**: open Music to compose vocals and instruments from a style prompt and sectioned lyrics. Choose an INT8 or BF16 checkpoint, set a maximum length from 1 to 360 seconds, and use automatic melody/chord planning or an editable ABC score. Progress follows the song through composition, rendering and FLAC output. Desktop, browser and mobile layouts are included.
+- **Write lyrics and enhance musical styles**: the buttons above Style and Lyrics use your configured local or external Prompt Assistant. Generate lyrics opens a popup for the topic, story, mood, perspective and language, and limits the draft using Max length. Use existing lyrics as context is unchecked by default and enables deliberate edits of a draft. Undo restores the previous text. Lyric length is a writing estimate; the audio limit can still cut a song short.
+- **Song titles, library and playlists**: name songs before generation or edit their titles later. The Library lists songs with search, sorting, Play all and Shuffle, plus playlist creation, renaming and membership controls. Audio, titles, playlists and lyric timings are saved on the current device for each account; download FLAC files for backups or sharing.
+- **Playback across the app**: a shared bottom player keeps music playing while you browse other pages, with previous/next, seeking, repeat and volume controls. The main player stays available in Create and controls the same song. Completing a new generation does not interrupt an already playing track.
+- **Manual lyric timing**: choose Sync manually, mark lines as they start or enter timestamps, then save. Timed lyrics follow playback and let you jump to a line. Timing is manual and needs no speech model download.
+
+### Runtime and fixes
+- **Managed YuE2 setup**: managed installs, Docker and the macOS setup script use the tested ComfyUI source labelled v0.35.0 + YuE2. Existing managed installs can update and restart from Music, including plain v0.35.0 installations missing the native music nodes. Remote ComfyUI hosts need their operator to update and restart them. Music offers the official checkpoint downloads and shows hardware and model-license information.
+- **Reference-image video generation**: the native H3 reference-image workflow no longer connects an unsupported audio VAE input. Audio decoding still uses the selected audio VAE.
+
+---
+
 ## What's New in v2.3.3
 
 ### Fixes and maintenance

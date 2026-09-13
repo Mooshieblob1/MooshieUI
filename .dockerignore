@@ -18,4 +18,7 @@ Thumbs.db
 # Dev files
 *.md
 LICENSE
-scripts/
+scripts/**
+!scripts/comfyui-compat/
+scripts/comfyui-compat/*
+!scripts/comfyui-compat/resolve_ref.py

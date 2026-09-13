@@ -48,6 +48,9 @@ pub struct PromptQueue {
     owners: std::sync::RwLock<HashMap<String, Option<String>>>,
     /// prompt_id → worker_id that is executing this prompt.
     worker_map: std::sync::RwLock<HashMap<String, u32>>,
+    /// Standalone music jobs are polled by the Music page, not restored into
+    /// the image generation progress store by queue broadcasts.
+    music_prompts: std::sync::RwLock<HashSet<String>>,
     /// Ordered list of (prompt_id, username) for queue position tracking
     pub(crate) queue: std::sync::RwLock<Vec<(String, Option<String>)>>,
     /// Prompts waiting to be submitted to ComfyUI (fair queue held prompts).
@@ -79,6 +82,7 @@ impl PromptQueue {
         Self {
             owners: std::sync::RwLock::new(HashMap::new()),
             worker_map: std::sync::RwLock::new(HashMap::new()),
+            music_prompts: std::sync::RwLock::new(HashSet::new()),
             queue: std::sync::RwLock::new(Vec::new()),
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
@@ -179,6 +183,7 @@ impl PromptQueue {
             .unwrap()
             .retain(|(id, _)| id != prompt_id);
         self.inserted_at.write().unwrap().remove(prompt_id);
+        self.music_prompts.write().unwrap().remove(prompt_id);
         worker_id
     }
 
@@ -210,6 +215,12 @@ impl PromptQueue {
     /// internal queue tracking. Returns ids that should be deleted from ComfyUI.
     pub fn cancel_and_remove(&self, prompt_id: &str) -> Vec<String> {
         let ids = self.related_ids(prompt_id);
+        {
+            let mut music = self.music_prompts.write().unwrap();
+            for id in &ids {
+                music.remove(id);
+            }
+        }
         {
             let mut cancelled = self.cancelled.write().unwrap();
             for id in &ids {
@@ -308,6 +319,17 @@ impl PromptQueue {
             .write()
             .unwrap()
             .insert(prompt_id.to_string(), worker_id);
+    }
+
+    pub fn mark_music(&self, prompt_id: &str) {
+        self.music_prompts
+            .write()
+            .unwrap()
+            .insert(prompt_id.to_string());
+    }
+
+    pub fn is_music(&self, prompt_id: &str) -> bool {
+        self.music_prompts.read().unwrap().contains(prompt_id)
     }
 
     /// Get the worker handling a prompt.
@@ -1211,6 +1233,7 @@ impl AppState {
                     "prompt_id": prompt_id,
                     "position": pos,
                     "total": total,
+                    "kind": if self.prompt_queue.is_music(prompt_id) { "music" } else { "generation" },
                 }),
             );
         }

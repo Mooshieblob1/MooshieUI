@@ -2,7 +2,12 @@
 
 MooshieUI pins ComfyUI to a release tag (`COMFYUI_REF` in
 [`src-tauri/src/comfyui_version.rs`](../../src-tauri/src/comfyui_version.rs)). Managed desktop installs and the
-in-app updater both target that tag. Bumping the pin is usually safe for the app
+in-app updater resolve that baseline through
+[`comfyui-source.json`](../../src-tauri/runtime/comfyui-source.json). While the
+baseline is `v0.35.0`, this selects the tested immutable YuE2 commit. The override
+expires when the compatibility bot advances the baseline to a newer release.
+`python scripts/comfyui-compat/resolve_ref.py` prints the actual managed source.
+Bumping the pin is usually safe for the app
 itself, but ComfyUI's internal refactors can break MooshieUI's **bundled custom
 nodes**, which import deep ComfyUI internals (`comfy.sample`, `comfy.samplers`,
 `comfy.model_management`, `folder_paths`, `latent_preview`, ...). When such an
@@ -13,7 +18,9 @@ import breaks, the node silently fails to register and disappears from
 runtime (`ensure_mooshie_nodes` in `src-tauri/src/comfyui/nodes.rs`): deploy the
 bundled nodes into a ComfyUI checkout, start ComfyUI in CPU mode, and assert
 every required bundled node class appears in `/object_info`. It also checks
-selected core-node input signatures used by the workflow templates.
+selected core-node input signatures used by the workflow templates. Native
+YuE2 classes come from `templates/music.rs`; a release missing music support
+fails this gate even if all bundled image nodes register.
 
 ## What it verifies
 
@@ -43,7 +50,10 @@ class with incompatible inputs also fails the check.
 
 ```bash
 # 1. Get a ComfyUI checkout at the version you want to test:
-git clone --depth=1 --branch v0.34.0 https://github.com/comfyanonymous/ComfyUI.git comfyui-target
+git init comfyui-target
+git -C comfyui-target remote add origin https://github.com/Comfy-Org/ComfyUI.git
+git -C comfyui-target fetch --depth=1 origin $(python scripts/comfyui-compat/resolve_ref.py)
+git -C comfyui-target reset --hard FETCH_HEAD
 
 # 2. Install deps into the active Python env (CPU torch is fine):
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
@@ -54,8 +64,8 @@ pip install ultralytics==8.4.75
 python scripts/comfyui-compat/smoke_test.py --comfyui-dir comfyui-target
 ```
 
-The example uses the v2.3.1 app's pin. Read `COMFYUI_REF` when testing another
-release, or supply the candidate tag you are evaluating. Add
+The example resolves the current managed source. Substitute an explicit
+candidate tag when evaluating a release. Add
 `--summary-json error-logs/comfyui-compat.json` to retain the structured result.
 
 Exit code `0` = required registration and core-input checks passed. `1` = a check failed
@@ -71,6 +81,8 @@ runs this weekly (and on demand via "Run workflow"):
    release, and decides whether the candidate is strictly newer.
 2. **smoke-test** checks out that candidate, installs deps, and runs
    `smoke_test.py`. The log and a JSON summary are uploaded as an artifact.
+   A forced check without an explicit target uses the managed source when the
+   latest release equals the baseline, including any immutable source override.
 3. **propose** (only when the smoke test passes and the candidate is newer)
    bumps `COMFYUI_REF` with a one-line `sed`, commits it to a
    `bot/comfyui-bump-<tag>` branch, and opens a PR with `gh`. The compatibility

@@ -156,11 +156,12 @@ class ComfyuiUpdateStore {
     this.updating = true;
     this.error = null;
     this.#setProgress(locale.t("settings.performance.comfyui_update_starting"), onProgress);
-    const unlisten = await ipcListen("setup:progress", (event: { payload: unknown }) => {
-      const data = event.payload as { message?: string };
-      if (data?.message) this.#setProgress(data.message, onProgress);
-    });
+    let unlisten = () => {};
     try {
+      unlisten = await ipcListen("setup:progress", (event: { payload: unknown }) => {
+        const data = event.payload as { message?: string };
+        if (data?.message) this.#setProgress(data.message, onProgress);
+      });
       await updateComfyui();
       writeKey(AUTO_UPDATE_FAILED_KEY, null);
       if (restart) {

@@ -7,7 +7,7 @@
 #   docker run --gpus all -p 3200:3200 -v mooshie-data:/data mooshieui
 #
 # Build args:
-#   COMFYUI_VERSION  — ComfyUI git tag/branch (default: master)
+#   COMFYUI_VERSION  — Optional ComfyUI ref override (default: managed source pin)
 #   TORCH_VERSION    — PyTorch version string (default: 2.7.1)
 # =============================================================================
 
@@ -71,7 +71,7 @@ FROM ghcr.io/ggml-org/llama.cpp:server-cuda AS llama
 # ---------------------------------------------------------------------------
 FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
-ARG COMFYUI_VERSION=master
+ARG COMFYUI_VERSION
 ARG TORCH_VERSION=2.11.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -98,9 +98,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     mv /root/.local/bin/uv /usr/local/bin/uv
 
-# Clone ComfyUI
-RUN git clone --depth=1 --branch ${COMFYUI_VERSION} \
-    https://github.com/comfyanonymous/ComfyUI.git ${COMFYUI_PATH}
+# Resolve the same source as desktop; fetch also accepts immutable commit SHAs.
+COPY src-tauri/src/comfyui_version.rs /tmp/mooshie-source/src-tauri/src/comfyui_version.rs
+COPY src-tauri/runtime/comfyui-source.json /tmp/mooshie-source/src-tauri/runtime/comfyui-source.json
+COPY scripts/comfyui-compat/resolve_ref.py /tmp/mooshie-source/scripts/comfyui-compat/resolve_ref.py
+RUN COMFYUI_SOURCE="${COMFYUI_VERSION:-$(python3 /tmp/mooshie-source/scripts/comfyui-compat/resolve_ref.py)}" && \
+    git init "${COMFYUI_PATH}" && \
+    git -C "${COMFYUI_PATH}" remote add origin https://github.com/Comfy-Org/ComfyUI.git && \
+    git -C "${COMFYUI_PATH}" fetch --depth=1 origin "$COMFYUI_SOURCE" && \
+    git -C "${COMFYUI_PATH}" reset --hard FETCH_HEAD
 
 # Create venv and install PyTorch + ComfyUI requirements
 RUN uv venv ${COMFYUI_PATH}/.venv --python python3.12 && \

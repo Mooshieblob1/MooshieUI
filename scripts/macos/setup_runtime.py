@@ -38,16 +38,17 @@ def main():
     runtime = root / "src-tauri/runtime"
     constraints = runtime / "macos-constraints.txt"
     python_version = (runtime / "macos-python.txt").read_text().strip()
-    pin = re.search(r'COMFYUI_REF:\s*&str\s*=\s*"([^"]+)"',
-                    (root / "src-tauri/src/comfyui_version.rs").read_text()).group(1)
-    pin = args.comfyui_ref or pin
-    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", pin):
-        raise SystemExit("Use an explicit ComfyUI release tag.")
+    spec = importlib.util.spec_from_file_location("comfyui_ref", root / "scripts/comfyui-compat/resolve_ref.py")
+    resolver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(resolver)
+    pin = args.comfyui_ref or resolver.managed_ref(root)
+    if not re.fullmatch(r"(?:v[0-9]+\.[0-9]+\.[0-9]+|[0-9a-f]{40})", pin):
+        raise SystemExit("Use an explicit ComfyUI release tag or commit.")
     run(args.uv, "python", "install", python_version)
     run(args.uv, "venv", work / "venv", "--python", python_version)
     python = work / "venv/bin/python"
     archive = work / "comfyui.zip"
-    urllib.request.urlretrieve(f"https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/{pin}.zip", archive)
+    urllib.request.urlretrieve(f"https://github.com/Comfy-Org/ComfyUI/archive/{pin}.zip", archive)
     with zipfile.ZipFile(archive) as z:
         for member in z.infolist():
             if not (work / member.filename).resolve().is_relative_to(work):

@@ -4,16 +4,13 @@ use std::sync::Arc;
 use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::comfyui_version::{comfyui_version_info, ComfyUiVersionInfo, COMFYUI_REF};
+use crate::comfyui_version::{
+    comfyui_archive_url, comfyui_source_ref, comfyui_target_label, comfyui_version_info,
+    comfyui_zip_dirname, ComfyUiVersionInfo,
+};
 use crate::config;
 use crate::error::AppError;
 use crate::state::AppState;
-
-/// Directory name GitHub's source archive expands to for [`COMFYUI_REF`].
-/// GitHub strips a leading `v` from the tag, e.g. `v0.26.0` -> `ComfyUI-0.26.0`.
-fn comfyui_zip_dirname() -> String {
-    format!("ComfyUI-{}", COMFYUI_REF.trim_start_matches('v'))
-}
 
 #[derive(Clone, serde::Serialize)]
 struct SetupProgress {
@@ -618,33 +615,18 @@ async fn step_download_comfyui(
         return Ok(());
     }
 
-    // Try git clone first (most systems have git). Pin to the tested-good tag so
-    // installs are reproducible instead of tracking a moving `master`.
-    let git_result = run_logged(
-        app,
-        "git",
-        &[
-            "clone",
-            "--depth=1",
-            "--branch",
-            COMFYUI_REF,
-            "https://github.com/comfyanonymous/ComfyUI.git",
-            comfyui_dir.to_str().unwrap(),
-        ],
-        &[],
-    )
-    .await;
+    // The managed source may be an immutable commit between releases. Fetch
+    // the exact ref: `git clone --branch` cannot check out a commit SHA.
+    std::fs::create_dir_all(&comfyui_dir).map_err(|e| e.to_string())?;
+    let git_result = update_comfyui_checkout(app, &comfyui_dir).await;
 
     if git_result.is_ok() {
         return Ok(());
     }
 
-    // Fallback: download the pinned tag's source zip
+    // The same immutable source is used for the no-git fallback.
     emit_log(app, "Git clone failed, falling back to zip download...");
-    let zip_url = format!(
-        "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/{}.zip",
-        COMFYUI_REF
-    );
+    let zip_url = comfyui_archive_url();
     let zip_path = base.join("_comfyui.zip");
     download_file(app, client, &zip_url, &zip_path, "ComfyUI").await?;
 
@@ -676,17 +658,30 @@ async fn step_download_comfyui(
             .map_err(|_| "Failed to extract ComfyUI".to_string())?;
     }
 
-    // A previous interrupted attempt may have left a partial `comfyui` dir.
-    // Renaming onto an existing directory fails on Windows (and on a non-empty
-    // dir on Unix), so clear any stale target before moving the freshly
-    // extracted tree into place.
-    if comfyui_dir.exists() {
-        std::fs::remove_dir_all(&comfyui_dir)
-            .map_err(|e| format!("Failed to clear stale ComfyUI dir: {}", e))?;
-    }
-    std::fs::rename(base.join(comfyui_zip_dirname()), &comfyui_dir)
-        .map_err(|e| format!("Failed to rename ComfyUI dir: {}", e))?;
+    // A failed git attempt can leave a directory containing user models or
+    // outputs. Overlay only source archive entries; never clear that directory.
+    let extracted = base.join(comfyui_zip_dirname());
+    copy_comfyui_source(&extracted, &comfyui_dir)
+        .map_err(|e| format!("Failed to install ComfyUI source: {e}"))?;
+    std::fs::remove_dir_all(&extracted).ok();
     std::fs::remove_file(&zip_path).ok();
+    Ok(())
+}
+
+fn copy_comfyui_source(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    let mut entries = std::fs::read_dir(source)?.collect::<Result<Vec<_>, _>>()?;
+    // main.py is the setup-complete source sentinel: write it last so an
+    // interrupted copy is retried on the next setup attempt.
+    entries.sort_by_key(|entry| entry.file_name() == "main.py");
+    for entry in entries {
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_comfyui_source(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
     Ok(())
 }
 
@@ -2583,7 +2578,7 @@ pub async fn get_comfyui_version(app: AppHandle) -> Result<ComfyUiVersionInfo, A
     Ok(comfyui_version_info(&base.join("comfyui")))
 }
 
-/// Move an existing ComfyUI working tree onto [`COMFYUI_REF`] using git.
+/// Move an existing ComfyUI working tree onto [`comfyui_source_ref`] using git.
 ///
 /// `git reset --hard <tag>` is run WITHOUT `git clean`, so untracked user data
 /// (models, outputs, inputs, custom_nodes) is left untouched while ComfyUI's own
@@ -2632,7 +2627,7 @@ async fn update_comfyui_checkout(app: &AppHandle, comfyui_dir: &Path) -> Result<
     .await
     .ok();
 
-    // Shallow-fetch just the pinned tag, then move the working tree onto it.
+    // Works with both release tags and immutable commit SHAs.
     run_logged(
         app,
         "git",
@@ -2642,22 +2637,21 @@ async fn update_comfyui_checkout(app: &AppHandle, comfyui_dir: &Path) -> Result<
             "fetch",
             "--depth=1",
             "origin",
-            "tag",
-            COMFYUI_REF,
+            comfyui_source_ref(),
         ],
         &[],
     )
     .await
-    .map_err(|_| format!("Failed to fetch ComfyUI {}", COMFYUI_REF))?;
+    .map_err(|_| format!("Failed to fetch ComfyUI {}", comfyui_source_ref()))?;
 
     run_logged(
         app,
         "git",
-        &["-C", dir, "reset", "--hard", COMFYUI_REF],
+        &["-C", dir, "reset", "--hard", "FETCH_HEAD"],
         &[],
     )
     .await
-    .map_err(|_| format!("Failed to check out ComfyUI {}", COMFYUI_REF))?;
+    .map_err(|_| format!("Failed to check out ComfyUI {}", comfyui_source_ref()))?;
 
     Ok(method.to_string())
 }
@@ -2665,14 +2659,14 @@ async fn update_comfyui_checkout(app: &AppHandle, comfyui_dir: &Path) -> Result<
 #[derive(Clone, serde::Serialize)]
 pub struct ComfyUiUpdateResult {
     pub updated: bool,
-    /// The tag the install was moved to ([`COMFYUI_REF`]).
+    /// Display label for the managed source installed.
     pub target_ref: String,
     /// "git-fetch" for an existing git checkout, "git-init" when a zip install
     /// was converted to a managed checkout.
     pub method: String,
 }
 
-/// Update the installed ComfyUI to the pinned [`COMFYUI_REF`]: stop the server,
+/// Update the installed ComfyUI to [`comfyui_source_ref`]: stop the server,
 /// move the working tree onto the tag, reinstall ComfyUI's Python deps, and
 /// redeploy the bundled MooshieUI custom nodes. ComfyUI is left stopped; the
 /// caller restarts it (via `start_comfyui`) so the full websocket wiring runs.
@@ -2686,13 +2680,29 @@ pub async fn update_comfyui(
     if !comfyui_dir.join("main.py").exists() {
         return Err("ComfyUI is not installed yet. Run setup first.".into());
     }
+    {
+        let config = state.config.read().await;
+        if config.server_mode == config::ServerMode::Remote {
+            return Err(
+                "Update ComfyUI on the remote host. This updater manages the local installation."
+                    .into(),
+            );
+        }
+        let configured = std::fs::canonicalize(&config.comfyui_path)?;
+        if configured != std::fs::canonicalize(&comfyui_dir)? {
+            return Err("This updater manages the ComfyUI installation in MooshieUI's data folder. Update the configured external installation separately.".into());
+        }
+    }
 
     // 1. Stop ComfyUI so the working tree is not locked (Windows) and the new
     //    version is picked up on the next start.
     emit(
         &app,
         "comfyui",
-        &format!("Stopping ComfyUI to update to {}...", COMFYUI_REF),
+        &format!(
+            "Stopping ComfyUI to update to {}...",
+            comfyui_target_label()
+        ),
         5,
     );
     crate::comfyui::process::stop_comfyui_process(&state)
@@ -2705,11 +2715,12 @@ pub async fn update_comfyui(
     //    the version report must say so rather than reading the checkout as
     //    "up to date" and hiding the retry.
     let marker = comfyui_dir.join(crate::comfyui_version::UPDATE_PENDING_MARKER);
-    std::fs::write(&marker, COMFYUI_REF).ok();
+    std::fs::write(&marker, comfyui_source_ref())
+        .map_err(|e| format!("Cannot mark ComfyUI update pending: {e}"))?;
     emit(
         &app,
         "comfyui",
-        &format!("Updating ComfyUI to {}...", COMFYUI_REF),
+        &format!("Updating ComfyUI to {}...", comfyui_target_label()),
         20,
     );
     let method = update_comfyui_checkout(&app, &comfyui_dir).await?;
@@ -2739,12 +2750,12 @@ pub async fn update_comfyui(
     emit(
         &app,
         "done",
-        &format!("ComfyUI updated to {}.", COMFYUI_REF),
+        &format!("ComfyUI updated to {}.", comfyui_target_label()),
         100,
     );
     Ok(ComfyUiUpdateResult {
         updated: true,
-        target_ref: COMFYUI_REF.to_string(),
+        target_ref: comfyui_target_label().to_string(),
         method,
     })
 }
@@ -2768,6 +2779,33 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn archive_overlay_preserves_models_and_only_marks_complete_after_copy() {
+        let root = unique_temp_dir("comfy-source-overlay");
+        let source = root.join("source");
+        let destination = root.join("comfyui");
+        fs::create_dir_all(source.join("comfy")).unwrap();
+        fs::create_dir_all(destination.join("models")).unwrap();
+        fs::write(source.join("main.py"), "new entrypoint").unwrap();
+        fs::write(source.join("comfy/sd.py"), "new loader").unwrap();
+        fs::write(destination.join("models/user-model.bin"), "keep this model").unwrap();
+        fs::write(destination.join("comfy"), "simulate interrupted install").unwrap();
+        assert!(super::copy_comfyui_source(&source, &destination).is_err());
+        assert!(!destination.join("main.py").exists());
+        fs::remove_file(destination.join("comfy")).unwrap();
+        super::copy_comfyui_source(&source, &destination).unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("models/user-model.bin")).unwrap(),
+            "keep this model"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("comfy/sd.py")).unwrap(),
+            "new loader"
+        );
+        assert!(destination.join("main.py").is_file());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

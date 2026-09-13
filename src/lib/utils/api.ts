@@ -2,6 +2,28 @@ import { ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import type { ExportFormat } from "./videoExport.js";
 import { locale } from "../stores/locale.svelte.js";
+import type { MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
+
+export async function getMusicCapabilities(): Promise<MusicCapabilities> {
+  return ipcInvoke("get_music_capabilities");
+}
+
+export async function generateMusic(params: MusicParams): Promise<MusicJob> {
+  return ipcInvoke("generate_music", { params });
+}
+
+export async function getMusicStatus(job: MusicJob): Promise<MusicStatus> {
+  return ipcInvoke("get_music_status", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+export async function loadMusicAudio(job: MusicJob): Promise<string> {
+  return ipcInvoke("load_music_audio", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** Desktop only: the path comes from the native Save dialog. */
+export async function saveMusicAudio(audioBase64: string, path: string): Promise<void> {
+  return ipcInvoke("save_music_audio", { audioBase64, path });
+}
 import type {
   AppConfig,
   GalleryImageEntry,

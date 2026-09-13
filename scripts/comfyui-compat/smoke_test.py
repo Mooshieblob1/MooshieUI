@@ -94,6 +94,10 @@ DEFAULT_MOOSHIE_REQUIREMENTS = "ultralytics==8.4.75\n"
 # instead of the third-party node's `lllite_name`. Checking the signature turns
 # that into a failed pin bump instead of a failed generation.
 REQUIRED_CORE_NODE_INPUTS = {
+    "YuE2GenerateABC": ["clip", "style", "lyrics", "seed", "mode", "max_abc_tokens"],
+    "YuE2GenerateMusic": ["clip", "style", "lyrics", "abc", "seed", "mode", "max_duration", "temperature", "top_p", "top_k", "repetition_penalty"],
+    "EmptyYuE2LatentAudio": ["seconds", "batch_size"],
+    "VAEDecodeAudioTiled": ["samples", "vae", "tile_size", "overlap"],
     "ModelPatchLoader": ["name"],
     "AnimaLLLiteApply": [
         "model",
@@ -288,6 +292,11 @@ def main() -> int:
         return 1
 
     required = parse_required_classes(nodes_rs)
+    music_source = (repo_root / "src-tauri/src/templates/music.rs").read_text(encoding="utf-8")
+    music_nodes = re.search(r'REQUIRED_NODES:\s*&\[&str\]\s*=\s*&\[(.*?)\];', music_source, re.S)
+    if not music_nodes:
+        raise ValueError("Cannot read the music workflow's required nodes")
+    required = list(dict.fromkeys(required + re.findall(r'"([^"]+)"', music_nodes.group(1))))
     if args.extra_required_file:
         extra = json.loads(args.extra_required_file.read_text(encoding="utf-8"))
         if not isinstance(extra, list) or not all(isinstance(name, str) for name in extra):

@@ -23,14 +23,62 @@ pub fn update_is_incomplete(comfyui_dir: &Path) -> bool {
     comfyui_dir.join(UPDATE_PENDING_MARKER).exists()
 }
 
-/// Pinned ComfyUI release tag that the app installs and updates to.
-///
-/// Fresh installs and the in-app "Update ComfyUI" action both target this exact
-/// tag, so every MooshieUI build runs against a known-good ComfyUI rather than
-/// whatever `master` happened to be at install time. The scheduled
-/// `comfyui-compat` workflow opens a bot PR bumping this constant once the
-/// custom-node smoke test passes against a newer ComfyUI release.
+/// Baseline release for compatibility comparisons. Installers resolve it with
+/// `comfyui_source_ref()`, which can select a tested immutable commit while a
+/// feature awaits a tagged release. The compatibility bot advances this tag
+/// only after bundled-node and native music checks pass.
 pub const COMFYUI_REF: &str = "v0.35.0";
+
+#[derive(serde::Deserialize)]
+struct SourceOverride {
+    release: String,
+    revision: String,
+    label: String,
+}
+
+static SOURCE_OVERRIDE: std::sync::LazyLock<SourceOverride> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!("../runtime/comfyui-source.json"))
+        .expect("bundled ComfyUI source manifest must be valid")
+});
+
+/// Use the tested YuE2 commit until a newer release passes the compatibility
+/// gate. Keeping the baseline tag separate lets the release bot compare tags.
+pub fn comfyui_source_ref() -> &'static str {
+    if SOURCE_OVERRIDE.release == COMFYUI_REF {
+        &SOURCE_OVERRIDE.revision
+    } else {
+        COMFYUI_REF
+    }
+}
+
+pub fn comfyui_target_label() -> &'static str {
+    if SOURCE_OVERRIDE.release == COMFYUI_REF {
+        &SOURCE_OVERRIDE.label
+    } else {
+        COMFYUI_REF
+    }
+}
+
+pub fn comfyui_archive_url() -> String {
+    format!(
+        "https://github.com/Comfy-Org/ComfyUI/archive/{}.zip",
+        comfyui_source_ref()
+    )
+}
+
+pub fn comfyui_zip_dirname() -> String {
+    format!("ComfyUI-{}", comfyui_source_ref().trim_start_matches('v'))
+}
+
+fn has_native_music(comfyui_dir: &Path) -> bool {
+    [
+        "comfy_extras/nodes_yue2.py",
+        "comfy/text_encoders/yue2.py",
+        "comfy/ldm/yue2/model.py",
+    ]
+    .iter()
+    .all(|file| comfyui_dir.join(file).is_file())
+}
 
 /// Read the installed ComfyUI version from its `comfyui_version.py` file
 /// (`__version__ = "0.26.0"`). Returns `None` if the file is missing or
@@ -86,9 +134,9 @@ fn comfyui_version_is_older(installed: &str, target: &str) -> bool {
 pub struct ComfyUiVersionInfo {
     /// Version currently installed on disk, if detectable.
     pub installed: Option<String>,
-    /// The pinned tag this MooshieUI build targets ([`COMFYUI_REF`]).
+    /// Display label of the managed source, including any feature override.
     pub target: String,
-    /// True when the installed version is older than the pinned target.
+    /// True when the installation is older, incomplete, or lacks target features.
     pub update_available: bool,
     /// True when a previous update left the install half-applied (new source,
     /// stale Python dependencies). The version numbers can look current while
@@ -103,7 +151,10 @@ pub fn comfyui_version_info(comfyui_dir: &Path) -> ComfyUiVersionInfo {
     let update_incomplete = update_is_incomplete(comfyui_dir);
     let update_available = update_incomplete
         || match installed.as_deref() {
-            Some(v) => comfyui_version_is_older(v, COMFYUI_REF),
+            Some(v) => {
+                comfyui_version_is_older(v, COMFYUI_REF)
+                    || (!comfyui_version_is_older(COMFYUI_REF, v) && !has_native_music(comfyui_dir))
+            }
             // An install with main.py but no comfyui_version.py predates the
             // version module entirely, so it is always older than the pinned
             // target. No main.py means ComfyUI isn't installed at all — that is
@@ -112,7 +163,7 @@ pub fn comfyui_version_info(comfyui_dir: &Path) -> ComfyUiVersionInfo {
         };
     ComfyUiVersionInfo {
         installed,
-        target: COMFYUI_REF.to_string(),
+        target: comfyui_target_label().to_string(),
         update_available,
         update_incomplete,
     }
@@ -121,6 +172,22 @@ pub fn comfyui_version_info(comfyui_dir: &Path) -> ComfyUiVersionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_source_and_archive_use_the_same_immutable_revision() {
+        let source = comfyui_source_ref();
+        if SOURCE_OVERRIDE.release == COMFYUI_REF {
+            assert_eq!(source.len(), 40);
+            assert!(source.bytes().all(|b| b.is_ascii_hexdigit()));
+            assert_ne!(source, COMFYUI_REF);
+            assert!(comfyui_target_label().contains("YuE2"));
+        }
+        assert!(comfyui_archive_url().ends_with(&format!("/{source}.zip")));
+        assert_eq!(
+            comfyui_zip_dirname(),
+            format!("ComfyUI-{}", source.trim_start_matches('v'))
+        );
+    }
 
     /// A checkout already on the pinned tag still reports an update when the
     /// pending marker is there. Without this, a failed dependency step leaves
@@ -138,11 +205,27 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("main.py"), "").unwrap();
+        for file in [
+            "comfy_extras/nodes_yue2.py",
+            "comfy/text_encoders/yue2.py",
+            "comfy/ldm/yue2/model.py",
+        ] {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
         let _ = std::fs::remove_file(dir.join(UPDATE_PENDING_MARKER));
 
         let clean = comfyui_version_info(&dir);
         assert!(!clean.update_available);
         assert!(!clean.update_incomplete);
+
+        std::fs::remove_file(dir.join("comfy_extras/nodes_yue2.py")).unwrap();
+        assert!(
+            comfyui_version_info(&dir).update_available,
+            "plain v0.35.0 must upgrade to the YuE2 source"
+        );
+        std::fs::write(dir.join("comfy_extras/nodes_yue2.py"), "").unwrap();
 
         std::fs::write(dir.join(UPDATE_PENDING_MARKER), COMFYUI_REF).unwrap();
         let pending = comfyui_version_info(&dir);

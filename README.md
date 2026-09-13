@@ -1,6 +1,6 @@
 # MooshieUI
 
-MooshieUI is a beginner-friendly interface for image and video generation through [ComfyUI](https://github.com/comfyanonymous/ComfyUI), with optional image generation through the **NovelAI API** using your own key. It runs in two modes:
+MooshieUI is a beginner-friendly interface for image, video and music generation through [ComfyUI](https://github.com/comfyanonymous/ComfyUI), with optional image generation through the **NovelAI API** using your own key. It runs in two modes:
 
 - **Desktop app** via Tauri (Windows/Linux; [native Apple Silicon macOS candidates](docs/MACOS.md))
 - **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile UI)
@@ -38,6 +38,7 @@ Full guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/Moosh
 | [Generation Basics](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics) | Image modes, pause/continue, queue, dimensions and guidance |
 | [NovelAI Backend](https://github.com/Mooshieblob1/MooshieUI/wiki/NovelAI-Backend) | Personal API keys, characters, references, costs, face detailing and Director Tools |
 | [Video Generation](https://github.com/Mooshieblob1/MooshieUI/wiki/Video-Generation) | MiniMax H3, model stacks, timeline, interpolation, playback and export |
+| [Music Generation](https://github.com/Mooshieblob1/MooshieUI/wiki/Music-Generation) | YuE2 songs, lyric writing, playlists, shared playback and manual lyric timing |
 | [Image Edit Mode](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Edit-Mode) | Qwen Image Edit, Flux Kontext and Anima ReStyler |
 | [Prompting Guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide) | Prompt Chunks, random syntax, Artist Styles, Style Creator and interrogation |
 | [Prompt Assistant](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompt-Assistant) | Local or external LLM-assisted prompt building |
@@ -58,11 +59,12 @@ Technical references and project planning documents are indexed in [docs/README.
 
 ## ✨ Highlights
 
-> **v2.3.2:** NovelAI face detailing follows the local refiner, with each face crop resized to fit within 1024×1024 before repainting. See the [face detailer guide](docs/NOVELAI.md#31-the-novelai-face-detailer).
+> **v2.3.4:** Create YuE2 songs with style and lyric assistance, organize them into playlists, and keep listening across the app. See [Music Generation](https://github.com/Mooshieblob1/MooshieUI/wiki/Music-Generation).
 
 - **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext and Anima ReStyler.
 - **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
 - **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, Turbo LoRA, TeaCache, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
+- **Music studio** - YuE2 songs from a musical style and sectioned lyrics, with duration-aware writing through your configured Prompt Assistant. Name songs, browse a device-local library, create playlists, use the shared bottom player, mark lyric timings manually and download lossless FLAC.
 - **Pause and continue** - pause ComfyUI text-to-image sampling, inspect a preview, change prompts or sampling settings, or paint a masked correction before continuing. Keep a pause to try different endings.
 - **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
 - **Smart model detection** - 20+ architectures identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
@@ -74,7 +76,7 @@ Technical references and project planning documents are indexed in [docs/README.
 - **Self-hostable** - headless web server with roles, per-user galleries, auth, and a dedicated mobile layout.
 - **12 languages** - English, German, Spanish, French, Italian, Japanese, Korean, Polish, Portuguese, Russian, Simplified Chinese and Traditional Chinese, switchable without restart.
 
-Controls depend on the selected backend and model. NovelAI offers the three standard image modes; Image Edit, video, and pause/continue use ComfyUI. See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for each feature's requirements.
+Controls depend on the selected backend and model. NovelAI offers the three standard image modes; Image Edit, video, music and pause/continue use ComfyUI. YuE2 requires its own checkpoint and native ComfyUI support; managed installs offer the tested runtime update. See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for each feature's requirements.
 
 ---
 
@@ -120,9 +122,9 @@ npm run tauri build    # production build
 
 1. You adjust settings in the Svelte UI.
 2. On Generate, `ipcInvoke()` sends settings to Rust through Tauri IPC on desktop or HTTP in browser mode; `ipcListen()` receives events through Tauri or SSE.
-3. Rust builds an image/video ComfyUI workflow from templates, or a NovelAI image request using the selected account's key.
+3. Rust builds an image, video or music ComfyUI workflow from templates, or a NovelAI image request using the selected account's key.
 4. ComfyUI workflows go to its `/prompt` API; NovelAI requests go to its image API. Optional local post-processing sends returned NovelAI images through ComfyUI.
-5. ComfyUI WebSocket events and NovelAI streaming responses feed the shared progress, preview and gallery pipeline.
+5. ComfyUI WebSocket events and NovelAI streaming responses feed progress and previews. Images and videos use the gallery; music has a separate audio player and device-local library.
 
 MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance, an SDXL↔Flux2 VAE adapter, Nanosaur DiT support, and face fix) that are auto-installed into ComfyUI. Details live in [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub). The tiled diffusion node is also available as a standalone ComfyUI custom node: [ComfyUI-MooshieTiledDiffusion](https://github.com/Mooshieblob1/ComfyUI-MooshieTiledDiffusion).
 
@@ -135,7 +137,7 @@ MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance,
 | Frontend | Svelte 5, TypeScript 6, Tailwind CSS 4 |
 | Runtime | Tauri desktop app + axum headless web server |
 | State | Svelte 5 runes - class-based singleton stores |
-| Persistence | Tauri Store (JSON) + SQLite (`rusqlite`) |
+| Persistence | Tauri Store (JSON), SQLite (`rusqlite`), and per-account IndexedDB for the music library |
 | Generation transport | ComfyUI REST/WebSocket and NovelAI HTTP/streaming through Rust |
 | Prompt Assistant | Local llama.cpp or configured external LLM endpoint |
 | Inference | ONNX Runtime (`ort`) for WD v3 image interrogation |

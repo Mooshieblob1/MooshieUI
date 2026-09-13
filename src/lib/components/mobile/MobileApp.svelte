@@ -1,6 +1,9 @@
 <script lang="ts">
   import MobileTabBar, { type MobileTab } from "./MobileTabBar.svelte";
   import MobileGeneratePage from "./MobileGeneratePage.svelte";
+  import MusicPage from "../music/MusicPage.svelte";
+  import MusicBottomPlayer from "../music/MusicBottomPlayer.svelte";
+  import { music } from "../../stores/music.svelte.js";
   import MobileSettingsPage from "./MobileSettingsPage.svelte";
   import GalleryPage from "../gallery/GalleryPage.svelte";
   import { ArtistGalleryPage } from "../../artist-gallery/index.js";
@@ -58,6 +61,8 @@
   <main class="flex-1 min-h-0 overflow-hidden">
     {#if currentTab === "generate"}
       <MobileGeneratePage />
+    {:else if currentTab === "music"}
+      <MusicPage {userRole} />
     {:else if currentTab === "gallery"}
       <GalleryPage onSwitchToGenerate={() => go("generate")} />
     {:else if currentTab === "modelhub" && canUseModelhub}
@@ -84,6 +89,7 @@
       <MobileSettingsPage {userRole} />
     {/if}
   </main>
+  <MusicBottomPlayer onOpen={() => { music.view = "generate"; go("music"); }} />
   <CharacterInsertModal onapplied={finishCharacterInsert} />
   <MobileTabBar
     current={currentTab}

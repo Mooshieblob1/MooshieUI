@@ -45,6 +45,7 @@ jobs:
     outputs:
       current_ref: ${{ steps.v.outputs.current_ref }}
       target_ref: ${{ steps.v.outputs.target_ref }}
+      source_ref: ${{ steps.v.outputs.source_ref }}
       should_test: ${{ steps.v.outputs.should_test }}
       is_newer: ${{ steps.v.outputs.is_newer }}
       pin_file: ${{ steps.v.outputs.pin_file }}
@@ -85,6 +86,13 @@ jobs:
             TARGET=$(gh api repos/comfyanonymous/ComfyUI/releases/latest --jq .tag_name)
           fi
           echo "target_ref=$TARGET" >> "$GITHUB_OUTPUT"
+          SOURCE="$TARGET"
+          # A forced check with no newer release tests the actual managed
+          # source. An explicit target still tests exactly what was requested.
+          if [ "$TARGET" = "$CURRENT" ] && [ -z "${INPUT_TARGET}" ]; then
+            SOURCE=$(python3 scripts/comfyui-compat/resolve_ref.py)
+          fi
+          echo "source_ref=$SOURCE" >> "$GITHUB_OUTPUT"
 
           # is_newer: TARGET strictly newer than CURRENT (semver, leading v stripped).
           if [ "$TARGET" = "$CURRENT" ]; then
@@ -119,7 +127,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: comfyanonymous/ComfyUI
-          ref: ${{ needs.detect.outputs.target_ref }}
+          ref: ${{ needs.detect.outputs.source_ref }}
           path: comfyui-target
 
       - name: Set up Python 3.12
@@ -191,7 +199,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install managed runtime and check candidate ComfyUI
         env:
-          COMFYUI_REF: ${{ needs.detect.outputs.target_ref }}
+          COMFYUI_REF: ${{ needs.detect.outputs.source_ref }}
         run: |
           mkdir -p macos-runtime/bin
           curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz

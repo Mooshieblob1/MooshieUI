@@ -3,6 +3,7 @@ pub mod api;
 pub mod config;
 #[cfg(feature = "desktop")]
 pub mod interrogator;
+pub mod music;
 #[cfg(feature = "desktop")]
 pub mod novelai;
 #[cfg(feature = "desktop")]
