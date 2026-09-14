@@ -68,7 +68,7 @@ async fn run_reserved(
     workflow: Value,
 ) -> Result<Vec<u8>, AppError> {
     let client_id = format!("{}-refine-{}", state.client_id, uuid::Uuid::new_v4());
-    let ws_base = worker.base_url.replacen("http", "ws", 1);
+    let ws_base = worker.base_url().replacen("http", "ws", 1);
     let url = format!("{ws_base}/ws?clientId={client_id}");
     let (mut socket, _) = tokio::time::timeout(
         Duration::from_secs(15),
@@ -107,7 +107,7 @@ async fn run_reserved(
         ] {
             if let Err(err) = state
                 .http_client
-                .post(format!("{}/{path}", worker.base_url))
+                .post(format!("{}/{path}", worker.base_url()))
                 .json(&body)
                 .timeout(Duration::from_secs(10))
                 .send()
@@ -292,6 +292,7 @@ mod tests {
         });
         let state = Arc::new(AppState::new(crate::config::AppConfig {
             server_port: port,
+            server_url: format!("http://127.0.0.1:{port}"),
             ..Default::default()
         }));
         *state.gpu_manager.workers[0].status.write().await =
@@ -336,6 +337,7 @@ mod tests {
         });
         let state = Arc::new(AppState::new(crate::config::AppConfig {
             server_port: port,
+            server_url: format!("http://127.0.0.1:{port}"),
             ..Default::default()
         }));
         *state.gpu_manager.workers[0].status.write().await =

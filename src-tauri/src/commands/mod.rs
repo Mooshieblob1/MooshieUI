@@ -4,6 +4,8 @@ pub mod config;
 #[cfg(feature = "desktop")]
 pub mod interrogator;
 pub mod music;
+pub mod music_cover;
+pub mod music_review;
 #[cfg(feature = "desktop")]
 pub mod novelai;
 #[cfg(feature = "desktop")]

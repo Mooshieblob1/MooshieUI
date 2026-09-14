@@ -544,7 +544,7 @@ impl AppState {
             for worker in &self.gpu_manager.workers {
                 let _ = self
                     .http_client
-                    .post(format!("{}/queue", worker.base_url))
+                    .post(format!("{}/queue", worker.base_url()))
                     .json(&serde_json::json!({ "delete": ids_to_delete }))
                     .send()
                     .await;

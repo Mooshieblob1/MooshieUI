@@ -25,6 +25,12 @@
     <h2 id="music-song-edit-title" class="text-lg font-semibold">{locale.t("music.edit_song")}</h2>
     <label class="block space-y-2 text-sm"><span>{locale.t("music.song_title")}</span><input class="min-h-11 w-full rounded-md bg-neutral-800 px-3" maxlength="200" bind:value={title} placeholder={song ? music.resultTitle(song) : ""} disabled={music.librarySaving} /></label>
     {#if song}
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="touch-target px-3 text-xs text-indigo-300" onclick={() => { const id = song.prompt_id; close(); music.reviewingSong = id; }}>{locale.t("music.review")}</button>
+        <button type="button" class="touch-target px-3 text-xs text-indigo-300 disabled:opacity-40" disabled={music.busy} onclick={() => { music.useVersion(song); close(); }}>{locale.t("music.version_use")}</button>
+        <button type="button" class="touch-target px-3 text-xs text-indigo-300 disabled:opacity-40" disabled={music.busy || !song.abc.trim()} onclick={() => { const id = song.prompt_id; close(); music.editingComposition = id; }}>{locale.t("music.edit_composition")}</button>
+        <button type="button" class="touch-target px-3 text-xs text-indigo-300" onclick={() => { music.compareIds = [song.prompt_id]; close(); music.comparing = true; }}>{locale.t("music.versions")}</button>
+      </div>
       <fieldset class="space-y-1">
         <legend class="mb-2 text-sm text-neutral-400">{locale.t("music.playlists")}</legend>
         {#each music.playlists as playlist (playlist.id)}

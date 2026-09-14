@@ -1,15 +1,17 @@
-import type { MusicPlaylist, MusicResult } from "../types/music.js";
+import type { MusicBatch, MusicPlan, MusicPlaylist, MusicResult } from "../types/music.js";
 
 // Audio is stored separately so browsing a library never loads every recording.
 // Each signed-in user gets a separate database on this browser/device.
 function openLibrary(owner: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(`mooshieui.music.library.${owner}`, 1);
+    const request = indexedDB.open(`mooshieui.music.library.${owner}`, 2);
     request.onupgradeneeded = () => {
       const db = request.result;
-      db.createObjectStore("songs", { keyPath: "prompt_id" });
-      db.createObjectStore("audio");
-      db.createObjectStore("playlists", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("songs")) db.createObjectStore("songs", { keyPath: "prompt_id" });
+      if (!db.objectStoreNames.contains("audio")) db.createObjectStore("audio");
+      if (!db.objectStoreNames.contains("playlists")) db.createObjectStore("playlists", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("plans")) db.createObjectStore("plans", { keyPath: "prompt_id" });
+      if (!db.objectStoreNames.contains("batches")) db.createObjectStore("batches", { keyPath: "id" });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -35,10 +37,12 @@ const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
 export const musicLibrary = {
   async load(owner: string) {
-    return transaction(owner, ["songs", "playlists"], "readonly", tx => {
+    return transaction(owner, ["songs", "playlists", "plans", "batches"], "readonly", tx => {
       const songs = tx.objectStore("songs").getAll();
       const playlists = tx.objectStore("playlists").getAll();
-      return () => ({ songs: songs.result as MusicResult[], playlists: playlists.result as MusicPlaylist[] });
+      const plans = tx.objectStore("plans").getAll();
+      const batches = tx.objectStore("batches").getAll();
+      return () => ({ songs: songs.result as MusicResult[], playlists: playlists.result as MusicPlaylist[], plans: plans.result as MusicPlan[], batches: batches.result as MusicBatch[] });
     });
   },
   async audio(owner: string, id: string): Promise<Blob | undefined> {
@@ -51,6 +55,18 @@ export const musicLibrary = {
     return transaction(owner, blob ? ["songs", "audio"] : ["songs"], "readwrite", tx => {
       tx.objectStore("songs").put(plain(song));
       if (blob) tx.objectStore("audio").put(blob, song.prompt_id);
+      return () => undefined;
+    });
+  },
+  async savePlan(owner: string, plan: MusicPlan) {
+    return transaction(owner, ["plans"], "readwrite", tx => {
+      tx.objectStore("plans").put(plain(plan));
+      return () => undefined;
+    });
+  },
+  async saveBatch(owner: string, batch: MusicBatch) {
+    return transaction(owner, ["batches"], "readwrite", tx => {
+      tx.objectStore("batches").put(plain(batch));
       return () => undefined;
     });
   },

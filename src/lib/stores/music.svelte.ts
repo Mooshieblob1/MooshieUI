@@ -3,7 +3,10 @@ import { getAuthUser } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { exportFlac, songTitle, blobBase64 } from "../utils/musicAudio.js";
 import { musicLibrary } from "../utils/musicLibrary.js";
-import type { MusicCapabilities, MusicExecutionEvent, MusicJob, MusicParams, MusicStage, MusicResult, MusicPlaylist } from "../types/music.js";
+import { coverScoreError } from "../utils/musicCover.js";
+import { inspectMusicScore } from "../utils/musicScore.js";
+import { cloneMusicParams, defaultMusicSampling, musicId, musicSeed, readMusicSampling } from "../utils/musicSettings.js";
+import type { MusicBatch, MusicPlan, MusicCapabilities, MusicExecutionEvent, MusicJob, MusicParams, MusicStage, MusicResult, MusicPlaylist } from "../types/music.js";
 import type { LyricAlignment } from "../utils/lyricTiming.js";
 
 // Native workflow node IDs from templates/music.rs. PreviewAny (9) can execute
@@ -15,7 +18,7 @@ const stageOrder: MusicStage[] = ["prepare", "score", "compose", "render", "deco
 
 const defaults = (): MusicParams => ({
   title: "", checkpoint: "", style: "", lyrics: "", planning: "full", abc: "",
-  max_duration: 120, steps: 32, seed: "-1",
+  max_duration: 120, steps: 32, seed: "-1", cover: false, sampling: defaultMusicSampling(),
 });
 
 const libraryAccount = () => {
@@ -24,6 +27,22 @@ const libraryAccount = () => {
 };
 
 class MusicStore {
+  plans = $state<MusicPlan[]>([]);
+  planCandidate = $state<MusicPlan | null>(null);
+  scoreUndo = $state<{ before: MusicParams; after: string } | null>(null);
+  candidateCount = $state(1);
+  batches = $state<MusicBatch[]>([]);
+  activeBatch = $state<MusicBatch | null>(null);
+  batchRunning = $state(false);
+  batchIndex = $state(0);
+  compareIds = $state<string[]>([]);
+  comparing = $state(false);
+  editingComposition = $state<string | null>(null);
+  reviewingSong = $state<string | null>(null);
+  reviewSource = $state.raw<File | null>(null);
+  private jobOwner: string | null = null;
+  private preparing = $state(false);
+  private cancelRequested = false;
   view = $state<"generate" | "library">("generate");
   editingSong = $state<string | null>(null);
   playlists = $state<MusicPlaylist[]>([]);
@@ -48,6 +67,14 @@ class MusicStore {
   private pendingWrites = 0;
   private libraryLoaded = false;
   params = $state<MusicParams>(defaults());
+  reviewedCoverAbc = $state("");
+  get coverReady() { return !this.params.cover || (!coverScoreError(this.params.abc, this.params.planning === "full") && this.reviewedCoverAbc === this.params.abc); }
+  setCover(cover: boolean) {
+    this.params.cover = cover;
+    this.reviewedCoverAbc = "";
+    if (cover) this.params.planning = "melody";
+    this.saveSettings();
+  }
   capabilities = $state<MusicCapabilities | null>(null);
   refreshing = $state(false);
   downloading = $state(false);
@@ -81,13 +108,14 @@ class MusicStore {
   rememberPrompt(id: string) { this.knownPrompts.add(id); }
   isMusicPrompt(id: string) { return this.knownPrompts.has(id); }
 
-  get busy() { return this.phase !== "idle"; }
+  get busy() { return this.preparing || this.phase !== "idle" || this.batchRunning; }
   get title() { return this.selectedResult ? this.resultTitle(this.selectedResult) : locale.t("music.untitled"); }
   get queueIndex() { return this.queue.indexOf(this.selectedResult?.prompt_id ?? ""); }
   get hasNext() { return this.queueIndex >= 0 && this.queueIndex < this.queue.length - 1; }
   get hasPrevious() { return this.currentTime > 3 || this.queueIndex > 0; }
   resultTitle(result: MusicResult) { return result.title?.trim() || songTitle(result.params.lyrics) || locale.t("music.untitled"); }
   get stages() {
+    if (this.submittedParams?.task === "plan") return ["prepare", "score", "retrieve"] as MusicStage[];
     const writesScore = this.submittedParams?.planning !== "off" && !this.submittedParams?.abc.trim();
     return stageOrder.filter(stage => stage !== "score" || writesScore);
   }
@@ -170,9 +198,14 @@ class MusicStore {
         if (typeof parsed[key] === "string") next[key] = parsed[key];
       }
       if (["full", "melody", "off"].includes(parsed.planning)) next.planning = parsed.planning;
+      next.cover = parsed.cover === true;
+      if (next.cover && next.planning === "off") next.planning = "melody";
       if (Number.isFinite(parsed.max_duration)) next.max_duration = parsed.max_duration;
       if (Number.isInteger(parsed.steps)) next.steps = parsed.steps;
+      next.sampling = readMusicSampling(parsed.sampling);
+      if (parsed.lineage && typeof parsed.lineage.project_id === "string") next.lineage = parsed.lineage;
       this.params = next;
+      this.reviewedCoverAbc = "";
     } catch (error) { console.warn("Failed to load music settings", error); }
   }
 
@@ -215,11 +248,123 @@ class MusicStore {
   async generate() {
     if (this.busy || !this.ready) return;
     this.error = "";
+    this.cancelRequested = false;
+    if (this.params.abc.trim()) {
+      const inspection = inspectMusicScore(this.params.abc);
+      if (!inspection.score) { this.error = `${locale.t("music.score_invalid")} ${inspection.error}`; return; }
+    }
+    if (this.params.cover) {
+      const scoreError = coverScoreError(this.params.abc, this.params.planning === "full");
+      if (scoreError || !this.coverReady) {
+        this.error = locale.t(`music.${scoreError ?? "cover_review_required"}`);
+        return;
+      }
+      if (this.params.planning === "off") this.params.planning = "melody";
+    }
     if (!/^-?\d+$/.test(this.params.seed.trim()) || BigInt(this.params.seed) < -1n || BigInt(this.params.seed) > 9223372036854775807n) {
       this.error = locale.t("music.invalid_seed");
       return;
     }
+    const snapshot = cloneMusicParams(this.params);
+    snapshot.seed = BigInt(snapshot.seed).toString();
+    const owner = libraryAccount();
+    this.preparing = true;
+    try { if (!this.libraryLoaded) await this.loadLibrary(); }
+    finally { this.preparing = false; }
+    if (owner !== libraryAccount() || this.phase !== "idle" || this.cancelRequested) return;
+    snapshot.task = "audio";
+    snapshot.lineage ??= { project_id: musicId() };
+    this.params.lineage = { ...snapshot.lineage };
     this.saveSettings();
+    const count = [1, 2, 4, 8].includes(this.candidateCount) ? this.candidateCount : 1;
+    if (count > 1) {
+      const seeds = new Set<string>();
+      if (snapshot.seed !== "-1") seeds.add(snapshot.seed);
+      while (seeds.size < count) seeds.add(musicSeed());
+      this.activeBatch = { id: musicId(), params: snapshot, createdAt: Date.now(),
+        attempts: [...seeds].map(seed => ({ seed, status: "pending" })) };
+      this.batchRunning = true; this.batchIndex = 0;
+      this.batches = [this.activeBatch, ...this.batches];
+      if (!await this.persistBatch()) { this.batchRunning = false; return; }
+      await this.submitBatchAttempt();
+    } else { this.activeBatch = null; await this.submit(snapshot); }
+  }
+  get isPlanJob() { return this.submittedParams?.task === "plan"; }
+
+  async generatePlan() {
+    if (this.busy || !this.ready || this.params.cover || this.params.planning === "off") return;
+    this.cancelRequested = false;
+    if (!this.params.style.trim() || !this.params.lyrics.trim()) { this.error = locale.t("music.plan_needs_text"); return; }
+    const params = cloneMusicParams(this.params);
+    const owner = libraryAccount();
+    this.preparing = true;
+    try { if (!this.libraryLoaded) await this.loadLibrary(); }
+    finally { this.preparing = false; }
+    if (owner !== libraryAccount() || this.phase !== "idle" || this.cancelRequested) return;
+    params.task = "plan";
+    params.lineage ??= { project_id: musicId() };
+    this.error = "";
+    this.activeBatch = null;
+    await this.submit(params);
+  }
+
+  async resumeBatch(batch: MusicBatch) {
+    if (this.busy || !this.ready) return;
+    this.cancelRequested = false;
+    const index = batch.attempts.findIndex(a => a.status === "pending");
+    if (index < 0) return;
+    this.activeBatch = JSON.parse(JSON.stringify(batch)); this.batchIndex = index; this.batchRunning = true;
+    this.error = "";
+    await this.submitBatchAttempt();
+  }
+
+  private persistJob() {
+    if (!this.jobOwner) return;
+    try {
+      const key = `mooshieui.music.active.${this.jobOwner}`;
+      if (this.job && this.submittedParams) localStorage.setItem(key, JSON.stringify({ job: this.job, params: this.submittedParams, startedAt: this.startedAt, batchId: this.activeBatch?.id }));
+      else localStorage.removeItem(key);
+    } catch { this.libraryError = locale.t("music.job_recovery_unavailable"); }
+  }
+
+  private recoverJob(owner: string) {
+    if (this.job || this.phase !== "idle") return;
+    try {
+      const raw = localStorage.getItem(`mooshieui.music.active.${owner}`);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved.job || typeof saved.job.prompt_id !== "string" || !Number.isInteger(saved.job.worker_id) || !saved.params || typeof saved.params.abc !== "string" || typeof saved.params.lyrics !== "string") return;
+      this.job = saved.job; this.submittedParams = saved.params; this.startedAt = saved.startedAt ?? Date.now();
+      this.jobOwner = owner; this.phase = "queued"; this.outcome = ""; this.stage = "prepare"; this.completedStages = []; this.failedPolls = 0; this.missingPolls = 0;
+      this.activeBatch = this.batches.find(b => b.id === saved.batchId) ?? null;
+      this.batchIndex = this.activeBatch ? this.activeBatch.attempts.findIndex(a => a.prompt_id === saved.job.prompt_id) : 0;
+      if (this.batchIndex < 0) this.activeBatch = null;
+      // Observe the submitted job only; remaining candidates require explicit Resume.
+      this.batchRunning = false; this.rememberPrompt(this.job!.prompt_id); this.schedulePoll();
+    } catch { this.libraryError = locale.t("music.job_recovery_unavailable"); }
+  }
+
+  private async persistBatch(): Promise<boolean> {
+    const batch = this.activeBatch ? JSON.parse(JSON.stringify(this.activeBatch)) as MusicBatch : null;
+    if (!batch) return true;
+    this.batches = this.batches.map(b => b.id === batch.id ? batch : b);
+    return this.writeLibrary(owner => musicLibrary.saveBatch(owner, batch));
+  }
+
+  private async submitBatchAttempt() {
+    const batch = this.activeBatch;
+    if (!this.batchRunning || !batch || this.batchIndex >= batch.attempts.length) return;
+    const attempt = batch.attempts[this.batchIndex];
+    attempt.status = "running";
+    if (!await this.persistBatch()) { this.batchRunning = false; return; }
+    if (!this.batchRunning) return;
+    await this.submit({ ...cloneMusicParams(batch.params), seed: attempt.seed,
+      lineage: { ...batch.params.lineage!, candidate_group: batch.id, candidate_index: this.batchIndex + 1 } });
+  }
+
+  private async submit(params: MusicParams) {
+    this.jobOwner = libraryAccount();
+    const owner = this.jobOwner;
     this.phase = "submitting";
     this.stage = "prepare";
     this.stageValue = 0;
@@ -231,13 +376,22 @@ class MusicStore {
     this.queuePosition = null;
     this.missingPolls = 0;
     this.failedPolls = 0;
-    this.submittedParams = { ...this.params };
+    this.submittedParams = cloneMusicParams(params);
     try {
-      this.job = await generateMusic(this.submittedParams);
+      const job = await generateMusic(this.submittedParams);
+      if (owner !== libraryAccount()) return;
+      this.job = job;
+      if (this.activeBatch && this.batchRunning) {
+        this.activeBatch.attempts[this.batchIndex].prompt_id = job.prompt_id;
+        void this.persistBatch();
+      }
       this.rememberPrompt(this.job.prompt_id);
       this.phase = "queued";
+      this.persistJob();
+      if (this.cancelRequested) { await this.cancel(); return; }
       this.schedulePoll();
     } catch (error) {
+      if (owner !== libraryAccount()) return;
       this.error = String(error);
       this.finish("failed");
     }
@@ -253,12 +407,22 @@ class MusicStore {
     if (!job) return;
     try {
       const status = await getMusicStatus(job);
-      if (this.job?.prompt_id !== job.prompt_id) return;
+      if (this.job?.prompt_id !== job.prompt_id || this.jobOwner !== libraryAccount()) return;
       if (this.failedPolls > 0) this.error = "";
       this.failedPolls = 0;
+      if (status.status === "completed" && (status.kind === "plan" || this.submittedParams?.task === "plan")) {
+        if (!status.abc?.trim()) { this.error = locale.t("music.failed"); this.finish("failed"); return; }
+        const plan: MusicPlan = { ...job, abc: status.abc, params: cloneMusicParams(this.submittedParams!), metadata: status.metadata, createdAt: Date.now() };
+        this.plans = [plan, ...this.plans.filter(p => p.prompt_id !== plan.prompt_id)];
+        this.planCandidate = plan;
+        await this.writeLibrary(owner => musicLibrary.savePlan(owner, plan));
+        if (this.jobOwner !== libraryAccount()) return;
+        this.finish("completed");
+        return;
+      }
       if (status.status === "completed" && status.filename) {
-        const result: MusicResult = { ...job, filename: status.filename, abc: status.abc ?? "", params: { ...this.submittedParams! }, title: this.submittedParams?.title?.trim().slice(0, 200), createdAt: Date.now() };
-        this.results = [result, ...this.results];
+        const result: MusicResult = { ...job, filename: status.filename, abc: status.abc ?? "", params: cloneMusicParams(this.submittedParams!), metadata: status.metadata, title: this.submittedParams?.title?.trim().slice(0, 200), createdAt: Date.now() };
+        this.results = [result, ...this.results.filter(r => r.prompt_id !== result.prompt_id)];
         this.enterStage("retrieve");
         this.phase = "loading";
         this.job = null;
@@ -268,7 +432,7 @@ class MusicStore {
           catch (error) { this.libraryError = `${locale.t("music.library_error")} ${String(error)}`; }
         }
         else await this.play(result, false);
-        this.finish("completed");
+        if (this.jobOwner === libraryAccount()) this.finish("completed");
         return;
       }
       if (status.status === "error") {
@@ -304,12 +468,34 @@ class MusicStore {
     this.queuePosition = null;
     if (outcome === "completed") this.completedStages = [...this.stages];
     this.job = null;
+    this.persistJob();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.activeBatch && this.activeBatch.attempts[this.batchIndex]) {
+      this.activeBatch.attempts[this.batchIndex].status = outcome;
+      if (outcome === "failed") this.activeBatch.attempts[this.batchIndex].error = this.error;
+      const batchId = this.activeBatch.id;
+      const owner = this.jobOwner;
+      void this.persistBatch().then(saved => {
+        if (!this.batchRunning || this.activeBatch?.id !== batchId || owner !== libraryAccount()) return;
+        if (!saved || outcome === "cancelled") { this.batchRunning = false; return; }
+        this.batchIndex = this.activeBatch.attempts.findIndex((attempt, index) => index > this.batchIndex && attempt.status === "pending");
+        if (this.batchIndex < 0) { this.batchRunning = false; return; }
+        this.error = "";
+        void this.submitBatchAttempt();
+      });
+    }
   }
 
   async cancel() {
-    if (!this.job || this.cancelling) return;
+    if (this.cancelling) return;
+    this.cancelRequested = true;
+    if (this.batchRunning && this.activeBatch) {
+      this.batchRunning = false;
+      for (const attempt of this.activeBatch.attempts) if (attempt.status === "pending" || attempt.status === "running") attempt.status = "cancelled";
+      void this.persistBatch();
+    }
+    if (!this.job) return;
     const job = this.job;
     this.cancelling = true;
     try {
@@ -326,7 +512,14 @@ class MusicStore {
       this.stopPlayback();
       this.results = [];
       this.playlists = [];
+      this.plans = []; this.planCandidate = null; this.scoreUndo = null; this.batches = [];
+      this.batchRunning = false; this.activeBatch = null; this.compareIds = []; this.comparing = false; this.editingComposition = null;
+      this.job = null; this.phase = "idle"; this.jobOwner = null;
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      this.params = defaults(); this.loadSettings();
       this.editingSong = null;
+      this.reviewingSong = null; this.reviewSource = null;
     }
     this.libraryOwner = owner;
     this.libraryLoading = true;
@@ -340,7 +533,10 @@ class MusicStore {
         this.results = [...this.results, ...saved.songs.filter(song => !existing.has(song.prompt_id))]
           .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
         this.playlists = saved.playlists;
+        this.plans = saved.plans ?? [];
+        this.batches = saved.batches ?? [];
         this.libraryLoaded = true;
+        this.recoverJob(owner);
       } catch (error) {
         if (this.libraryOwner === owner) this.libraryError = `${locale.t("music.library_error")} ${String(error)}`;
       } finally {
@@ -375,7 +571,7 @@ class MusicStore {
     if (this.selectedResult?.prompt_id === song.prompt_id) this.selectedResult = song;
   }
 
-  async updateSong(id: string, patch: Pick<Partial<MusicResult>, "title" | "alignment" | "duration">): Promise<boolean> {
+  async updateSong(id: string, patch: Pick<Partial<MusicResult>, "title" | "alignment" | "duration" | "review">): Promise<boolean> {
     return this.writeLibrary(async owner => {
       const current = this.results.find(song => song.prompt_id === id);
       if (!current) throw new Error("Song is no longer available");
@@ -425,24 +621,30 @@ class MusicStore {
   }
 
   async archive(result: MusicResult, suppliedBlob?: Blob): Promise<Blob> {
+    const requestedOwner = libraryAccount();
     await this.loadLibrary();
+    if (requestedOwner !== libraryAccount()) throw new Error("Music library account changed");
     const owner = this.libraryOwner!;
     let blob = suppliedBlob;
+    let needsSave = !result.saved;
     if (!blob && result.saved) blob = await musicLibrary.audio(owner, result.prompt_id);
     if (!blob) {
+      needsSave = true;
       const base64 = await loadMusicAudio(result);
       blob = new Blob([Uint8Array.from(atob(base64), char => char.charCodeAt(0))], { type: "audio/flac" });
     }
-    if (!result.saved) {
+    if (needsSave) {
       if (this.libraryOwner !== owner) throw new Error("Music library account changed");
       const recording = blob;
-      await this.writeLibrary(async writeOwner => {
+      const saved = await this.writeLibrary(async writeOwner => {
         const current = this.results.find(song => song.prompt_id === result.prompt_id) ?? result;
         const next = { ...current, saved: true };
         await musicLibrary.saveSong(writeOwner, next, recording);
         if (this.libraryOwner === writeOwner) this.replaceSong(next);
       });
+      if (!saved) throw new Error(this.libraryError || "Music recording could not be saved");
     }
+    if (owner !== libraryAccount()) throw new Error("Music library account changed");
     return blob;
   }
 
@@ -605,9 +807,45 @@ class MusicStore {
   }
 
   reuseScore() {
-    if (!this.selectedResult) return;
-    this.params = { ...this.selectedResult.params, seed: this.selectedResult.seed, abc: this.selectedResult.abc };
+    if (!this.selectedResult || this.busy) return;
+    this.useVersion(this.selectedResult);
+  }
+
+  useVersion(result: MusicResult) {
+    if (this.busy) return;
+    this.params = { ...cloneMusicParams(result.params), task: "audio", seed: result.seed, abc: result.abc,
+      sampling: readMusicSampling(result.params.sampling),
+      lineage: { project_id: result.params.lineage?.project_id ?? result.prompt_id, parent_id: result.prompt_id } };
+    this.reviewedCoverAbc = "";
+    this.view = "generate";
     this.saveSettings();
+  }
+
+  applyPlan(plan: MusicPlan) {
+    if (this.busy) return;
+    const before = cloneMusicParams(this.params);
+    this.params = { ...cloneMusicParams(plan.params), task: "audio", seed: plan.seed, abc: plan.abc, sampling: readMusicSampling(plan.params.sampling) };
+    this.scoreUndo = { before, after: JSON.stringify(this.params) };
+    this.planCandidate = null;
+    this.saveSettings();
+  }
+
+  replaceScore(abc: string) {
+    if (this.busy) return;
+    const before = cloneMusicParams(this.params);
+    this.params.abc = abc; this.reviewedCoverAbc = "";
+    this.scoreUndo = { before, after: JSON.stringify(this.params) };
+    this.saveSettings();
+  }
+
+  undoScore() {
+    if (this.busy || !this.scoreUndo || JSON.stringify(this.params) !== this.scoreUndo.after) return;
+    this.params = cloneMusicParams(this.scoreUndo.before); this.scoreUndo = null; this.reviewedCoverAbc = "";
+    this.saveSettings();
+  }
+
+  toggleCompare(id: string) {
+    this.compareIds = this.compareIds.includes(id) ? this.compareIds.filter(item => item !== id) : [...this.compareIds.slice(-1), id];
   }
 }
 

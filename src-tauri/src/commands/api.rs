@@ -315,7 +315,7 @@ pub async fn reorder_queue_item(
     for worker in &state.gpu_manager.workers {
         let _ = state
             .http_client
-            .post(format!("{}/queue", worker.base_url))
+            .post(format!("{}/queue", worker.base_url()))
             .json(&serde_json::json!({ "delete": [real_id] }))
             .send()
             .await;

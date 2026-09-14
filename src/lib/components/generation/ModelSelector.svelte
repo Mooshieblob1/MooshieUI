@@ -5,13 +5,14 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel, findModelByHash, hashModelFile, getComputeCapability, checkNodeAvailable, installCustomNode, isCustomNodeInstalled } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
+  import { resolveAvailableModel } from "../../utils/modelAvailability.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
@@ -457,7 +458,7 @@
     // Nothing suitable installed — auto-download. Skip if another batch
     // download already owns the progress UI; the generate-time guard still
     // catches the misconfiguration with an actionable message.
-    if (downloading !== null) return;
+    if (downloading !== null || models.remote) return;
 
     krea2EnsureRunning = true;
     const files: { file: ModelFile; label: string }[] = [
@@ -645,7 +646,7 @@
   /** Load cached model hashes from localStorage */
   function loadCachedHashes(): Record<string, string> {
     try {
-      return JSON.parse(localStorage.getItem("modelHashes") || "{}");
+      return JSON.parse(localStorage.getItem(`modelHashes:${models.cacheScope}`) || "{}");
     } catch { return {}; }
   }
 
@@ -653,11 +654,14 @@
   function cacheHash(category: string, filename: string, hash: string) {
     const cached = loadCachedHashes();
     cached[`${category}::${hash}`] = filename;
-    localStorage.setItem("modelHashes", JSON.stringify(cached));
+    localStorage.setItem(`modelHashes:${models.cacheScope}`, JSON.stringify(cached));
   }
 
   /** Resolve recommended models by hash on mount */
   async function resolveModelHashes() {
+    const scope = models.cacheScope;
+    hashResolved = {};
+    if (!scope || models.remote) return;
     const allFiles: ModelFile[] = [];
     for (const rec of recommendedModels) {
       if (rec.checkpoint?.hash) allFiles.push(rec.checkpoint);
@@ -688,7 +692,7 @@
         const found = await findModelByHash(f.category, f.hash);
         if (found) {
           resolved[key] = found;
-          cacheHash(f.category, found, f.hash);
+          if (scope === models.cacheScope) cacheHash(f.category, found, f.hash);
         }
       } catch (e) {
         console.warn(`Hash lookup failed for ${f.filename}:`, e);
@@ -696,31 +700,72 @@
     });
 
     await Promise.all(lookups);
-    hashResolved = resolved;
+    if (scope === models.cacheScope) hashResolved = resolved;
   }
 
-  /** Check if a model file is installed (by hash first, then filename fallback) */
+  $effect(() => {
+    const scope = models.cacheScope;
+    if (scope) untrack(() => { void resolveModelHashes(); });
+  });
+
+  function availableFilename(f: ModelFile, modelList: string[]): string | undefined {
+    const cached = f.hash ? hashResolved[`${f.category}::${f.hash}`] : undefined;
+    return resolveAvailableModel(f.filename, modelList, cached);
+  }
+
   function isModelFileInstalled(f: ModelFile, modelList: string[]): boolean {
-    if (f.hash) {
-      const key = `${f.category}::${f.hash}`;
-      if (hashResolved[key]) return true;
-    }
-    return modelList.includes(f.filename);
+    return availableFilename(f, modelList) !== undefined;
   }
 
-  /** Get the actual filename on disk for a model file (may differ from expected if renamed) */
   function resolvedFilename(f: ModelFile): string {
-    if (f.hash) {
-      const key = `${f.category}::${f.hash}`;
-      if (hashResolved[key]) return hashResolved[key];
-    }
-    return f.filename;
+    return availableFilename(f, modelListForCategory(f.category)) ?? f.filename;
   }
+
+  function isLocalOnly(f: ModelFile): boolean {
+    return availableFilename(f, models.localOnly[f.category] ?? []) !== undefined;
+  }
+
+  function recommendedFiles(rec: RecommendedModel): ModelFile[] {
+    if (rec.splitModel) return [rec.splitModel.diffusionModel, rec.splitModel.clipModel, rec.splitModel.vaeModel];
+    return [rec.checkpoint, rec.vaeModel].filter((file): file is ModelFile => !!file);
+  }
+
+  function recommendedLocalOnly(rec: RecommendedModel): boolean {
+    const files = recommendedFiles(rec);
+    return files.some(isLocalOnly) && files.every((file) =>
+      isModelFileInstalled(file, modelListForCategory(file.category)) || isLocalOnly(file));
+  }
+
+  function unavailableMessage(files: ModelFile[]): string {
+    return locale.t(models.remote ? "generation.model.external_missing" : "generation.model.local_unavailable_detail", {
+      files: files.map((file) => `${file.category}/${file.filename}`).join(", "),
+    });
+  }
+
+  const unavailableSelection = $derived.by(() => {
+    if (generation.isNovelAi || models.loading || !Object.keys(models.serverModels).length) return [];
+    const selections = generation.useSplitModel
+      ? [
+          { category: generation.modelSourceCategory ?? "diffusion_models", filename: generation.diffusionModel },
+          { category: "text_encoders", filename: generation.clipModel },
+          { category: "vae", filename: generation.vae },
+        ]
+      : [
+          { category: generation.modelSourceCategory ?? "checkpoints", filename: generation.checkpoint },
+          { category: "vae", filename: generation.vae },
+        ];
+    return selections.filter(({ category, filename }) => filename && !(models.serverModels[category] ?? [])
+      .some((available) => available.replace(/\\/g, "/") === filename.replace(/\\/g, "/")))
+      .map(({ category, filename }) => `${category}/${filename}`);
+  });
 
   /** After downloading a model file, compute its hash and cache it */
   async function cacheHashAfterDownload(f: ModelFile) {
+    const scope = models.cacheScope;
+    if (models.remote) return;
     try {
       const result = await hashModelFile(f.category, f.filename);
+      if (scope !== models.cacheScope) return;
       // Cache the AutoV2 hash (CivitAI-compatible, first 10 chars of SHA256)
       cacheHash(f.category, f.filename, result.autov2);
       hashResolved = { ...hashResolved, [`${f.category}::${result.autov2}`]: f.filename };
@@ -776,9 +821,6 @@
         },
       };
     });
-
-    // Resolve model hashes in background
-    resolveModelHashes();
 
     // Probe NVIDIA compute capability so we can gate FP8-only recommended
     // entries. Cheap (single nvidia-smi shell-out) and fire-and-forget — a
@@ -910,6 +952,7 @@
     value: string;
     rec?: RecommendedModel;
     installed: boolean;
+    localOnly?: boolean;
     size?: string;
     gateHint?: string;
   }
@@ -964,6 +1007,7 @@
     // Add recommended models first
     for (const rec of recommendedModels) {
       const installed = isRecommendedInstalled(rec);
+      const localOnly = !installed && recommendedLocalOnly(rec);
       // Hide entries gated behind a compute-capability we haven't met unless
       // all split/checkpoint components already exist locally. That keeps
       // retired or hardware-specific models visible for users who have them,
@@ -974,14 +1018,15 @@
       // Detection-only entries (no download URLs) are hidden until every
       // component is present on disk — otherwise the user would see an entry
       // they can't action.
-      if (rec.detectionOnly && !installed) continue;
+      if (rec.detectionOnly && !installed && !localOnly) continue;
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
-          label: installed ? rec.label : `⬇ ${rec.label}`,
+          label: installed || localOnly || models.remote ? rec.label : `⬇ ${rec.label}`,
           value: rec.label,
           rec,
           installed,
+          localOnly,
           size: rec.sizeKey ? locale.t(rec.sizeKey) : rec.size,
           gateHint: rec.gateHint,
         });
@@ -1074,12 +1119,14 @@
    * recommended sampling settings instead.
    */
   function selectNovelAiModel(id: string) {
+    downloadError = "";
     generation.selectNovelAiModel(id);
     checkpointSearch = "";
     closeCheckpointDropdown();
   }
 
   function selectCheckpoint(name: string) {
+    downloadError = "";
     // Clear split model state when selecting a normal checkpoint. Detection may
     // flip this back (and re-set modelSourceCategory) if the file turns out to be
     // a split-file model that just happens to live in checkpoints/.
@@ -1108,6 +1155,7 @@
 
   /** Use a diffusion model file discovered on disk (not in the curated recommended list). */
   async function selectCustomDiffusion(filename: string) {
+    downloadError = "";
     closeCheckpointDropdown();
     checkpointSearch = "";
     generation.useSplitModel = true;
@@ -1119,6 +1167,7 @@
   }
 
   async function selectRecommended(rec: RecommendedModel) {
+    downloadError = "";
     closeCheckpointDropdown();
     checkpointSearch = "";
 
@@ -1137,6 +1186,11 @@
         missingFiles.push({ file: rec.checkpoint, label: locale.t('generation.model.downloading_checkpoint') });
       if (rec.vaeModel && !isModelFileInstalled(rec.vaeModel, modelListForCategory(rec.vaeModel.category)))
         missingFiles.push({ file: rec.vaeModel, label: locale.t('generation.model.downloading_vae') });
+    }
+
+    if (missingFiles.length > 0 && (models.remote || missingFiles.some(({ file }) => isLocalOnly(file)))) {
+      downloadError = unavailableMessage(missingFiles.filter(({ file }) => models.remote || isLocalOnly(file)).map(({ file }) => file));
+      return;
     }
 
     if (missingFiles.length > 0) {
@@ -1200,6 +1254,12 @@
           dlOrder = [];
         }
       }
+    }
+
+    const unavailable = recommendedFiles(rec).filter((file) => !isModelFileInstalled(file, modelListForCategory(file.category)));
+    if (unavailable.length > 0) {
+      downloadError = unavailableMessage(unavailable);
+      return;
     }
 
     // Use resolved filenames (handles renamed files detected by hash). Curated
@@ -1316,11 +1376,17 @@
     >
       <span class="truncate">{displayCheckpoint()}</span>
     </button>
+    {#if unavailableSelection.length > 0}
+      <p class="mt-2 text-[11px] text-amber-300">{locale.t("generation.model.unavailable_server")}: {unavailableSelection.join(", ")}</p>
+    {/if}
+    {#if downloadError}
+      <p role="alert" class="mt-2 text-[11px] text-amber-300">{downloadError}</p>
+    {/if}
+    {#if models.remote}
+      <p class="mt-2 text-[11px] text-neutral-400">{locale.t("generation.model.external_download_hint")}</p>
+    {/if}
     {#if downloading}
       <div class="mt-2 bg-neutral-800/80 rounded-lg px-3 py-2 space-y-2">
-        {#if downloadError}
-          <div class="text-[11px] text-red-400">{downloadError}</div>
-        {/if}
         {#each dlOrder as filename (filename)}
           {@const entry = dlEntries[filename]}
           {#if entry}
@@ -1386,9 +1452,9 @@
                   {#if item.gateHint}
                     <span class="ml-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-0.5 align-middle text-[9px] uppercase tracking-wide text-emerald-300">{item.gateHint}</span>
                   {/if}
-                  {#if !item.installed}
-                    <span class="text-[10px] text-neutral-500 ml-1">({locale.t('generation.model.auto_download')})</span>
-                  {/if}
+                  <span class="block text-[10px] {item.localOnly ? 'text-amber-300' : 'text-neutral-500'}">
+                    {locale.t(item.installed ? "generation.model.available_server" : item.localOnly ? "generation.model.local_unavailable" : models.remote ? "generation.model.unavailable_server" : "generation.model.auto_download")}
+                  </span>
                 </span>
                 {#if item.size}
                   <span class="text-[10px] text-neutral-500 shrink-0">{item.size}</span>

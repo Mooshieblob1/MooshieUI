@@ -1,37 +1,5 @@
-import { getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
-
-function modelBasename(filename: string): string {
-  const normalized = filename.replace(/\\/g, "/");
-  const slash = normalized.lastIndexOf("/");
-  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
-}
-
-/**
- * Merge ComfyUI API model names with on-disk files from extra paths.
- * API entries win when basename matches; disk-only files are appended once.
- */
-async function mergeWithDiskModels(category: string, apiModels: string[]): Promise<string[]> {
-  const safeApiModels = apiModels ?? [];
-  try {
-    const disk = await listModelFiles(category);
-    const diskNames = (disk ?? [])
-      .filter((f) => f && typeof f.filename === "string")
-      .map((f) => f.filename);
-
-    const apiBasenames = new Set(safeApiModels.map(modelBasename));
-    const merged = [...safeApiModels];
-    for (const name of diskNames) {
-      const base = modelBasename(name);
-      if (!apiBasenames.has(base)) {
-        merged.push(name);
-        apiBasenames.add(base);
-      }
-    }
-    return merged.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  } catch {
-    return safeApiModels;
-  }
-}
+import { getConfig, getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
+import { localOnlyModels } from "../utils/modelAvailability.js";
 
 class ModelsStore {
   checkpoints = $state<string[]>([]);
@@ -48,10 +16,41 @@ class ModelsStore {
   /** ModelPatchLoader weights (`models/model_patches/`), e.g. Anima LLLite. */
   modelPatches = $state<string[]>([]);
   loading = $state(false);
+  remote = $state(false);
+  serverUrl = $state("");
+  cacheScope = $state("");
+  serverModels = $state<Record<string, string[]>>({});
+  localOnly = $state<Record<string, string[]>>({});
+  private refreshId = 0;
 
-  async refresh() {
+  private clearInventory() {
+    this.serverModels = {};
+    this.localOnly = {};
+    this.checkpoints = [];
+    this.vaes = [];
+    this.loras = [];
+    this.embeddings = [];
+    this.upscaleModels = [];
+    this.diffusionModels = [];
+    this.textEncoders = [];
+    this.controlnetModels = [];
+    this.ultralyticsModels = [];
+    this.modelPatches = [];
+    this.samplers = [];
+    this.schedulers = [];
+  }
+
+  async refresh(): Promise<boolean> {
+    const refreshId = ++this.refreshId;
     this.loading = true;
     try {
+      const config = await getConfig();
+      if (refreshId !== this.refreshId) return false;
+      const cacheScope = JSON.stringify([config.server_url, config.comfyui_path, config.extra_model_paths]);
+      if (this.cacheScope !== cacheScope) this.clearInventory();
+      this.remote = config.server_mode === "remote";
+      this.serverUrl = config.server_url;
+      this.cacheScope = cacheScope;
       console.log("ModelsStore: fetching models...");
       // Text encoders may live in either `text_encoders/` (modern split-file
       // layout) or `clip/` (legacy ComfyUI / Forge layout). Fetch both and
@@ -79,43 +78,44 @@ class ModelsStore {
 
       const mergedEncoders = Array.from(new Set([...(textEncoders ?? []), ...(clipEncoders ?? [])]));
       const mergedDiffusionModels = Array.from(new Set([...(diffusionModels ?? []), ...(unetModels ?? [])]));
-      let diffusionModelFiles: string[];
-      let unetModelFiles: string[];
-
-      [
-        this.checkpoints,
-        this.vaes,
-        this.loras,
-        this.embeddings,
-        this.upscaleModels,
-        diffusionModelFiles,
-        unetModelFiles,
-        this.textEncoders,
-        this.controlnetModels,
-        this.ultralyticsModels,
-        this.modelPatches,
-      ] = await Promise.all([
-        mergeWithDiskModels("checkpoints", checkpoints),
-        mergeWithDiskModels("vae", vaes),
-        mergeWithDiskModels("loras", loras),
-        mergeWithDiskModels("embeddings", embeddings),
-        mergeWithDiskModels("upscale_models", upscaleModels),
-        mergeWithDiskModels("diffusion_models", mergedDiffusionModels),
-        mergeWithDiskModels("unet", unetModels),
-        mergeWithDiskModels("text_encoders", mergedEncoders),
-        mergeWithDiskModels("controlnet", controlnetModels),
-        mergeWithDiskModels("ultralytics", ultralyticsModels),
-        mergeWithDiskModels("model_patches", modelPatches),
-      ]);
-      this.diffusionModels = Array.from(new Set([...diffusionModelFiles, ...unetModelFiles])).sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" }),
-      );
+      const inventory: Record<string, string[]> = {
+        checkpoints: checkpoints ?? [], vae: vaes ?? [], loras: loras ?? [],
+        embeddings: embeddings ?? [], upscale_models: upscaleModels ?? [],
+        diffusion_models: mergedDiffusionModels, unet: mergedDiffusionModels,
+        text_encoders: mergedEncoders, clip: mergedEncoders,
+        controlnet: controlnetModels ?? [], ultralytics: ultralyticsModels ?? [],
+        model_patches: modelPatches ?? [],
+      };
+      const localOnly = Object.fromEntries(await Promise.all(
+        Object.entries(inventory).map(async ([category, available]) => {
+          const disk = await listModelFiles(category).catch(() => []);
+          return [category, localOnlyModels(disk.map((file) => file.filename), available)];
+        }),
+      ));
+      if (refreshId !== this.refreshId) return false;
+      this.serverModels = inventory;
+      this.localOnly = localOnly;
+      this.checkpoints = inventory.checkpoints;
+      this.vaes = inventory.vae;
+      this.loras = inventory.loras;
+      this.embeddings = inventory.embeddings;
+      this.upscaleModels = inventory.upscale_models;
+      this.diffusionModels = mergedDiffusionModels;
+      this.textEncoders = mergedEncoders;
+      this.controlnetModels = inventory.controlnet;
+      this.ultralyticsModels = inventory.ultralytics;
+      this.modelPatches = inventory.model_patches;
       this.samplers = samplerInfo.samplers;
       this.schedulers = samplerInfo.schedulers;
+      return true;
     } catch (e) {
       console.error("Failed to refresh models:", e);
+      if (refreshId === this.refreshId) {
+        this.clearInventory();
+      }
+      return false;
     } finally {
-      this.loading = false;
+      if (refreshId === this.refreshId) this.loading = false;
     }
   }
 }

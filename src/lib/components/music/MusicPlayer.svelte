@@ -58,6 +58,7 @@
       <div class="min-w-0 flex-1">
         <h2 class="break-words text-xl font-semibold leading-snug tracking-tight text-neutral-100">{hasAudio ? title : locale.t("music.empty_title")}</h2>
         {#if music.selectedResult}<button type="button" class="touch-target text-xs text-indigo-300 hover:underline" onclick={() => { music.editingSong = music.selectedResult!.prompt_id; }}>{locale.t("music.edit_song")}</button>{/if}
+        {#if music.selectedResult}<button type="button" class="touch-target ml-3 text-xs text-indigo-300 hover:underline" onclick={() => { music.reviewingSong = music.selectedResult!.prompt_id; }}>{locale.t("music.review")}</button>{/if}
         <p class="mt-2 line-clamp-3 text-sm leading-relaxed text-neutral-400">{music.selectedResult?.params.style || locale.t("music.empty")}</p>
       </div>
     </div>

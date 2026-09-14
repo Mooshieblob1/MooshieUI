@@ -1,3 +1,22 @@
+## What's New in v2.3.5
+
+### Covers and composition tools
+- **Cover a song**: transcribe a source recording with native ComfyUI SheetSage2, review its ABC melody, and generate a cover with new lyrics or musical direction. Choose which melody parts to retain and whether harmony can change. The audio encoder download and refresh flow now makes the installed SheetSage2 model available for selection.
+- **Source length as the starting limit**: importing a recording sets Maximum length from its duration. Extend it afterward or use the source-length reset. This ceiling does not force the singer to follow the original lyric timing.
+- **Plan and inspect scores before rendering**: generate and save an ABC score draft, check notes, bars and estimated duration, preview melodies, adjust tempo, and export MIDI or a printable SVG page.
+- **Edit a composition with checked constraints**: ask the configured Prompt Assistant for reharmonization, transposition, tempo, structure or lyric changes. Review the proposed score, style and lyrics before applying them. Selected melody, rhythm, tempo, lyric and section constraints are checked against the original score.
+- **Stronger music prompting**: style enhancement, lyric writing and composition editing use guidance adapted from the upstream yue2-music skill while retaining the existing assistant configuration and Undo safeguards.
+- **Versions and listening comparisons**: create a version from a saved song, compare A and B with shared playback position or an excerpt loop, and export project ZIPs containing original FLAC, ABC, lyrics, style, settings, seeds and available generation receipts.
+- **Candidates and advanced sampling**: generate 1, 2, 4 or 8 candidates sequentially, retain each attempt and resume pending candidates after a reload. Advanced controls expose semantic sampling and guidance; supported workers report score-planning and semantic truncation separately.
+- **Review recognized lyrics and approximate timing**: optionally transcribe source and cover audio with xAI, then ask the configured assistant to explain the measured evidence. Saved reports retain playable timestamps and can be reopened. Recognition can fail on singing; this review does not judge musical quality or automatically repair sung timing.
+
+### ComfyUI setup and connection fixes
+- **Managed ComfyUI leaves other applications running**: new installs prefer port 18288 and can choose another free port. Existing port settings are retained. Restart and shutdown identify MooshieUI's own processes, including kept-alive instances, instead of stopping an unrelated process on the configured port.
+- **Clearer model availability**: model choices follow the connected ComfyUI server's advertised filenames. Local files that the server cannot use are identified separately, stale results are discarded when connections change, and remote selections no longer trigger an ineffective local download.
+- **More reliable Windows setup and updates**: setup can locate Git outside the inherited PATH or install a verified portable copy. Setup and update operations are serialized, and the pinned ComfyUI checkout is prepared before it is applied.
+
+---
+
 ## What's New in v2.3.4
 
 ### Music studio

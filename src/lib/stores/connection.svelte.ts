@@ -6,7 +6,7 @@ const CDN_BASE = "https://cdn.mooshieblob.com";
 
 class ConnectionStore {
   connected = $state(false);
-  serverUrl = $state("http://127.0.0.1:8188");
+  serverUrl = $state("http://127.0.0.1:18288");
   /** Manifest URL for the Anima artist gallery. Proxied in browser mode to avoid CORS. */
   artistGalleryManifestUrl = $state(
     `${CDN_BASE}/20260425_anima_all_artists/indices/manifest.json`,

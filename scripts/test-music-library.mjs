@@ -14,7 +14,7 @@ function load(path, imports = {}, globals = {}) {
   vm.runInNewContext(compiled, { module, exports: module.exports, require: name => {
     assert.ok(name in imports, `Unexpected import ${name}`);
     return imports[name];
-  }, $state: state, console, setTimeout, clearTimeout, Blob, URL, atob, crypto, ...globals });
+  }, $state: state, console, setTimeout, clearTimeout, Blob, URL, atob, crypto, localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} }, ...globals });
   return module.exports;
 }
 const timing = load("src/lib/utils/lyricTiming.ts");
@@ -66,6 +66,9 @@ const { music } = load("src/lib/stores/music.svelte.ts", {
     loadMusicAudio: async () => { remoteCalls++; return pendingRemote ? await pendingRemote : btoa("fLaC synthetic"); },
   },
   "../utils/ipc.js": { getAuthUser: () => user },
+  "../utils/musicCover.js": load("src/lib/utils/musicCover.ts", {}, { TextEncoder }),
+  "../utils/musicSettings.js": load("src/lib/utils/musicSettings.ts"),
+  "../utils/musicScore.js": load("src/lib/utils/musicScore.ts", {}, { TextEncoder }),
   "./locale.svelte.js": { locale: { t: key => key } },
   "../utils/musicAudio.js": { songTitle: () => "Fallback title", exportFlac: async () => "downloaded", blobBase64: async () => "" },
   "../utils/musicLibrary.js": { musicLibrary: {

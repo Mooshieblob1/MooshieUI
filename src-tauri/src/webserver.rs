@@ -2408,7 +2408,9 @@ async fn dispatch_command(
         }
         "kill_port_process" => {
             let port = state.config.read().await.server_port;
-            crate::comfyui::process::kill_process_on_port(port).await;
+            crate::comfyui::process::stop_comfyui_process(&state)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(port))
         }
         "connect_ws" => {
@@ -2455,7 +2457,7 @@ async fn dispatch_command(
             let mut running: Vec<serde_json::Value> = Vec::new();
             let mut pending: Vec<serde_json::Value> = Vec::new();
             for worker in &state.gpu_manager.workers {
-                let url = format!("{}/queue", worker.base_url);
+                let url = format!("{}/queue", worker.base_url());
                 if let Ok(resp) = state.http_client.get(&url).send().await {
                     if let Ok(val) = resp.json::<serde_json::Value>().await {
                         if let Some(arr) = val.get("queue_running").and_then(|v| v.as_array()) {
@@ -2660,7 +2662,7 @@ async fn dispatch_command(
 
             // 3. Delete all pending items from each ComfyUI worker queue
             for worker in &state.gpu_manager.workers {
-                let queue_url = format!("{}/queue", worker.base_url);
+                let queue_url = format!("{}/queue", worker.base_url());
                 if let Ok(resp) = state.http_client.get(&queue_url).send().await {
                     if let Ok(val) = resp.json::<serde_json::Value>().await {
                         let mut pending_ids: Vec<String> = Vec::new();
@@ -2678,7 +2680,7 @@ async fn dispatch_command(
                         if !pending_ids.is_empty() {
                             let _ = state
                                 .http_client
-                                .post(format!("{}/queue", worker.base_url))
+                                .post(format!("{}/queue", worker.base_url()))
                                 .json(&serde_json::json!({ "delete": pending_ids }))
                                 .send()
                                 .await;
@@ -3355,7 +3357,7 @@ async fn dispatch_command(
             for worker in &state.gpu_manager.workers {
                 let _ = state
                     .http_client
-                    .post(format!("{}/queue", worker.base_url))
+                    .post(format!("{}/queue", worker.base_url()))
                     .json(&serde_json::json!({ "delete": [real_id] }))
                     .send()
                     .await;
@@ -5327,7 +5329,7 @@ async fn dispatch_command(
                 .as_u64()
                 .map(|v| v as u32)
                 .unwrap_or(1024)
-                .clamp(64, 4096);
+                .clamp(64, 16384);
             // Resolved before the SSE hand-off so a browser client sees the same
             // vision behaviour as the desktop app, including the silent fallback
             // to a text-only turn when the frame cannot be read.
@@ -5428,6 +5430,48 @@ async fn dispatch_command(
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "get_music_review_capabilities" => Ok(serde_json::json!(
+            commands::music_review::capabilities(&state).await
+        )),
+        "hash_music_review_audio" => commands::music_review::audio_hash(
+            args["audioBase64"].as_str().ok_or("Missing audioBase64")?,
+        )
+        .map(|hash| serde_json::json!(hash))
+        .map_err(|e| e.to_string()),
+        "transcribe_music_review" => {
+            let result = commands::music_review::transcribe(
+                &state,
+                args["audioBase64"].as_str().ok_or("Missing audioBase64")?,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "get_cover_capabilities" => Ok(commands::music_cover::capabilities(&state, username).await),
+        "transcribe_music_cover" => commands::music_cover::start(
+            state.clone(),
+            args["audioBase64"].as_str().ok_or("Missing audioBase64")?,
+            args["filename"].as_str().ok_or("Missing filename")?,
+            username.map(str::to_string),
+        )
+        .await
+        .map(|id| serde_json::json!(id))
+        .map_err(|e| e.to_string()),
+        "get_cover_transcription" => commands::music_cover::status(
+            &state,
+            args["jobId"].as_str().ok_or("Missing jobId")?,
+            username,
+            args["cancel"].as_bool().unwrap_or(false),
+        )
+        .await
+        .map_err(|e| e.to_string()),
+        "transcribe_music_native" => {
+            let request = serde_json::from_value(args["request"].clone())
+                .map_err(|e| format!("Invalid transcription request: {e}"))?;
+            commands::music::transcribe_native(&state, request, username.map(str::to_string))
+                .await
+                .map_err(|e| e.to_string())
         }
         "generate_music" => {
             let params = serde_json::from_value(args["params"].clone())

@@ -11,7 +11,7 @@
   });
   const elapsed = $derived(audioTime(Math.max(0, ((music.finishedAt || now) - music.startedAt) / 1000)));
   const heading = $derived(
-    music.outcome ? locale.t(`music.outcome_${music.outcome}`)
+    music.outcome ? locale.t(music.isPlanJob && music.outcome === "completed" ? "music.plan_candidate" : `music.outcome_${music.outcome}`)
       : music.cancelling ? locale.t("music.cancelling")
       : music.phase === "submitting" ? locale.t("music.phase_submitting")
       : music.phase === "queued" ? (music.queuePosition === null ? locale.t("music.phase_queued") : locale.t("music.queue_position", { position: music.queuePosition }))

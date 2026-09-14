@@ -1229,7 +1229,7 @@ async fn connect_websocket_for_worker_inner(
     }
 
     let ws_url = worker
-        .base_url
+        .base_url()
         .replace("http://", "ws://")
         .replace("https://", "wss://");
     let ws_url = format!("{}/ws?clientId={}", ws_url, state.client_id);

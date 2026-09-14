@@ -1,6 +1,6 @@
 # MooshieUI documentation
 
-Documentation for the current implementation, reviewed against **v2.3.2**. Start with the [repository README](../README.md) for an overview or the [user wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for installation and feature walkthroughs.
+Documentation for the current implementation, with music and connection updates for **v2.3.5**. Start with the [repository README](../README.md) for an overview or the [user wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for installation and feature walkthroughs.
 
 ## Feature and technical references
 
@@ -12,6 +12,7 @@ Documentation for the current implementation, reviewed against **v2.3.2**. Start
 | [STYLE_REFERENCE.md](STYLE_REFERENCE.md) | IP-Adapter/Flux Redux support, model files and controls |
 | [MACOS.md](MACOS.md) | Apple Silicon candidate installation, validation, and release gating |
 | [YuE2 integration](research/yue2-integration.md) | Native ComfyUI music support, model setup, and validation limits |
+| [Music studio guide](MUSIC.md) | Covers, reviewed scores, checked edits, MIDI, versions, comparisons and project exports |
 
 The wiki also covers [music and playlists](https://github.com/Mooshieblob1/MooshieUI/wiki/Music-Generation), [video](https://github.com/Mooshieblob1/MooshieUI/wiki/Video-Generation), [pause and continue](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics#pause-and-continue-a-generation), [Style Creator](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide#style-creator), [Image Edit](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Edit-Mode), and [hosted accounts](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User).
 
@@ -23,6 +24,7 @@ These documents include proposals and historical evidence; they are not promises
 |----------|---------|
 | [ROADMAP-2026-gaps.md](ROADMAP-2026-gaps.md) | Original gap analysis with current implementation status |
 | [FEATURE_RESEARCH.md](FEATURE_RESEARCH.md) | Historical research shortlist; its ecosystem table is a snapshot |
+| [Cover audio review and timing](research/music-cover-review.md) | Implemented xAI review, timing limits, and the decision to abandon experimental audio timing repair |
 | [MACOS_RELEASE_PLAN.md](MACOS_RELEASE_PLAN.md) | Apple Silicon release requirements and outstanding qualification gates |
 | [BOT_REVIEW_TRIAGE.md](BOT_REVIEW_TRIAGE.md) | Triage notes for automated PR review comments |
 | [issue_cleanup_followup_tracks.md](issue_cleanup_followup_tracks.md) | Historical issue follow-up tracks |

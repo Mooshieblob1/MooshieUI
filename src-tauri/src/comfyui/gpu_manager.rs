@@ -42,9 +42,9 @@ pub struct GpuWorker {
     /// GPU index (CUDA_VISIBLE_DEVICES value).
     pub gpu_index: u32,
     /// Port this ComfyUI instance listens on.
-    pub port: u16,
-    /// HTTP base URL for this worker's ComfyUI API.
-    pub base_url: String,
+    endpoint: std::sync::RwLock<(u16, String)>,
+    /// Serializes start/stop so a second launch cannot orphan the first child.
+    pub lifecycle: Mutex<()>,
     /// Current status.
     pub status: RwLock<WorkerStatus>,
     /// Whether this worker is currently reserved (executing a prompt).
@@ -68,12 +68,12 @@ pub struct GpuWorker {
 
 impl GpuWorker {
     pub fn new(id: u32, cfg: &GpuWorkerConfig, base_port: u16) -> Self {
-        let port = cfg.port.unwrap_or(base_port + id as u16);
+        let port = cfg.port.unwrap_or(base_port.saturating_add(id as u16));
         Self {
             id,
             gpu_index: cfg.gpu_index,
-            port,
-            base_url: format!("http://127.0.0.1:{}", port),
+            endpoint: std::sync::RwLock::new((port, format!("http://127.0.0.1:{}", port))),
+            lifecycle: Mutex::new(()),
             status: RwLock::new(if cfg.enabled {
                 WorkerStatus::Stopped
             } else {
@@ -90,6 +90,22 @@ impl GpuWorker {
                 .unwrap_or_else(|| format!("GPU {}", cfg.gpu_index)),
             vram_mode: cfg.vram_mode.clone(),
         }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.endpoint.read().unwrap_or_else(|e| e.into_inner()).0
+    }
+
+    pub fn base_url(&self) -> String {
+        self.endpoint
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .clone()
+    }
+
+    pub fn set_endpoint(&self, port: u16, base_url: String) {
+        *self.endpoint.write().unwrap_or_else(|e| e.into_inner()) = (port, base_url);
     }
 
     /// Whether this worker can accept a new prompt right now.
@@ -161,6 +177,10 @@ impl GpuManager {
                 .map(|(i, cfg)| Arc::new(GpuWorker::new(i as u32, cfg, config.server_port)))
                 .collect()
         };
+
+        if config.gpu_workers.is_empty() {
+            workers[0].set_endpoint(config.server_port, config.server_url.clone());
+        }
 
         Self {
             workers,
@@ -319,6 +339,45 @@ impl GpuManager {
         }
     }
 
+    /// Submit to the exact worker whose models/inputs were checked. Never migrate
+    /// a graph containing an uploaded file to a different worker.
+    pub(crate) async fn submit_prompt_to_worker(
+        &self,
+        worker_id: u32,
+        workflow: serde_json::Value,
+        client_id: &str,
+    ) -> Result<(u32, crate::comfyui::types::PromptResponse), AppError> {
+        let worker = self
+            .workers
+            .iter()
+            .find(|w| w.id == worker_id)
+            .ok_or_else(|| AppError::Other("The selected GPU worker is unavailable.".into()))?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            let status = *worker.status.read().await;
+            if status == WorkerStatus::Running {
+                return self
+                    .do_submit_to_server_queue(worker, workflow, client_id)
+                    .await;
+            }
+            if status != WorkerStatus::Idle {
+                return Err(AppError::Other(
+                    "The selected GPU worker stopped. Refresh and retry.".into(),
+                ));
+            }
+            if worker.try_reserve() {
+                return self.do_submit(worker, workflow, client_id).await;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(AppError::Other(
+                    "The selected GPU worker is busy. Try again later.".into(),
+                ));
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(1), self.worker_available.notified())
+                .await;
+        }
+    }
+
     /// POST a prompt to a worker that is already executing. ComfyUI queues it
     /// server-side; we do not reserve the worker again.
     async fn do_submit_to_server_queue(
@@ -332,7 +391,7 @@ impl GpuManager {
             "client_id": client_id,
         });
 
-        let url = format!("{}/prompt", worker.base_url);
+        let url = format!("{}/prompt", worker.base_url());
         let resp = self
             .http_client
             .post(&url)
@@ -380,7 +439,7 @@ impl GpuManager {
             "client_id": client_id,
         });
 
-        let url = format!("{}/prompt", worker.base_url);
+        let url = format!("{}/prompt", worker.base_url());
         let resp = self
             .http_client
             .post(&url)
@@ -391,7 +450,13 @@ impl GpuManager {
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                let prompt_resp: crate::comfyui::types::PromptResponse = r.json().await?;
+                let prompt_resp: crate::comfyui::types::PromptResponse = match r.json().await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        self.mark_worker_idle(worker.id).await;
+                        return Err(error.into());
+                    }
+                };
                 // Worker stays Running — will be released when execution completes
                 // (via WebSocket execution_complete event)
                 Ok((worker.id, prompt_resp))
@@ -474,7 +539,7 @@ impl GpuManager {
                 id: w.id,
                 gpu_index: w.gpu_index,
                 label: w.label.clone(),
-                port: w.port,
+                port: w.port(),
                 status: *w.status.read().await,
                 reserved: w.reserved.load(Ordering::Acquire),
             });
@@ -489,7 +554,7 @@ impl GpuManager {
             .first_ready_worker()
             .await
             .ok_or_else(|| AppError::ConnectionFailed("No GPU workers are ready".into()))?;
-        let url = format!("{}{}", worker.base_url, path);
+        let url = format!("{}{}", worker.base_url(), path);
         let resp = self.http_client.get(&url).send().await?;
         if !resp.status().is_success() {
             return Err(AppError::ApiError {
@@ -510,7 +575,7 @@ impl GpuManager {
             .first_ready_worker()
             .await
             .ok_or_else(|| AppError::ConnectionFailed("No GPU workers are ready".into()))?;
-        let url = format!("{}{}", worker.base_url, path);
+        let url = format!("{}{}", worker.base_url(), path);
         let resp = self.http_client.post(&url).json(body).send().await?;
         if !resp.status().is_success() {
             return Err(AppError::ApiError {
@@ -530,7 +595,7 @@ impl GpuManager {
         match worker_id {
             Some(id) => {
                 if let Some(w) = self.workers.get(id as usize) {
-                    let url = format!("{}/interrupt", w.base_url);
+                    let url = format!("{}/interrupt", w.base_url());
                     self.http_client.post(&url).send().await?;
                 }
             }
@@ -538,7 +603,7 @@ impl GpuManager {
                 for w in &self.workers {
                     let status = *w.status.read().await;
                     if status == WorkerStatus::Running {
-                        let url = format!("{}/interrupt", w.base_url);
+                        let url = format!("{}/interrupt", w.base_url());
                         let _ = self.http_client.post(&url).send().await;
                     }
                 }
@@ -574,7 +639,7 @@ impl GpuManager {
             .workers
             .get(worker_id as usize)
             .ok_or_else(|| AppError::Other(format!("Unknown GPU worker {worker_id}")))?;
-        let url = format!("{}/history/{}", worker.base_url, prompt_id);
+        let url = format!("{}/history/{}", worker.base_url(), prompt_id);
         let resp = self.http_client.get(&url).send().await?;
         if !resp.status().is_success() {
             return Err(AppError::ApiError {

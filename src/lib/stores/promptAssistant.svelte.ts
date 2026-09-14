@@ -19,6 +19,9 @@ import {
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
 import { cleanMusicWritingResponse, musicWritingProblems, musicWritingRequest } from "../utils/yue2Skill.js";
+import { musicEditRequest, validateMusicEdit, type MusicEditContext, type MusicEditProposal } from "../utils/musicEdit.js";
+import { musicReviewRequest, validateMusicReviewExplanation, type MusicReviewRecord } from "../utils/musicReview.js";
+import type { MusicResult } from "../types/music.js";
 import type { MusicWritingContext, MusicWritingTask } from "../utils/yue2Skill.js";
 import {
   H3_MAX_TOKENS,
@@ -332,6 +335,48 @@ class PromptAssistantStore {
     } finally {
       this.isGenerating = false;
     }
+  }
+
+  async editForMusic(context: MusicEditContext): Promise<MusicEditProposal> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = musicEditRequest(context);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let prompt = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const text = await callExternalLlm(request.system, prompt, request.maxTokens);
+          try { return validateMusicEdit(text, context); }
+          catch (error) {
+            if (attempt === 1) throw error;
+            prompt = `${request.prompt}\n\nValidation rejected the previous proposal. Return a complete corrected JSON object satisfying the original constraints:\n${String(error).slice(0, 3000)}`;
+          }
+        }
+        throw new Error("invalid_music_edit");
+      });
+    } finally { this.isGenerating = false; }
+  }
+
+  async reviewForMusic(record: MusicReviewRecord, song: MusicResult, language: string, isCurrent: () => boolean = () => true) {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = musicReviewRequest(record, song, language);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let prompt = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (!isCurrent()) throw new Error("music_review_cancelled");
+          const text = await callExternalLlm(request.system, prompt, request.maxTokens);
+          if (!isCurrent()) throw new Error("music_review_cancelled");
+          try { return validateMusicReviewExplanation(text, record.report); }
+          catch (error) {
+            if (attempt === 1) throw error;
+            prompt = `${request.prompt}\nReturn a corrected JSON object. Every issue must reference an existing evidence_id. Do not add prose outside JSON.`;
+          }
+        }
+        throw new Error("invalid_music_review");
+      });
+    } finally { this.isGenerating = false; }
   }
 
   /** Returns the cleaned/enhanced prompt string. Caller applies it. */

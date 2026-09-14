@@ -1,6 +1,6 @@
 <script lang="ts">
   import { locale } from "../stores/locale.svelte.js";
-  import { killPortProcess, updateComfyui } from "../utils/api.js";
+  import { stopComfyui, updateComfyui } from "../utils/api.js";
   import { ipcInvoke, ipcListen, isBrowserMode } from "../utils/ipc.js";
   import {
     isCrashPayload,
@@ -16,7 +16,7 @@
     onrestarted?: () => void;
   }
 
-  let { open, payload, serverUrl = "http://127.0.0.1:8188", onclose, onrestarted }: Props =
+  let { open, payload, serverUrl = "http://127.0.0.1:18288", onclose, onrestarted }: Props =
     $props();
 
   let busy = $state(false);
@@ -33,7 +33,7 @@
         : locale.t("app.external_comfy.title_already_running"),
   );
 
-  const port = $derived(payload.port ?? 8188);
+  const port = $derived(payload.port ?? 18288);
 
   function waitForComfyReady(timeoutMs = 120_000): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -107,11 +107,11 @@
     }
   }
 
-  async function killAndRestart() {
+  async function restartManagedComfyui() {
     busy = true;
     localError = "";
     try {
-      await killPortProcess();
+      await stopComfyui();
       const result = await ipcInvoke<string>("start_comfyui");
       if (result === "already_running" || result === "skipped") {
         onrestarted?.();
@@ -261,7 +261,7 @@
           <button
             type="button"
             class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm transition-colors cursor-pointer disabled:opacity-50"
-            onclick={killAndRestart}
+            onclick={restartManagedComfyui}
             disabled={busy}
           >
             {busy

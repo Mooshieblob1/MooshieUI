@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "comfyui-desktop"
-version = "2.3.4"
+version = "2.3.5"
 dependencies = [
  "argon2",
  "axum",
@@ -845,6 +845,7 @@ dependencies = [
  "percent-encoding",
  "png 0.18.1",
  "rand 0.10.2",
+ "regex",
  "reqwest 0.12.28",
  "rmpv",
  "rusqlite",
@@ -873,6 +874,7 @@ dependencies = [
  "url",
  "uuid",
  "webkit2gtk",
+ "windows-sys 0.61.2",
  "zip 8.6.0",
 ]
 

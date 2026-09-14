@@ -270,8 +270,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             server_mode: ServerMode::AutoLaunch,
-            server_url: "http://127.0.0.1:8188".to_string(),
-            server_port: 8188,
+            server_url: "http://127.0.0.1:18288".to_string(),
+            server_port: 18288,
             comfyui_path: String::new(),
             venv_path: String::new(),
             extra_args: vec![],

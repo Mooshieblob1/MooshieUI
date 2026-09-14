@@ -14,6 +14,13 @@
   import MusicProgress from "./MusicProgress.svelte";
   import MusicLibrary from "./MusicLibrary.svelte";
   import MusicSongDialog from "./MusicSongDialog.svelte";
+  import MusicCover from "./MusicCover.svelte";
+  import MusicScoreTools from "./MusicScoreTools.svelte";
+  import MusicSampling from "./MusicSampling.svelte";
+  import MusicEdit from "./MusicEdit.svelte";
+  import MusicReview from "./MusicReview.svelte";
+  import MusicVersions from "./MusicVersions.svelte";
+  import { musicCover } from "../../stores/musicCover.svelte.js";
 
   let { userRole = "admin" }: { userRole?: string } = $props();
   const canDownload = $derived(userRole === "admin" || userRole === "moderator");
@@ -51,6 +58,7 @@
     const snapshot = {
       style: music.params.style, lyrics: music.params.lyrics,
       maxDuration: music.params.max_duration, abc: music.params.abc,
+      planning: music.params.planning, cover: music.params.cover === true,
       useExistingLyrics: task === "lyrics" && useExistingLyrics && !!music.params.lyrics.trim(),
     };
     try {
@@ -67,7 +75,7 @@
       const result = await promptAssistant.writeForMusic(task, { ...snapshot, language: locale.intlTag, brief });
       if (!active || sequence !== writingSequence) return;
       // A late response must not replace edits or settings loaded while waiting.
-      if (snapshot.style !== music.params.style || snapshot.lyrics !== music.params.lyrics || snapshot.maxDuration !== music.params.max_duration || snapshot.abc !== music.params.abc) {
+      if (snapshot.style !== music.params.style || snapshot.lyrics !== music.params.lyrics || snapshot.maxDuration !== music.params.max_duration || snapshot.abc !== music.params.abc || snapshot.planning !== music.params.planning || snapshot.cover !== (music.params.cover === true)) {
         writingError = locale.t("music.assistant_changed");
         return;
       }
@@ -112,7 +120,7 @@
     await comfyuiUpdate.update();
   }
   const inputClass = "w-full min-w-0 rounded-md border border-transparent bg-neutral-900 px-3 py-2.5 text-sm leading-relaxed text-neutral-200 placeholder:text-neutral-500 transition-colors hover:border-indigo-400/20 focus:border-indigo-400/50 focus:outline-none disabled:opacity-50";
-  onMount(() => { if (!music.busy) music.loadSettings(); void music.loadLibrary(); });
+  onMount(() => { if (!music.busy) music.loadSettings(); void music.loadLibrary(); void musicCover.refresh(); });
   $effect(() => { if (connection.connected) untrack(() => { void music.refresh(); }); });
 </script>
 
@@ -155,11 +163,15 @@
 </dialog>
 
 <MusicSongDialog />
+<MusicEdit />
+<MusicReview />
+<MusicVersions />
 <div class="flex h-full min-h-0 flex-col">
   <nav class="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-4 py-2" aria-label={locale.t("music.studio_title")}>
     {#each (["generate", "library"] as const) as view}
       <button type="button" class={`touch-target rounded-full px-5 text-sm font-medium transition-colors ${music.view === view ? 'bg-neutral-200 text-neutral-950' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`} aria-current={music.view === view ? "page" : undefined} onclick={() => { music.view = view; }}>{locale.t(view === "generate" ? "music.compose" : "music.library")}</button>
     {/each}
+    {#if music.results.length}<button type="button" class="touch-target ml-auto max-w-48 rounded-md px-3 text-xs text-indigo-300 hover:bg-neutral-900" onclick={() => music.comparing = true}>{locale.t("music.versions")}</button>{/if}
     {#if music.busy && music.view === "library"}<span class="ml-auto text-xs text-indigo-300" role="status">{locale.t("music.generating")}</span>{/if}
   </nav>
 {#if music.view === "library"}
@@ -197,7 +209,13 @@
     {/if}
 
     <div class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-8">
-      <form class="min-w-0 space-y-4" onsubmit={(event) => { event.preventDefault(); if (!writing) void music.generate(); }} onchange={() => music.saveSettings()}>
+      <form class="min-w-0 space-y-4" onsubmit={(event) => { event.preventDefault(); if (!writing && !musicCover.busy) void music.generate(); }} onchange={() => music.saveSettings()}>
+        <div class="flex gap-2" role="group" aria-label={locale.t("music.cover_mode")}>
+          {#each [false, true] as cover}
+            <button type="button" class={`touch-target rounded-full px-4 text-sm ${!!music.params.cover === cover ? 'bg-neutral-200 text-neutral-950' : 'text-neutral-400 hover:bg-neutral-900'}`} aria-pressed={!!music.params.cover === cover} disabled={music.busy || (musicCover.busy && !cover) || !!writing} onclick={() => music.setCover(cover)}>{locale.t(cover ? "music.cover" : "music.original")}</button>
+          {/each}
+        </div>
+        {#if music.params.cover}<MusicCover {canDownload} />{/if}
         <label class="block space-y-2 text-sm font-medium text-neutral-200"><span>{locale.t("music.song_title")}</span><input class={inputClass} type="text" maxlength="200" bind:value={music.params.title} placeholder={locale.t("music.title_optional")} /></label>
         <div>
           <div class="flex flex-wrap items-center justify-between gap-x-3">
@@ -224,6 +242,7 @@
           {#if music.params.abc.trim()}<p class="mt-2 text-xs leading-relaxed text-amber-300">{locale.t("music.assistant_score_help")}</p>{/if}
         </div>
         {#if writingError}<p class="whitespace-pre-wrap break-words border-l-2 border-red-400 pl-3 text-xs leading-relaxed text-red-300" role="alert">{writingError}</p>{/if}
+        <MusicScoreTools />
         <div class="space-y-1.5">
           <div class="flex items-center justify-between gap-3">
             <label for="music-duration" class="text-sm font-medium text-neutral-300">{locale.t("music.max_length")}</label>
@@ -253,16 +272,15 @@
               <label class="space-y-1.5 text-xs text-neutral-400"><span>{locale.t("music.seed")}</span><input class={inputClass} type="text" inputmode="text" bind:value={music.params.seed} oninvalid={() => { if (settingsEl) settingsEl.open = true; }} required /></label>
               <label class="space-y-1.5 text-xs text-neutral-400"><span>{locale.t("generation.steps.title")}</span><input class={inputClass} type="number" min="1" max="100" step="1" bind:value={music.params.steps} oninvalid={() => { if (settingsEl) settingsEl.open = true; }} required /></label>
             </div>
+            {#if !music.params.cover}
             <label class="block space-y-1.5 text-xs text-neutral-400">
               <span>{locale.t("music.planning")}</span>
               <select class={inputClass} bind:value={music.params.planning}>
                 <option value="full">{locale.t("music.plan_full")}</option><option value="melody">{locale.t("music.plan_melody")}</option><option value="off">{locale.t("music.plan_off")}</option>
               </select>
             </label>
-            <label class="block space-y-1.5 text-xs text-neutral-400">
-              <span>{locale.t("music.abc")}</span>
-              <textarea class={`${inputClass} font-mono text-xs`} rows="4" maxlength="128000" bind:value={music.params.abc} placeholder={locale.t("music.abc_help")}></textarea>
-            </label>
+            {/if}
+            <MusicSampling />
             <details open={music.capabilities?.checkpoints.length === 0}>
               <summary class="min-h-11 cursor-pointer content-center text-xs text-neutral-400">{locale.t("music.setup")}</summary>
               <div class="space-y-3 pb-2 text-xs leading-relaxed text-neutral-400">
@@ -281,14 +299,17 @@
             </details>
           </div>
         </details>
+        <label class="flex items-center justify-between gap-3 text-xs text-neutral-400"><span>{locale.t("music.candidates")}</span><select class={`${inputClass} max-w-28`} bind:value={music.candidateCount} disabled={music.busy}>{#each [1, 2, 4, 8] as count}<option value={count}>{count}</option>{/each}</select></label>
+        <p class="text-xs text-neutral-500">{locale.t("music.candidates_help")}</p>
         <div class="flex items-center gap-3">
-          <button type="submit" class="touch-target inline-flex min-h-12 flex-1 items-center justify-center gap-2.5 rounded-md bg-indigo-500 px-4 text-sm font-semibold text-[var(--theme-accent-foreground)] transition-colors hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 disabled:opacity-40" disabled={!connection.connected || !music.ready || music.busy || !!writing}>
+          <button type="submit" class="touch-target inline-flex min-h-12 flex-1 items-center justify-center gap-2.5 rounded-md bg-indigo-500 px-4 text-sm font-semibold text-[var(--theme-accent-foreground)] transition-colors hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 disabled:opacity-40" disabled={!connection.connected || !music.ready || !music.coverReady || music.busy || musicCover.busy || !!writing}>
             <svg class={`h-4 w-4 ${music.busy ? 'motion-safe:animate-pulse' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17V6l10-2v11M9 10l10-2"/><ellipse cx="6" cy="17" rx="3" ry="2"/><ellipse cx="16" cy="15" rx="3" ry="2"/></svg>
-            {locale.t(music.busy ? "music.generating" : "music.generate")}
+            {locale.t(music.busy ? "music.generating" : music.params.cover ? "music.cover_generate" : "music.generate")}
           </button>
-          {#if music.job}<button type="button" class="touch-target rounded-sm px-3 text-sm text-neutral-400 hover:bg-neutral-900 disabled:opacity-40" disabled={music.cancelling} onclick={() => music.cancel()}>{locale.t("common.cancel")}</button>{/if}
+          {#if music.busy}<button type="button" class="touch-target rounded-sm px-3 text-sm text-neutral-400 hover:bg-neutral-900 disabled:opacity-40" disabled={music.cancelling} onclick={() => music.cancel()}>{locale.t("common.cancel")}</button>{/if}
         </div>
         <MusicProgress />
+        {#if music.batches.length}<details><summary class="touch-target cursor-pointer content-center text-xs text-neutral-400">{locale.t("music.candidate_history")}</summary><div class="max-h-64 space-y-3 overflow-auto">{#each music.batches as batch}<div class="space-y-1 border-l border-neutral-700 pl-3"><p class="text-xs text-neutral-300">{batch.params.title || batch.params.style.slice(0, 80)}</p>{#each batch.attempts as attempt, index}<p class="text-xs text-neutral-500">{index + 1}. {locale.t(`music.attempt_${attempt.status}`)} · {attempt.seed}{#if attempt.error}<span class="block text-red-300">{attempt.error}</span>{/if}</p>{/each}{#if batch.attempts.some(a => a.status === "pending")}<button type="button" class="touch-target text-xs text-indigo-300 disabled:opacity-40" disabled={music.busy} onclick={() => music.resumeBatch(batch)}>{locale.t("music.candidate_resume")}</button>{/if}</div>{/each}</div></details>{/if}
         {#if music.error}<p class="whitespace-pre-wrap break-words border-l-2 border-red-400 pl-3 text-xs leading-relaxed text-red-300" role="alert">{music.error}</p>{/if}
       </form>
 
@@ -296,6 +317,9 @@
         <MusicPlayer />
         {#if music.selectedResult}
           <div class="space-y-1">
+            {#if music.selectedResult.metadata?.abc_truncated}<p class="text-xs text-amber-300">{locale.t("music.truncated_score")}</p>{/if}
+            {#if music.selectedResult.metadata?.semantic_truncated}<p class="text-xs text-amber-300">{locale.t("music.truncated_audio")}</p>{/if}
+            {#if music.selectedResult.metadata?.semantic_truncated == null}<p class="text-xs text-neutral-500">{locale.t("music.truncation_unknown")}</p>{/if}
             {#if music.selectedResult.abc}
               <details><summary class="min-h-11 cursor-pointer content-center text-xs text-neutral-400">{locale.t("music.abc")}</summary><pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-neutral-400">{music.selectedResult.abc}</pre><button type="button" class="touch-target my-2 rounded-sm px-3 text-xs text-indigo-300 hover:bg-neutral-900" onclick={() => music.reuseScore()}>{locale.t("music.reuse_score")}</button></details>
             {/if}

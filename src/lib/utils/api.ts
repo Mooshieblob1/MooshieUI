@@ -2,7 +2,32 @@ import { ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import type { ExportFormat } from "./videoExport.js";
 import { locale } from "../stores/locale.svelte.js";
-import type { MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
+import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
+import type { MusicTranscript } from "./musicReview.js";
+
+export function getMusicReviewCapabilities(): Promise<boolean> {
+  return ipcInvoke("get_music_review_capabilities");
+}
+export function transcribeMusicReview(audioBase64: string): Promise<MusicTranscript> {
+  return ipcInvoke("transcribe_music_review", { audioBase64 });
+}
+export function hashMusicReviewAudio(audioBase64: string): Promise<string> {
+  return ipcInvoke("hash_music_review_audio", { audioBase64 });
+}
+
+export function getCoverCapabilities(): Promise<{ configured: boolean; device?: string; error?: string; latest_job?: string }> {
+  return ipcInvoke("get_cover_capabilities");
+}
+export function transcribeMusicCover(audioBase64: string, filename: string): Promise<string> {
+  return ipcInvoke("transcribe_music_cover", { audioBase64, filename });
+}
+export function getCoverTranscription(jobId: string, cancel = false): Promise<CoverTranscriptionStatus> {
+  return ipcInvoke("get_cover_transcription", { jobId, cancel });
+}
+
+export function transcribeMusicNative(audioBase64: string, filename: string, encoder: string, mode: "melody" | "full"): Promise<MusicJob> {
+  return ipcInvoke("transcribe_music_native", { request: { audio_base64: audioBase64, filename, encoder, mode } });
+}
 
 export async function getMusicCapabilities(): Promise<MusicCapabilities> {
   return ipcInvoke("get_music_capabilities");
@@ -23,6 +48,10 @@ export async function loadMusicAudio(job: MusicJob): Promise<string> {
 /** Desktop only: the path comes from the native Save dialog. */
 export async function saveMusicAudio(audioBase64: string, path: string): Promise<void> {
   return ipcInvoke("save_music_audio", { audioBase64, path });
+}
+
+export async function saveMusicFile(dataBase64: string, path: string): Promise<void> {
+  return ipcInvoke("save_music_file", { dataBase64, path });
 }
 import type {
   AppConfig,

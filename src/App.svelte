@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
@@ -27,6 +27,10 @@
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { music } from "./lib/stores/music.svelte.js";
+  import { musicCover } from "./lib/stores/musicCover.svelte.js";
+  import { stopScorePreview } from "./lib/utils/musicPreview.js";
+  $effect(() => { const id = musicCover.nativeJob?.prompt_id; if (id) untrack(() => music.rememberPrompt(id)); });
+  $effect(() => { if (music.playing) untrack(stopScorePreview); });
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
@@ -854,7 +858,7 @@
   let startupStatusKind = $state<"idle" | "manual" | "starting" | "connecting" | "error">("idle");
   let externalComfyOpen = $state(false);
   let externalComfyPayload = $state<ComfyServerErrorPayload>({ error: "" });
-  let comfyServerUrl = $state("http://127.0.0.1:8188");
+  let comfyServerUrl = $state("http://127.0.0.1:18288");
 
   let photopeaOpen = $state(false);
   let photopeaImage = $state<OutputImage | null>(null);
@@ -2670,6 +2674,8 @@
     // and a save triggered mid-load would persist in-memory defaults over the
     // restored values; model-family detection is in flight over the same window.
     startup.locked = true;
+    startupStatus = locale.t("app.startup.loading_settings");
+    startupStatusKind = "starting";
     // Never let the lock stick if no unlock path is reached (unreachable server,
     // dropped event); the banner still reports the real startup state.
     setTimeout(() => { startup.locked = false; }, 120_000);
@@ -2681,7 +2687,7 @@
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
       managedComfyui = cfg.server_mode === "autolaunch";
-      comfyServerUrl = cfg.server_url || `http://127.0.0.1:${cfg.server_port ?? 8188}`;
+      comfyServerUrl = cfg.server_url || `http://127.0.0.1:${cfg.server_port ?? 18288}`;
     } catch {
       // Config not ready yet, defaults are fine
     }
@@ -2690,6 +2696,7 @@
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
     void music.loadLibrary();
     await syncManualSaveModeToConfig();
+    startupStatus = locale.t("app.status.starting_comfyui");
 
     // Browser/LAN mode: pull the server-side preference snapshot (or seed it
     // from current local state) once local settings have loaded and the auth
@@ -2717,6 +2724,10 @@
       }),
       ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
+        void getConfig().then((cfg) => {
+          comfyServerUrl = cfg.server_url;
+          connection.serverUrl = cfg.server_url;
+        }).catch((error) => console.warn("Could not refresh the ComfyUI endpoint:", error));
         // A healthy server is connected even before its first checkpoint is
         // downloaded. Music setup must work on a fresh managed installation.
         connection.connected = true;
@@ -3927,7 +3938,7 @@
         gallery.showToast(locale.t("photopea.saved"), "success");
       }}
     />
-    {#if startupStatus && !connection.connected}
+    {#if startupStatus && !connection.connected && !startup.locked}
       <div class="mb-1 flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
         {#if startupStatusKind === "manual" || startupStatusKind === "error"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -3971,17 +3982,13 @@
         {/if}
       </div>
     {/if}
-    <div class="relative flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950">
     {#if startup.locked}
-      <div
-        class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-neutral-950/70 backdrop-blur-[2px]"
-        role="status"
-        aria-label={locale.t("app.startup.initializing")}
-      >
-        <div class="h-6 w-6 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
-        <span class="text-sm text-neutral-300">{locale.t("app.startup.initializing")}</span>
+      <div class="mb-1 flex shrink-0 items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300" role="status">
+        <div class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
+        <span>{startupStatus || locale.t("app.startup.initializing")}</span>
       </div>
     {/if}
+    <div class="relative flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950" inert={startup.locked}>
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "music"}

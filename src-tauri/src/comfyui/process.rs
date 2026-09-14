@@ -1,19 +1,25 @@
 use std::time::Duration;
 
+use super::managed_process::{reserve_port, ManagedProcess};
 use crate::config::{AppConfig, ServerMode};
 use crate::error::AppError;
 use crate::state::AppState;
 
 /// True when ComfyUI's `/system_stats` endpoint responds with HTTP 2xx.
 pub async fn comfyui_health_ok(http_client: &reqwest::Client, health_url: &str) -> bool {
-    match http_client.get(health_url).send().await {
+    match http_client
+        .get(health_url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }
 }
 
 /// Parse a Windows `netstat -ano` line and return the PID when it is a TCP socket, the local port matches exactly, and it is in a listening state (foreign port is 0 or *).
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", test))]
 pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 5 {
@@ -40,7 +46,8 @@ pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> 
 ///
 /// On Linux, also strips AppImage env leakage — see [`tokio_command_no_window`].
 pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
-    let mut cmd = std::process::Command::new(program);
+    let mut cmd = std::process::Command::new(super::git::resolve_program(program.as_ref()));
+    super::git::apply_child_env(&mut cmd);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -62,7 +69,8 @@ pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
 pub(crate) fn tokio_command_no_window(
     program: impl AsRef<std::ffi::OsStr>,
 ) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = tokio::process::Command::new(super::git::resolve_program(program.as_ref()));
+    super::git::apply_child_env(cmd.as_std_mut());
     #[cfg(windows)]
     {
         // `tokio::process::Command` exposes `creation_flags` inherently, so the
@@ -536,16 +544,133 @@ pub fn uses_configured_gpu_workers(config: &AppConfig) -> bool {
     !config.gpu_workers.is_empty()
 }
 
-/// After killing a stale ComfyUI listener, wait until `/system_stats` stops responding.
-async fn wait_for_port_free(state: &AppState, health_url: &str, port: u16) {
-    kill_process_on_port(port).await;
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        if !comfyui_health_ok(&state.http_client, health_url).await {
-            return;
+/// Update runtime routing and the config that will be persisted as one operation.
+fn apply_managed_endpoint(
+    manager: &super::gpu_manager::GpuManager,
+    config: &mut AppConfig,
+    worker_id: Option<u32>,
+    port: u16,
+) -> bool {
+    let url = format!("http://127.0.0.1:{port}");
+    let mut changed = false;
+    let update_primary = if let Some(id) = worker_id {
+        if let Some(worker) = manager.workers.get(id as usize) {
+            worker.set_endpoint(port, url.clone());
+        }
+        let primary = config.gpu_workers.iter().position(|worker| worker.enabled);
+        if let Some(worker) = config.gpu_workers.get_mut(id as usize) {
+            changed = worker.port != Some(port);
+            worker.port = Some(port);
+        }
+        primary == Some(id as usize)
+    } else {
+        if let Some(worker) = manager.workers.first() {
+            worker.set_endpoint(port, url.clone());
+        }
+        true
+    };
+    if update_primary {
+        changed |= config.server_port != port || config.server_url != url;
+        config.server_port = port;
+        config.server_url = url;
+    }
+    changed
+}
+
+/// Keep every request path in sync with the port selected for the managed server.
+async fn set_managed_endpoint(state: &AppState, worker_id: Option<u32>, port: u16) {
+    let updated = {
+        let mut config = state.config.write().await;
+        apply_managed_endpoint(&state.gpu_manager, &mut config, worker_id, port)
+            .then(|| config.clone())
+    };
+    if let Some(config) = updated {
+        if let Err(err) = crate::config::save_config(&config) {
+            log::warn!("Could not save managed ComfyUI endpoint: {err}");
         }
     }
-    log::warn!("Port {} still in use after kill attempts", port);
+}
+
+async fn stop_owned_process(
+    process: &tokio::sync::Mutex<Option<tokio::process::Child>>,
+    config: &AppConfig,
+    worker_id: Option<u32>,
+) -> Result<(), AppError> {
+    let mut handle = process.lock().await;
+    let owned = handle
+        .as_ref()
+        .and_then(|child| child.id())
+        .and_then(|pid| ManagedProcess::from_child(pid).ok())
+        .or_else(|| {
+            (config.server_mode == ServerMode::AutoLaunch)
+                .then(|| ManagedProcess::load(config, worker_id))
+                .flatten()
+        });
+    if let Some(owned) = owned {
+        tokio::task::spawn_blocking(move || owned.stop())
+            .await
+            .map_err(|err| AppError::Other(format!("Managed shutdown failed: {err}")))??;
+    }
+    if let Some(child) = handle.as_mut() {
+        // The child handle itself is proof of ownership, even if metadata could
+        // not be read. Never fall back to finding a process by its port.
+        if child.try_wait()?.is_none() {
+            child.kill().await?;
+        }
+        tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .map_err(|_| {
+                AppError::Other("Managed ComfyUI did not stop within 5 seconds".into())
+            })??;
+    }
+    *handle = None;
+    Ok(())
+}
+
+fn stop_owned_process_blocking(
+    process: &tokio::sync::Mutex<Option<tokio::process::Child>>,
+    config: &AppConfig,
+    worker_id: Option<u32>,
+) {
+    let mut handle = process.blocking_lock();
+    let owned = handle
+        .as_ref()
+        .and_then(|child| child.id())
+        .and_then(|pid| ManagedProcess::from_child(pid).ok())
+        .or_else(|| {
+            (config.server_mode == ServerMode::AutoLaunch)
+                .then(|| ManagedProcess::load(config, worker_id))
+                .flatten()
+        });
+    if let Some(owned) = owned {
+        if let Err(err) = owned.stop() {
+            log::warn!("Managed shutdown failed: {err}");
+        }
+    }
+    if let Some(child) = handle.as_mut() {
+        let _ = child.start_kill();
+    }
+    *handle = None;
+}
+
+async fn remember_spawn(
+    config: &AppConfig,
+    worker_id: Option<u32>,
+    port: u16,
+    child: &mut tokio::process::Child,
+) -> Result<(), AppError> {
+    let result = child
+        .id()
+        .ok_or_else(|| AppError::ProcessSpawnFailed("ComfyUI exited during launch".into()))
+        .and_then(|pid| ManagedProcess::capture(config, pid, port))
+        .and_then(|owned| owned.save(config, worker_id));
+    if let Err(err) = result {
+        // Do not leave an untracked keep-alive process behind on a failed launch.
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Mark the legacy single-worker (the auto-created default worker when
@@ -556,7 +681,7 @@ pub async fn mark_legacy_worker_idle(state: &AppState) {
     use super::gpu_manager::WorkerStatus;
     let port = state.config.read().await.server_port;
     for worker in &state.gpu_manager.workers {
-        if worker.port != port {
+        if worker.port() != port {
             continue;
         }
         let mut status = worker.status.write().await;
@@ -633,18 +758,54 @@ fn kernel_cache_targets(cache_base: &std::path::Path) -> [(&'static str, std::pa
 }
 
 /// Spawn the ComfyUI process (or detect an already-running one).
+async fn ensure_git_for_startup(state: &AppState, config: &AppConfig) {
+    #[cfg(windows)]
+    if let Some(base) = crate::config::app_data_dir() {
+        if let Err(error) =
+            super::git::ensure_available(&base, &state.http_client, config.network_proxy.as_deref())
+                .await
+        {
+            // Core generation can still start offline. Setup and Update report
+            // this as an error because they need Git to complete their work.
+            log::warn!("Git is unavailable for custom-node installation: {error}");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (state, config);
+}
+
 /// Returns immediately — does NOT wait for the server to become ready.
 pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppError> {
-    let config = state.config.read().await.clone();
+    let _lifecycle = state.comfyui_lifecycle.lock().await;
+    let mut config = state.config.read().await.clone();
 
-    // Deploy bundled custom nodes whenever we have a valid ComfyUI path,
-    // regardless of server mode — the user may have started ComfyUI externally
-    // but still needs our nodes installed.
+    if config.server_mode != ServerMode::AutoLaunch {
+        if let Some(worker) = state.gpu_manager.workers.first() {
+            worker.set_endpoint(config.server_port, config.server_url.clone());
+        }
+        // External mode only connects. It must never install local nodes or
+        // claim readiness without reaching and validating the selected server.
+        let health_url = format!("{}/system_stats", config.server_url);
+        if !comfyui_health_ok(&state.http_client, &health_url).await {
+            return Err(AppError::ConnectionFailed(format!(
+                "Cannot reach ComfyUI at {}",
+                config.server_url
+            )));
+        }
+        super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
+        mark_legacy_worker_idle(state).await;
+        return Ok(StartResult::Skipped);
+    }
+
+    // Only managed local mode may modify the local ComfyUI installation.
     if !config.comfyui_path.is_empty() {
         let main_exists = std::path::Path::new(&config.comfyui_path)
             .join("main.py")
             .exists();
         if main_exists {
+            ensure_git_for_startup(state, &config).await;
             // Must run before launch: ComfyUI caches its model file lists at startup.
             migrate_anima_lllite_weights(&config.comfyui_path);
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
@@ -685,21 +846,6 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         }
     }
 
-    if config.server_mode != ServerMode::AutoLaunch {
-        // Remote mode: assume the configured worker is reachable and mark it
-        // idle so `submit_prompt` can dispatch to it.  If the server is
-        // actually down, the POST /prompt will surface the error. If it is
-        // reachable, verify the MooshieUI node required by every workflow now.
-        let health_url = format!("{}/system_stats", config.server_url);
-        if comfyui_health_ok(&state.http_client, &health_url).await {
-            super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
-                .await
-                .map_err(AppError::ProcessSpawnFailed)?;
-        }
-        mark_legacy_worker_idle(state).await;
-        return Ok(StartResult::Skipped);
-    }
-
     if uses_configured_gpu_workers(&config) {
         let mut started_any = false;
         let mut first_error: Option<AppError> = None;
@@ -726,67 +872,23 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         return Ok(StartResult::Spawned);
     }
 
-    // Check if something is already listening on the target port (e.g. a container)
-    let health_url = format!("{}/system_stats", config.server_url);
-    if comfyui_health_ok(&state.http_client, &health_url).await {
-        let mooshie_ok =
-            super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
-                .await;
-        let controlnet_ok =
-            super::nodes::verify_required_controlnet_nodes(&state.http_client, &config.server_url)
-                .await;
-        let style_transfer_ok = super::nodes::verify_required_style_transfer_nodes(
-            &state.http_client,
-            &config.server_url,
-        )
-        .await;
-        let gguf_ok =
-            super::nodes::verify_required_gguf_nodes(&state.http_client, &config.server_url).await;
-
-        if mooshie_ok.is_ok() {
-            if let Err(e) = controlnet_ok {
-                log::warn!(
-                    "ComfyUI at {} is running but optional ControlNet nodes are missing: {}",
-                    config.server_url,
-                    e
-                );
-            }
-            if let Err(e) = style_transfer_ok {
-                log::warn!(
-                    "ComfyUI at {} is running but optional style transfer nodes are missing: {}",
-                    config.server_url,
-                    e
-                );
-            }
-            if let Err(e) = gguf_ok {
-                log::warn!(
-                    "ComfyUI at {} is running but optional GGUF nodes are missing: {}",
-                    config.server_url,
-                    e
-                );
-            }
-            log::info!(
-                "ComfyUI already running at {}, skipping spawn",
-                config.server_url
-            );
+    // Reuse a keep-alive instance only when its saved OS identity still matches.
+    // A compatible ComfyUI found on a port may belong to another application.
+    if let Some(owned) = ManagedProcess::load(&config, None) {
+        set_managed_endpoint(state, None, owned.port).await;
+        config = state.config.read().await.clone();
+        let health_url = format!("{}/system_stats", config.server_url);
+        if !comfyui_health_ok(&state.http_client, &health_url).await {
+            return Ok(StartResult::Spawned); // Our process is still starting.
+        }
+        if super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
+            .await
+            .is_ok()
+        {
             mark_legacy_worker_idle(state).await;
             return Ok(StartResult::AlreadyRunning);
         }
-
-        // Stale external ComfyUI: MooshieUI nodes were deployed to disk but the running
-        // process never loaded them. Kill the listener and spawn a managed instance below.
-        log::warn!(
-            "ComfyUI at {} is missing required MooshieUI nodes — freeing port {} and spawning managed ComfyUI",
-            config.server_url,
-            config.server_port
-        );
-        if let Err(e) = mooshie_ok {
-            log::warn!("Mooshie node verification: {}", e);
-        }
-        if let Err(e) = controlnet_ok {
-            log::warn!("ControlNet node verification (optional): {}", e);
-        }
-        wait_for_port_free(state, &health_url, config.server_port).await;
+        stop_owned_process(&state.comfyui_process, &config, None).await?;
     }
 
     #[cfg(target_os = "windows")]
@@ -900,9 +1002,21 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     #[cfg(target_os = "macos")]
     super::runtime::validate_macos_args(&config.extra_args)?;
 
+    let port_reservation = reserve_port(config.server_port)?;
+    let port = port_reservation.local_addr()?.port();
+    if port != config.server_port {
+        log::info!(
+            "ComfyUI port {} is occupied; using {port} without touching the existing process",
+            config.server_port
+        );
+    }
+    set_managed_endpoint(state, None, port).await;
+    config.server_port = port;
+    config.server_url = format!("http://127.0.0.1:{port}");
+
     log::info!("Spawning ComfyUI: {} {}", python_path, main_path);
 
-    let mut cmd = tokio::process::Command::new(&python_path);
+    let mut cmd = tokio_command_no_window(&python_path);
     cmd.arg(&main_path)
         .arg("--listen")
         .arg("127.0.0.1")
@@ -1186,10 +1300,12 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         })
         .kill_on_drop(!config.keep_alive);
 
-    let child = cmd
+    drop(port_reservation);
+    let mut child = cmd
         .spawn()
         .map_err(|e| AppError::ProcessSpawnFailed(e.to_string()))?;
 
+    remember_spawn(&config, None, config.server_port, &mut child).await?;
     *state.comfyui_process.lock().await = Some(child);
 
     Ok(StartResult::Spawned)
@@ -1316,172 +1432,25 @@ pub fn read_comfyui_log_tail(lines: usize) -> Option<String> {
 }
 
 pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
+    let _lifecycle = state.comfyui_lifecycle.lock().await;
     let config = state.config.read().await.clone();
-    let port = config.server_port;
-
-    // Disconnect WebSocket first
-    {
-        let mut ws = state.ws_handle.lock().await;
-        if let Some(h) = ws.take() {
-            h.abort();
-        }
+    if let Some(ws) = state.ws_handle.lock().await.take() {
+        ws.abort();
     }
-
-    // Kill our child process if we have one
-    {
-        let mut process = state.comfyui_process.lock().await;
-        if let Some(ref mut child) = *process {
-            child.kill().await.ok();
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            *process = None;
-        }
-    }
-
-    if uses_configured_gpu_workers(&config) {
-        stop_all_workers(state).await;
-        return Ok(());
-    }
-
-    // If something is still listening on the port (external process or race),
-    // kill it by port number
-    kill_process_on_port(port).await;
-
-    // Wait for the port to actually be free
-    let health_url = format!("http://127.0.0.1:{}/system_stats", port);
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        if !comfyui_health_ok(&state.http_client, &health_url).await {
-            return Ok(()); // Port is free
-        }
-    }
-
-    log::warn!("Port {} still in use after stop attempts", port);
-    Ok(())
+    let main_result = stop_owned_process(&state.comfyui_process, &config, None).await;
+    let worker_result = stop_all_workers(state).await;
+    main_result.and(worker_result)
 }
 
 /// Synchronous shutdown path used from Tauri's `RunEvent::ExitRequested`.
+/// In remote mode this disconnects; it never terminates the external server.
 pub fn stop_comfyui_process_blocking(state: &AppState) {
     let config = state.config.blocking_read().clone();
-
-    {
-        let mut ws = state.ws_handle.blocking_lock();
-        if let Some(h) = ws.take() {
-            h.abort();
-        }
+    if let Some(ws) = state.ws_handle.blocking_lock().take() {
+        ws.abort();
     }
-
-    {
-        let mut process = state.comfyui_process.blocking_lock();
-        if let Some(ref mut child) = *process {
-            log::info!("Shutting down ComfyUI process...");
-            let _ = child.start_kill();
-            *process = None;
-        }
-    }
-
-    if uses_configured_gpu_workers(&config) {
-        stop_all_workers_blocking(state);
-    } else {
-        kill_process_on_port_blocking(config.server_port);
-    }
-}
-
-/// Find and kill any process listening on the given port.
-pub async fn kill_process_on_port(port: u16) {
-    #[cfg(target_os = "linux")]
-    {
-        // fuser -k sends SIGKILL to all processes using the port
-        let _ = tokio::process::Command::new("fuser")
-            .args(["-k", &format!("{}/tcp", port)])
-            .output()
-            .await;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = tokio::process::Command::new("lsof")
-            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
-            .output()
-            .await
-        {
-            let pids = String::from_utf8_lossy(&output.stdout);
-            for pid in pids.lines() {
-                if let Ok(pid) = pid.trim().parse::<u32>() {
-                    let _ = tokio::process::Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .output()
-                        .await;
-                }
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        let mut cmd = tokio::process::Command::new("cmd");
-        cmd.args(["/C", "netstat -ano"]);
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        if let Ok(output) = cmd.output().await {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                if let Some(pid) = parse_netstat_listening_pid(line, port) {
-                    let mut kill_cmd = tokio::process::Command::new("taskkill");
-                    kill_cmd.args(["/F", "/PID", &pid.to_string()]);
-                    kill_cmd.creation_flags(CREATE_NO_WINDOW);
-                    let _ = kill_cmd.output().await;
-                }
-            }
-        }
-    }
-}
-
-/// Blocking variant for shutdown hooks that cannot `.await`.
-fn kill_process_on_port_blocking(port: u16) {
-    #[cfg(target_os = "linux")]
-    {
-        let _ = std::process::Command::new("fuser")
-            .args(["-k", &format!("{}/tcp", port)])
-            .output();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = std::process::Command::new("lsof")
-            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
-            .output()
-        {
-            let pids = String::from_utf8_lossy(&output.stdout);
-            for pid in pids.lines() {
-                if pid.trim().parse::<u32>().is_ok() {
-                    let _ = std::process::Command::new("kill")
-                        .args(["-9", pid.trim()])
-                        .output();
-                }
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        if let Ok(output) = std::process::Command::new("netstat")
-            .arg("-ano")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                if let Some(pid) = parse_netstat_listening_pid(line, port) {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/PID", &pid.to_string()])
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output();
-                }
-            }
-        }
-    }
+    stop_owned_process_blocking(&state.comfyui_process, &config, None);
+    stop_all_workers_blocking(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -1497,7 +1466,11 @@ pub async fn start_worker_process(
     state: &AppState,
     worker: &Arc<GpuWorker>,
 ) -> Result<(), AppError> {
+    let _lifecycle = worker.lifecycle.lock().await;
     let config = state.config.read().await.clone();
+    if config.server_mode != ServerMode::AutoLaunch {
+        return Ok(());
+    }
     #[cfg(target_os = "macos")]
     super::runtime::validate_macos_args(&config.extra_args)?;
 
@@ -1507,6 +1480,7 @@ pub async fn start_worker_process(
             .join("main.py")
             .exists();
         if main_exists {
+            ensure_git_for_startup(state, &config).await;
             // Must run before launch: ComfyUI caches its model file lists at startup.
             migrate_anima_lllite_weights(&config.comfyui_path);
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
@@ -1551,71 +1525,21 @@ pub async fn start_worker_process(
         return Ok(());
     }
 
-    // Check if something is already listening on the worker's port
-    let health_url = format!("{}/system_stats", worker.base_url);
-    if comfyui_health_ok(&state.http_client, &health_url).await {
-        let mooshie_ok =
-            super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url).await;
-        let controlnet_ok =
-            super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
-                .await;
-        let style_transfer_ok = super::nodes::verify_required_style_transfer_nodes(
-            &state.http_client,
-            &worker.base_url,
-        )
-        .await;
-        let gguf_ok =
-            super::nodes::verify_required_gguf_nodes(&state.http_client, &worker.base_url).await;
-
-        if mooshie_ok.is_ok() {
-            if let Err(e) = controlnet_ok {
-                log::warn!(
-                    "Worker {} (GPU {}): optional ControlNet nodes missing at {}: {}",
-                    worker.id,
-                    worker.gpu_index,
-                    worker.base_url,
-                    e
-                );
-            }
-            if let Err(e) = style_transfer_ok {
-                log::warn!(
-                    "Worker {} (GPU {}): optional style transfer nodes missing at {}: {}",
-                    worker.id,
-                    worker.gpu_index,
-                    worker.base_url,
-                    e
-                );
-            }
-            if let Err(e) = gguf_ok {
-                log::warn!(
-                    "Worker {} (GPU {}): optional GGUF nodes missing at {}: {}",
-                    worker.id,
-                    worker.gpu_index,
-                    worker.base_url,
-                    e
-                );
-            }
-            log::info!(
-                "Worker {} (GPU {}): ComfyUI already running at {}",
-                worker.id,
-                worker.gpu_index,
-                worker.base_url,
-            );
-            {
-                let mut status = worker.status.write().await;
-                *status = WorkerStatus::Idle;
-            }
+    if let Some(owned) = ManagedProcess::load(&config, Some(worker.id)) {
+        set_managed_endpoint(state, Some(worker.id), owned.port).await;
+        let base_url = worker.base_url();
+        if !comfyui_health_ok(&state.http_client, &format!("{base_url}/system_stats")).await {
+            *worker.status.write().await = WorkerStatus::Starting;
             return Ok(());
         }
-
-        log::warn!(
-            "Worker {} (GPU {}): ComfyUI at {} missing MooshieUI nodes — freeing port {}",
-            worker.id,
-            worker.gpu_index,
-            worker.base_url,
-            worker.port
-        );
-        wait_for_port_free(state, &health_url, worker.port).await;
+        if super::nodes::verify_required_mooshie_nodes(&state.http_client, &base_url)
+            .await
+            .is_ok()
+        {
+            *worker.status.write().await = WorkerStatus::Idle;
+            return Ok(());
+        }
+        stop_owned_process(&worker.process, &config, Some(worker.id)).await?;
     }
 
     #[cfg(target_os = "windows")]
@@ -1637,11 +1561,22 @@ pub async fn start_worker_process(
         )));
     }
 
+    let port_reservation = reserve_port(worker.port())?;
+    let port = port_reservation.local_addr()?.port();
+    if port != worker.port() {
+        log::info!(
+            "Worker {}: port {} is occupied; using {port}",
+            worker.id,
+            worker.port()
+        );
+    }
+    set_managed_endpoint(state, Some(worker.id), port).await;
+
     log::info!(
         "Worker {} (GPU {}): Spawning ComfyUI on port {}",
         worker.id,
         worker.gpu_index,
-        worker.port,
+        worker.port(),
     );
 
     {
@@ -1649,12 +1584,12 @@ pub async fn start_worker_process(
         *status = WorkerStatus::Starting;
     }
 
-    let mut cmd = tokio::process::Command::new(&python_path);
+    let mut cmd = tokio_command_no_window(&python_path);
     cmd.arg(&main_path)
         .arg("--listen")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg(worker.port.to_string())
+        .arg(worker.port().to_string())
         .arg("--disable-auto-launch"); // MooshieUI is the frontend — no browser needed
 
     cmd.arg("--preview-method").arg("auto");
@@ -1770,10 +1705,12 @@ pub async fn start_worker_process(
         })
         .kill_on_drop(!config.keep_alive);
 
-    let child = cmd
+    drop(port_reservation);
+    let mut child = cmd
         .spawn()
         .map_err(|e| AppError::ProcessSpawnFailed(e.to_string()))?;
 
+    remember_spawn(&config, Some(worker.id), port, &mut child).await?;
     *worker.process.lock().await = Some(child);
     Ok(())
 }
@@ -1784,7 +1721,7 @@ pub async fn wait_for_worker_ready(
     worker: &Arc<GpuWorker>,
     timeout_secs: u64,
 ) -> Result<(), AppError> {
-    let url = format!("{}/system_stats", worker.base_url);
+    let url = format!("{}/system_stats", worker.base_url());
     let iterations = timeout_secs * 2;
 
     for i in 0..iterations {
@@ -1792,16 +1729,18 @@ pub async fn wait_for_worker_ready(
 
         if comfyui_health_ok(&state.http_client, &url).await {
             if let Err(e) =
-                super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url)
+                super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url())
                     .await
             {
                 let mut status = worker.status.write().await;
                 *status = WorkerStatus::Error;
                 return Err(AppError::ProcessSpawnFailed(e));
             }
-            if let Err(e) =
-                super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
-                    .await
+            if let Err(e) = super::nodes::verify_required_controlnet_nodes(
+                &state.http_client,
+                &worker.base_url(),
+            )
+            .await
             {
                 log::warn!(
                     "Worker {}: ControlNet custom nodes not loaded (optional): {}",
@@ -1811,7 +1750,7 @@ pub async fn wait_for_worker_ready(
             }
             if let Err(e) = super::nodes::verify_required_style_transfer_nodes(
                 &state.http_client,
-                &worker.base_url,
+                &worker.base_url(),
             )
             .await
             {
@@ -1822,7 +1761,8 @@ pub async fn wait_for_worker_ready(
                 );
             }
             if let Err(e) =
-                super::nodes::verify_required_gguf_nodes(&state.http_client, &worker.base_url).await
+                super::nodes::verify_required_gguf_nodes(&state.http_client, &worker.base_url())
+                    .await
             {
                 log::warn!(
                     "Worker {}: GGUF custom nodes not loaded (optional): {}",
@@ -1836,7 +1776,7 @@ pub async fn wait_for_worker_ready(
                 "Worker {} (GPU {}): ready on port {}",
                 worker.id,
                 worker.gpu_index,
-                worker.port
+                worker.port()
             );
             return Ok(());
         }
@@ -1887,7 +1827,12 @@ pub async fn wait_for_worker_ready(
 }
 
 /// Stop a specific worker's ComfyUI process.
-pub async fn stop_worker_process(worker: &Arc<GpuWorker>) -> Result<(), AppError> {
+pub async fn stop_worker_process(
+    state: &AppState,
+    worker: &Arc<GpuWorker>,
+) -> Result<(), AppError> {
+    let _lifecycle = worker.lifecycle.lock().await;
+    let config = state.config.read().await.clone();
     // Abort WebSocket task
     {
         let mut ws = worker.ws_handle.lock().await;
@@ -1896,18 +1841,8 @@ pub async fn stop_worker_process(worker: &Arc<GpuWorker>) -> Result<(), AppError
         }
     }
 
-    // Kill child process
-    {
-        let mut process = worker.process.lock().await;
-        if let Some(ref mut child) = *process {
-            child.kill().await.ok();
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            *process = None;
-        }
-    }
-
-    // Kill anything lingering on the port
-    kill_process_on_port(worker.port).await;
+    stop_owned_process(&worker.process, &config, Some(worker.id)).await?;
+    worker.release();
 
     let mut status = worker.status.write().await;
     *status = WorkerStatus::Stopped;
@@ -1942,10 +1877,10 @@ pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
 
         let w = Arc::clone(worker);
         let http_client = state.http_client.clone();
-        let base_url = w.base_url.clone();
+        let base_url = w.base_url();
         let worker_id = w.id;
         let gpu_index = w.gpu_index;
-        let port = w.port;
+        let port = w.port();
 
         let handle = tokio::spawn(async move {
             let url = format!("{}/system_stats", base_url);
@@ -2040,12 +1975,17 @@ pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
 }
 
 /// Stop all workers.
-pub async fn stop_all_workers(state: &AppState) {
+pub async fn stop_all_workers(state: &AppState) -> Result<(), AppError> {
+    let mut first_error = None;
     for worker in &state.gpu_manager.workers {
-        if let Err(e) = stop_worker_process(worker).await {
+        if let Err(e) = stop_worker_process(state, worker).await {
             log::error!("Failed to stop worker {}: {}", worker.id, e);
+            if first_error.is_none() {
+                first_error = Some(e);
+            }
         }
     }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Stop all workers from synchronous shutdown hooks.
@@ -2060,20 +2000,8 @@ pub fn stop_all_workers_blocking(state: &AppState) {
             }
         }
 
-        {
-            let mut process = worker.process.blocking_lock();
-            if let Some(ref mut child) = *process {
-                log::info!(
-                    "Shutting down worker {} (GPU {})...",
-                    worker.id,
-                    worker.gpu_index
-                );
-                let _ = child.start_kill();
-                *process = None;
-            }
-        }
-
-        kill_process_on_port_blocking(worker.port);
+        let config = state.config.blocking_read().clone();
+        stop_owned_process_blocking(&worker.process, &config, Some(worker.id));
 
         worker.release();
         let mut status = worker.status.blocking_write();
@@ -2087,6 +2015,104 @@ pub fn stop_all_workers_blocking(state: &AppState) {
 mod tests {
     use super::{attention_backend_flag, kernel_cache_targets, uses_configured_gpu_workers};
     use crate::config::{AppConfig, GpuWorkerConfig};
+
+    #[tokio::test]
+    async fn stop_leaves_an_unowned_listener_running_in_both_modes() {
+        use crate::config::ServerMode;
+        use crate::state::AppState;
+        for mode in [ServerMode::AutoLaunch, ServerMode::Remote] {
+            let external = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = external.local_addr().unwrap().port();
+            let config = AppConfig {
+                server_mode: mode,
+                server_port: port,
+                server_url: format!("http://127.0.0.1:{port}"),
+                ..AppConfig::default()
+            };
+            let state = AppState::new(config);
+            super::stop_comfyui_process(&state).await.unwrap();
+            assert!(std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_err());
+            assert!(std::net::TcpStream::connect(external.local_addr().unwrap()).is_ok());
+        }
+    }
+
+    #[test]
+    fn exit_leaves_an_unowned_listener_running() {
+        let external = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = external.local_addr().unwrap().port();
+        let config = AppConfig {
+            server_port: port,
+            ..AppConfig::default()
+        };
+        let state = crate::state::AppState::new(config);
+        super::stop_comfyui_process_blocking(&state);
+        assert!(std::net::TcpStream::connect(external.local_addr().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn fallback_updates_single_and_multi_worker_routing_and_saved_config() {
+        use crate::comfyui::gpu_manager::GpuManager;
+        let mut config = AppConfig::default();
+        let manager = GpuManager::new(&config, reqwest::Client::new());
+        assert!(super::apply_managed_endpoint(
+            &manager,
+            &mut config,
+            None,
+            32123
+        ));
+        assert_eq!(manager.workers[0].base_url(), config.server_url);
+        assert_eq!(manager.workers[0].port(), config.server_port);
+        assert_eq!(config.server_port, 32123);
+        assert!(!super::apply_managed_endpoint(
+            &manager,
+            &mut config,
+            None,
+            32123
+        ));
+
+        config.gpu_workers = vec![
+            GpuWorkerConfig {
+                gpu_index: 0,
+                port: Some(18288),
+                enabled: false,
+                label: None,
+                vram_mode: None,
+            },
+            GpuWorkerConfig {
+                gpu_index: 1,
+                port: Some(18289),
+                enabled: true,
+                label: None,
+                vram_mode: None,
+            },
+            GpuWorkerConfig {
+                gpu_index: 2,
+                port: Some(18290),
+                enabled: true,
+                label: None,
+                vram_mode: None,
+            },
+        ];
+        let manager = GpuManager::new(&config, reqwest::Client::new());
+        super::apply_managed_endpoint(&manager, &mut config, Some(1), 32124);
+        super::apply_managed_endpoint(&manager, &mut config, Some(2), 32125);
+        assert_eq!(manager.workers[1].base_url(), "http://127.0.0.1:32124");
+        assert_eq!(manager.workers[2].base_url(), "http://127.0.0.1:32125");
+        assert_eq!(config.server_url, manager.workers[1].base_url());
+        assert_eq!(config.gpu_workers[1].port, Some(32124));
+        assert_eq!(config.gpu_workers[2].port, Some(32125));
+    }
+
+    #[test]
+    fn external_worker_uses_the_configured_url() {
+        let config = AppConfig {
+            server_mode: crate::config::ServerMode::Remote,
+            server_url: "https://example.invalid/comfy".into(),
+            ..AppConfig::default()
+        };
+        let manager = crate::comfyui::gpu_manager::GpuManager::new(&config, reqwest::Client::new());
+        assert_eq!(manager.workers[0].base_url(), config.server_url);
+    }
 
     #[test]
     fn sage_backends_ask_for_the_sage_flag() {

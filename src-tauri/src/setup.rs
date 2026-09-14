@@ -12,6 +12,8 @@ use crate::config;
 use crate::error::AppError;
 use crate::state::AppState;
 
+static SETUP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Clone, serde::Serialize)]
 struct SetupProgress {
     step: String,
@@ -156,6 +158,7 @@ impl SetupNetworkOpts {
 /// Apply CREATE_NO_WINDOW flag on Windows to prevent console popups.
 #[cfg(target_os = "windows")]
 fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    crate::comfyui::git::apply_child_env(cmd.as_std_mut());
     #[allow(unused_imports)]
     use std::os::windows::process::CommandExt;
     cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -609,6 +612,7 @@ async fn step_download_comfyui(
     app: &AppHandle,
     base: &Path,
     client: &reqwest::Client,
+    net: &SetupNetworkOpts,
 ) -> Result<(), String> {
     let comfyui_dir = base.join("comfyui");
     if comfyui_dir.join("main.py").exists() {
@@ -618,10 +622,19 @@ async fn step_download_comfyui(
     // The managed source may be an immutable commit between releases. Fetch
     // the exact ref: `git clone --branch` cannot check out a commit SHA.
     std::fs::create_dir_all(&comfyui_dir).map_err(|e| e.to_string())?;
-    let git_result = update_comfyui_checkout(app, &comfyui_dir).await;
+    let git = crate::comfyui::git::resolve_program("git".as_ref());
+    let git_result = crate::comfyui::git::prepare_checkout(
+        &git,
+        &comfyui_dir,
+        "https://github.com/Comfy-Org/ComfyUI.git",
+        comfyui_source_ref(),
+        net.network_proxy.as_deref(),
+    )
+    .await;
 
-    if git_result.is_ok() {
-        return Ok(());
+    match git_result {
+        Ok(checkout) => return checkout.apply().await,
+        Err(error) => log::warn!("Git setup failed; trying the ComfyUI archive: {error}"),
     }
 
     // The same immutable source is used for the no-git fallback.
@@ -2377,6 +2390,9 @@ pub async fn run_setup(
     network_proxy: Option<String>,
     pip_index_url: Option<String>,
 ) -> Result<(), AppError> {
+    let _setup = SETUP_LOCK
+        .try_lock()
+        .map_err(|_| "A ComfyUI setup or update is already running")?;
     #[cfg(target_os = "macos")]
     crate::comfyui::runtime::validate_host()?;
     let net = SetupNetworkOpts::from_options(network_proxy.clone(), pip_index_url.clone());
@@ -2390,6 +2406,17 @@ pub async fn run_setup(
     }
     let base = data_dir(&app)?;
     std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+
+    #[cfg(windows)]
+    {
+        emit(&app, "git", "Checking Git for ComfyUI...", 1);
+        crate::comfyui::git::ensure_available(
+            &base,
+            &state.http_client,
+            net.network_proxy.as_deref(),
+        )
+        .await?;
+    }
 
     // 0. Stop ComfyUI first. Re-running setup over an existing install rewrites
     //    the venv, and on Windows an executable that is currently running cannot
@@ -2445,7 +2472,7 @@ pub async fn run_setup(
 
     // 3. Download ComfyUI
     emit(&app, "comfyui", "Downloading ComfyUI...", 30);
-    step_download_comfyui(&app, &base, &state.http_client).await?;
+    step_download_comfyui(&app, &base, &state.http_client, &net).await?;
 
     // 4. Create venv
     emit(&app, "venv", "Creating virtual environment...", 40);
@@ -2578,84 +2605,6 @@ pub async fn get_comfyui_version(app: AppHandle) -> Result<ComfyUiVersionInfo, A
     Ok(comfyui_version_info(&base.join("comfyui")))
 }
 
-/// Move an existing ComfyUI working tree onto [`comfyui_source_ref`] using git.
-///
-/// `git reset --hard <tag>` is run WITHOUT `git clean`, so untracked user data
-/// (models, outputs, inputs, custom_nodes) is left untouched while ComfyUI's own
-/// tracked source files are moved to the pinned release. A zip-based install
-/// with no `.git` is converted to a managed git checkout in place; its existing
-/// files are untracked and survive the reset. Returns the method used, for
-/// reporting.
-async fn update_comfyui_checkout(app: &AppHandle, comfyui_dir: &Path) -> Result<String, String> {
-    let dir = comfyui_dir
-        .to_str()
-        .ok_or_else(|| "Invalid ComfyUI path".to_string())?;
-    let url = "https://github.com/comfyanonymous/ComfyUI.git";
-
-    let method = if comfyui_dir.join(".git").exists() {
-        "git-fetch"
-    } else {
-        // Zip-based install (no git history). Initialise a repo in place so we
-        // can fetch the pinned tag; existing files are untracked and survive the
-        // reset that follows.
-        emit_log(
-            app,
-            "ComfyUI install has no git history; initialising repository...",
-        );
-        run_logged(app, "git", &["-C", dir, "init"], &[])
-            .await
-            .map_err(|_| "Failed to initialise git in the ComfyUI directory".to_string())?;
-        run_logged(
-            app,
-            "git",
-            &["-C", dir, "remote", "add", "origin", url],
-            &[],
-        )
-        .await
-        .ok();
-        "git-init"
-    };
-
-    // Ensure origin points at the canonical ComfyUI repo (the user may have a
-    // fork remote). Non-fatal when it already matches.
-    run_logged(
-        app,
-        "git",
-        &["-C", dir, "remote", "set-url", "origin", url],
-        &[],
-    )
-    .await
-    .ok();
-
-    // Works with both release tags and immutable commit SHAs.
-    run_logged(
-        app,
-        "git",
-        &[
-            "-C",
-            dir,
-            "fetch",
-            "--depth=1",
-            "origin",
-            comfyui_source_ref(),
-        ],
-        &[],
-    )
-    .await
-    .map_err(|_| format!("Failed to fetch ComfyUI {}", comfyui_source_ref()))?;
-
-    run_logged(
-        app,
-        "git",
-        &["-C", dir, "reset", "--hard", "FETCH_HEAD"],
-        &[],
-    )
-    .await
-    .map_err(|_| format!("Failed to check out ComfyUI {}", comfyui_source_ref()))?;
-
-    Ok(method.to_string())
-}
-
 #[derive(Clone, serde::Serialize)]
 pub struct ComfyUiUpdateResult {
     pub updated: bool,
@@ -2675,6 +2624,9 @@ pub async fn update_comfyui(
     app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<ComfyUiUpdateResult, AppError> {
+    let _setup = SETUP_LOCK
+        .try_lock()
+        .map_err(|_| "A ComfyUI setup or update is already running")?;
     let base = data_dir(&app)?;
     let comfyui_dir = base.join("comfyui");
     if !comfyui_dir.join("main.py").exists() {
@@ -2694,6 +2646,38 @@ pub async fn update_comfyui(
         }
     }
 
+    let net = {
+        let config = state.config.read().await;
+        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
+    };
+    // Git discovery/download and fetching do not change the working source or
+    // Python environment. Fail here while the existing server is still usable.
+    emit(&app, "git", "Checking Git for the ComfyUI update...", 5);
+    let git = crate::comfyui::git::ensure_available(
+        &base,
+        &state.http_client,
+        net.network_proxy.as_deref(),
+    )
+    .await?;
+    emit(
+        &app,
+        "comfyui",
+        &format!("Fetching ComfyUI {}...", comfyui_target_label()),
+        10,
+    );
+    let checkout = crate::comfyui::git::prepare_checkout(
+        &git,
+        &comfyui_dir,
+        "https://github.com/Comfy-Org/ComfyUI.git",
+        comfyui_source_ref(),
+        net.network_proxy.as_deref(),
+    )
+    .await
+    .map_err(|error| {
+        log::error!("ComfyUI update preparation failed: {error}");
+        error
+    })?;
+
     // 1. Stop ComfyUI so the working tree is not locked (Windows) and the new
     //    version is picked up on the next start.
     emit(
@@ -2703,11 +2687,9 @@ pub async fn update_comfyui(
             "Stopping ComfyUI to update to {}...",
             comfyui_target_label()
         ),
-        5,
+        20,
     );
-    crate::comfyui::process::stop_comfyui_process(&state)
-        .await
-        .ok();
+    crate::comfyui::process::stop_comfyui_process(&state).await?;
 
     // 2. Move the working tree onto the pinned tag. The marker goes down first:
     //    from here until every step below has succeeded the install is
@@ -2721,15 +2703,11 @@ pub async fn update_comfyui(
         &app,
         "comfyui",
         &format!("Updating ComfyUI to {}...", comfyui_target_label()),
-        20,
+        30,
     );
-    let method = update_comfyui_checkout(&app, &comfyui_dir).await?;
+    checkout.apply().await?;
 
     // 3. Reinstall ComfyUI's Python deps (a new release may add/upgrade them).
-    let net = {
-        let config = state.config.read().await;
-        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
-    };
     emit(&app, "deps", "Updating ComfyUI dependencies...", 55);
     step_install_deps(&app, &base, &net).await?;
 
@@ -2756,7 +2734,7 @@ pub async fn update_comfyui(
     Ok(ComfyUiUpdateResult {
         updated: true,
         target_ref: comfyui_target_label().to_string(),
-        method,
+        method: checkout.method.to_string(),
     })
 }
 

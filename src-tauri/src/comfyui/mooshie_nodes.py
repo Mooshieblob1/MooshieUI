@@ -1238,7 +1238,159 @@ class MooshieResumeEdit:
         return (out,)
 
 
+class MooshieYuE2Plan:
+    """Native YuE2 planning with an explicit end-token/budget receipt."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "clip": ("CLIP",), "style": ("STRING", {"multiline": True}),
+            "lyrics": ("STRING", {"multiline": True}),
+            "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            "mode": (["full", "melody"],),
+            "max_abc_tokens": ("INT", {"default": 8192, "min": 1, "max": 20000}),
+        }}
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("abc", "receipt")
+    FUNCTION = "plan"
+    CATEGORY = "mooshie/music"
+
+    def plan(self, clip, style, lyrics, seed, mode, max_abc_tokens):
+        tokens = clip.tokenize(style, lyrics=lyrics, cot=mode, seed=seed, max_tokens=max_abc_tokens)
+        ids = clip.generate(tokens, max_length=max_abc_tokens, temperature=0.7,
+                            top_p=0.9, top_k=30, repetition_penalty=1.005, seed=seed)
+        # The supported native generator omits ABC_END from returned ids and
+        # returns immediately on it. Exactly max_length ids therefore means
+        # that every iteration produced a non-end token, including the last.
+        # This is the token stopping contract, not an estimate from score/audio length.
+        if not isinstance(ids, list) or len(ids) > max_abc_tokens:
+            raise RuntimeError("Unsupported YuE2 planner token result; update the music adapter.")
+        receipt = {"adapter": "mooshie-yue2-1", "abc_truncated": len(ids) == max_abc_tokens,
+                   "abc_tokens": len(ids), "max_abc_tokens": max_abc_tokens}
+        return clip.decode(ids), json.dumps(receipt)
+
+
+class MooshieYuE2Music:
+    """Native semantic generation with guidance and a small, serializable receipt."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "clip": ("CLIP",), "style": ("STRING", {"multiline": True}),
+            "lyrics": ("STRING", {"multiline": True}), "abc": ("STRING", {"multiline": True}),
+            "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            "mode": (["full", "melody"],),
+            "max_duration": ("FLOAT", {"default": 120.0, "min": 1.0, "max": 360.0}),
+            "temperature": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0}),
+            "top_p": ("FLOAT", {"default": 0.95, "min": 0.01, "max": 1.0}),
+            "top_k": ("INT", {"default": 100, "min": 1, "max": 32768}),
+            "repetition_penalty": ("FLOAT", {"default": 1.2, "min": 0.01, "max": 10.0}),
+            "cfg_scale": ("FLOAT", {"default": -1.0, "min": -1.0, "max": 20.0}),
+        }}
+
+    RETURN_TYPES = ("CONDITIONING", "FLOAT", "STRING")
+    RETURN_NAMES = ("conditioning", "seconds", "receipt")
+    FUNCTION = "generate"
+    CATEGORY = "mooshie/music"
+
+    def generate(self, clip, style, lyrics, abc, seed, mode, max_duration,
+                 temperature, top_p, top_k, repetition_penalty, cfg_scale):
+        from comfy.text_encoders.yue2 import FRAMES_PER_SECOND
+        if not abc.strip():
+            mode = "off"
+        if cfg_scale == -1:
+            cfg_scale = 1.01 if mode == "off" else 1.0
+        if not 0 <= cfg_scale <= 20:
+            raise ValueError("Semantic guidance must be automatic (-1), or 0–20.")
+        tokens = clip.tokenize(style, lyrics=lyrics, cot=mode, abc=abc, seed=seed,
+                               max_tokens=max(1, round(max_duration * FRAMES_PER_SECOND)),
+                               temperature=temperature, top_p=top_p, top_k=top_k,
+                               repetition_penalty=repetition_penalty, cfg_scale=cfg_scale)
+        conditioning = clip.encode_from_tokens_scheduled(tokens)
+        metadata = conditioning[0][1]
+        seconds = metadata["yue2_frames"] / FRAMES_PER_SECOND
+        truncated = metadata.get("yue2_truncated")
+        receipt = {"adapter": "mooshie-yue2-1", "semantic_truncated": truncated if isinstance(truncated, bool) else None,
+                   "semantic_frames": metadata["yue2_frames"], "generated_seconds": seconds,
+                   "cfg_scale": cfg_scale, "mode": mode}
+        return conditioning, seconds, json.dumps(receipt)
+
+
+class MooshieMusicLoadAudio:
+    """Load one app-owned source recording and remove that temporary upload."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"audio": ("STRING",)}}
+
+    RETURN_TYPES = ("AUDIO",)
+    FUNCTION = "load"
+    CATEGORY = "mooshie/music"
+
+    @classmethod
+    def IS_CHANGED(cls, audio):
+        return float("nan")
+
+    def load(self, audio):
+        import av
+        from comfy.model_management import throw_exception_if_processing_interrupted
+        from pathlib import Path
+        import time
+        pattern = r"mooshie_cover_[0-9a-f-]{36}\.(wav|mp3|flac|m4a|ogg|opus|aiff|aif)"
+        if not re.fullmatch(pattern, audio):
+            raise ValueError("Invalid temporary cover recording name.")
+        root = Path(folder_paths.get_input_directory()).resolve()
+        source = root / audio
+        if source.is_symlink() or source.resolve().parent != root:
+            raise ValueError("Cover recording must be a regular file in the input folder.")
+        # Cancelled queues can leave an upload unconsumed. Only this namespaced,
+        # bounded-lifetime class of files is eligible for later cleanup.
+        for old in root.glob("mooshie_cover_*"):
+            try:
+                if re.fullmatch(pattern, old.name) and not old.is_symlink() and time.time() - old.stat().st_mtime > 86400:
+                    old.unlink()
+            except OSError:
+                pass
+        try:
+            if not source.is_file() or source.stat().st_size > 64 * 1024 * 1024:
+                raise ValueError("Missing cover recording or source exceeds 64 MiB.")
+            # Decode incrementally with a hard duration bound. Container metadata
+            # can be absent or wrong; never accumulate hours from a small MP3.
+            sample_rate = 44100
+            frames, samples = [], 0
+            with av.open(str(source)) as container:
+                if not container.streams.audio:
+                    raise ValueError("The recording has no audio stream.")
+                stream = container.streams.audio[0]
+                resampler = av.AudioResampler(format="fltp", layout="stereo", rate=sample_rate)
+                def append(frame):
+                    nonlocal samples
+                    samples += frame.samples
+                    if samples > 360 * sample_rate:
+                        raise ValueError("Cover source exceeds 360 seconds. Trim it before transcription.")
+                    frames.append(torch.from_numpy(frame.to_ndarray()))
+                for frame in container.decode(streams=stream.index):
+                    throw_exception_if_processing_interrupted()
+                    for output in resampler.resample(frame):
+                        append(output)
+                for output in resampler.resample(None):
+                    append(output)
+            if not frames:
+                raise ValueError("No audio frames decoded.")
+            waveform = torch.cat(frames, dim=1)
+            return ({"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate},)
+        finally:
+            try:
+                source.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 NODE_CLASS_MAPPINGS = {
+    "MooshieYuE2Plan": MooshieYuE2Plan,
+    "MooshieYuE2Music": MooshieYuE2Music,
+    "MooshieMusicLoadAudio": MooshieMusicLoadAudio,
     "MooshieSigmaTail": MooshieSigmaTail,
     "MooshieResumeEdit": MooshieResumeEdit,
     "MooshieFaceDetailer": MooshieFaceDetailer,
@@ -1252,6 +1404,9 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "MooshieYuE2Plan": "Mooshie YuE2 Score and Status",
+    "MooshieYuE2Music": "Mooshie YuE2 Music and Status",
+    "MooshieMusicLoadAudio": "Mooshie Temporary Cover Audio",
     "MooshieSigmaTail": "Mooshie Sigma Tail (resume)",
     "MooshieResumeEdit": "Mooshie Resume Edit (paused latent)",
     "MooshieFaceDetailer": "Mooshie Face Detailer",

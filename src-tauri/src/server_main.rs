@@ -183,21 +183,9 @@ async fn main() {
         .expect("Failed to listen for ctrl-c");
     log::info!("Shutdown signal received, cleaning up...");
 
-    // Kill ComfyUI process(es)
-    let configured_worker_mode = {
-        let config = state.config.read().await;
-        process::uses_configured_gpu_workers(&config)
-    };
-    if configured_worker_mode {
-        log::info!("Shutting down all GPU workers...");
-        process::stop_all_workers(&state).await;
-    } else {
-        let mut proc = state.comfyui_process.lock().await;
-        if let Some(ref mut child) = *proc {
-            log::info!("Shutting down ComfyUI process...");
-            let _ = child.start_kill();
-            *proc = None;
-        }
+    // Use the same ownership checks and process-tree cleanup as desktop mode.
+    if let Err(err) = process::stop_comfyui_process(&state).await {
+        log::error!("Could not stop managed ComfyUI: {err}");
     }
 
     server_handle.abort();

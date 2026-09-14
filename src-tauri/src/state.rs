@@ -725,8 +725,11 @@ pub struct AppState {
     pub cleanup_reactors_started: std::sync::atomic::AtomicBool,
     /// Multi-user generation queue — tracks prompt ownership and position.
     pub prompt_queue: PromptQueue,
+    pub cover_jobs: crate::commands::music_cover::CoverJobs,
+    pub music_review_lock: Mutex<()>,
     /// Multi-GPU worker manager — distributes prompts across N GPU backends.
     pub gpu_manager: GpuManager,
+    pub comfyui_lifecycle: Mutex<()>,
     /// Tracks output temp filenames by placeholder prompt_id for recovery.
     /// Populated by the WebSocket bridge when `comfyui:output_image` fires;
     /// consumed (and cleared) by `recover_prompt_outputs`.
@@ -794,7 +797,10 @@ impl AppState {
             web_server_running: std::sync::atomic::AtomicBool::new(false),
             cleanup_reactors_started: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
+            cover_jobs: crate::commands::music_cover::CoverJobs::default(),
+            music_review_lock: Mutex::new(()),
             gpu_manager,
+            comfyui_lifecycle: Mutex::new(()),
             output_image_cache: std::sync::RwLock::new(HashMap::new()),
             last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
             model_requests: ModelRequestState::new(),
@@ -883,7 +889,7 @@ impl AppState {
             );
             let _ = self
                 .http_client
-                .post(format!("{}/free", worker.base_url))
+                .post(format!("{}/free", worker.base_url()))
                 .json(&serde_json::json!({
                     "unload_models": true,
                     "free_memory": true,
@@ -1058,7 +1064,7 @@ impl AppState {
                 if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
                     let _ = self
                         .http_client
-                        .post(format!("{}/queue", worker.base_url))
+                        .post(format!("{}/queue", worker.base_url()))
                         .json(&serde_json::json!({ "delete": ids_to_delete }))
                         .send()
                         .await;
@@ -1072,7 +1078,7 @@ impl AppState {
             if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
                 let _ = self
                     .http_client
-                    .post(format!("{}/free", worker.base_url))
+                    .post(format!("{}/free", worker.base_url()))
                     .json(&serde_json::json!({
                         "unload_models": true,
                         "free_memory": true,
@@ -1173,7 +1179,7 @@ impl AppState {
             for worker in &self.gpu_manager.workers {
                 let _ = self
                     .http_client
-                    .post(format!("{}/queue", worker.base_url))
+                    .post(format!("{}/queue", worker.base_url()))
                     .json(&serde_json::json!({ "delete": ids_to_delete }))
                     .send()
                     .await;
@@ -1186,7 +1192,7 @@ impl AppState {
             if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
                 let _ = self
                     .http_client
-                    .post(format!("{}/free", worker.base_url))
+                    .post(format!("{}/free", worker.base_url()))
                     .json(&serde_json::json!({
                         "unload_models": true,
                         "free_memory": true,

@@ -64,7 +64,7 @@ Technical references and project planning documents are indexed in [docs/README.
 - **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext and Anima ReStyler.
 - **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
 - **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, Turbo LoRA, TeaCache, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
-- **Music studio** - YuE2 songs from a musical style and sectioned lyrics, with duration-aware writing through your configured Prompt Assistant. Name songs, browse a device-local library, create playlists, use the shared bottom player, mark lyric timings manually and download lossless FLAC.
+- **Music studio** - YuE2 songs, native SheetSage2 covers and score-aware assistance through your configured Prompt Assistant. [Review and edit scores](docs/MUSIC.md), preview melodies, export MIDI, generate sequential candidates, compare saved versions and export projects with original FLAC and settings. Review recognized lyrics and approximate cover timing using xAI transcription and your assistant, with playable evidence. Includes playlists, shared playback and manual lyric timing.
 - **Pause and continue** - pause ComfyUI text-to-image sampling, inspect a preview, change prompts or sampling settings, or paint a masked correction before continuing. Keep a pause to try different endings.
 - **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
 - **Smart model detection** - 20+ architectures identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
@@ -85,8 +85,12 @@ Controls depend on the selected backend and model. NovelAI offers the three stan
 ### Desktop (Windows/Linux)
 
 1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases).
-2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required.
+2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required. On Windows, it also installs an app-local copy of Git when a working Git installation cannot be found.
 3. Start generating; ComfyUI launches automatically.
+
+Managed ComfyUI uses port **18288** for new installations, preserves saved port settings, and chooses another free port if needed. Setup, restart, and shutdown stop only processes identified as MooshieUI's own, including verified keep-alive instances. Existing ComfyUI applications can stay running. To connect to one intentionally, choose **Remote** in the connection settings.
+
+The generation model picker uses the connected ComfyUI server's model inventory. A file downloaded locally may still be unavailable to that server; the picker and model manager show this separately. For an external server, install models on that server and refresh the model list. Startup progress appears above the page, keeping the tips readable while controls initialize.
 
 > Allow roughly 5–10 GB for the runtime, plus space for model downloads; first setup typically takes 5–15 minutes depending on your connection. GPU support varies by platform, including an allowlisted AMD Windows preview. See [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) for details.
 
@@ -204,6 +208,7 @@ MooshieUI stands on the shoulders of a huge amount of open-source work. Sincere 
 - **[Svelte](https://svelte.dev/)**, **[Tailwind CSS](https://tailwindcss.com/)**, **[Vite](https://vite.dev/)**, and **[TypeScript](https://www.typescriptlang.org/)** - the frontend stack.
 - **[PyTorch](https://pytorch.org/)** - the ML framework behind ComfyUI inference.
 - **[uv](https://github.com/astral-sh/uv)** (Astral) - manages Python and the ComfyUI environment during setup.
+- **[MinGit](https://gitforwindows.org/mingit)** (Git for Windows) - downloaded when needed for ComfyUI updates and custom-node installation on Windows.
 
 ### Inference runtimes
 

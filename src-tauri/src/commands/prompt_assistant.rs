@@ -417,7 +417,9 @@ pub async fn call_external_llm(
     image_filename: Option<String>,
     image_data: Option<Vec<String>>,
 ) -> Result<String, AppError> {
-    let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 4096);
+    // Complete score edits need more room than short prompt rewrites. Existing
+    // callers keep their requested budgets; the upper bound remains explicit.
+    let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 16384);
     let images =
         crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data).await;
     chat_any(&app, &state, &system, &prompt, max_tokens, &images).await

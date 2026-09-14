@@ -14,6 +14,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { buildFolderTrees, countFilesRecursive, type FolderTreeNode } from "../../utils/modelFolderTree.js";
+  import { resolveAvailableModel } from "../../utils/modelAvailability.js";
   import { modelFolderPath } from "../../utils/modelGallerySort.js";
 
   interface Props {
@@ -39,6 +40,13 @@
     { id: "text_encoders", label: () => locale.t("settings.paths.open_folder.clip") },
     { id: "diffusion_models", label: () => locale.t("settings.paths.open_folder.diffusion") },
   ];
+
+  function availabilityLabel(file: ManagedModelFile): string {
+    const available = models.serverModels[activeCategory];
+    if (!available) return "";
+    return locale.t(resolveAvailableModel(file.filename, available)
+      ? "generation.model.available_server" : "generation.model.local_unavailable");
+  }
 
   let activeCategory = $state("checkpoints");
   let files = $state<ManagedModelFile[]>([]);
@@ -581,6 +589,7 @@
               {@const moveGroups = moveGroupsFor(file)}
               <div class="rounded-xl border border-neutral-700 bg-neutral-900 p-3">
                 <p class="break-all text-sm font-medium text-neutral-100">{file.filename}</p>
+                <p class="text-[10px] text-neutral-400">{availabilityLabel(file)}</p>
                 <p class="mt-1 text-xs text-neutral-500">{file.directory_label}</p>
                 <p class="mt-0.5 break-all text-[10px] text-neutral-600">{file.directory}</p>
                 <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-400">
@@ -618,6 +627,7 @@
               <div class="grid grid-cols-[minmax(0,1fr)_150px_110px_120px_142px] items-center gap-3 border-b border-neutral-800 px-3 py-2.5 transition-colors last:border-b-0 hover:bg-neutral-800">
                 <div class="min-w-0">
                   <p class="truncate text-sm text-neutral-100" title={file.filename}>{file.filename}</p>
+                  <p class="text-[10px] text-neutral-400">{availabilityLabel(file)}</p>
                   <p class="truncate text-[10px] text-neutral-500" title={file.directory}>{file.directory_label} · {file.directory}</p>
                 </div>
                 <div class="truncate text-xs text-neutral-400" title={file.directory_label}>{file.directory_label}</div>

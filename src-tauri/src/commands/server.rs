@@ -180,12 +180,11 @@ pub async fn stop_comfyui(state: State<'_, Arc<AppState>>) -> Result<(), AppErro
     process::stop_comfyui_process(&state).await
 }
 
-/// Kill whatever process is currently listening on the configured ComfyUI port.
-/// Used by the "external instance" modal so the user can free port 8188 and retry.
+/// Compatibility alias: stop only managed ComfyUI processes before retrying.
 #[tauri::command]
 pub async fn kill_port_process(state: State<'_, Arc<AppState>>) -> Result<u16, AppError> {
     let port = state.config.read().await.server_port;
-    process::kill_process_on_port(port).await;
+    process::stop_comfyui_process(&state).await?;
     Ok(port)
 }
 

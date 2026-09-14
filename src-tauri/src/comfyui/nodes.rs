@@ -227,6 +227,9 @@ const IPADAPTER_PLUS_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNo
 }];
 
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
+    "MooshieYuE2Plan",
+    "MooshieYuE2Music",
+    "MooshieMusicLoadAudio",
     "MooshieSaveImage",
     "MooshieSaveVideo",
     "MooshieLoadVideoPath",
