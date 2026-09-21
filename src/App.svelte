@@ -1941,6 +1941,40 @@
         generation.vae = metadata.vae;
       }
 
+      // LoRAs — stored as "name:strength_model:strength_clip, ..."
+      if (metadata.loras !== undefined) {
+        const parsed: { name: string; strength_model: number; strength_clip: number }[] = [];
+        for (const entry of metadata.loras.split(",")) {
+          const trimmed = entry.trim();
+          if (!trimmed) continue;
+          const parts = trimmed.split(":");
+          const name = parts[0]?.trim();
+          if (!name) continue;
+          parsed.push({
+            name,
+            strength_model:
+              parts[1] !== undefined && Number.isFinite(parseFloat(parts[1]))
+                ? parseFloat(parts[1])
+                : 1.0,
+            strength_clip:
+              parts[2] !== undefined && Number.isFinite(parseFloat(parts[2]))
+                ? parseFloat(parts[2])
+                : 1.0,
+          });
+        }
+        // Only keep LoRAs that exist in the current model list
+        const valid = parsed.filter((l) => models.loras.includes(l.name));
+        generation.loras = valid.map((l) => ({
+          name: l.name,
+          strength_model: l.strength_model,
+          strength_clip: l.strength_clip,
+          enabled: true,
+        }));
+      } else {
+        // No LoRAs in metadata — clear any active selection.
+        generation.loras = [];
+      }
+
       // MooshieUI-exclusive params round-trip
       if (metadata.mooshie_smart_guidance !== undefined) {
         generation.smartGuidance = metadata.mooshie_smart_guidance === "true";
