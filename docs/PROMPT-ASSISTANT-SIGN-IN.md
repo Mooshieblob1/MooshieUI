@@ -1,4 +1,6 @@
-# Prompt Assistant account sign-in (unreleased)
+# Prompt Assistant account sign-in
+
+Available in v2.3.6 and later.
 
 In **Settings > Prompt Assistant**, enable the external assistant and choose:
 

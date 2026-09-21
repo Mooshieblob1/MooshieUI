@@ -1,7 +1,7 @@
 # Music studio
 
-This guide describes the music tools included in v2.3.5 and the unreleased
-song-link importer described below.
+This guide describes the music tools included in v2.3.6, including reference-song
+lookup, temporary song-link imports, audio style analysis and saved style profiles.
 
 ## Setup
 
@@ -37,7 +37,7 @@ You can also import ABC, type in the score editor, or generate directly with an
 empty score. Off planning generates without a score; clear ABC before using it.
 Saved plans are available from **Saved score drafts**.
 
-Leave **Lyrics** empty for a purely instrumental track (unreleased). Whitespace-only
+Leave **Lyrics** empty for a purely instrumental track. Whitespace-only
 lyrics also count as empty. MooshieUI requests instruments only, without vocals,
 singing, speech, humming or choir, in both score planning and audio generation.
 This also applies to covers and supplied scores. Your saved style and score stay
@@ -69,7 +69,7 @@ An administrator or moderator can download `sheetsage2_bf16.safetensors`
 (1.39 GB) into the host's `models/audio_encoders` folder. A remote transcription
 worker needs that encoder installed on its own machine.
 
-### Auto style from audio (unreleased)
+### Auto style from audio
 
 In **Styles**, enable **Auto style from audio**. Choose the current cover source,
 upload a separate style reference, or explicitly select one of your generated
@@ -127,7 +127,7 @@ creates text guidance for YuE2; use the separate cover transcription workflow
 for a reviewed melody score. It does not transfer the original singer or add
 native audio conditioning.
 
-### Saved style profiles (unreleased)
+### Saved style profiles
 
 After analysis, name the accepted style and choose **Save style profile**. The
 saved record contains your edited style, the original source observations and
@@ -143,7 +143,7 @@ then presents an editable draft with Apply/Undo. It does not resend or reanalyze
 audio, and it keeps the saved source observations unchanged. Saved profiles and
 comparison notes are currently device-local and are not included in project ZIPs.
 
-### Draft a style from a reference song (unreleased)
+### Draft a style from a reference song
 
 In **Styles**, enable **Use a reference song**, enter a song title and optionally
 an artist and version/remix, then choose **Find song**. Select the matching
@@ -167,7 +167,7 @@ key, instrumentation or production. If the model cannot describe that recording
 reliably, it leaves the style unchanged. Edits, recording changes, account changes
 and closing the panel invalidate late responses. Nothing is applied automatically.
 
-### Import a song link (unreleased)
+### Import a song link
 
 Under **Transcribe a source recording**, paste a link and choose **Import song**.
 YouTube, YouTube Music and Dailymotion download the linked recording. Spotify,
@@ -342,7 +342,7 @@ These checks verify symbolic score and text properties. They do not prove that
 the generated singing follows the score, that a translation fits perfectly, or
 that a new arrangement sounds better. Listen to the resulting versions.
 
-### Arrangement planner prototype (unreleased)
+### Arrangement planner prototype
 
 Open **Arrangement planner · Prototype**, suggest sections or add your own, then
 reorder them, assign whole seconds and add optional musical directions. Suggestions

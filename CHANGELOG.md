@@ -1,5 +1,29 @@
 # Changelog
 
+## What's New in v2.3.6
+
+### Music references, styles and comparisons
+- **Find a reference song**: search by title, artist and version, review the matching catalog entry, and ask your configured Prompt Assistant for an editable style draft. Retrieved context and inferred musical details remain visible before Apply or Undo.
+- **Import a song link for covers**: import public YouTube, YouTube Music or Dailymotion recordings. Spotify, Deezer and Tidal links look up song information and find an audio match on YouTube; listen to confirm the version. Required media tools install automatically on supported hosts. Imports are temporary, bounded to six minutes and 64 MiB, and do not start transcription automatically.
+- **Auto style from audio**: analyze a recording or selected excerpt with a supported audio-input provider, review the description and uncertainties, and apply an editable style. Save reusable text-only style profiles and adapt them to another duration or vocal mode without re-uploading audio. Playing a song does not send it for analysis.
+- **Instrumental intent and arrangement guidance**: empty Lyrics now requests instruments only in planning and generation. The Arrangement planner prototype turns ordered sections and approximate durations into editable style guidance. Scoped composition edits include before/after previews and preservation checks; these tools do not splice or repair rendered audio.
+- **Better A/B listening**: match listening volume with local loudness measurements, compare generation settings and keep comparison notes. Original recordings stay unchanged; saved profiles and notes remain local to the current device and account.
+
+### Prompt Assistant account sign-in
+- **ChatGPT and Google accounts**: choose ChatGPT (subscription) or Gemini (Google sign-in) in Prompt Assistant settings. MooshieUI installs the pinned official companion, opens desktop sign-in and keeps credentials in its own app-data directory. Account quotas apply; these connections do not fall back to a paid API key.
+- **Supported inputs and cleanup**: ChatGPT supports text and images; Gemini also supports music audio analysis when advertised by its companion. Agent tools are disabled, and cancellation, timeouts and shutdown stop owned companion processes. Browser clients use the account configured on their host. Existing local and API-key providers remain available.
+
+### Video generation and retained drafts
+- **Standard and Turbo methods**: choose Larryvrh or compatible LightX2V first/last-frame and reference presets with their matching steps, sampling and shifts. Existing VDN selections migrate to Standard; VDN is no longer offered.
+- **Concise H3 motion guidance**: simple shots and Live2D requests use shorter prompts, preserve requested motion and endpoints, and avoid rigid blink schedules.
+- **Experimental 2x refinement**: optionally retain an H3 draft, then choose Refine 2x from the saved clip to generate a larger version while preserving its audio. Retained tensors use additional storage on the original ComfyUI server and can be deleted separately. The learned upscaler and workflow pass CPU checks; full two-pass GPU quality and memory use remain unqualified.
+
+### Gallery and maintenance
+- **Refresh gallery**: discover externally added or restored files, remove missing persisted entries and reload changed metadata while preserving unsaved and in-flight results. Refresh does not rename gallery files.
+- **Build and setup fixes**: resolve frontend type errors, clean up companions on browser-idle shutdown, deploy the complete H3 helper package in compatibility checks, and validate media prerequisites on Linux and macOS. Local caches and generated Linux/Nix state are ignored while shared build inputs remain tracked.
+
+---
+
 ## What's New in v2.3.5
 
 ### Covers and composition tools
