@@ -257,6 +257,15 @@ pub struct GenerationParams {
     /// of 20). Requires the `ComfyUI-MiniMax-H3-Turbo` custom node pack.
     #[serde(default)]
     pub video_turbo_enabled: bool,
+    /// Explicit sampling mode. Empty preserves older clients' Turbo boolean.
+    #[serde(default)]
+    pub video_acceleration: String,
+    #[serde(default)]
+    pub video_turbo_preset: String,
+    #[serde(default)]
+    pub video_vdn_precision: super::h3_vdn::VdnPrecision,
+    #[serde(default)]
+    pub video_save_draft: bool,
     /// Sampling steps used when the Turbo LoRA is on (clamped to 4..=8 by the
     /// video validation arm). Ignored when `video_turbo_enabled` is false.
     #[serde(default = "default_video_turbo_steps")]

@@ -39,6 +39,7 @@ impl Default for MusicSampling {
 pub struct MusicParams {
     pub checkpoint: String,
     pub style: String,
+    #[serde(default)]
     pub lyrics: String,
     pub planning: String,
     pub abc: String,
@@ -77,8 +78,8 @@ pub fn validate(params: &MusicParams) -> Result<(), String> {
     if params.checkpoint.trim().is_empty() || !params.checkpoint.to_lowercase().contains("yue2") {
         return Err("Select a YuE2 checkpoint from ComfyUI's checkpoints folder.".into());
     }
-    if params.style.trim().is_empty() || params.lyrics.trim().is_empty() {
-        return Err("Enter a style and sectioned lyrics for YuE2.".into());
+    if params.style.trim().is_empty() {
+        return Err("Enter a style for YuE2. Leave lyrics blank for instrumental music.".into());
     }
     if !matches!(params.planning.as_str(), "full" | "melody" | "off") {
         return Err("YuE2 planning must be full, melody, or off.".into());
@@ -168,10 +169,19 @@ pub fn build(params: &MusicParams, seed: i64) -> Value {
 
 pub fn build_with_capabilities(params: &MusicParams, seed: i64, extended: bool) -> Value {
     let sampling = &params.sampling;
+    // Empty lyrics explicitly request an instrumental in both planning and audio
+    // generation. Keep the user's saved style/lyrics intact for editing and reuse.
+    let instrumental = params.lyrics.trim().is_empty();
+    let style = if instrumental {
+        format!("{}\nPurely instrumental music. Instruments only; no vocals, singing, speech, humming or choir.", params.style.trim())
+    } else {
+        params.style.clone()
+    };
+    let lyrics = if instrumental { "" } else { &params.lyrics };
     let mut graph = json!({
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": params.checkpoint}},
         "3": {"class_type": "YuE2GenerateMusic", "inputs": {
-            "clip": ["1", 1], "style": params.style, "lyrics": params.lyrics,
+            "clip": ["1", 1], "style": style, "lyrics": lyrics,
             "abc": "", "seed": seed,
             "mode": if params.planning == "melody" { "melody" } else { "full" },
             "max_duration": params.max_duration,
@@ -201,7 +211,7 @@ pub fn build_with_capabilities(params: &MusicParams, seed: i64, extended: bool) 
     if params.planning != "off" {
         let score = if params.abc.trim().is_empty() || params.task == MusicTask::Plan {
             graph["2"] = json!({"class_type": if extended { "MooshieYuE2Plan" } else { "YuE2GenerateABC" }, "inputs": {
-                "clip": ["1", 1], "style": params.style, "lyrics": params.lyrics,
+                "clip": ["1", 1], "style": style, "lyrics": lyrics,
                 "seed": seed, "mode": params.planning, "max_abc_tokens": sampling.max_abc_tokens
             }});
             if extended {
@@ -254,6 +264,68 @@ mod tests {
             sampling: MusicSampling::default(),
         }
     }
+    #[test]
+    fn blank_lyrics_request_instrumental_plans_and_audio_without_mutating_inputs() {
+        for lyrics in ["", " \n\t "] {
+            for extended in [false, true] {
+                for planning in ["full", "melody", "off"] {
+                    for task in [MusicTask::Audio, MusicTask::Plan] {
+                        if task == MusicTask::Plan && planning == "off" {
+                            continue;
+                        }
+                        let mut p = params();
+                        p.lyrics = lyrics.into();
+                        p.planning = planning.into();
+                        p.task = task;
+                        assert!(validate(&p).is_ok());
+                        let graph = build_with_capabilities(&p, 42, extended);
+                        for id in ["2", "3"] {
+                            if let Some(node) = graph.get(id) {
+                                assert_eq!(node["inputs"]["lyrics"], "");
+                                let style = node["inputs"]["style"].as_str().unwrap();
+                                assert!(style.starts_with("folk"));
+                                assert!(style.contains("Purely instrumental"));
+                                assert!(style.contains("no vocals"));
+                            }
+                        }
+                        assert_eq!(p.lyrics, lyrics);
+                        assert_eq!(p.style, "folk");
+                    }
+                }
+                let mut p = params();
+                p.lyrics = lyrics.into();
+                p.cover = true;
+                p.planning = "melody".into();
+                p.abc = "X:1\nK:C\nCDEF".into();
+                assert!(validate(&p).is_ok());
+                let graph = build_with_capabilities(&p, 42, extended);
+                assert!(graph.get("2").is_none());
+                assert_eq!(graph["3"]["inputs"]["abc"], p.abc);
+                assert_eq!(graph["3"]["inputs"]["lyrics"], "");
+                assert!(graph["3"]["inputs"]["style"]
+                    .as_str()
+                    .unwrap()
+                    .contains("no vocals"));
+            }
+        }
+        let p = params();
+        let graph = build(&p, 42);
+        for id in ["2", "3"] {
+            assert_eq!(graph[id]["inputs"]["style"], p.style);
+            assert_eq!(graph[id]["inputs"]["lyrics"], p.lyrics);
+        }
+        let mut omitted = serde_json::to_value(&p).unwrap();
+        omitted.as_object_mut().unwrap().remove("lyrics");
+        assert!(serde_json::from_value::<MusicParams>(omitted)
+            .unwrap()
+            .lyrics
+            .is_empty());
+        let mut missing_style = p;
+        missing_style.style = " ".into();
+        missing_style.lyrics.clear();
+        assert!(validate(&missing_style).is_err());
+    }
+
     #[test]
     fn reviewed_plans_have_no_audio_nodes_and_never_reuse_old_abc() {
         let mut p = params();

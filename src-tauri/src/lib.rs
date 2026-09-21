@@ -12,6 +12,7 @@ pub mod http_range;
 pub mod interrogator;
 pub mod jxl;
 pub mod log_buffer;
+pub mod media_tools;
 pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
@@ -158,6 +159,7 @@ pub fn run() {
                 let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
                 let handle = _app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    media_tools::start(shared_state.clone());
                     *shared_state.app_handle.lock().await = Some(handle);
                 });
             }
@@ -542,6 +544,8 @@ pub fn run() {
             commands::api::install_h3_turbo,
             commands::api::is_h3_teacache_installed,
             commands::api::install_h3_teacache,
+            commands::api::get_h3_vdn_status,
+            commands::api::install_h3_vdn,
             commands::api::install_pip_package,
             commands::api::check_python_import,
             commands::websocket::connect_ws,
@@ -580,6 +584,7 @@ pub fn run() {
             commands::prompt_assistant::set_llm_base_url,
             commands::prompt_assistant::list_external_llm_models,
             commands::prompt_assistant::connect_llm_oauth,
+            commands::prompt_assistant::cancel_llm_oauth,
             commands::prompt_assistant::set_llm_xai_client,
             commands::prompt_assistant::call_external_llm,
             commands::api::fetch_cached_image,
@@ -601,6 +606,11 @@ pub fn run() {
             commands::video_export::copy_file_to_clipboard,
             commands::video_export::copy_file_to,
             commands::video_interpolate::interpolate_video,
+            commands::video_drafts::get_h3_upscaler_status,
+            commands::video_drafts::install_h3_upscaler,
+            commands::video_drafts::get_video_draft_status,
+            commands::video_drafts::refine_video_draft,
+            commands::video_drafts::delete_video_draft,
             commands::music::get_music_capabilities,
             commands::music_review::get_music_review_capabilities,
             commands::music_review::transcribe_music_review,
@@ -608,6 +618,16 @@ pub fn run() {
             commands::music_cover::get_cover_capabilities,
             commands::music_cover::transcribe_music_cover,
             commands::music_cover::get_cover_transcription,
+            commands::music_link::get_music_link_capabilities,
+            commands::music_link::prepare_music_link_tools,
+            commands::music_link::import_music_link,
+            commands::music_link::get_music_link_import,
+            commands::music_reference::search_music_reference,
+            commands::music_audio_style::get_music_audio_style_capabilities,
+            commands::music_audio_style::analyze_music_audio_style,
+            commands::music_audio_style::get_music_audio_style,
+            commands::music_audio_style::measure_music_loudness,
+            commands::music_reference::get_music_reference,
             commands::music::generate_music,
             commands::music::transcribe_music_native,
             commands::music::get_music_status,
@@ -624,6 +644,12 @@ pub fn run() {
     app.run(|app_handle, event| {
         if let RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<Arc<AppState>>();
+            tauri::async_runtime::block_on(async {
+                media_tools::shutdown(&state).await;
+                prompt_assistant::companion::shutdown().await;
+                commands::music_link::shutdown(&state).await;
+                commands::music_audio_style::shutdown(&state).await;
+            });
             let keep_alive = {
                 let config = state.config.blocking_read();
                 config.keep_alive

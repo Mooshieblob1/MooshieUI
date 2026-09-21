@@ -25,7 +25,7 @@ import {
 } from "../utils/modelFamily.js";
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import { GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
-import { H3_TURBO_LORA } from "../utils/h3Models.js";
+import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import {
   NOVELAI_DEFAULTS,
@@ -41,6 +41,7 @@ import {
   H3_DIFFUSION_MARKERS,
   H3_MAX_REF_IMAGES,
   H3_TURBO_DEFAULT_STEPS,
+  resolveVideoAcceleration,
   H3_TURBO_MAX_STEPS,
   H3_TURBO_MIN_STEPS,
   clampH3Megapixels,
@@ -71,6 +72,9 @@ import type {
   ResumeStage,
   VideoAspectRatio,
   VideoVariant,
+  VideoAcceleration,
+  VideoTurboPreset,
+  VideoVdnPrecision,
 } from "../types/index.js";
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
@@ -933,7 +937,21 @@ class GenerationStore {
   videoInterpEngine = $state<"rife" | "gmfss">("rife");
   /** MiniMax-H3 Turbo LoRA: distilled few-step sampling. Only ever true once the
    *  lazy install has put the node pack and the adapter on disk. */
-  videoTurboEnabled = $state(false);
+  videoAcceleration = $state<VideoAcceleration>("standard");
+  videoTurboPreset = $state<VideoTurboPreset>("larryvrh");
+  videoLightxLora = $state<string | null>(null);
+  videoVdnPrecision = $state<VideoVdnPrecision>("bf16");
+  videoSaveDraft = $state(false);
+  videoDraftNodesReady = $state(false);
+  get videoDraftFits() { const { width, height } = this.videoDimensions; return width * height * 4 <= 2_200_000; }
+  get effectiveVideoTurboPreset() { return h3TurboPreset(this.videoTurboPreset, this.videoVariant); }
+  get videoTurboEnabled(): boolean { return this.videoAcceleration === "turbo"; }
+  set videoTurboEnabled(enabled: boolean) {
+    this.videoAcceleration = enabled ? "turbo" : "standard";
+  }
+  /** Installation runs across panel remounts without allowing new generations. */
+  videoAccelerationInstalling = $state(false);
+  videoAccelerationReady = $state(false);
   /** Sampling steps while Turbo is on; clamped to 4..8 by the backend too. */
   videoTurboSteps = $state(H3_TURBO_DEFAULT_STEPS);
   /** TeaCache: reuses the previous step's model output while the accumulated
@@ -1018,6 +1036,10 @@ class GenerationStore {
 
   /** Whether the video mode has everything it needs to submit a generation. */
   get videoReady(): boolean {
+    if (this.videoSaveDraft && (!this.videoDraftFits || !this.videoDraftNodesReady)) return false;
+    if (this.videoAccelerationInstalling) return false;
+    if (this.videoAcceleration !== "standard" && !this.videoAccelerationReady) return false;
+    if (this.videoAcceleration !== "standard" && this.videoAcceleration !== "turbo") return false;
     if (!this.videoModelsReady) return false;
     if (!this.videoDiffusionModelLooksLikeH3) return false;
     if (!this.videoDiffusionModelMatchesVariant) return false;
@@ -1031,6 +1053,11 @@ class GenerationStore {
       return false;
     }
     return true;
+  }
+
+  /** Whether the active mode has the models and nodes needed to submit. */
+  get canGenerate(): boolean {
+    return this.mode === "video" ? this.videoReady : !!this.checkpoint;
   }
 
   /** Whether the developer mode section in Settings has been unlocked (10 version taps). Not persisted. */
@@ -2720,8 +2747,10 @@ class GenerationStore {
         if (saved.videoRifeFastMode !== undefined) this.videoRifeFastMode = saved.videoRifeFastMode;
         if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
         if (saved.videoInterpEngine !== undefined) this.videoInterpEngine = saved.videoInterpEngine;
-        if (saved.videoTurboEnabled !== undefined)
-          this.videoTurboEnabled = saved.videoTurboEnabled;
+        this.videoAcceleration = resolveVideoAcceleration(saved.videoAcceleration, saved.videoTurboEnabled);
+        this.videoTurboPreset = h3TurboPreset(saved.videoTurboPreset, this.videoVariant).id;
+        this.videoVdnPrecision = saved.videoVdnPrecision === "int8" ? "int8" : "bf16";
+        this.videoSaveDraft = saved.videoSaveDraft === true;
         if (saved.videoTeacacheEnabled !== undefined)
           this.videoTeacacheEnabled = saved.videoTeacacheEnabled;
         if (saved.videoTurboSteps !== undefined)
@@ -3023,9 +3052,17 @@ class GenerationStore {
         videoRifeFastMode: this.videoRifeFastMode,
         videoRifeEnsemble: this.videoRifeEnsemble,
         videoInterpEngine: this.videoInterpEngine,
-        videoTurboEnabled: this.videoTurboEnabled,
+        videoAcceleration: this.videoAcceleration,
+      videoTurboPreset: this.effectiveVideoTurboPreset.id,
+      videoVdnPrecision: this.videoVdnPrecision,
+      videoSaveDraft: this.videoSaveDraft,
+      videoTurboEnabled: this.videoTurboEnabled,
         videoTurboSteps: this.videoTurboSteps,
         videoTeacacheEnabled: this.videoTeacacheEnabled,
+        videoModelTier: this.videoModelTier,
+        videoTurboLora: this.videoTurboLora,
+        videoSampler: this.videoSampler,
+        videoScheduler: this.videoScheduler,
         videoDiffusionModel: this.videoDiffusionModel,
         videoClipModel: this.videoClipModel,
         videoVaeModel: this.videoVaeModel,
@@ -3180,6 +3217,10 @@ class GenerationStore {
       videoRifeFastMode: this.videoRifeFastMode,
       videoRifeEnsemble: this.videoRifeEnsemble,
       videoInterpEngine: this.videoInterpEngine,
+      videoAcceleration: this.videoAcceleration,
+      videoTurboPreset: this.effectiveVideoTurboPreset.id,
+      videoVdnPrecision: this.videoVdnPrecision,
+      videoSaveDraft: this.videoSaveDraft,
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
       videoTeacacheEnabled: this.videoTeacacheEnabled,
@@ -3807,9 +3848,13 @@ class GenerationStore {
       video_rife_fast_mode: this.videoRifeFastMode,
       video_rife_ensemble: this.videoRifeEnsemble,
       video_interp_engine: this.videoInterpEngine,
+      video_acceleration: resolveVideoAcceleration(this.videoAcceleration, this.videoTurboEnabled),
+      video_turbo_preset: this.effectiveVideoTurboPreset.id,
+      video_vdn_precision: this.videoVdnPrecision,
+      video_save_draft: this.videoSaveDraft,
       video_turbo_enabled: this.videoTurboEnabled,
-      video_turbo_steps: this.videoTurboSteps,
-      video_turbo_lora: this.videoTurboEnabled ? this.videoTurboLora : null,
+      video_turbo_steps: this.effectiveVideoTurboPreset.steps ?? this.videoTurboSteps,
+      video_turbo_lora: this.videoTurboEnabled ? (this.effectiveVideoTurboPreset.id === "larryvrh" ? this.videoTurboLora : (this.videoLightxLora ?? this.effectiveVideoTurboPreset.file.filename)) : null,
       video_teacache_enabled: this.videoTeacacheEnabled,
       video_model_tier: this.videoModelTier,
       video_sampler: this.videoSampler || null,

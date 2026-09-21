@@ -3,6 +3,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { LlmProviderState } from "../../types/index.js";
+  import { cancelLlmOauth } from "../../utils/api.js";
 
   /**
    * Provider picker and auth row for the external LLM path.
@@ -30,6 +31,8 @@
   /** Ids the Rust registry knows. Base URL, default model and wire format stay
    *  server-side; the frontend only needs the id and a label. */
   const PROVIDER_IDS = [
+    "chatgpt",
+    "gemini-cli",
     "anthropic",
     "openai",
     "xai",
@@ -45,6 +48,7 @@
   const provider = $derived(promptAssistant.provider);
   const providerId = $derived(provider?.provider ?? "custom");
   const isCustom = $derived(providerId === "custom");
+  const isCompanion = $derived(!!provider?.companion);
   /** xAI signed in rather than keyed: the only provider taking a client id. */
   const isXaiOauth = $derived(providerId === "xai-oauth");
   /** Sign-in binds a loopback listener on the machine running Rust, which in
@@ -167,6 +171,38 @@
       </div>
     {/if}
 
+    {#if isCompanion}
+      <div class="space-y-2 rounded-lg border border-neutral-700 p-3">
+        <p class="text-xs text-neutral-300">{locale.t('settings.prompt_assistant.companion_hint')}</p>
+        {#if providerId === 'gemini-cli'}
+          <p class="text-xs text-neutral-400">{locale.t('settings.prompt_assistant.gemini_companion_hint')}</p>
+        {/if}
+        <p class="text-xs text-neutral-400">{locale.t('settings.prompt_assistant.companion_audio')}</p>
+        {#if provider?.signed_in}
+          <p class="text-xs text-green-400">{locale.t('settings.prompt_assistant.companion_signed_in')}</p>
+        {/if}
+        {#if canOauth}
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="touch-target rounded-lg border border-indigo-500/60 px-3 py-2 text-xs text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-40"
+              disabled={promptAssistant.providerBusy}
+              onclick={() => run(() => promptAssistant.connectOauth(providerId))}
+            >{promptAssistant.oauthBusy
+                ? locale.t('settings.prompt_assistant.companion_waiting')
+                : locale.t('settings.prompt_assistant.oauth_connect', { provider: providerLabel(providerId) })}</button>
+            {#if promptAssistant.oauthBusy}
+              <button class="touch-target rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-300" onclick={async () => {
+                try { await cancelLlmOauth(); } catch (e) { error = String(e); }
+              }}>{locale.t('common.cancel')}</button>
+            {:else if provider?.signed_in}
+              <button class="touch-target rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-300" onclick={() => run(() => promptAssistant.saveApiKey(''))}>{locale.t('settings.prompt_assistant.companion_sign_out')}</button>
+            {/if}
+          </div>
+        {:else}
+          <p class="text-xs text-neutral-400">{locale.t('settings.prompt_assistant.companion_desktop')}</p>
+        {/if}
+      </div>
+    {:else}
     <div class="space-y-1.5">
       <div class="flex items-center justify-between gap-2">
         <label for="llm-api-key" class="text-xs text-neutral-400">{locale.t('settings.prompt_assistant.external_key')}</label>
@@ -238,6 +274,7 @@
       {/if}
     </div>
 
+    {/if}
     <div>
       <div class="flex items-center justify-between gap-2 mb-1">
         <label for="llm-model" class="text-xs text-neutral-400">{locale.t('settings.prompt_assistant.external_model')}</label>
@@ -256,7 +293,7 @@
         value={provider?.model ?? ""}
         disabled={promptAssistant.providerBusy}
         onchange={(e) => run(() => promptAssistant.saveModel(e.currentTarget.value))}
-        placeholder="gpt-4o-mini"
+        placeholder={isCompanion ? locale.t('settings.prompt_assistant.companion_auto_model') : 'gpt-4o-mini'}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
       />
       <!-- Free text with suggestions: plenty of self-hosted endpoints serve
@@ -266,7 +303,7 @@
           <option value={model}></option>
         {/each}
       </datalist>
-      <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.model_hint')}</p>
+      <p class="text-[10px] text-neutral-500 mt-1">{locale.t(isCompanion ? 'settings.prompt_assistant.companion_model_hint' : 'settings.prompt_assistant.model_hint')}</p>
     </div>
 
     {#if error}

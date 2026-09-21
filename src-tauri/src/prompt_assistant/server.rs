@@ -749,6 +749,9 @@ pub async fn chat_provider(
 ) -> Result<String, AppError> {
     let base = super::providers::effective_base_url(provider_id, base_url);
     match super::providers::wire_for(provider_id) {
+        super::providers::Wire::Companion => {
+            super::companion::chat(provider_id, model, system, user, images, None).await
+        }
         super::providers::Wire::Anthropic => {
             chat_anthropic(
                 client, &base, api_key, model, system, user, max_tokens, images,
@@ -781,6 +784,9 @@ pub async fn list_models(
     base_url: &str,
     api_key: &str,
 ) -> Result<Vec<String>, AppError> {
+    if super::companion::is_companion(provider_id) {
+        return super::companion::models(provider_id).await;
+    }
     let anthropic = super::providers::wire_for(provider_id) == super::providers::Wire::Anthropic;
     let base = super::providers::effective_base_url(provider_id, base_url);
     let urls = if anthropic {

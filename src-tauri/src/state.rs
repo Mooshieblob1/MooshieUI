@@ -726,6 +726,10 @@ pub struct AppState {
     /// Multi-user generation queue — tracks prompt ownership and position.
     pub prompt_queue: PromptQueue,
     pub cover_jobs: crate::commands::music_cover::CoverJobs,
+    pub link_imports: crate::commands::music_link::LinkImports,
+    pub audio_style_jobs: crate::commands::music_audio_style::AudioStyleJobs,
+    pub media_tools: crate::media_tools::MediaTools,
+    pub reference_lookup: crate::commands::music_reference::ReferenceLookup,
     pub music_review_lock: Mutex<()>,
     /// Multi-GPU worker manager — distributes prompts across N GPU backends.
     pub gpu_manager: GpuManager,
@@ -798,6 +802,10 @@ impl AppState {
             cleanup_reactors_started: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
             cover_jobs: crate::commands::music_cover::CoverJobs::default(),
+            link_imports: crate::commands::music_link::LinkImports::default(),
+            audio_style_jobs: crate::commands::music_audio_style::AudioStyleJobs::default(),
+            media_tools: crate::media_tools::MediaTools::default(),
+            reference_lookup: crate::commands::music_reference::ReferenceLookup::default(),
             music_review_lock: Mutex::new(()),
             gpu_manager,
             comfyui_lifecycle: Mutex::new(()),

@@ -53,6 +53,11 @@ const context = { params, brief:'Add jazz harmony', constraints:{ melody:'both',
 const response = { abc:harmony, style:'English, jazz harmony',lyrics:params.lyrics,summary:'Added a major seventh chord.' };
 assert.equal(edit.validateMusicEdit(JSON.stringify(response), context).check.match, true);
 assert.equal(JSON.parse(edit.musicEditRequest(context).prompt).abc, abc);
+const instrumentalContext = { ...context, params: { ...params, lyrics: '' } };
+assert.equal(edit.validateMusicEdit(JSON.stringify({ ...response, lyrics: '' }), instrumentalContext).check.match, true);
+assert.ok(edit.musicEditRequest(instrumentalContext).system.includes('Blank or whitespace-only lyrics mean purely instrumental'));
+assert.throws(() => edit.validateMusicEdit(JSON.stringify(response), instrumentalContext), /Lyrics changed/);
+assert.equal(edit.validateMusicEdit(JSON.stringify({ ...response, lyrics: '' }), { ...context, constraints: { ...context.constraints, lyrics: false, structure: false } }).lyrics, '');
 for (const changed of [{ ...response, lyrics:'Changed' }, { ...response, abc:tempo }, { ...response, abc:harmony.replace('C2 E2 G2 E2','D2 E2 G2 E2') }, { ...response, extra:'no' }]) assert.throws(() => edit.validateMusicEdit(JSON.stringify(changed), context));
 assert.equal(edit.validateMusicEdit(JSON.stringify({...response,abc:tempo}), {...context,constraints:{...context.constraints,tempo:false}}).check.match,true);
 const archive = await project.musicZip([{name:'score.abc',blob:new Blob([abc])},{name:'test.bin',blob:new Blob([new Uint8Array([0,255,10,13])])}]);
@@ -78,6 +83,8 @@ const api={ generateMusic:async p=>{ submits.push(structuredClone(p)); if(fail)t
 const imports={ '../utils/api.js':api,'../utils/ipc.js':{getAuthUser:()=>user},'./locale.svelte.js':{locale:{t:key=>key}},'../utils/musicAudio.js':{songTitle:()=>'',blobBase64:async()=>''},'../utils/musicCover.js':cover,'../utils/musicSettings.js':settings,
   '../utils/musicScore.js':score, '../utils/musicLibrary.js':{musicLibrary:{load:async()=>structuredClone(saved),savePlan:async(_,p)=>saved.plans.push(p),saveBatch:async(_,b)=>{saved.batches=saved.batches.filter(x=>x.id!==b.id).concat(structuredClone(b));},saveSong:async()=>{},audio:async()=>new Blob(['fLaC'])}} };
 const globals={setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{},localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)}};
+imports['../utils/musicStyleProfiles.js'] = load('src/lib/utils/musicStyleProfiles.ts', { './musicAudioStyle.js': load('src/lib/utils/musicAudioStyle.ts', { './api.js': {}, './musicAudio.js': {} }) });
+imports['../utils/musicComparison.js'] = load('src/lib/utils/musicComparison.ts', { './api.js': {}, './musicAudio.js': {} });
 const {music}=load('src/lib/stores/music.svelte.ts',imports,globals);
 music.capabilities={missing_nodes:[],checkpoints:['yue2']}; music.params=structuredClone(params);
 await Promise.all([music.generatePlan(),music.generatePlan()]); assert.equal(submits.length,1,'Double clicks submit only once');
@@ -100,3 +107,25 @@ await resumed.loadLibrary();assert.equal(resumed.job.prompt_id,'p3');assert.equa
 await music.cancel(); assert.equal(music.batchRunning,false); assert.ok(batch.attempts.slice(2).every(a=>a.status==='cancelled'));
 user='other';await resumed.loadLibrary();assert.equal(resumed.job,null);assert.equal(resumed.plans.length,saved.plans.length); // mock returns same data; active handle still isolated
 console.log('PASS review-first plans, immutable undo, duplicate prevention, sequential distinct seeds, failure continuation, cancellation and job recovery');
+for (const lyrics of ['', ' \n\t ']) {
+  for (const action of ['generatePlan', 'generate']) {
+    const instrumental = load('src/lib/stores/music.svelte.ts', imports, globals).music;
+    instrumental.capabilities = { missing_nodes: [], checkpoints: ['yue2'] };
+    instrumental.params = { ...structuredClone(params), lyrics };
+    instrumental.libraryLoaded = true;
+    const before = submits.length;
+    await instrumental[action]();
+    assert.equal(submits.length, before + 1, 'Blank lyrics may reach the backend for both tasks');
+    assert.equal(submits.at(-1).lyrics, lyrics);
+    assert.equal(submits.at(-1).task, action === 'generatePlan' ? 'plan' : 'audio');
+    assert.equal(instrumental.params.lyrics, lyrics, 'Do not fill the lyrics field with directions');
+  }
+}
+const noStyle = load('src/lib/stores/music.svelte.ts', imports, globals).music;
+noStyle.capabilities = { missing_nodes: [], checkpoints: ['yue2'] };
+noStyle.params = { ...structuredClone(params), lyrics: '', style: ' ' };
+const beforeNoStyle = submits.length;
+await noStyle.generatePlan();
+assert.equal(submits.length, beforeNoStyle);
+assert.equal(noStyle.error, 'music.plan_needs_text');
+console.log('PASS instrumental planning, generation, composition editing and explicit lyric preservation');

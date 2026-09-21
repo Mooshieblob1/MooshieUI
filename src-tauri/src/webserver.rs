@@ -281,6 +281,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_base_url",
     "set_llm_xai_client",
     "connect_llm_oauth",
+    "cancel_llm_oauth",
     "list_external_llm_models",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
@@ -289,6 +290,8 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "install_rife",
     "install_h3_turbo",
     "install_h3_teacache",
+    "install_h3_vdn",
+    "install_h3_upscaler",
     "import_image_directory",
     "open_directory",
     "move_installation",
@@ -3574,6 +3577,11 @@ async fn dispatch_command(
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
             if path.exists() {
+                if filename.ends_with(".mp4") {
+                    commands::video_drafts::delete_draft(&state, &dir, &filename)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
             crate::gallery_index::remove(&path);
@@ -3612,6 +3620,7 @@ async fn dispatch_command(
             let old_path = dir.join(&old);
             let new_path = dir.join(&new_name);
             std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+            commands::video_drafts::move_record(&old_path, &new_path).map_err(|e| e.to_string())?;
             crate::gallery_index::rename(&old_path, &new_path);
             Ok(serde_json::json!(new_name))
         }
@@ -4621,6 +4630,31 @@ async fn dispatch_command(
                 crate::comfyui::nodes::is_h3_teacache_installed(&comfyui_path)
             ))
         }
+        "get_h3_vdn_status" => {
+            let precision = serde_json::from_value::<Option<crate::comfyui::h3_vdn::VdnPrecision>>(
+                args["precision"].clone(),
+            )
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+            Ok(serde_json::json!(state.h3_vdn_status(precision).await))
+        }
+        "install_h3_vdn" => {
+            let precision = serde_json::from_value::<Option<crate::comfyui::h3_vdn::VdnPrecision>>(
+                args["precision"].clone(),
+            )
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+            let emit = |step: &str, message: &str, done: bool| {
+                state.broadcast("install:progress", serde_json::json!({
+                    "node_name": crate::comfyui::h3_vdn::PACKAGE, "step": step, "message": message, "done": done
+                }));
+            };
+            let result = state.install_h3_vdn(precision, &emit).await;
+            if let Err(error) = &result {
+                emit("error", error, true);
+            }
+            result.map(|_| serde_json::json!(null))
+        }
         "install_h3_teacache" => {
             let (comfyui_path, venv_path, network_proxy, pip_index_url) = {
                 let config = state.config.read().await;
@@ -5312,6 +5346,11 @@ async fn dispatch_command(
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
+        "cancel_llm_oauth" => {
+            crate::prompt_assistant::companion::cancel_login();
+            Ok(serde_json::Value::Null)
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
         "list_external_llm_models" => {
             let models = crate::prompt_assistant::providers::list_available_models(
                 &state.http_client,
@@ -5449,6 +5488,71 @@ async fn dispatch_command(
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "get_cover_capabilities" => Ok(commands::music_cover::capabilities(&state, username).await),
+        "search_music_reference" => commands::music_reference::search(
+            &state,
+            args["query"].as_str().ok_or("Missing query")?,
+        )
+        .await
+        .map(|songs| serde_json::json!(songs))
+        .map_err(|e| e.to_string()),
+        "get_music_reference" => commands::music_reference::context(
+            &state,
+            args["songId"].as_u64().ok_or("Missing songId")?,
+        )
+        .await
+        .map(|context| serde_json::json!(context))
+        .map_err(|e| e.to_string()),
+        "get_music_link_capabilities" => Ok(state.media_tools.status()),
+        "get_music_audio_style_capabilities" => {
+            Ok(commands::music_audio_style::capabilities(&state).await)
+        }
+        "measure_music_loudness" => commands::music_audio_style::start_measurement(
+            state.clone(),
+            args["audioBase64"].as_str().ok_or("Missing audioBase64")?,
+            username.map(str::to_string),
+        )
+        .await
+        .map(|id| serde_json::json!(id))
+        .map_err(|e| e.to_string()),
+        "analyze_music_audio_style" => commands::music_audio_style::start(
+            state.clone(),
+            args["audioBase64"].as_str().ok_or("Missing audioBase64")?,
+            serde_json::from_value(args["target"].clone()).map_err(|e| e.to_string())?,
+            args["backendId"].as_str().ok_or("Missing backendId")?,
+            username.map(str::to_string),
+        )
+        .await
+        .map(|id| serde_json::json!(id))
+        .map_err(|e| e.to_string()),
+        "get_music_audio_style" => commands::music_audio_style::status(
+            &state,
+            args["jobId"].as_str().ok_or("Missing jobId")?,
+            username,
+            args["cancel"].as_bool().unwrap_or(false),
+        )
+        .await
+        .map_err(|e| e.to_string()),
+        "prepare_music_link_tools" => {
+            crate::media_tools::start(state.clone());
+            Ok(state.media_tools.status())
+        }
+        "import_music_link" => commands::music_link::start(
+            state.clone(),
+            args["url"].as_str().ok_or("Missing url")?,
+            args["query"].as_str().unwrap_or(""),
+            username.map(str::to_string),
+        )
+        .await
+        .map(|id| serde_json::json!(id))
+        .map_err(|e| e.to_string()),
+        "get_music_link_import" => commands::music_link::status(
+            &state,
+            args["jobId"].as_str().ok_or("Missing jobId")?,
+            username,
+            args["cancel"].as_bool().unwrap_or(false),
+        )
+        .await
+        .map_err(|e| e.to_string()),
         "transcribe_music_cover" => commands::music_cover::start(
             state.clone(),
             args["audioBase64"].as_str().ok_or("Missing audioBase64")?,
@@ -5497,6 +5601,35 @@ async fn dispatch_command(
                     .map(|audio| serde_json::json!(audio))
                     .map_err(|e| e.to_string())
             }
+        }
+        "get_h3_upscaler_status" => Ok(commands::video_drafts::upscaler_status(&state).await),
+        "install_h3_upscaler" => commands::video_drafts::install_upscaler(&state)
+            .await
+            .map_err(|e| e.to_string()),
+        "get_video_draft_status" | "delete_video_draft" | "refine_video_draft" => {
+            let filename = args["filename"].as_str().ok_or("Missing filename")?;
+            let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
+            match command {
+                "get_video_draft_status" => {
+                    commands::video_drafts::draft_status(&state, &dir, filename).await
+                }
+                "delete_video_draft" => {
+                    commands::video_drafts::delete_draft(&state, &dir, filename).await
+                }
+                _ => {
+                    commands::video_drafts::refine_draft(
+                        &state,
+                        &dir,
+                        filename,
+                        u32::try_from(args["steps"].as_u64().ok_or("Missing steps")?)
+                            .map_err(|_| "Invalid steps")?,
+                        args["sigma"].as_f64().ok_or("Missing strength")?,
+                        username.map(str::to_string),
+                    )
+                    .await
+                }
+            }
+            .map_err(|e| e.to_string())
         }
         "interpolate_video" => {
             let filename = args["filename"].as_str().ok_or("Missing filename")?;
@@ -7184,6 +7317,11 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     // Cancel any in-progress generation before exiting so the
                     // ComfyUI queue doesn't keep running after the tab closes.
                     let _ = state.gpu_manager.interrupt(None).await;
+                    crate::media_tools::shutdown(&state).await;
+                    #[cfg(any(feature = "desktop", feature = "server"))]
+                    crate::prompt_assistant::companion::shutdown().await;
+                    commands::music_link::shutdown(&state).await;
+                    commands::music_audio_style::shutdown(&state).await;
                     std::process::exit(0);
                 }
             }

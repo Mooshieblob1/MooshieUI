@@ -8,6 +8,8 @@ import { inspectMusicScore } from "../utils/musicScore.js";
 import { cloneMusicParams, defaultMusicSampling, musicId, musicSeed, readMusicSampling } from "../utils/musicSettings.js";
 import type { MusicBatch, MusicPlan, MusicCapabilities, MusicExecutionEvent, MusicJob, MusicParams, MusicStage, MusicResult, MusicPlaylist } from "../types/music.js";
 import type { LyricAlignment } from "../utils/lyricTiming.js";
+import { readSavedMusicStyle, type SavedMusicStyle } from "../utils/musicStyleProfiles.js";
+import { readComparisonNotes, type MusicComparisonNotes } from "../utils/musicComparison.js";
 
 // Native workflow node IDs from templates/music.rs. PreviewAny (9) can execute
 // after saving, so it must not send the visible stage back to score writing.
@@ -28,6 +30,8 @@ const libraryAccount = () => {
 
 class MusicStore {
   plans = $state<MusicPlan[]>([]);
+  styleProfiles = $state<SavedMusicStyle[]>([]);
+  comparisonNotes = $state<MusicComparisonNotes[]>([]);
   planCandidate = $state<MusicPlan | null>(null);
   scoreUndo = $state<{ before: MusicParams; after: string } | null>(null);
   candidateCount = $state(1);
@@ -294,7 +298,7 @@ class MusicStore {
   async generatePlan() {
     if (this.busy || !this.ready || this.params.cover || this.params.planning === "off") return;
     this.cancelRequested = false;
-    if (!this.params.style.trim() || !this.params.lyrics.trim()) { this.error = locale.t("music.plan_needs_text"); return; }
+    if (!this.params.style.trim()) { this.error = locale.t("music.plan_needs_text"); return; }
     const params = cloneMusicParams(this.params);
     const owner = libraryAccount();
     this.preparing = true;
@@ -512,6 +516,7 @@ class MusicStore {
       this.stopPlayback();
       this.results = [];
       this.playlists = [];
+      this.styleProfiles = []; this.comparisonNotes = [];
       this.plans = []; this.planCandidate = null; this.scoreUndo = null; this.batches = [];
       this.batchRunning = false; this.activeBatch = null; this.compareIds = []; this.comparing = false; this.editingComposition = null;
       this.job = null; this.phase = "idle"; this.jobOwner = null;
@@ -535,6 +540,8 @@ class MusicStore {
         this.playlists = saved.playlists;
         this.plans = saved.plans ?? [];
         this.batches = saved.batches ?? [];
+        this.styleProfiles = (saved.styles ?? []).flatMap(value => { try { return [readSavedMusicStyle(value)]; } catch { return []; } });
+        this.comparisonNotes = (saved.comparisons ?? []).flatMap(value => { try { return [readComparisonNotes(value)]; } catch { return []; } });
         this.libraryLoaded = true;
         this.recoverJob(owner);
       } catch (error) {
@@ -569,6 +576,30 @@ class MusicStore {
   private replaceSong(song: MusicResult) {
     this.results = this.results.map(item => item.prompt_id === song.prompt_id ? song : item);
     if (this.selectedResult?.prompt_id === song.prompt_id) this.selectedResult = song;
+  }
+  async saveStyleProfile(value: SavedMusicStyle): Promise<boolean> {
+    const requestedOwner = libraryAccount();
+    await this.loadLibrary();
+    if (requestedOwner !== libraryAccount()) return false;
+    return this.writeLibrary(async owner => {
+      const record = readSavedMusicStyle(value);
+      if (this.styleProfiles.length >= 100 && !this.styleProfiles.some(p => p.id === record.id)) throw new Error(locale.t("music.profiles_limit"));
+      await musicLibrary.saveStyle(owner, record);
+      if (this.libraryOwner === owner) this.styleProfiles = [record, ...this.styleProfiles.filter(p => p.id !== record.id)];
+    });
+  }
+  async deleteStyleProfile(id: string): Promise<boolean> {
+    return this.writeLibrary(async owner => {
+      await musicLibrary.deleteStyle(owner, id);
+      if (this.libraryOwner === owner) this.styleProfiles = this.styleProfiles.filter(p => p.id !== id);
+    });
+  }
+  async saveComparisonNotes(value: MusicComparisonNotes): Promise<boolean> {
+    return this.writeLibrary(async owner => {
+      const record = readComparisonNotes(value);
+      await musicLibrary.saveComparison(owner, record);
+      if (this.libraryOwner === owner) this.comparisonNotes = [record, ...this.comparisonNotes.filter(p => p.id !== record.id)];
+    });
   }
 
   async updateSong(id: string, patch: Pick<Partial<MusicResult>, "title" | "alignment" | "duration" | "review">): Promise<boolean> {

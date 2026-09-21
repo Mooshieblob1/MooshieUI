@@ -22,6 +22,10 @@ import { cleanMusicWritingResponse, musicWritingProblems, musicWritingRequest } 
 import { musicEditRequest, validateMusicEdit, type MusicEditContext, type MusicEditProposal } from "../utils/musicEdit.js";
 import { musicReviewRequest, validateMusicReviewExplanation, type MusicReviewRecord } from "../utils/musicReview.js";
 import type { MusicResult } from "../types/music.js";
+import type { MusicReferenceContext, MusicReferenceDraft } from "../types/music.js";
+import { referenceStyleRequest, validateReferenceStyle } from "../utils/musicReference.js";
+import { savedStyleRequest, type SavedMusicStyle } from "../utils/musicStyleProfiles.js";
+import type { AudioStyleTarget } from "../utils/musicAudioStyle.js";
 import type { MusicWritingContext, MusicWritingTask } from "../utils/yue2Skill.js";
 import {
   H3_MAX_TOKENS,
@@ -112,6 +116,7 @@ class PromptAssistantStore {
   externalModels = $state<string[]>([]);
   /** A provider mutation or model listing is in flight. */
   providerBusy = $state(false);
+  oauthBusy = $state(false);
   /**
    * The code the xAI device sign-in is waiting on, or null when none is live.
    *
@@ -271,11 +276,13 @@ class PromptAssistantStore {
     const unlisten = await ipcListen("llm:device_code", (event: any) => {
       this.deviceCode = event.payload as LlmDeviceCode;
     });
+    this.oauthBusy = true;
     try {
       await this.mutateProvider(() => connectLlmOauth(id));
     } finally {
       unlisten();
       this.deviceCode = null;
+      this.oauthBusy = false;
     }
   }
 
@@ -337,7 +344,37 @@ class PromptAssistantStore {
     }
   }
 
-  async editForMusic(context: MusicEditContext): Promise<MusicEditProposal> {
+  async styleFromReference(reference: MusicReferenceContext, context: MusicWritingContext, isCurrent: () => boolean = () => true): Promise<MusicReferenceDraft> {
+    const request = referenceStyleRequest(reference, context);
+    return this.requestStyleDraft(request, context.maxDuration, isCurrent);
+  }
+
+  async adaptSavedMusicStyle(saved: SavedMusicStyle, target: AudioStyleTarget, isCurrent: () => boolean): Promise<MusicReferenceDraft> {
+    return this.requestStyleDraft(savedStyleRequest(saved, target), target.max_duration, isCurrent);
+  }
+
+  private async requestStyleDraft(request: { system: string; prompt: string; maxTokens: number }, duration: number, isCurrent: () => boolean): Promise<MusicReferenceDraft> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let prompt = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (!isCurrent()) throw new Error("music_reference_cancelled");
+          const text = await callExternalLlm(request.system, prompt, request.maxTokens);
+          if (!isCurrent()) throw new Error("music_reference_cancelled");
+          try { return validateReferenceStyle(text, duration); }
+          catch (error) {
+            if (String(error).includes("music_reference_unknown") || attempt === 1) throw error;
+            prompt = request.prompt + "\nReturn a corrected JSON object with status, style and estimates, following the original constraints. If uncertain about the recording, return status unknown.";
+          }
+        }
+        throw new Error("invalid_music_reference");
+      });
+    } finally { this.isGenerating = false; }
+  }
+
+  async editForMusic(context: MusicEditContext, isCurrent: () => boolean = () => true): Promise<MusicEditProposal> {
     if (this.isGenerating) throw new Error("busy_generation");
     const request = musicEditRequest(context);
     this.isGenerating = true;
@@ -345,7 +382,9 @@ class PromptAssistantStore {
       return await this.withStageListener(async () => {
         let prompt = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
+          if (!isCurrent()) throw new Error("music_edit_cancelled");
           const text = await callExternalLlm(request.system, prompt, request.maxTokens);
+          if (!isCurrent()) throw new Error("music_edit_cancelled");
           try { return validateMusicEdit(text, context); }
           catch (error) {
             if (attempt === 1) throw error;

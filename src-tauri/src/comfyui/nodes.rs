@@ -232,6 +232,10 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieMusicLoadAudio",
     "MooshieSaveImage",
     "MooshieSaveVideo",
+    "MooshieH3SaveDraft",
+    "MooshieH3LoadDraft",
+    "MooshieH3UpscaleDraft",
+    "MooshieH3RestoreAudio",
     "MooshieLoadVideoPath",
     "MooshieFaceDetailer",
     "MooshieFaceDetect",
@@ -318,6 +322,22 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
     })?;
 
     let init_path = mooshie_dir.join("__init__.py");
+    for (name, content) in [
+        (
+            "h3_drafts.py",
+            include_str!("../../../comfyui-nodes/h3_drafts.py"),
+        ),
+        (
+            "h3_upscaler.py",
+            include_str!("../../../comfyui-nodes/h3_upscaler.py"),
+        ),
+        (
+            "h3_upscaler.LICENSE",
+            include_str!("../../../comfyui-nodes/h3_upscaler.LICENSE"),
+        ),
+    ] {
+        std::fs::write(mooshie_dir.join(name), content).map_err(|e| e.to_string())?;
+    }
     std::fs::write(&init_path, MOOSHIE_NODES_INIT).map_err(|e| {
         format!(
             "Failed to write mooshie-nodes/__init__.py at '{}': {}",
@@ -1368,10 +1388,59 @@ pub async fn verify_required_h3_nodes_for_generation(
         .is_some_and(|data| !data.trim().is_empty());
 
     if timeline_drives {
-        verify_required_h3_director_nodes(http_client, base_url).await
+        verify_required_h3_director_nodes(http_client, base_url).await?;
     } else {
-        verify_required_h3_native_nodes(http_client, base_url, &params.video_variant).await
+        verify_required_h3_native_nodes(http_client, base_url, &params.video_variant).await?;
     }
+    if params.video_save_draft || crate::templates::video::acceleration(params) != "standard" {
+        let info: serde_json::Value = http_client
+            .get(format!("{base_url}/object_info"))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        if params.video_save_draft
+            && (info.get("MooshieH3SaveDraft").is_none()
+                || info["MooshieSaveVideo"]["input"]["optional"]
+                    .get("draft_id")
+                    .is_none())
+        {
+            return Err("Update the MooshieUI custom nodes on the ComfyUI server and restart it to retain drafts.".into());
+        }
+        let required = match crate::templates::video::acceleration(params) {
+            "vdn" => vec!["ApplyVDNH3"],
+            "turbo" if crate::templates::video::lightx_preset(params).is_some() => {
+                vec!["LoraLoaderModelOnly", "MiniMaxH3SigmaShift"]
+            }
+            "turbo" => vec!["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
+            _ => vec![],
+        };
+        for class in required {
+            if info.get(class).is_none() {
+                return Err(format!(
+                    "The selected video method requires {class} on the connected ComfyUI server."
+                ));
+            }
+        }
+        if crate::templates::video::acceleration(params) == "vdn"
+            && !info["ApplyVDNH3"]["input"]["required"]["vdn_checkpoint"][0]
+                .as_array()
+                .is_some_and(|items| {
+                    items
+                        .iter()
+                        .any(|v| v.as_str() == Some(params.video_vdn_precision.checkpoint()))
+                })
+        {
+            return Err(
+                "Install the selected VDN precision on the connected ComfyUI server.".into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Verify that ComfyUI loaded the MooshieUI custom node classes required by

@@ -1,4 +1,4 @@
-import type { VideoVariant } from "../types/index.js";
+import type { VideoVariant, VideoTurboPreset } from "../types/index.js";
 
 /**
  * The MiniMax H3 model stack, as data.
@@ -28,6 +28,7 @@ export interface H3ModelFile {
   category: H3ModelCategory;
   /** Exact size, for the pre-download estimate and the progress rows. */
   sizeBytes: number;
+  sha256?: string;
 }
 
 export type H3TierId = "nvfp4" | "int8" | "fp8" | "bf16" | "custom";
@@ -88,6 +89,36 @@ export const H3_TURBO_LORA: H3ModelFile = {
   category: "loras",
   sizeBytes: 779_849_816,
 };
+
+export interface H3TurboPreset {
+  id: VideoTurboPreset;
+  label: string;
+  variant?: VideoVariant;
+  steps?: number;
+  videoShift: number;
+  file: H3ModelFile;
+}
+
+const LIGHTX2V_REPO = "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/3ec17a324ced54151364f24f8b5fb6bf7e26414f";
+function lightxFile(filename: string, sha256: string): H3ModelFile {
+  return { filename, url: `${LIGHTX2V_REPO}/${filename}`, category: "loras", sizeBytes: 1_956_193_000, sha256 };
+}
+export const H3_TURBO_PRESETS: readonly H3TurboPreset[] = [
+  { id: "larryvrh", label: "Larryvrh v4", videoShift: 12, file: H3_TURBO_LORA },
+  { id: "lightx2v_fl2v_4", label: "LightX2V FL2V v1.2 · 4", variant: "fl2va", steps: 4, videoShift: 6,
+    file: lightxFile("minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors", "c8168ebc17bbacc4296103dda2fec1ba85b24392fa08cf2bfbcef0cff0dc3cc8") },
+  { id: "lightx2v_fl2v_8", label: "LightX2V FL2V v1.0 · 8", variant: "fl2va", steps: 8, videoShift: 6,
+    file: lightxFile("minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", "08cfe946033af7d27719b964b6e0a0e50c32138daabbd6ce4137e23df6bf9980") },
+  { id: "lightx2v_ref2v_8", label: "LightX2V Ref2V v1.0 · 8", variant: "ref2va", steps: 8, videoShift: 12,
+    file: lightxFile("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", "6a56f41ab4229c9dd845b9501bbd475ee57e112d846cf2e819d534a1ae928c5a") },
+];
+
+/** Keep the chosen family while switching between native and reference tasks. */
+export function h3TurboPreset(id: unknown, variant: VideoVariant): H3TurboPreset {
+  const preset = H3_TURBO_PRESETS.find(p => p.id === id) ?? H3_TURBO_PRESETS[0];
+  if (!preset.variant || preset.variant === variant) return preset;
+  return H3_TURBO_PRESETS.find(p => p.id === (variant === "ref2va" ? "lightx2v_ref2v_8" : "lightx2v_fl2v_8"))!;
+}
 
 export const H3_TIERS: readonly H3Tier[] = [
   {

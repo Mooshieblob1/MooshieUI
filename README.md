@@ -63,8 +63,8 @@ Technical references and project planning documents are indexed in [docs/README.
 
 - **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext and Anima ReStyler.
 - **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
-- **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, Turbo LoRA, TeaCache, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
-- **Music studio** - YuE2 songs, native SheetSage2 covers and score-aware assistance through your configured Prompt Assistant. [Review and edit scores](docs/MUSIC.md), preview melodies, export MIDI, generate sequential candidates, compare saved versions and export projects with original FLAC and settings. Review recognized lyrics and approximate cover timing using xAI transcription and your assistant, with playable evidence. Includes playlists, shared playback and manual lyric timing.
+- **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, [Standard and Larryvrh/LightX2V Turbo methods](docs/VIDEO.md), retained drafts with experimental 2× refinement, TeaCache, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
+- **Music studio** - YuE2 songs, native SheetSage2 covers and score-aware assistance through your configured Prompt Assistant. [Review and edit scores](docs/MUSIC.md), preview melodies, export MIDI, generate sequential candidates, compare saved versions and export projects with original FLAC and settings. Review recognized lyrics and approximate cover timing using xAI transcription and your assistant, with playable evidence. Includes playlists, shared playback and manual lyric timing. Unreleased: style analysis from selected audio sections, reusable style profiles, volume-matched A/B listening, scoped edits with before/after previews, and an arrangement-planning prototype.
 - **Pause and continue** - pause ComfyUI text-to-image sampling, inspect a preview, change prompts or sampling settings, or paint a masked correction before continuing. Keep a pause to try different endings.
 - **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
 - **Smart model detection** - 20+ architectures identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
@@ -72,7 +72,7 @@ Technical references and project planning documents are indexed in [docs/README.
 - **Refinement and references** - MultiDiffusion/SpotDiffusion upscaling, SeedVR2 restoration, face detailing, ControlNet, IP-Adapter/Flux Redux style references, sampler guidance and the SDXL DMD2 preset.
 - **Compare Grid (XYZ)** - per-cell parameter sweeps stitched into a single labelled image.
 - **Queue and feedback** - reorder or cancel pending jobs, interrupt a run, watch previews and progress, and opt into completion notifications.
-- **Gallery & metadata** - SQLite-backed image and video gallery, manual save mode, generation times and A/B comparison; import SwarmUI, A1111 and NovelAI settings, with original NovelAI PNG metadata preserved when copying.
+- **Gallery & metadata** - Persistent image and video gallery with a Refresh gallery action for externally added, restored or removed files, manual save mode, generation times and A/B comparison; import SwarmUI, A1111 and NovelAI settings, with original NovelAI PNG metadata preserved when copying. Refresh scans the current user's gallery folder and reloads embedded metadata without renaming files.
 - **Self-hostable** - headless web server with roles, per-user galleries, auth, and a dedicated mobile layout.
 - **12 languages** - English, German, Spanish, French, Italian, Japanese, Korean, Polish, Portuguese, Russian, Simplified Chinese and Traditional Chinese, switchable without restart.
 
@@ -143,7 +143,7 @@ MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance,
 | State | Svelte 5 runes - class-based singleton stores |
 | Persistence | Tauri Store (JSON), SQLite (`rusqlite`), and per-account IndexedDB for the music library |
 | Generation transport | ComfyUI REST/WebSocket and NovelAI HTTP/streaming through Rust |
-| Prompt Assistant | Local llama.cpp or configured external LLM endpoint |
+| Prompt Assistant | Local llama.cpp or configured external LLM endpoint; unreleased [ChatGPT / Gemini account sign-in](docs/PROMPT-ASSISTANT-SIGN-IN.md) |
 | Inference | ONNX Runtime (`ort`) for WD v3 image interrogation |
 | Autocomplete | Danbooru + Anima tag databases (~140k tags) |
 | i18n | 12 languages, checked key/placeholder parity, runtime switching |

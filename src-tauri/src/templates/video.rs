@@ -22,6 +22,85 @@ pub const H3_DEFAULT_STEPS: u32 = 20;
 /// left to work with; above 8 it stops improving and starts over-sharpening.
 pub const H3_TURBO_MIN_STEPS: u32 = 4;
 pub const H3_TURBO_MAX_STEPS: u32 = 8;
+pub const H3_VDN_STEPS: u32 = 8;
+
+pub fn acceleration(params: &GenerationParams) -> &str {
+    if params.video_acceleration.is_empty() {
+        if params.video_turbo_enabled {
+            "turbo"
+        } else {
+            "standard"
+        }
+    } else {
+        &params.video_acceleration
+    }
+}
+
+pub fn lightx_preset(params: &GenerationParams) -> Option<(&'static str, u32, f64)> {
+    if acceleration(params) != "turbo" {
+        return None;
+    }
+    match params.video_turbo_preset.as_str() {
+        "lightx2v_fl2v_4" => Some((
+            "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
+            4,
+            6.0,
+        )),
+        "lightx2v_fl2v_8" => Some((
+            "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+            8,
+            6.0,
+        )),
+        "lightx2v_ref2v_8" => Some((
+            "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+            8,
+            12.0,
+        )),
+        _ => None,
+    }
+}
+
+fn sampling_steps(params: &GenerationParams) -> u32 {
+    if let Some((_, steps, _)) = lightx_preset(params) {
+        return steps;
+    }
+    match acceleration(params) {
+        "vdn" => H3_VDN_STEPS,
+        "turbo" => params
+            .video_turbo_steps
+            .clamp(H3_TURBO_MIN_STEPS, H3_TURBO_MAX_STEPS),
+        _ => H3_DEFAULT_STEPS,
+    }
+}
+
+fn sampler_name(params: &GenerationParams) -> &str {
+    if lightx_preset(params).is_some() {
+        return "euler";
+    }
+    match acceleration(params) {
+        "vdn" => "er_sde",
+        "turbo" => "minimax_h3_turbo",
+        _ => params
+            .video_sampler
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("res_multistep"),
+    }
+}
+
+fn scheduler_name(params: &GenerationParams) -> &str {
+    match acceleration(params) {
+        "vdn" => "beta",
+        "turbo" => "simple",
+        _ => params
+            .video_scheduler
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("simple"),
+    }
+}
 
 /// MiniMax H3 emits 24 fps and only accepts frame counts on the 17n+5 grid
 /// (widget: min 5, max 3600, step 17). Snaps the requested duration UP to
@@ -78,13 +157,7 @@ pub(crate) fn video_metadata_params(
 ) -> std::collections::HashMap<String, String> {
     let (width, height) =
         compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
-    let steps = if params.video_turbo_enabled {
-        params
-            .video_turbo_steps
-            .clamp(H3_TURBO_MIN_STEPS, H3_TURBO_MAX_STEPS)
-    } else {
-        H3_DEFAULT_STEPS
-    };
+    let steps = sampling_steps(params);
     // RIFE doubles H3's native 24 fps without changing the clip's duration.
     let fps = if params.video_rife_enabled {
         48.0
@@ -108,23 +181,42 @@ pub(crate) fn video_metadata_params(
     put("steps", steps.to_string());
     put("mode", "video".to_string());
     put("size", format!("{width}x{height}"));
+    put("sampler", sampler_name(params).to_string());
+    put("scheduler", scheduler_name(params).to_string());
     put(
-        "sampler",
-        if params.video_turbo_enabled {
-            "minimax_h3_turbo".to_string()
-        } else {
-            "res_multistep".to_string()
-        },
+        "mooshie_video_acceleration",
+        acceleration(params).to_string(),
     );
-    put("scheduler", "simple".to_string());
+    if acceleration(params) == "vdn" {
+        put(
+            "mooshie_video_vdn_checkpoint",
+            params.video_vdn_precision.checkpoint().to_string(),
+        );
+    }
     put("mooshie_video_variant", params.video_variant.clone());
     put("mooshie_video_fps", format!("{fps}"));
     put(
         "mooshie_video_duration_seconds",
         params.video_duration_seconds.to_string(),
     );
-    if params.video_turbo_enabled {
+    if acceleration(params) == "turbo" {
         put("mooshie_video_turbo", "true".to_string());
+        put(
+            "mooshie_video_turbo_preset",
+            if params.video_turbo_preset.is_empty() {
+                "larryvrh".into()
+            } else {
+                params.video_turbo_preset.clone()
+            },
+        );
+        put(
+            "mooshie_video_turbo_lora",
+            params.video_turbo_lora.clone().unwrap_or_else(|| {
+                lightx_preset(params)
+                    .map_or(crate::comfyui::nodes::H3_TURBO_LORA_FILENAME, |p| p.0)
+                    .into()
+            }),
+        );
     }
     if params.video_rife_enabled {
         put("mooshie_video_rife", "true".to_string());
@@ -187,7 +279,43 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     // sampling to 4-8 steps. It sits between the DiT and both MODEL consumers
     // (`BasicScheduler` and `BasicGuider`) — re-pointing only one of them would
     // schedule sigmas for a model the guider never sees.
-    let model_source_id = if params.video_turbo_enabled {
+    let model_source_id = if acceleration(params) == "vdn" {
+        let vdn_id = next_id.to_string();
+        workflow.insert(
+            vdn_id.clone(),
+            json!({
+                "class_type": "ApplyVDNH3",
+                "inputs": {
+                    "model": [unet_id.as_str(), 0],
+                    "vdn_checkpoint": params.video_vdn_precision.checkpoint(),
+                    "apply_turbo_adapter": true,
+                    "strength": 1.0,
+                    "lora_mode": "merge",
+                    "branch_weights": "auto",
+                    "retain_buffers": "auto",
+                    "attention_backend": "grouped",
+                    "verbose": false
+                }
+            }),
+        );
+        next_id += 1;
+        vdn_id
+    } else if let Some((filename, _, shift)) = lightx_preset(params) {
+        let lora_id = next_id.to_string();
+        workflow.insert(lora_id.clone(), json!({"class_type": "LoraLoaderModelOnly", "inputs": {
+            "model": [unet_id.as_str(), 0], "lora_name": params.video_turbo_lora.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(filename), "strength_model": 1.0
+        }}));
+        next_id += 1;
+        let shift_id = next_id.to_string();
+        workflow.insert(
+            shift_id.clone(),
+            json!({"class_type": "MiniMaxH3SigmaShift", "inputs": {
+                "model": [lora_id, 0], "shift_video": shift, "shift_audio": 3.0
+            }}),
+        );
+        next_id += 1;
+        shift_id
+    } else if acceleration(params) == "turbo" {
         let lora_id = next_id.to_string();
         workflow.insert(
             lora_id.clone(),
@@ -324,7 +452,10 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         inputs.insert("resize_method".to_string(), json!("crop"));
         inputs.insert("img_compression".to_string(), json!(0));
         inputs.insert("ref_image_size".to_string(), json!("match"));
-        inputs.insert("shift_video".to_string(), json!(12.0));
+        inputs.insert(
+            "shift_video".to_string(),
+            json!(lightx_preset(params).map_or(12.0, |p| p.2)),
+        );
         inputs.insert("shift_audio".to_string(), json!(3.0));
         inputs.insert("inpaint_audio".to_string(), json!(true));
         inputs.insert("override_audio".to_string(), json!(false));
@@ -515,16 +646,11 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     // `KSamplerSelect` outright rather than wrapping it.
     // When Turbo is off the user may supply a custom sampler (e.g. "euler" for
     // the custom tier); fall back to the H3 preset "res_multistep".
-    let sampler_name = params
-        .video_sampler
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("res_multistep");
+    let sampler_name = sampler_name(params);
     let sampler_select_id = next_id.to_string();
     workflow.insert(
         sampler_select_id.clone(),
-        if params.video_turbo_enabled {
+        if acceleration(params) == "turbo" && lightx_preset(params).is_none() {
             json!({ "class_type": "MiniMaxH3TurboSampler", "inputs": {} })
         } else {
             json!({
@@ -535,20 +661,14 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     );
     next_id += 1;
 
-    let steps = if params.video_turbo_enabled {
-        params
-            .video_turbo_steps
-            .clamp(H3_TURBO_MIN_STEPS, H3_TURBO_MAX_STEPS)
-    } else {
-        H3_DEFAULT_STEPS
-    };
+    let steps = sampling_steps(params);
 
     // TeaCache wraps the model in a cached-forward-pass function: it reuses the
     // previous step's output while the accumulated input delta stays under
     // threshold. Inserted after `steps` is known (needed for the "last N
     // steps" guard) and before the scheduler/guider fan `model_link` out to
     // both consumers, so both pick up the wrapped model transparently.
-    let model_link = if params.video_teacache_enabled {
+    let model_link = if params.video_teacache_enabled && acceleration(params) != "vdn" {
         let teacache_id = next_id.to_string();
         workflow.insert(
             teacache_id.clone(),
@@ -571,16 +691,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
 
     // Custom scheduler override (e.g. "beta" for the custom tier). Only active
     // when Turbo is off; fall back to the H3 preset "simple".
-    let scheduler_name = if params.video_turbo_enabled {
-        "simple"
-    } else {
-        params
-            .video_scheduler
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("simple")
-    };
+    let scheduler_name = scheduler_name(params);
     let scheduler_id = next_id.to_string();
     workflow.insert(
         scheduler_id.clone(),
@@ -690,8 +801,27 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     );
     next_id += 1;
 
-    let save_id = next_id.to_string();
     let mut save_inputs = serde_json::Map::new();
+    if params.video_save_draft {
+        let draft_node = next_id.to_string();
+        next_id += 1;
+        let mut draft_params =
+            serde_json::to_value(params).expect("serializable generation parameters");
+        draft_params["seed"] = json!(seed);
+        draft_params["video_frame_count"] =
+            json!(compute_h3_frame_length(params.video_duration_seconds));
+        let mut inputs = json!({"samples": [sampler_id.as_str(), 1], "positive": [h3_id.as_str(), conditioning_slot],
+            "draft_id": uuid::Uuid::new_v4().simple().to_string(), "params_json": draft_params.to_string()});
+        if uses_director && params.video_timeline_custom_audio {
+            inputs["audio"] = json!([h3_id.as_str(), 3]);
+        }
+        workflow.insert(
+            draft_node.clone(),
+            json!({"class_type": "MooshieH3SaveDraft", "inputs": inputs}),
+        );
+        save_inputs.insert("draft_id".into(), json!([draft_node, 0]));
+    }
+    let save_id = next_id.to_string();
     save_inputs.insert("video".to_string(), json!([create_video_id.as_str(), 0]));
     save_inputs.insert("filename_prefix".to_string(), json!("mooshie_video"));
     if include_metadata {
@@ -754,6 +884,127 @@ mod tests {
             "video_audio_vae_model": "minimax_h3_audio_vae_fp32.safetensors"
         }))
         .expect("valid test params")
+    }
+
+    #[test]
+    fn lightx_presets_route_their_exact_steps_shift_and_adapter() {
+        for (preset, variant, steps, shift) in [
+            ("lightx2v_fl2v_4", "fl2va", 4, 6.0),
+            ("lightx2v_fl2v_8", "fl2va", 8, 6.0),
+            ("lightx2v_ref2v_8", "ref2va", 8, 12.0),
+        ] {
+            let mut params = video_params(variant);
+            params.video_acceleration = "turbo".into();
+            params.video_turbo_preset = preset.into();
+            params.video_turbo_steps = 6;
+            let workflow = build(&params, 42, true);
+            assert!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").is_empty());
+            assert!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").is_empty());
+            let adapter = nodes_of_class(&workflow, "LoraLoaderModelOnly")[0];
+            assert_eq!(
+                adapter["inputs"]["lora_name"],
+                lightx_preset(&params).unwrap().0
+            );
+            assert_eq!(adapter["inputs"]["strength_model"], 1.0);
+            let shifted = nodes_of_class(&workflow, "MiniMaxH3SigmaShift")[0];
+            assert_eq!(shifted["inputs"]["shift_video"], shift);
+            assert_eq!(shifted["inputs"]["shift_audio"], 3.0);
+            let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+            let guider = nodes_of_class(&workflow, "BasicGuider")[0];
+            assert_eq!(scheduler["inputs"]["steps"], steps);
+            assert_eq!(scheduler["inputs"]["scheduler"], "simple");
+            assert_eq!(scheduler["inputs"]["model"], guider["inputs"]["model"]);
+            assert_eq!(
+                nodes_of_class(&workflow, "KSamplerSelect")[0]["inputs"]["sampler_name"],
+                "euler"
+            );
+            assert_eq!(
+                video_metadata_params(&params, 42)["mooshie_video_turbo_preset"],
+                preset
+            );
+        }
+    }
+
+    #[test]
+    fn lightx_validation_rejects_wrong_variant_and_adapter() {
+        let mut params = video_params("fl2va");
+        params.video_acceleration = "turbo".into();
+        params.video_turbo_preset = "lightx2v_ref2v_8".into();
+        assert!(super::super::validate_generation_params(&params).is_err());
+        params.video_turbo_preset = "lightx2v_fl2v_4".into();
+        params.video_turbo_lora = Some("wrong.safetensors".into());
+        assert!(super::super::validate_generation_params(&params).is_err());
+        params.video_turbo_lora = Some(format!("nested/{}", lightx_preset(&params).unwrap().0));
+        assert!(super::super::validate_generation_params(&params).is_ok());
+    }
+
+    #[test]
+    fn draft_retention_is_opt_in_and_captures_clean_latents_and_seed() {
+        let mut params = video_params("fl2va");
+        assert!(nodes_of_class(&build(&params, 123, true), "MooshieH3SaveDraft").is_empty());
+        params.video_save_draft = true;
+        let workflow = build(&params, 123, true);
+        let draft = nodes_of_class(&workflow, "MooshieH3SaveDraft")[0];
+        assert_eq!(draft["inputs"]["samples"][1], 1);
+        let saved: Value =
+            serde_json::from_str(draft["inputs"]["params_json"].as_str().unwrap()).unwrap();
+        assert_eq!(saved["seed"], 123);
+        assert_eq!(saved["video_frame_count"], compute_h3_frame_length(5.0));
+        assert_eq!(draft["inputs"]["draft_id"].as_str().unwrap().len(), 32);
+        assert!(nodes_of_class(&workflow, "MooshieSaveVideo")[0]["inputs"]["draft_id"].is_array());
+        params.video_megapixels = 1.0;
+        assert!(super::super::validate_generation_params(&params)
+            .unwrap_err()
+            .contains("smaller resolution"));
+    }
+
+    #[test]
+    fn refinement_rebuilds_guider_preserves_audio_and_does_not_reapply_acceleration() {
+        let mut params = video_params("fl2va");
+        params.video_acceleration = "vdn".into();
+        params.video_rife_enabled = true;
+        let workflow = super::super::video_refine::build(
+            &params,
+            &"a".repeat(32),
+            "source.mp4",
+            832,
+            480,
+            8,
+            0.35,
+        );
+        for class in [
+            "ApplyVDNH3",
+            "MiniMaxH3TurboSampler",
+            "LoraLoaderModelOnly",
+            "MooshieH3SaveDraft",
+            "DisableNoise",
+        ] {
+            assert!(nodes_of_class(&workflow, class).is_empty(), "{class}");
+        }
+        let upscale_id = workflow
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, n)| n["class_type"] == "MooshieH3UpscaleDraft")
+            .unwrap()
+            .0;
+        assert_eq!(
+            nodes_of_class(&workflow, "BasicGuider")[0]["inputs"]["conditioning"],
+            json!([upscale_id, 1])
+        );
+        let sampler = nodes_of_class(&workflow, "SamplerCustomAdvanced")[0];
+        assert_eq!(sampler["inputs"]["sigmas"], json!([upscale_id, 2]));
+        assert_eq!(sampler["inputs"]["latent_image"], json!([upscale_id, 0]));
+        assert_eq!(nodes_of_class(&workflow, "RandomNoise").len(), 1);
+        assert_eq!(nodes_of_class(&workflow, "MooshieH3RestoreAudio").len(), 1);
+        let save = nodes_of_class(&workflow, "MooshieSaveVideo")[0];
+        let metadata =
+            crate::metadata::parse_swarmui_json(save["inputs"]["metadata_json"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(metadata["size"], "1664x960");
+        assert_eq!(metadata["mooshie_video_acceleration"], "standard");
+        assert!(!metadata.contains_key("mooshie_video_vdn_checkpoint"));
+        assert!(save["inputs"].get("draft_id").is_none());
     }
 
     fn nodes_of_class<'a>(workflow: &'a Value, class_type: &str) -> Vec<&'a Value> {
@@ -1672,5 +1923,118 @@ mod tests {
             std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap()).unwrap();
             println!("wrote {}", path.display());
         }
+    }
+
+    #[test]
+    fn explicit_acceleration_overrides_legacy_turbo_and_preserves_old_requests() {
+        let mut params = video_params("fl2va");
+        params.video_turbo_enabled = true;
+        assert_eq!(acceleration(&params), "turbo");
+        assert_eq!(
+            nodes_of_class(&build(&params, 1, false), "MiniMaxH3TurboLoRA").len(),
+            1
+        );
+        params.video_acceleration = "standard".into();
+        let workflow = build(&params, 1, false);
+        assert!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").is_empty());
+        assert!(nodes_of_class(&workflow, "ApplyVDNH3").is_empty());
+        assert_eq!(
+            nodes_of_class(&workflow, "BasicScheduler")[0]["inputs"]["steps"],
+            H3_DEFAULT_STEPS
+        );
+    }
+
+    #[test]
+    fn vdn_uses_its_own_adapter_schedule_and_metadata_despite_stale_turbo_settings() {
+        let mut params = video_params("fl2va");
+        params.video_acceleration = "vdn".into();
+        params.video_turbo_enabled = true;
+        params.video_turbo_steps = 4;
+        params.video_teacache_enabled = true;
+        params.video_sampler = Some("euler".into());
+        params.video_scheduler = Some("normal".into());
+        let workflow = build(&params, 1, true);
+        assert!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").is_empty());
+        assert!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").is_empty());
+        assert!(nodes_of_class(&workflow, "MiniMaxH3TeaCache").is_empty());
+        let patch = nodes_of_class(&workflow, "ApplyVDNH3")[0];
+        assert_eq!(patch["inputs"]["apply_turbo_adapter"], true);
+        assert_eq!(patch["inputs"]["lora_mode"], "merge");
+        assert_eq!(patch["inputs"]["attention_backend"], "grouped");
+        let model = json!([node_id_of_class(&workflow, "ApplyVDNH3"), 0]);
+        assert_eq!(
+            nodes_of_class(&workflow, "BasicGuider")[0]["inputs"]["model"],
+            model
+        );
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        assert_eq!(scheduler["inputs"]["model"], model);
+        assert_eq!(scheduler["inputs"]["steps"], 8);
+        assert_eq!(scheduler["inputs"]["scheduler"], "beta");
+        assert_eq!(
+            nodes_of_class(&workflow, "KSamplerSelect")[0]["inputs"]["sampler_name"],
+            "er_sde"
+        );
+        let metadata = video_metadata_params(&params, 1);
+        assert_eq!(metadata["sampler"], "er_sde");
+        assert_eq!(metadata["scheduler"], "beta");
+        assert_eq!(metadata["steps"], "8");
+        assert_eq!(metadata["mooshie_video_acceleration"], "vdn");
+        assert!(!metadata.contains_key("mooshie_video_turbo"));
+    }
+
+    #[test]
+    fn vdn_keeps_keyframes_references_timeline_and_audio_routes() {
+        for variant in ["fl2va", "ref2va"] {
+            for timeline in [false, true] {
+                let mut params = if timeline {
+                    director_params(variant)
+                } else {
+                    video_params(variant)
+                };
+                params.video_acceleration = "vdn".into();
+                params.video_first_frame = Some("first.png".into());
+                params.video_last_frame = Some("last.png".into());
+                params.video_ref_images = vec!["ref.png".into()];
+                assert!(super::super::validate_generation_params(&params).is_ok());
+                let workflow = build(&params, 42, false);
+                let vdn = node_id_of_class(&workflow, "ApplyVDNH3");
+                let model = if timeline {
+                    let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+                    let input = if variant == "fl2va" {
+                        "model"
+                    } else {
+                        "model_ref2va"
+                    };
+                    assert_eq!(director["inputs"][input], json!([vdn, 0]));
+                    json!([node_id_of_class(&workflow, "MooshieH3Director"), 0])
+                } else {
+                    json!([vdn, 0])
+                };
+                assert_eq!(
+                    nodes_of_class(&workflow, "BasicGuider")[0]["inputs"]["model"],
+                    model
+                );
+                assert_eq!(
+                    nodes_of_class(&workflow, "BasicScheduler")[0]["inputs"]["model"],
+                    model
+                );
+                assert_eq!(nodes_of_class(&workflow, "VAEDecodeAudio").len(), 1);
+                assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn vdn_rejects_unsupported_mode_and_gguf_but_standard_keeps_gguf() {
+        let mut params = video_params("fl2va");
+        params.video_acceleration = "typo".into();
+        assert!(super::super::validate_generation_params(&params).is_err());
+        params.video_acceleration = "vdn".into();
+        params.video_diffusion_model = Some("minimax_h3_fl2va.gguf".into());
+        assert!(super::super::validate_generation_params(&params)
+            .unwrap_err()
+            .contains("GGUF"));
+        params.video_acceleration = "standard".into();
+        assert!(super::super::validate_generation_params(&params).is_ok());
     }
 }

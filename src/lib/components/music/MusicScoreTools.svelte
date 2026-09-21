@@ -32,7 +32,7 @@
 <section class="space-y-3 border-t border-neutral-800 pt-3" aria-label={locale.t("music.score_workbench")}>
   <div class="flex flex-wrap items-center justify-between gap-1">
     <h2 class="text-sm font-medium text-neutral-200">{locale.t("music.score_workbench")}</h2>
-    <button type="button" class={button} disabled={locked || !inspection.score} onclick={() => music.editingComposition = "draft"}>{locale.t("music.edit_composition")}</button>
+    <button type="button" class={button} disabled={locked} onclick={() => music.editingComposition = "draft"}>{locale.t("music.edit_composition")}</button>
   </div>
   {#if !music.params.cover}
     <div class="flex flex-wrap gap-2">
@@ -47,9 +47,9 @@
     <div class="flex flex-wrap items-center gap-2">
       <label class="flex items-center gap-2 text-xs text-neutral-400">{locale.t("music.score_tempo")}<input class={`${input} max-w-24`} type="number" min="20" max="400" step="1" bind:value={tempo} disabled={locked} /></label>
       <button type="button" class={button} disabled={locked} onclick={changeTempo}>{locale.t("music.score_set_tempo")}</button>
-      <button type="button" class={button} disabled={locked || !music.scoreUndo || music.scoreUndo.after !== JSON.stringify(music.params)} onclick={() => music.undoScore()}>{locale.t("prompt_assistant.undo")}</button>
     </div>
   {/if}
+  {#if music.scoreUndo}<button type="button" class={button} disabled={locked || music.scoreUndo.after !== JSON.stringify(music.params)} onclick={() => music.undoScore()}>{locale.t("prompt_assistant.undo")}</button>{/if}
   {#if music.plans.length}
     <label class="block space-y-1 text-xs text-neutral-400"><span>{locale.t("music.saved_plans")}</span><select class={input} value="" disabled={locked} onchange={event => { music.planCandidate = music.plans.find(p => p.prompt_id === event.currentTarget.value) ?? null; event.currentTarget.value = ""; }}><option value="">{locale.t("music.plan_choose")}</option>{#each music.plans as plan}<option value={plan.prompt_id}>{plan.params.title || plan.params.style.slice(0, 80)} · {plan.seed}</option>{/each}</select></label>
   {/if}

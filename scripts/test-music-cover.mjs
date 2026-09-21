@@ -43,6 +43,8 @@ const { music } = load('src/lib/stores/music.svelte.ts', {
   '../utils/musicCover.js': cover,
   '../utils/musicScore.js': load('src/lib/utils/musicScore.ts'),
   '../utils/musicSettings.js': load('src/lib/utils/musicSettings.ts'),
+  '../utils/musicStyleProfiles.js': load('src/lib/utils/musicStyleProfiles.ts', { './musicAudioStyle.js': load('src/lib/utils/musicAudioStyle.ts', { './api.js': {}, './musicAudio.js': {} }) }),
+  '../utils/musicComparison.js': load('src/lib/utils/musicComparison.ts', { './api.js': {}, './musicAudio.js': {} }),
   '../utils/musicAudio.js': {}, '../utils/musicLibrary.js': {},
 }, { setTimeout: fn => { timer = fn; return 1; }, clearTimeout: () => {}, localStorage: { setItem() {} } });
 music.capabilities = { missing_nodes: [], checkpoints: ['yue2'] };
@@ -119,15 +121,17 @@ let sourceUser = 'source-owner', destroyed, urlSequence = 0, saved = 0;
 const revoked = [];
 const pageMusic = { params: { abc: '', planning: 'melody', max_duration: 240 }, busy: false, saveSettings() { saved++; } };
 const { sourceEvents } = load(componentPath, {
-  svelte: { onMount() {}, onDestroy(fn) { destroyed = fn; } },
+  svelte: { onMount() {}, onDestroy(fn) { destroyed = fn; }, untrack: fn => fn() },
   '../../stores/music.svelte.js': { music: pageMusic },
   '../../stores/musicCover.svelte.js': { musicCover: { busy: false } },
   '../../stores/locale.svelte.js': { locale: { t: key => key } },
   '../../utils/musicCover.js': cover,
   '../../utils/musicScore.js': {},
   '../../utils/ipc.js': { getAuthUser: () => sourceUser },
+  '../../utils/api.js': {},
+  '../../utils/musicLink.js': { needsSongMatch: () => false },
 }, {
-  $props: () => ({}), $derived: value => value,
+  $props: () => ({}), $derived: value => value, $effect() {},
   URL: { createObjectURL: () => `blob:source-${++urlSequence}`, revokeObjectURL: url => revoked.push(url) },
 }, `${componentScript}\nexport const sourceEvents = { chooseSource, readSourceDuration, useSourceLength, sourceDurationFailed, get url() { return sourceUrl; }, get length() { return sourceLength; }, get tooLong() { return sourceTooLong; }, get error() { return durationError; } };`);
 const file = { size: 100, name: 'source.wav' };

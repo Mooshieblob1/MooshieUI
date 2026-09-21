@@ -131,7 +131,7 @@ fn process_snapshot(pids: ProcessesToUpdate<'_>) -> System {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct ManagedProcess {
+pub(crate) struct ManagedProcess {
     identity: ProcessIdentity,
     comfyui_path: PathBuf,
     pub port: u16,

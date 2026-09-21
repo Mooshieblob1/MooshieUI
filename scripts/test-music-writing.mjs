@@ -75,6 +75,17 @@ const styleRequest = skill.musicWritingRequest("style", context);
 assert.equal(JSON.parse(styleRequest.prompt).lyrics_or_idea, context.lyrics);
 assert.ok(styleRequest.system.includes("do not rewrite or quote them"));
 assert.ok(styleRequest.system.includes("30 seconds"));
+for (const lyrics of ["", " \n\t "]) {
+  const instrumental = skill.musicWritingRequest("style", { ...context, lyrics });
+  assert.equal(JSON.parse(instrumental.prompt).generation.instrumental, true);
+  assert.ok(instrumental.system.includes("no vocals, singing, speech, humming or choir"));
+  assert.ok(!instrumental.system.includes("immediate vocal entrance"));
+  assert.ok(!instrumental.system.includes("seconds for singing"));
+  const explicitLyrics = skill.musicWritingRequest("lyrics", { ...context, lyrics, brief: "A song about home" });
+  assert.equal(JSON.parse(explicitLyrics.prompt).generation.instrumental, false);
+  assert.ok(explicitLyrics.system.includes("fresh, original, singable lyric draft"));
+}
+assert.equal(JSON.parse(styleRequest.prompt).generation.instrumental, false);
 console.log("PASS: duration limits, multilingual/repeated lyric budgets, field separation and output validation");
 
 const score = 'X:1\nM:6/8\nL:1/16\nQ:1/4=88\nK:G\n% verse\nV:Vocal\nG4-G2 z2 B4|\nV:Ins\nZ|\n% chorus\nV:Vocal\nd4 B4 G4|';
@@ -131,6 +142,8 @@ let unlistens = 0;
 let listenError = false;
 const { promptAssistant } = loadSource("src/lib/stores/promptAssistant.svelte.ts", (name) => {
   if (name === "../utils/yue2Skill.js") return skill;
+  if (name === "../utils/musicStyleProfiles.js") return loadSource("src/lib/utils/musicStyleProfiles.ts", () => loadSource("src/lib/utils/musicAudioStyle.ts"));
+  if (name === "../utils/musicReference.js") return loadSource("src/lib/utils/musicReference.ts", () => skill);
   if (name === "../utils/musicReview.js") return loadSource("src/lib/utils/musicReview.ts", () => loadSource("src/lib/utils/musicScore.ts", undefined, { TextEncoder }), { TextEncoder });
   if (name === "../utils/musicEdit.js") return loadSource("src/lib/utils/musicEdit.ts", () => loadSource("src/lib/utils/musicScore.ts", undefined, { TextEncoder }), { TextEncoder });
   if (name === "../utils/api.js") return {
@@ -252,6 +265,8 @@ const pageMusic = { params: { style: context.style, lyrics: "Original draft", ma
 const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
 let pageCalls = [];
 let resolveDraft;
+let pageOwner = null;
+const pageConnection = { connected: true }, pageCover = { busy: false };
 const pageAssistant = {
   isGenerating: false, isAvailable: true, refreshStatus: async () => {},
   writeForMusic: async (...args) => { pageCalls.push(args); return await new Promise(resolve => { resolveDraft = resolve; }); },
@@ -259,12 +274,15 @@ const pageAssistant = {
 const { events } = loadSource(pagePath, (name) => {
   if (name === "svelte") return { onDestroy() {}, onMount() {}, tick: async () => {}, untrack: fn => fn() };
   if (name.includes("/music.svelte")) return { music: pageMusic };
+  if (name.includes("/connection.svelte")) return { connection: pageConnection };
+  if (name.includes("/musicCover.svelte")) return { musicCover: pageCover };
+  if (name.includes("/ipc.js")) return { getAuthUser: () => pageOwner };
   if (name.includes("/promptAssistant.svelte")) return { promptAssistant: pageAssistant };
   if (name.includes("/locale.svelte")) return { locale: { t: key => key, intlTag: "en-AU" } };
   if (name.includes("/llmError")) return { mapLlmError: String };
   return {};
 }, { $props: () => ({}), $derived: value => value, $effect: () => {} },
-`${script}\nexport const events = { openLyricsDialog, closeLyricsDialog, writeMusic, undoWriting, setDialog(value) { lyricsDialog = value; }, setUseExistingLyrics(value) { useExistingLyrics = value; }, getUseExistingLyrics() { return useExistingLyrics; }, getError() { return writingError; } };`);
+`${script}\nexport const events = { openLyricsDialog, closeLyricsDialog, writeMusic, undoWriting, generate, setAudioStyle(value) { audioStyle = value; }, getPreparingStyle() { return preparingStyle; }, setDialog(value) { lyricsDialog = value; }, setUseExistingLyrics(value) { useExistingLyrics = value; }, getUseExistingLyrics() { return useExistingLyrics; }, getError() { return writingError; } };`);
 events.setDialog(dialog);
 events.openLyricsDialog();
 assert.equal(dialog.open, true);
@@ -324,3 +342,63 @@ for (const field of ["abc", "planning", "cover"]) {
   pageMusic.params[field] = before;
 }
 console.log("PASS: popup opens without generating, draft context is opt-in and resets, topic/style/duration reach LLM, success closes, Undo, cancel and changed settings preserve the draft");
+
+let styleRequests = 0, finishStyle;
+const submissions = [];
+Object.assign(pageMusic, { view: "generate", ready: true, coverReady: true, generate: async () => submissions.push(structuredClone(pageMusic.params)) });
+events.setAudioStyle({
+  isEnabled: () => true,
+  prepareForGeneration: async current => {
+    styleRequests++;
+    const success = await new Promise(resolve => { finishStyle = resolve; });
+    if (!success || !current()) return false;
+    pageMusic.params.style = "Inferred instrumental piano.";
+    return true;
+  },
+});
+pageMusic.params.style = "";
+let generating = events.generate();
+await events.generate();
+assert.equal(styleRequests, 1, "Double-clicks cannot start duplicate paid analyses");
+assert.equal(submissions.length, 0, "Generation waits for a completed style");
+finishStyle(true); await generating;
+assert.equal(submissions[0].style, "Inferred instrumental piano.");
+assert.equal(events.getPreparingStyle(), false);
+pageMusic.params.style = "Manual style";
+await events.generate();
+assert.equal(styleRequests, 1, "Existing styles bypass audio analysis");
+assert.equal(submissions[1].style, "Manual style");
+for (const change of ["cancel", "style", "seed", "account", "view"]) {
+  pageMusic.params.style = ""; pageMusic.view = "generate"; pageOwner = null;
+  generating = events.generate();
+  if (change === "style") pageMusic.params.style = "Typed while waiting";
+  if (change === "seed") pageMusic.params.seed = "changed";
+  if (change === "account") pageOwner = "different-account";
+  if (change === "view") pageMusic.view = "library";
+  finishStyle(change !== "cancel"); await generating;
+  assert.equal(submissions.length, 2, "Cancelled or changed drafts do not submit: " + change);
+  assert.equal(events.getPreparingStyle(), false);
+}
+console.log("PASS: blank-style generation waits for audio, avoids duplicate analysis, keeps existing text and rejects cancelled/stale requests");
+
+const referenceContext = { song: { id: 123, title: "Track (Live)", artist: "Artist" }, sources: [{ title: "Catalog", url: "https://music.apple.com/us/song/123", text: "Live recording" }] };
+const referenceDraft = { status: "ok", style: context.style, estimates: ["Arrangement and instrumentation are suggestions, not audio measurements."] };
+calls = []; replies = ["bad JSON", JSON.stringify(referenceDraft)];
+assert.equal((await promptAssistant.styleFromReference(referenceContext, context)).style, context.style);
+assert.equal(calls.length, 2);
+assert.equal(JSON.parse(calls[0][1]).reference.song.title, "Track (Live)");
+assert.ok(calls[1][1].startsWith(calls[0][1]));
+assert.equal(promptAssistant.isGenerating, false);
+calls = []; replies = ['{"status":"unknown","style":"","estimates":[]}'];
+await assert.rejects(promptAssistant.styleFromReference(referenceContext, context), /music_reference_unknown/);
+assert.equal(calls.length, 1, "Unknown recordings must not be pressured into invented styles");
+assert.equal(promptAssistant.isGenerating, false);
+calls = []; replies = [new Promise(resolve => { complete = resolve; })];
+let referenceCurrent = true;
+const referencePending = promptAssistant.styleFromReference(referenceContext, context, () => referenceCurrent);
+await new Promise(resolve => setImmediate(resolve));
+await assert.rejects(promptAssistant.writeForMusic("style", context), /busy_generation/);
+referenceCurrent = false; complete(JSON.stringify(referenceDraft));
+await assert.rejects(referencePending, /music_reference_cancelled/);
+assert.equal(promptAssistant.isGenerating, false);
+console.log("PASS: reference-song dispatch, bounded retry, unknown-song refusal, original evidence, cancellation and shared LLM concurrency");

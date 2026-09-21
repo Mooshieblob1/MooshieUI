@@ -20,6 +20,8 @@ use crate::state::AppState;
 /// Wire format a provider speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wire {
+    /// Official companion protocol using its own subscription sign-in.
+    Companion,
     /// `POST {base}/chat/completions`, `Authorization: Bearer <key>`,
     /// answer at `choices[0].message.content`.
     OpenAiCompatible,
@@ -50,6 +52,22 @@ pub struct LlmProvider {
 /// default for installs that predate the provider field, so their existing
 /// base URL and key keep working untouched.
 const PROVIDERS: &[LlmProvider] = &[
+    LlmProvider {
+        id: "chatgpt",
+        base_url: "",
+        default_model: "",
+        wire: Wire::Companion,
+        oauth: true,
+    },
+    LlmProvider {
+        // Stable persisted id; Google sign-in now uses Antigravity ACP after
+        // Gemini CLI retired consumer account access on June 18, 2026.
+        id: "gemini-cli",
+        base_url: "",
+        default_model: "",
+        wire: Wire::Companion,
+        oauth: true,
+    },
     LlmProvider {
         id: "anthropic",
         base_url: "https://api.anthropic.com/v1",
@@ -150,6 +168,8 @@ pub struct LlmProviderState {
     pub api_key_configured: bool,
     /// Whether this build can sign in to the provider without an API key.
     pub oauth: bool,
+    pub companion: bool,
+    pub signed_in: bool,
     /// Whether the external path is the one the assistant will actually use.
     pub enabled: bool,
     /// The xAI OAuth client id the operator supplied, or empty. Public by
@@ -171,6 +191,8 @@ pub fn state_of(cfg: &AppConfig) -> LlmProviderState {
         model: cfg.llm_external_model.clone(),
         api_key_configured: !cfg.llm_external_api_key.trim().is_empty(),
         oauth: provider(&cfg.llm_provider).is_some_and(|p| p.oauth),
+        companion: super::companion::is_companion(&cfg.llm_provider),
+        signed_in: super::companion::connected(&cfg.llm_provider),
         enabled: cfg.llm_external_enabled,
         xai_client_id: cfg.llm_xai_client_id.clone(),
         xai_scope: cfg.llm_xai_scope.clone(),
@@ -235,7 +257,19 @@ pub async fn store_key(
     config: &RwLock<AppConfig>,
     api_key: &str,
 ) -> Result<LlmProviderState, AppError> {
+    let selected = config.read().await.llm_provider.clone();
+    if super::companion::is_companion(&selected) {
+        if !api_key.trim().is_empty() {
+            return Err(AppError::LlmError(
+                "This provider uses account sign-in, not API keys.".into(),
+            ));
+        }
+        super::companion::disconnect(&selected).await?;
+    }
     mutate(config, |cfg| {
+        if cfg.llm_provider != selected {
+            return;
+        }
         cfg.llm_external_api_key = api_key.trim().to_string();
         // A pasted key supersedes any signed-in session, and an empty one is
         // the sign-out path, so either way the OAuth session goes with it.
@@ -246,6 +280,32 @@ pub async fn store_key(
         cfg.llm_external_enabled = !cfg.llm_external_api_key.is_empty();
     })
     .await
+}
+
+/// Official companions own their OAuth tokens. Only enable the selected route.
+pub async fn connect_companion(
+    state: &AppState,
+    provider_id: &str,
+) -> Result<LlmProviderState, AppError> {
+    if state.config.read().await.llm_provider != provider_id {
+        return Err(AppError::LlmError(
+            "Select this provider before signing in.".into(),
+        ));
+    }
+    super::companion::connect(state, provider_id).await?;
+    let mut cfg = state.config.write().await;
+    if cfg.llm_provider != provider_id {
+        return Err(AppError::LlmError(
+            "The selected provider changed during sign-in. Select it again to use this account."
+                .into(),
+        ));
+    }
+    cfg.llm_external_api_key.clear();
+    cfg.llm_external_base_url.clear();
+    clear_oauth_session(&mut cfg);
+    cfg.llm_external_enabled = true;
+    crate::config::save_config(&cfg).map_err(AppError::Other)?;
+    Ok(state_of(&cfg))
 }
 
 /// Store a key an OAuth flow issued, switching provider if needed.
@@ -503,7 +563,9 @@ mod tests {
     #[test]
     fn only_anthropic_uses_the_anthropic_wire() {
         for p in PROVIDERS {
-            let expected = if p.id == "anthropic" {
+            let expected = if super::super::companion::is_companion(p.id) {
+                Wire::Companion
+            } else if p.id == "anthropic" {
                 Wire::Anthropic
             } else {
                 Wire::OpenAiCompatible
@@ -514,7 +576,10 @@ mod tests {
 
     #[test]
     fn hosted_providers_pin_an_https_base_url_and_a_model() {
-        for p in PROVIDERS.iter().filter(|p| p.id != "custom") {
+        for p in PROVIDERS
+            .iter()
+            .filter(|p| p.id != "custom" && p.wire != Wire::Companion)
+        {
             assert!(
                 p.base_url.starts_with("https://"),
                 "{} must pin an https base URL",

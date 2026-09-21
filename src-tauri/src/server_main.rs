@@ -79,6 +79,7 @@ async fn main() {
 
     // Clean up and create temp image directory
     temp_images::init();
+    comfyui_desktop_lib::media_tools::start(state.clone());
 
     // Start the web server (always LAN-enabled in server mode)
     let server_state = state.clone();
@@ -182,6 +183,10 @@ async fn main() {
         .await
         .expect("Failed to listen for ctrl-c");
     log::info!("Shutdown signal received, cleaning up...");
+    comfyui_desktop_lib::media_tools::shutdown(&state).await;
+    comfyui_desktop_lib::prompt_assistant::companion::shutdown().await;
+    comfyui_desktop_lib::commands::music_link::shutdown(&state).await;
+    comfyui_desktop_lib::commands::music_audio_style::shutdown(&state).await;
 
     // Use the same ownership checks and process-tree cleanup as desktop mode.
     if let Err(err) = process::stop_comfyui_process(&state).await {

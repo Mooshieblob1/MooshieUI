@@ -1,0 +1,54 @@
+name: Music Tool Native Validation
+
+on:
+  push:
+    branches: ['validation/media-tools-*']
+  pull_request:
+    paths:
+      - 'src-tauri/src/media_tools*'
+      - 'scripts/media-tools-smoke/**'
+      - '.github/workflows/media-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prerequisites:
+    name: ${{ matrix.platform }} prerequisites
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-24.04 }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { platform: macos-x86_64, runner: macos-15-intel }
+          - { platform: macos-aarch64, runner: macos-15 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+      - name: Test production installer
+        shell: bash
+        env:
+          MOOSHIE_MEDIA_TOOLS_SMOKE_ROOT: ${{ runner.temp }}/mooshie-media-smoke
+          MOOSHIE_MEDIA_TOOLS_TEST_DIR: ${{ runner.temp }}/mooshie-media-smoke/bin/media
+        run: |
+          set -o pipefail
+          cargo test --manifest-path scripts/media-tools-smoke/Cargo.toml --locked -- --nocapture 2>&1 | tee media-tools-unit.log
+          cargo test --manifest-path scripts/media-tools-smoke/Cargo.toml --locked live_install_and_offline_reuse -- --ignored --nocapture 2>&1 | tee media-tools-install.log
+          cargo test --manifest-path scripts/media-tools-smoke/Cargo.toml --locked startup_reuses_tools_offline_and_runs_media_pipeline -- --ignored --nocapture 2>&1 | tee media-tools-runtime.log
+      - name: Record macOS binary deployment targets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          find "$RUNNER_TEMP/mooshie-media-smoke/bin/media" -type f -perm -111 -exec xcrun vtool -show-build {} \; > media-tools-macos-targets.log
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: media-tools-${{ matrix.platform }}
+          path: media-tools-*.log

@@ -4,6 +4,42 @@ import type { ExportFormat } from "./videoExport.js";
 import { locale } from "../stores/locale.svelte.js";
 import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
 import type { MusicTranscript } from "./musicReview.js";
+import type { MusicLinkCapabilities, MusicLinkImport } from "./musicLink.js";
+import type { ReferenceSong, MusicReferenceContext } from "../types/music.js";
+import type { AudioStyleCapabilities, AudioStyleTarget, AudioStyleStatus } from "./musicAudioStyle.js";
+
+export function getMusicAudioStyleCapabilities(): Promise<AudioStyleCapabilities> {
+  return ipcInvoke("get_music_audio_style_capabilities");
+}
+export function analyzeMusicAudioStyle(audioBase64: string, target: AudioStyleTarget, backendId: string): Promise<string> {
+  return ipcInvoke("analyze_music_audio_style", { audioBase64, target, backendId });
+}
+export function getMusicAudioStyle(jobId: string, cancel = false): Promise<AudioStyleStatus> {
+  return ipcInvoke("get_music_audio_style", { jobId, cancel });
+}
+export function measureMusicLoudness(audioBase64: string): Promise<string> {
+  return ipcInvoke("measure_music_loudness", { audioBase64 });
+}
+
+export function searchMusicReference(query: string): Promise<ReferenceSong[]> {
+  return ipcInvoke("search_music_reference", { query });
+}
+export function getMusicReference(songId: number): Promise<MusicReferenceContext> {
+  return ipcInvoke("get_music_reference", { songId });
+}
+
+export function getMusicLinkCapabilities(): Promise<MusicLinkCapabilities> {
+  return ipcInvoke("get_music_link_capabilities");
+}
+export function prepareMusicLinkTools(): Promise<MusicLinkCapabilities> {
+  return ipcInvoke("prepare_music_link_tools");
+}
+export function importMusicLink(url: string, query = ""): Promise<string> {
+  return ipcInvoke("import_music_link", { url, query });
+}
+export function getMusicLinkImport(jobId: string, cancel = false): Promise<MusicLinkImport> {
+  return ipcInvoke("get_music_link_import", { jobId, cancel });
+}
 
 export function getMusicReviewCapabilities(): Promise<boolean> {
   return ipcInvoke("get_music_review_capabilities");
@@ -993,6 +1029,23 @@ export async function installH3Turbo(): Promise<void> {
   return ipcInvoke("install_h3_turbo", {});
 }
 
+/** VDN availability reported by the connected backend. */
+export interface H3VdnStatus {
+  precision: "bf16" | "int8";
+  ready: boolean;
+  node_loaded: boolean;
+  can_install: boolean;
+  download_bytes: number;
+}
+
+export async function getH3VdnStatus(precision: "bf16" | "int8" = "bf16"): Promise<H3VdnStatus> {
+  return ipcInvoke("get_h3_vdn_status", { precision });
+}
+
+export async function installH3Vdn(precision: "bf16" | "int8" = "bf16"): Promise<void> {
+  return ipcInvoke("install_h3_vdn", { precision });
+}
+
 /** Is the MiniMax-H3 TeaCache node pack on disk? */
 export async function isH3TeacacheInstalled(): Promise<boolean> {
   return ipcInvoke("is_h3_teacache_installed", {});
@@ -1410,6 +1463,10 @@ export async function connectLlmOauth(provider: string): Promise<LlmProviderStat
   return ipcInvoke("connect_llm_oauth", { provider });
 }
 
+export async function cancelLlmOauth(): Promise<void> {
+  return ipcInvoke("cancel_llm_oauth");
+}
+
 /**
  * Store the xAI OAuth client id, and optionally a scope override.
  *
@@ -1529,3 +1586,22 @@ export async function getGpuStats(): Promise<GpuStats[]> {
   if (!resp.ok) throw new Error(await resp.text());
   return resp.json();
 }
+export interface H3UpscalerStatus {
+  ready: boolean;
+  nodes_ready: boolean;
+  can_install: boolean;
+  download_bytes: number;
+}
+export interface VideoDraftStatus {
+  retained: boolean;
+  available?: boolean;
+  upscaler_ready?: boolean;
+  error?: string;
+  draft?: { width: number; height: number; frames: number; bytes: number };
+}
+export const getH3UpscalerStatus = () => ipcInvoke<H3UpscalerStatus>("get_h3_upscaler_status");
+export const installH3Upscaler = () => ipcInvoke<H3UpscalerStatus>("install_h3_upscaler");
+export const getVideoDraftStatus = (filename: string) => ipcInvoke<VideoDraftStatus>("get_video_draft_status", { filename });
+export const deleteVideoDraft = (filename: string) => ipcInvoke<void>("delete_video_draft", { filename });
+export const refineVideoDraft = (filename: string, steps: number, sigma: number) =>
+  ipcInvoke<{ prompt_id: string }>("refine_video_draft", { filename, steps, sigma });

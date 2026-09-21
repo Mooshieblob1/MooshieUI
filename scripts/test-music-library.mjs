@@ -68,6 +68,8 @@ const { music } = load("src/lib/stores/music.svelte.ts", {
   "../utils/ipc.js": { getAuthUser: () => user },
   "../utils/musicCover.js": load("src/lib/utils/musicCover.ts", {}, { TextEncoder }),
   "../utils/musicSettings.js": load("src/lib/utils/musicSettings.ts"),
+  "../utils/musicStyleProfiles.js": load("src/lib/utils/musicStyleProfiles.ts", { "./musicAudioStyle.js": load("src/lib/utils/musicAudioStyle.ts", { "./api.js": {}, "./musicAudio.js": {} }) }),
+  "../utils/musicComparison.js": load("src/lib/utils/musicComparison.ts", { "./api.js": {}, "./musicAudio.js": {} }),
   "../utils/musicScore.js": load("src/lib/utils/musicScore.ts", {}, { TextEncoder }),
   "./locale.svelte.js": { locale: { t: key => key } },
   "../utils/musicAudio.js": { songTitle: () => "Fallback title", exportFlac: async () => "downloaded", blobBase64: async () => "" },

@@ -96,6 +96,9 @@ export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit"
  * reference-image graph. Each variant needs its own diffusion model file.
  */
 export type VideoVariant = "fl2va" | "ref2va";
+export type VideoAcceleration = "standard" | "turbo";
+export type VideoTurboPreset = "larryvrh" | "lightx2v_fl2v_4" | "lightx2v_fl2v_8" | "lightx2v_ref2v_8";
+export type VideoVdnPrecision = "bf16" | "int8";
 
 /**
  * Aspect ratio selections offered in the UI. `auto` is a UI-only value: the
@@ -468,6 +471,12 @@ export interface GenerationParams {
   video_interp_engine?: string;
   /** MiniMax-H3 Turbo LoRA (distilled few-step sampling). */
   video_turbo_enabled?: boolean;
+  /** Explicit mode; older clients can continue sending video_turbo_enabled. */
+  /** Historical VDN metadata remains readable; it is no longer selectable. */
+  video_acceleration?: VideoAcceleration | "vdn";
+  video_turbo_preset?: VideoTurboPreset;
+  video_vdn_precision?: VideoVdnPrecision;
+  video_save_draft?: boolean;
   /** Sampling steps while Turbo is on; the backend clamps to 4..8. */
   video_turbo_steps?: number;
   /** Turbo adapter filename inside `models/loras/`. */
@@ -833,6 +842,8 @@ export interface PromptAssistantOpts {
 
 /** Ids of the external LLM providers the backend registry knows about. */
 export type LlmProviderId =
+  | "chatgpt"
+  | "gemini-cli"
   | "anthropic"
   | "openai"
   | "xai"
@@ -853,6 +864,8 @@ export interface LlmProviderState {
   api_key_configured: boolean;
   /** The provider has a sign-in flow this build implements. */
   oauth: boolean;
+  companion: boolean;
+  signed_in: boolean;
   /** The external provider, not the bundled local model, is what runs. */
   enabled: boolean;
   /**

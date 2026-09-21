@@ -159,20 +159,15 @@ export function h3IdleUserPrompt(prompt: string, ctx: H3PromptContext): string {
   if (hasSceneContent(rest)) return rest;
 
   return ctx.taskType === "t2va"
-    ? "Write an idle loop for a single character held in one steady framing: the pose never changes, and the only motion is breathing, blinking, flowing hair, drifting cloth and quiet ambient life."
-    : "Turn the attached reference into an idle loop. Describe what is actually in it, and keep the pose, framing, appearance, clothing and setting exactly as they are; the only motion added is breathing, blinking, flowing hair, drifting cloth and quiet ambient life.";
+    ? "Animate a single character in a steady shot with gentle breathing, quick natural blinks with eyes open between them, and a little hair or clothing movement. Keep the motion brief and simple, with quiet ambience."
+    : "Animate the reference with gentle breathing, quick natural blinks where appropriate, and a little hair or clothing movement. Preserve the character, pose, framing and art style. Keep the motion brief and simple, with quiet ambience.";
 }
 
 /** The idle envelope, stated once so the prompt and the validator agree. */
-const IDLE_MOTION_RULES = `Allowed motion. Describe a natural mix of these, scaled to what is actually visible in the reference:
-- Slow, complete blinks every 3 to 4 seconds: the eyelids close fully and reopen in a soft natural cycle, with the gaze drifting gently between blinks. This must be stated explicitly.
-- Continuously flowing hair driven by a named ambient force (still indoor air, a soft draught, gentle wind): strands lift, cross and settle, never freezing into a fixed shape.
-- Quiet breathing: a soft rise and fall of the chest and shoulders, with the clothing over them responding.
-- Independent secondary motion on tails, ears, ribbons, hoods, straps, cloth and any other hanging or attached element.
-- Very small head tilts and shifts of a few degrees. The overall pose is held.
-- Micro hand motion if hands are visible: a finger flexing, a grip settling, a small idle adjustment.
-- Ambient background life: drifting smoke or dust, flickering firelight, falling leaves or snow, distant movement.
-- The camera holds a fixed position with at most the faintest handheld sway.
+const IDLE_MOTION_RULES = `Allowed motion. Use a small selection appropriate to the visible subject, not a checklist to include in full:
+- Gentle breathing and, for a subject with visible open eyes, quick natural blinks with eyes open between them. Preserve intentionally closed eyes or a different blink behavior the user explicitly requests. Do not invent a blink count, interval, slow eyelid cycle or drifting gaze.
+- A little hair or clothing movement from a plausible breeze, or one other subtle secondary motion the user requested. Do not animate every attached detail independently.
+- Quiet background ambience if appropriate. Keep the camera fixed and preserve the overall pose; do not add head turns, hand gestures or camera sway by default.
 
 Forbidden. These break the idle loop and must never appear, even if the user asked for them:
 - Locomotion of any kind: walking, running, stepping, turning around, standing up, sitting down.
@@ -197,12 +192,17 @@ export function h3IdleRewriteSystemPrompt(
 ): string {
   const isRef = h3FormatOf(ctx.taskType) === "ref";
   const body = isRef ? "detailed_description" : "integrated_multimodal_description";
-  const budget = isRef
-    ? `Because this is an idle loop rather than a scene, ${body} runs 250 to 450 words and never exceeds 550. Spend that budget on continuous physical detail - how the hair moves, how the breath reads, what the background is doing - not on plot.`
-    : `Because this is an idle loop rather than a scene, ${body} runs 200 to 350 words. Spend that budget on continuous physical detail - how the hair moves, how the breath reads, what the background is doing - not on plot.`;
+  const budget = `Keep ${body} to roughly 40 to 90 words for a simple idle animation; shorter is fine. Preserve all required format fields. State the visual anchor once, then the few requested motions and camera behavior. Do not pad the description to span the duration or repeat the same constraints. Add length only for explicit user details or dialogue.`;
   const anchor = hasFirstFrameImage
     ? "The reference image is attached. Read it and write the description from what is actually in it: the same character, outfit, pose, framing, lighting and setting."
     : "";
+  const keyframe = ctx.taskType === "t2va"
+    ? "Establish the subject and setting from the user's text; no reference image is supplied."
+    : ctx.taskType === "l2va"
+      ? "The connected reference is the last frame. Keep the idle motion consistent with that final pose; do not claim it is a first-frame reference."
+      : isRef
+        ? "Preserve the referenced appearance and setting without inventing first- or last-frame constraints."
+        : "Begin from the connected first frame and preserve its appearance and overall pose. Honor a connected last frame when present.";
 
   return `${h3RewriteSystemPrompt(ctx, hasFirstFrameImage)}
 
@@ -214,9 +214,9 @@ ${IDLE_MOTION_RULES}
 
 ${budget}
 
-Write one continuous [Shot 1] only. State that the shot begins from the reference image and that the pose, framing, appearance, clothing and environment are preserved. Then describe the micro-motion in playback order. Fixed structural elements (furniture, walls, props the subject is not touching) stay locked.
+Write one continuous [Shot 1] only. ${keyframe} Describe the micro-motion in a few direct sentences. Fixed structural elements (furniture, walls, props the subject is not touching) stay locked.
 
-overall_soundscape carries quiet ambience only: room tone, soft wind, faint cloth and hair movement, distant environment. No dialogue.
+overall_soundscape carries a short, appropriate ambience description. Keep any explicitly requested dialogue in the required dialogue tags in the main description; otherwise add no speech. Use N/A for non_diegetic_music unless the user requested music.
 
 Never write the words "Live2D", "idle mode" or any other name for this instruction into the output. Describe the motion, not the request.`;
 }
@@ -259,11 +259,8 @@ export function validateH3IdleResponse(
 
   const body = text.toLowerCase();
 
-  if (!/\bblink(?:s|ed|ing)?\b/.test(body))
-    return {
-      ok: false,
-      rule: "This is an idle animation, so the description must state the blink cycle explicitly: the eyelids close fully and reopen every 3 to 4 seconds, with the gaze drifting between blinks.",
-    };
+  // Blinks are conditional on visible open eyes and the user's intent. A
+  // format retry must not add them to a closed-eye pose or a nonhuman subject.
 
   // Deliberate camera work is the single most common way an idle rewrite goes
   // wrong, and it is the one thing that cannot be salvaged after generation.
@@ -273,7 +270,7 @@ export function validateH3IdleResponse(
   if (cameraMove)
     return {
       ok: false,
-      rule: `The camera must hold a fixed position with at most the faintest handheld sway, but the description contains deliberate camera motion ("${cameraMove[0].trim()}"). Remove it and state that the camera is locked off.`,
+      rule: `The camera must hold a fixed position, but the description contains deliberate camera motion ("${cameraMove[0].trim()}"). Remove it and state that the camera is locked off.`,
     };
 
   if (/\[shot\s*[2-9]\d*\]/.test(body))

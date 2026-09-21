@@ -359,6 +359,7 @@ pub async fn connect_llm_oauth(
     }
 
     match provider.as_str() {
+        "chatgpt" | "gemini-cli" => providers::connect_companion(&state, &provider).await,
         "nous" => {
             let session = oauth::connect_nous(&state.http_client).await?;
             providers::store_oauth_session(&state.config, &provider, session).await
@@ -369,6 +370,12 @@ pub async fn connect_llm_oauth(
             providers::store_oauth_key(&state.config, &provider, key).await
         }
     }
+}
+
+#[tauri::command]
+pub async fn cancel_llm_oauth() -> Result<(), AppError> {
+    crate::prompt_assistant::companion::cancel_login();
+    Ok(())
 }
 
 /// Store the xAI OAuth client id (and optional scope override) this install

@@ -4,7 +4,10 @@ pub mod config;
 #[cfg(feature = "desktop")]
 pub mod interrogator;
 pub mod music;
+pub mod music_audio_style;
 pub mod music_cover;
+pub mod music_link;
+pub mod music_reference;
 pub mod music_review;
 #[cfg(feature = "desktop")]
 pub mod novelai;
@@ -12,6 +15,7 @@ pub mod novelai;
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
 pub mod server;
+pub mod video_drafts;
 pub mod video_export;
 pub mod video_interpolate;
 #[cfg(feature = "desktop")]
