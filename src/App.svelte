@@ -351,8 +351,8 @@
     );
   });
 
-  // NovelAI has no image-edit or video endpoint, so those mode tabs are hidden
-  // there (see GenerationPage). Switching to a NovelAI model while one of them
+  // NovelAI has no image-edit or video endpoint, so those navigation entries are hidden.
+  // Switching to a NovelAI model while one of them
   // is selected would otherwise strand the user on a tab with no way back.
   $effect(() => {
     if (!generation.isNovelAi) return;
@@ -702,6 +702,12 @@
   let mobileCurrentTab = $state<PrimaryPage>("generate");
   let mobileGenerateNavigationVersion = $state(0);
   let generationDoneToast = $state<GenerationDoneToast | null>(null);
+
+  function openGenerationWorkspace(workspace: "image" | "video") {
+    generation.setMode(workspace === "video" ? "video" : generation.lastImageMode);
+    if (workspace === "video") canvas.isCanvasMode = false;
+    currentPage = "generate";
+  }
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -3683,11 +3689,13 @@
     <div class="relative mx-auto">
       <button
         class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
-        'generate'
+        'generate' && generation.mode !== 'video'
           ? 'bg-indigo-600 text-white'
           : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
-        onclick={() => (currentPage = "generate")}
+        onclick={() => openGenerationWorkspace("image")}
         title={locale.t('nav.generate')}
+        aria-label={locale.t('nav.generate')}
+        aria-current={currentPage === "generate" && generation.mode !== "video" ? "page" : undefined}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -3703,7 +3711,7 @@
           /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" /></svg
         >
       </button>
-      {#if progress.isGenerating}
+      {#if progress.isGenerating && progress.currentMode !== "video"}
         <div
           class="absolute -top-1 -right-1 min-w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 pointer-events-none
             {progress.queuePosition !== null && progress.queuePosition > 0 ? 'bg-amber-500 text-black' : 'bg-indigo-400 text-white animate-pulse'}"
@@ -3716,7 +3724,7 @@
           {/if}
         </div>
       {/if}
-      {#if progress.isGenerating && progress.totalSteps > 0 && currentPage !== "generate"}
+      {#if progress.isGenerating && progress.currentMode !== "video" && progress.totalSteps > 0 && (currentPage !== "generate" || generation.mode === "video")}
         <div class="absolute bottom-0 left-0.5 right-0.5 h-0.5 bg-neutral-700 rounded-full overflow-hidden pointer-events-none">
           <div
             class="h-full rounded-full transition-[width] duration-200 {progress.wasUpscaled && progress.samplingPass >= 2 ? 'bg-emerald-400' : 'bg-indigo-400'}"
@@ -3725,6 +3733,24 @@
         </div>
       {/if}
     </div>
+    {#if !generation.isNovelAi}
+      <div class="relative mx-auto">
+        <button
+          class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'generate' && generation.mode === 'video' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+          onclick={() => openGenerationWorkspace("video")}
+          title={locale.t("generation.mode.video")}
+          aria-label={locale.t("generation.mode.video")}
+          aria-current={currentPage === "generate" && generation.mode === "video" ? "page" : undefined}
+        >
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg>
+        </button>
+        {#if progress.isGenerating && progress.currentMode === "video"}
+          <span class="absolute -top-1 -right-1 min-w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 pointer-events-none {progress.queuePosition !== null && progress.queuePosition > 0 ? 'bg-amber-500 text-black' : 'bg-indigo-400 text-white animate-pulse'}" title={progress.phaseLabel}>
+            {progress.queuePosition !== null && progress.queuePosition > 0 ? `#${progress.queuePosition + 1}` : "●"}
+          </span>
+        {/if}
+      </div>
+    {/if}
     <button
       class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'music' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
       onclick={() => (currentPage = "music")}

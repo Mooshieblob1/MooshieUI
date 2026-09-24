@@ -71,8 +71,11 @@ All image URLs in each shard are absolute, computed at build time from
   `ongeneratePreview` / `previewStatus` hooks for generating missing previews.
 - The shared preview recipe is exported from `previewRecipe.ts`; use it when
   matching the CDN previews locally.
-- Style Creator consumes the artist index for candidate combinations and saves
-  picks as Artist Styles. Its generation loop belongs to the app, not the data
+- Style Creator consumes the artist index for candidate combinations. Single-artist
+  picks become artist favourites with the standard Miku preview; multi-artist picks
+  become Artist Styles with the generated thumbnail. Existing single-artist styles
+  offer **Favourite artist** in the Styles tab, keeping the original style intact.
+  Its generation loop belongs to the app, not the data
   client. See the [Style Creator guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide#style-creator).
 - The data client fetches published metadata and images; it does not publish
   to the CDN or own the generation backend.

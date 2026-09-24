@@ -24,6 +24,9 @@
   // The anchor-alone card is a reference, not a candidate, so a round that
   // holds one has nothing to save "both" of.
   const saveableCount = $derived(cards.filter((c) => c.saveable).length);
+  const favouriteBoth = $derived(
+    saveableCount > 1 && cards.filter((c) => c.saveable).every((c) => c.artists.length === 1),
+  );
 
   function chipLabel(artist: StyleArtist): string {
     const tag = generation.isNovelAi ? stripArtistSigil(artist.tag) : artist.tag;
@@ -76,26 +79,30 @@
     </div>
     <div class="flex flex-wrap items-center justify-center gap-2">
       {#if c.saveable}
-        <input
-          type="text"
-          value={c.name}
-          placeholder={locale.t("style_creator.name")}
-          oninput={(e) => styleCreator.setCardName(i, (e.currentTarget as HTMLInputElement).value)}
-          class="w-48 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
-        />
+        {#if c.artists.length > 1}
+          <input
+            type="text"
+            value={c.name}
+            placeholder={locale.t("style_creator.name")}
+            oninput={(e) => styleCreator.setCardName(i, (e.currentTarget as HTMLInputElement).value)}
+            class="w-48 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
+          />
+        {/if}
         <button
           type="button"
           class="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
           disabled={!choosing}
-          onclick={() => void styleCreator.pick(i)}>{locale.t("style_creator.pick")}</button
+          onclick={() => void styleCreator.pick(i)}>{locale.t(c.artists.length === 1 ? "styles.manager.favourite_artist" : "style_creator.pick")}</button
         >
-        <button
-          type="button"
-          class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:text-indigo-200 disabled:opacity-50"
-          disabled={!choosing}
-          onclick={() => void styleCreator.pick(i, true)}
-          >{locale.t("style_creator.pick_edit")}</button
-        >
+        {#if c.artists.length > 1}
+          <button
+            type="button"
+            class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] text-neutral-300 hover:text-indigo-200 disabled:opacity-50"
+            disabled={!choosing}
+            onclick={() => void styleCreator.pick(i, true)}
+            >{locale.t("style_creator.pick_edit")}</button
+          >
+        {/if}
       {:else}
         <span class="text-[11px] text-neutral-500">{locale.t("style_creator.anchor_alone")}</span>
         <button
@@ -183,7 +190,7 @@
                 class="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                 disabled={!choosing}
                 onclick={() => void styleCreator.pickAll()}
-                >{locale.t("style_creator.pick_both")}</button
+                >{locale.t(favouriteBoth ? "style_creator.favourite_both" : "style_creator.pick_both")}</button
               >
             {/if}
             <button

@@ -7,6 +7,10 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
   import { generateStyleThumbnail } from "../../utils/styleThumbnailGen.js";
+  import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
+  import { singleArtistSlug } from "../../utils/artistTag.js";
 
   interface Props {
     onclose?: () => void;
@@ -29,6 +33,21 @@
   let importStatus = $state<string | null>(null);
   let importError = $state<string | null>(null);
   let fileInput: HTMLInputElement | null = $state(null);
+
+  // Older/imported styles may only have a tag, without a gallery slug.
+  $effect(() => {
+    if (activeTab === "styles" && connection.artistGalleryManifestUrl &&
+        styles.styles.some((style) => style.artists.length === 1 && !style.artists[0].slug)) {
+      void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
+    }
+  });
+
+  function favouriteArtist(style: ArtistStyle) {
+    const slug = singleArtistSlug(style.artists, gallery.artistTagIndex);
+    if (!slug || artistFavourites.isFavourite(slug)) return;
+    artistFavourites.add(slug);
+    gallery.showToast(locale.t("style_creator.saved_artists", { count: 1 }), "success");
+  }
 
   function createStyle() {
     const name = newName.trim() || locale.t("styles.manager.default_style_name", { n: String(styles.styles.length + 1) });
@@ -303,6 +322,17 @@
                 <p class="truncate text-[11px] text-neutral-500">
                   {style.artists.length === 1 ? locale.t("styles.manager.artists_count", { count: String(style.artists.length) }) : locale.t("styles.manager.artists_count_plural", { count: String(style.artists.length) })} · {locale.t("styles.manager.overall_weight", { weight: locale.formatDecimal(style.overallWeight, 2) })}
                 </p>
+                {#if style.artists.length === 1}
+                  {@const slug = singleArtistSlug(style.artists, gallery.artistTagIndex)}
+                  {@const favourited = !!slug && artistFavourites.isFavourite(slug)}
+                  <button
+                    type="button"
+                    class="touch-target mt-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:text-indigo-200 disabled:opacity-50"
+                    disabled={!slug || favourited}
+                    title={locale.t(!slug ? "styles.manager.artist_unresolved" : "styles.manager.favourite_artist_hint")}
+                    onclick={() => favouriteArtist(style)}
+                  >{locale.t(favourited ? "styles.manager.artist_favourited" : "styles.manager.favourite_artist")}</button>
+                {/if}
               </div>
               <div class="flex shrink-0 items-center gap-1">
                 <button

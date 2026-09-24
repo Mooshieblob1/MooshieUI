@@ -93,15 +93,15 @@
     { id: "img2img" as const, label: () => locale.t('generation.mode.img2img') },
     { id: "inpainting" as const, label: () => locale.t('generation.mode.inpainting') },
     { id: "image_edit" as const, label: () => locale.t('generation.mode.image_edit') },
-    { id: "video" as const, label: () => locale.t('generation.mode.video') },
   ];
 
-  // NovelAI has no edit or video endpoint, so those tabs are dropped entirely
-  // rather than shown disabled. All three tab bars render this list.
+  // Video has its own primary navigation entry. These tabs only switch image modes.
   const modes = $derived(
-    generation.isNovelAi
-      ? ALL_MODES.filter((m) => m.id !== "image_edit" && m.id !== "video")
-      : ALL_MODES,
+    generation.mode === "video"
+      ? []
+      : generation.isNovelAi
+        ? ALL_MODES.filter((m) => m.id !== "image_edit")
+        : ALL_MODES,
   );
 
   let canvasEditorRef: CanvasEditor | undefined = $state();
@@ -2261,6 +2261,9 @@
     {#if mobileFriendly}
       <div class="fixed top-2 left-1/2 -translate-x-1/2 z-50 w-[min(96vw,34rem)] px-2">
         <div class="w-full flex gap-1 bg-neutral-900 rounded-lg p-1 border border-neutral-700 shadow">
+          {#if generation.mode === "video"}
+            <h1 class="flex-1 px-2.5 py-2 text-center text-xs font-medium text-neutral-200">{locale.t("generation.mode.video")}</h1>
+          {/if}
           {#each modes as mode}
             <button
               onclick={() => {
@@ -2316,6 +2319,9 @@
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
             <div class="flex gap-1.5 items-center">
               <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
+                {#if generation.mode === "video"}
+                  <h1 class="flex-1 py-1.5 text-center text-xs font-medium text-neutral-200">{locale.t("generation.mode.video")}</h1>
+                {/if}
                 {#each modes as mode}
                   <button
                     onclick={() => {
@@ -2495,6 +2501,9 @@
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">
             <div class="flex gap-1.5 items-center">
               <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
+                {#if generation.mode === "video"}
+                  <h1 class="flex-1 py-1.5 text-center text-xs font-medium text-neutral-200">{locale.t("generation.mode.video")}</h1>
+                {/if}
                 {#each modes as mode}
                   <button
                     onclick={() => {

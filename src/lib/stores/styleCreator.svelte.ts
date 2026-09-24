@@ -1,7 +1,7 @@
 /**
  * Style Creator: draw random artist combinations, generate them side by side
- * on one pinned seed, and save the one the user picks as an Artist Style with
- * that image as its thumbnail.
+ * on one pinned seed. Single-artist picks become artist favourites with their
+ * standard Miku preview; combinations become Artist Styles with the picked image.
  *
  * The draw is pure random over the Artists index. No LLM is involved.
  *
@@ -30,7 +30,7 @@ import { locale } from "./locale.svelte.js";
 import { artistFavourites } from "../artist-gallery/favourites.svelte.js";
 import { submitGeneration } from "../utils/generationSubmit.js";
 import { classifyGenerationError } from "../utils/generationErrors.js";
-import { artistIndexKey, artistTagBodiesMatch, stripArtistSigil } from "../utils/artistTag.js";
+import { artistIndexKey, artistTagBodiesMatch, singleArtistSlug, stripArtistSigil } from "../utils/artistTag.js";
 import { isBelowThresholdCount } from "../artist-gallery/counts.js";
 import type { ArtistSearchHit } from "../artist-gallery/types.js";
 import type { OutputImage } from "../types/index.js";
@@ -548,7 +548,7 @@ class StyleCreatorStore {
   }
 
   /**
-   * Save the picked card as a style and move on. The next round starts before
+   * Save the picked card and move on. The next round starts before
    * the thumbnail resize is awaited, so the loop is never blocked by it.
    * Picking the anchor-alone card saves nothing.
    */
@@ -558,20 +558,8 @@ class StyleCreatorStore {
     if (!round) return;
     const card = round.cards[index];
     if (!card || !card.image) return;
-    const image = card.image;
-    const name = card.name;
-    const artists = card.artists.map((a) => ({ ...a }));
-    const saveable = card.saveable;
     this.finishRound();
-    if (!saveable) {
-      if (this.running) this.nextRound();
-      return;
-    }
-    const style = styles.create(name, artists);
-    if (edit) styleEditors.openStyle(style.id);
-    if (this.running) this.nextRound();
-    await this.attachThumbnail(style.id, image);
-    gallery.showToast(locale.t("style_creator.saved", { name: style.name }), "success");
+    await this.saveCandidates(card.saveable ? [card] : [], edit);
   }
 
   /**
@@ -584,23 +572,44 @@ class StyleCreatorStore {
     const round = this.round;
     if (!round) return;
     // Snapshot before finishRound clears the round out from under us.
-    const picks = round.cards
-      .filter((c) => c.saveable && c.image)
-      .map((c) => ({
-        image: c.image as OutputImage,
-        name: c.name,
-        artists: c.artists.map((a) => ({ ...a })),
-      }));
+    const picks = round.cards.filter((c) => c.saveable && c.image);
     if (picks.length === 0) return;
     this.finishRound();
-    const created = picks.map((p) => styles.create(p.name, p.artists));
-    // Same as pick: the next round starts before the resizes are awaited.
+    await this.saveCandidates(picks);
+  }
+
+  private async saveCandidates(cards: RoundCard[], edit = false): Promise<void> {
+    const created: { id: string; name: string; image: OutputImage }[] = [];
+    let artistCount = 0;
+    for (const card of cards) {
+      if (!card.image) continue;
+      const artists = card.artists.map((a) => ({ ...a }));
+      const slug = singleArtistSlug(artists, gallery.artistTagIndex);
+      if (slug) {
+        // Favourites use the gallery's Miku preview. Never attach this round's
+        // image, and keep the category of an artist that is already favourited.
+        if (!artistFavourites.isFavourite(slug)) artistFavourites.add(slug);
+        artistCount++;
+      } else {
+        const style = styles.create(card.name, artists);
+        if (edit) styleEditors.openStyle(style.id);
+        created.push({ id: style.id, name: style.name, image: card.image });
+      }
+    }
+    // Start the next round before waiting for multi-artist thumbnail resizes.
     if (this.running) this.nextRound();
-    await Promise.all(created.map((style, i) => this.attachThumbnail(style.id, picks[i].image)));
-    gallery.showToast(
-      locale.t("style_creator.saved_count", { count: created.length }),
-      "success",
-    );
+    if (artistCount > 0) {
+      gallery.showToast(locale.t("style_creator.saved_artists", { count: artistCount }), "success");
+    }
+    await Promise.all(created.map((style) => this.attachThumbnail(style.id, style.image)));
+    if (created.length > 0) {
+      gallery.showToast(
+        created.length === 1
+          ? locale.t("style_creator.saved", { name: created[0].name })
+          : locale.t("style_creator.saved_count", { count: created.length }),
+        "success",
+      );
+    }
   }
 
   /**

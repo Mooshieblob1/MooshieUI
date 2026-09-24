@@ -4,6 +4,8 @@
   import MusicPage from "../music/MusicPage.svelte";
   import MusicBottomPlayer from "../music/MusicBottomPlayer.svelte";
   import { music } from "../../stores/music.svelte.js";
+  import { generation } from "../../stores/generation.svelte.js";
+  import { canvas } from "../../stores/canvas.svelte.js";
   import MobileSettingsPage from "./MobileSettingsPage.svelte";
   import GalleryPage from "../gallery/GalleryPage.svelte";
   import { ArtistGalleryPage } from "../../artist-gallery/index.js";
@@ -19,7 +21,7 @@
     userRole?: string;
     navigationTarget?: MobileTab | null;
     navigationVersion?: number;
-    onTabChange?: (tab: MobileTab) => void;
+    onTabChange?: (tab: Exclude<MobileTab, "video">) => void;
   }
   let {
     canUseModelhub = false,
@@ -29,30 +31,44 @@
     onTabChange,
   }: Props = $props();
 
-  let currentTab = $state<MobileTab>("generate");
+  let currentTab = $state<Exclude<MobileTab, "video">>("generate");
   let lastNavigationVersion = $state(navigationVersion);
 
   function go(tab: MobileTab) {
+    if (tab === "video") {
+      generation.setMode("video");
+      canvas.isCanvasMode = false;
+      openGeneration();
+      return;
+    }
+    if (tab === "generate") generation.setMode(generation.lastImageMode);
     currentTab = tab;
     onTabChange?.(tab);
+  }
+
+  // Gallery actions and completion notifications have already selected a mode.
+  function openGeneration() {
+    currentTab = "generate";
+    onTabChange?.("generate");
   }
 
   function handleCharacterInsert(character: AnimadexCharacter) {
     characterInsert.request(character);
     if (!characterInsert.pending) {
-      go("generate");
+      openGeneration();
     }
   }
 
   function finishCharacterInsert() {
     characterInsert.dismiss();
-    go("generate");
+    openGeneration();
   }
 
   $effect(() => {
     if (navigationVersion === lastNavigationVersion) return;
     lastNavigationVersion = navigationVersion;
-    if (navigationTarget) go(navigationTarget);
+    if (navigationTarget === "generate") openGeneration();
+    else if (navigationTarget) go(navigationTarget);
   });
 </script>
 
@@ -64,7 +80,7 @@
     {:else if currentTab === "music"}
       <MusicPage {userRole} />
     {:else if currentTab === "gallery"}
-      <GalleryPage onSwitchToGenerate={() => go("generate")} />
+      <GalleryPage onSwitchToGenerate={openGeneration} />
     {:else if currentTab === "modelhub" && canUseModelhub}
       <div class="h-full overflow-hidden">
         <ModelHubPage />
@@ -92,8 +108,9 @@
   <MusicBottomPlayer onOpen={() => { music.view = "generate"; go("music"); }} />
   <CharacterInsertModal onapplied={finishCharacterInsert} />
   <MobileTabBar
-    current={currentTab}
+    current={currentTab === "generate" && generation.mode === "video" ? "video" : currentTab}
     onChange={go}
     showModelhub={canUseModelhub}
+    showVideo={!generation.isNovelAi}
   />
 </div>

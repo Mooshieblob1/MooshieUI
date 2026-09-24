@@ -82,6 +82,18 @@ export function artistIndexKey(tag: string): string {
     .replace(/\s+/g, "_");
 }
 
+/** Resolve a single-artist style to its gallery slug, including imported tags. */
+export function singleArtistSlug(
+  artists: readonly { tag: string; slug?: string }[],
+  index: ArtistTagIndex,
+): string | null {
+  if (artists.length !== 1) return null;
+  const artist = artists[0];
+  // Slugs from the gallery are already canonical. Do not invent one from a
+  // typed tag: punctuation in a tag need not match the CDN's filesystem slug.
+  return artist.slug || index.get(artistIndexKey(artist.tag))?.slug || null;
+}
+
 /**
  * Is this prompt token an artist tag?
  *

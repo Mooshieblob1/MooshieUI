@@ -1,5 +1,19 @@
 # Changelog
 
+## What's New in v2.3.7
+
+### Artist favourites and Style Creator
+- **Save single artists to favourites**: when a Style Creator candidate contains one artist, **Favourite artist** saves it to Artists with the standard Miku preview. **Favourite both** saves both single-artist candidates. Combinations with multiple artists still save as Artist Styles with the generated image.
+- **Favourite existing single-artist styles**: use **Favourite artist** in Artist Styles to add an older style's artist to Artists. The original style stays intact, and an existing favourite keeps its category.
+
+### Video navigation
+- **Video in primary navigation**: open Video beside Generate and Music on desktop and mobile. Generate returns to your previous image mode, and progress indicators follow the workspace doing the generation. Gallery actions such as **Make video** and **Add as video reference** continue into the Video workspace.
+
+### Fixes and maintenance
+- **Restore LoRAs from gallery images**: **Remix** and **Reuse Settings** restore available LoRAs with their saved model and CLIP strengths, including zero. Images made without LoRAs clear the current selection. Fixes #701.
+
+---
+
 ## What's New in v2.3.6
 
 ### Music references, styles and comparisons
