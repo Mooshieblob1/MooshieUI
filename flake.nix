@@ -101,6 +101,24 @@
         });
       in
       {
+        # Explicit tasks also work when VS Code is opened from the desktop.
+        devShells.default = pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [
+            nodejs pnpm cargo rustc rustfmt clippy pkg-config wrapGAppsHook3
+          ];
+          buildInputs = with pkgs; [
+            openssl glib gtk3 webkitgtk_4_1 libsoup_3 librsvg
+            glib-networking gsettings-desktop-schemas
+            gst_all_1.gst-plugins-base gst_all_1.gst-plugins-good
+            gst_all_1.gst-libav
+          ];
+          OPENSSL_NO_VENDOR = "1";
+          shellHook = ''
+            export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+            export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
+          '';
+        };
+
         # The raw Tauri app (works for the GUI, but its setup wizard downloads
         # generic-linux uv/CPython that NixOS can't exec directly).
         packages.unwrapped = mooshieui-unwrapped;

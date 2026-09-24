@@ -1,0 +1,192 @@
+{
+  "windows-x86_64": [
+    {
+      "tool": "yt-dlp",
+      "version": "2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+      "kind": "raw",
+      "member": "",
+      "binary": "yt-dlp.exe"
+    },
+    {
+      "tool": "ffmpeg",
+      "version": "9.0.1",
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.1/ffmpeg-9.0.1-essentials_build.zip",
+      "sha256": "fec81ae03971d9dd4be3ebe02e263bd2ec1d789483f931bdba5f5715e65da2e9",
+      "kind": "zip",
+      "member": "ffmpeg-9.0.1-essentials_build/bin/ffmpeg.exe",
+      "binary": "ffmpeg.exe"
+    },
+    {
+      "tool": "deno",
+      "version": "2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+      "sha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+      "kind": "zip",
+      "member": "deno.exe",
+      "binary": "deno.exe"
+    },
+    {
+      "tool": "node",
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+      "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+      "kind": "zip",
+      "member": "node-v24.21.0-win-x64/node.exe",
+      "binary": "node.exe"
+    }
+  ],
+  "macos-x86_64": [
+    {
+      "tool": "yt-dlp",
+      "version": "2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos",
+      "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202",
+      "kind": "raw",
+      "member": "",
+      "binary": "yt-dlp"
+    },
+    {
+      "tool": "ffmpeg",
+      "version": "9.0.1",
+      "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1787081194_9.0.1/ffmpeg.zip",
+      "sha256": "5bdead62ff504ab9b447cc72b212c4fb481e3f7de5877d427a51bee8136dda40",
+      "kind": "zip",
+      "member": "ffmpeg",
+      "binary": "ffmpeg"
+    },
+    {
+      "tool": "deno",
+      "version": "2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-apple-darwin.zip",
+      "sha256": "95daaff11c116a52ad54785e7914c8e9c9cdcaba793c5ed929c74ca2d8e6259a",
+      "kind": "zip",
+      "member": "deno",
+      "binary": "deno"
+    },
+    {
+      "tool": "node",
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz",
+      "sha256": "1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097",
+      "kind": "tar.gz",
+      "member": "node-v24.21.0-darwin-x64/bin/node",
+      "binary": "node"
+    }
+  ],
+  "macos-aarch64": [
+    {
+      "tool": "yt-dlp",
+      "version": "2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos",
+      "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202",
+      "kind": "raw",
+      "member": "",
+      "binary": "yt-dlp"
+    },
+    {
+      "tool": "ffmpeg",
+      "version": "9.0.1",
+      "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1787073674_9.0.1/ffmpeg.zip",
+      "sha256": "8287a1b2229e05eb41859f073e18e6c52c60a778f2f5e6881070fe51b79407fe",
+      "kind": "zip",
+      "member": "ffmpeg",
+      "binary": "ffmpeg"
+    },
+    {
+      "tool": "deno",
+      "version": "2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-aarch64-apple-darwin.zip",
+      "sha256": "5cd46d6268f6f78f5d88bdc7159d20bd44cdaa4b3303474839f87ec6fe7ae25c",
+      "kind": "zip",
+      "member": "deno",
+      "binary": "deno"
+    },
+    {
+      "tool": "node",
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
+      "sha256": "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
+      "kind": "tar.gz",
+      "member": "node-v24.21.0-darwin-arm64/bin/node",
+      "binary": "node"
+    }
+  ],
+  "linux-x86_64": [
+    {
+      "tool": "yt-dlp",
+      "version": "2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux",
+      "sha256": "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a",
+      "kind": "raw",
+      "member": "",
+      "binary": "yt-dlp"
+    },
+    {
+      "tool": "ffmpeg",
+      "version": "9.0.1",
+      "url": "https://ffmpeg.martin-riedl.de/download/linux/amd64/1787074600_9.0.1/ffmpeg.zip",
+      "sha256": "18bec7d5c2ab3b24d277466b758394e109b0479133b98d155c5540ed3013fa74",
+      "kind": "zip",
+      "member": "ffmpeg",
+      "binary": "ffmpeg"
+    },
+    {
+      "tool": "deno",
+      "version": "2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip",
+      "sha256": "c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490",
+      "kind": "zip",
+      "member": "deno",
+      "binary": "deno"
+    },
+    {
+      "tool": "node",
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.gz",
+      "sha256": "6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff",
+      "kind": "tar.gz",
+      "member": "node-v24.21.0-linux-x64/bin/node",
+      "binary": "node"
+    }
+  ],
+  "linux-aarch64": [
+    {
+      "tool": "yt-dlp",
+      "version": "2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_linux_aarch64",
+      "sha256": "b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc",
+      "kind": "raw",
+      "member": "",
+      "binary": "yt-dlp"
+    },
+    {
+      "tool": "ffmpeg",
+      "version": "9.0.1",
+      "url": "https://ffmpeg.martin-riedl.de/download/linux/arm64/1787072884_9.0.1/ffmpeg.zip",
+      "sha256": "92cff3dec20d996bb5b8a918b156b64301338e7c28046053c82d0935cf7c6eb2",
+      "kind": "zip",
+      "member": "ffmpeg",
+      "binary": "ffmpeg"
+    },
+    {
+      "tool": "deno",
+      "version": "2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-aarch64-unknown-linux-gnu.zip",
+      "sha256": "c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf",
+      "kind": "zip",
+      "member": "deno",
+      "binary": "deno"
+    },
+    {
+      "tool": "node",
+      "version": "24.21.0",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.gz",
+      "sha256": "724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5",
+      "kind": "tar.gz",
+      "member": "node-v24.21.0-linux-arm64/bin/node",
+      "binary": "node"
+    }
+  ]
+}

@@ -242,6 +242,8 @@ class GalleryStore {
    */
   lightboxFollowIds = $state<string[]>([]);
   loading = $state(false);
+  refreshing = $state(false);
+  private _diskLoadPromise: Promise<boolean> | null = null;
   /** True while a save/download operation is in progress (prevents double-clicks). */
   saving = $state(false);
   toast = $state<GalleryToast | null>(null);
@@ -1025,11 +1027,41 @@ class GalleryStore {
     }
   }
 
-  /** Load previously saved gallery images from disk on startup (metadata only — no image bytes). */
-  async loadFromDisk() {
+  /** Serialize directory reads so an older listing cannot overwrite a newer one. */
+  loadFromDisk(refreshMetadata = false): Promise<boolean> {
+    const previous = this._diskLoadPromise ?? Promise.resolve(true);
+    const pending = previous.then(() => this._loadFromDisk(refreshMetadata)).finally(() => {
+      if (this._diskLoadPromise === pending) this._diskLoadPromise = null;
+    });
+    this._diskLoadPromise = pending;
+    return pending;
+  }
+
+  async refresh() {
+    if (this.refreshing || this.loading) return;
+    this.refreshing = true;
+    try {
+      const success = await this.loadFromDisk(true);
+      this.showToast(
+        locale.t(success ? "gallery.toast.refreshed" : "gallery.toast.refresh_failed"),
+        success ? "success" : "error",
+      );
+    } finally {
+      this.refreshing = false;
+    }
+  }
+
+  /** Reconcile saved files with live objects, preserving unsaved and in-flight results. */
+  private async _loadFromDisk(refreshMetadata: boolean): Promise<boolean> {
     this.loading = true;
     try {
+      // Finish older metadata reads before invalidating their results.
+      await this._metadataHydrationPromise;
+      const before = new Map(this.images.map(image => [image, image.gallery_filename]));
+      const beforeNames = new Set(before.values());
       const entries = await listGalleryImageEntries();
+      const diskNames = new Set(entries.map(entry => entry.filename));
+      const revision = refreshMetadata ? Date.now() : undefined;
       const loaded: OutputImage[] = [];
       for (const entry of entries) {
         const filename = entry.filename;
@@ -1056,6 +1088,9 @@ class GalleryStore {
             isUpscaled = lowered.includes("upscale") || lowered.includes("upscaled");
           }
 
+          const thumb = await thumbnailUrl(filename);
+          const full = await fullImageUrl(filename);
+          const version = `${entry.modified_ms}-${entry.size_bytes}${revision ? `-${revision}` : ""}`;
           loaded.push({
             filename: origFilename,
             subfolder: "",
@@ -1064,8 +1099,8 @@ class GalleryStore {
             generation_mode: generationMode,
             is_upscaled: isUpscaled,
             url: undefined,
-            thumbnailUrl: await thumbnailUrl(filename),
-            fullImageUrl: await fullImageUrl(filename),
+            thumbnailUrl: `${thumb}${thumb.includes("?") ? "&" : "?"}v=${version}`,
+            fullImageUrl: `${full}${full.includes("?") ? "&" : "?"}v=${version}`,
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,
@@ -1076,21 +1111,78 @@ class GalleryStore {
           console.error(`Failed to parse gallery entry ${filename}:`, e);
         }
       }
-      if (loaded.length > 0) {
-        this.images = [...loaded, ...this.images];
+      // Resolve against the current arrays after all awaits: generation, saving,
+      // and deletion can finish while the directory request is in flight.
+      await this._metadataHydrationPromise;
+      await Promise.all(this._persistPromises.values());
+      const existing = new Map<string, OutputImage>();
+      for (const image of [...this.sessionImages, ...this.images]) {
+        if (image.gallery_filename && !existing.has(image.gallery_filename)) {
+          existing.set(image.gallery_filename, image);
+        }
       }
+      const reconciled: OutputImage[] = [];
+      for (const diskImage of loaded) {
+        const name = diskImage.gallery_filename!;
+        const image = existing.get(name);
+        if (!image && beforeNames.has(name)) continue; // Deleted during the scan.
+        if (image) {
+          const changed = image.file_size_bytes !== diskImage.file_size_bytes
+            || image.generated_at_ms !== diskImage.generated_at_ms;
+          if (before.get(image) === name && (refreshMetadata || changed)) {
+            image.metadata = undefined;
+            this._metadataMisses.delete(name);
+          }
+          image.thumbnailUrl = diskImage.thumbnailUrl;
+          image.fullImageUrl = diskImage.fullImageUrl;
+          image.file_size_bytes = diskImage.file_size_bytes;
+          image.generated_at_ms = diskImage.generated_at_ms;
+          image.duration_seconds = diskImage.duration_seconds;
+          image.fps = diskImage.fps;
+        }
+        reconciled.push(image ?? diskImage);
+      }
+
+      const loadedNames = new Set(loaded.map(image => image.gallery_filename));
+      const retained = this.images.filter(image => !image.gallery_filename
+        || !before.has(image)
+        || before.get(image) !== image.gallery_filename
+        || (diskNames.has(image.gallery_filename) && !loadedNames.has(image.gallery_filename)));
+      const seen = new Set<string | OutputImage>();
+      const next = [...retained, ...reconciled].filter(image => {
+        const key = image.gallery_filename ?? image;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const kept = new Set(next);
+      const removed = this.images.filter(image => !kept.has(image));
+      this.images = next;
+      this.sessionImages = this.sessionImages.filter(image => kept.has(image));
+      if (this.selectedImage && !kept.has(this.selectedImage)) this.closeLightbox();
+      if (this.lastSelectedImage && !kept.has(this.lastSelectedImage)) this.lastSelectedImage = null;
+      if (this.comparePin && !kept.has(this.comparePin)) this.comparePin = null;
+      if ((this.compareA && !kept.has(this.compareA)) || (this.compareB && !kept.has(this.compareB))) {
+        this.closeCompare();
+      }
+      const usedUrls = new Set([
+        ...next.map(image => image.url), this.lightboxUrl, this.compareUrlA, this.compareUrlB,
+        progress.lastOutputImage, progress.previewImage,
+      ]);
+      for (const image of removed) {
+        if (image.url?.startsWith("blob:") && !usedUrls.has(image.url)) URL.revokeObjectURL(image.url);
+      }
+      if (refreshMetadata) this._metadataMisses.clear();
+      if (isBrowserMode) void this.refreshStorageInfo();
+      const hydration = this.hydrateMetadataInBackground();
+      if (refreshMetadata) await hydration;
+      return true;
     } catch (e) {
       console.error("Failed to list gallery images:", e);
+      return false;
     } finally {
       this.loading = false;
     }
-    // Fetch storage info after loading gallery (browser mode)
-    if (isBrowserMode) {
-      this.refreshStorageInfo();
-    }
-    // Background: populate metadata for thumbnails so artist-tag detection
-    // and other prompt-based UI work without needing the lightbox.
-    void this.hydrateMetadataInBackground();
   }
 
   /** Null until hydration starts; resolves when ALL pending images have metadata. */
@@ -1813,6 +1905,8 @@ class GalleryStore {
 
   /** Re-scan legacy gallery metadata and migrate old filenames to include mode metadata. */
   async rescanMetadata() {
+    if (this.loading || this.refreshing) return;
+    this.loading = true;
     try {
       let migrated = 0;
       for (const image of this.images) {
@@ -1856,6 +1950,8 @@ class GalleryStore {
     } catch (e) {
       console.error("Failed to re-scan gallery metadata:", e);
       this.showToast(locale.t("gallery.toast.rescan_failed"), "error");
+    } finally {
+      this.loading = false;
     }
   }
 

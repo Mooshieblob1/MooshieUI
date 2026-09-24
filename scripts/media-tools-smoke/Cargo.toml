@@ -1,0 +1,23 @@
+[package]
+name = "mooshie-media-tools-smoke"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Compile the real installer on native runners without building the GUI, models,
+# or ComfyUI. Keep these dependency ranges aligned with src-tauri/Cargo.toml.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+
+[workspace]

@@ -1593,6 +1593,9 @@ pub fn save_video_to_gallery(
     }
     let dest_video = gallery_dir.join(&video_filename);
     move_gallery_file(video_path, &dest_video)?;
+    if let Err(error) = super::video_drafts::move_record(video_path, &dest_video) {
+        log::warn!("Video saved, but its retained draft record could not be moved: {error}");
+    }
     // Mirror the mp4's own metadata into a top-level uuid box. Best-effort: the
     // node writes the container-native copy and this only adds the sidecar that
     // survives a chat-client upload, so a failure is worth a log line and
@@ -2165,11 +2168,17 @@ pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
+pub async fn delete_gallery_image(
+    state: State<'_, Arc<AppState>>,
+    filename: String,
+) -> Result<(), AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     match resolve_gallery_image_path(&dir, &filename) {
         Ok(path) => {
+            if filename.ends_with(".mp4") {
+                super::video_drafts::delete_draft(state.inner(), &dir, &filename).await?;
+            }
             std::fs::remove_file(&path)?;
             crate::gallery_index::remove(&path);
             // Videos own a poster sidecar that listings never surface; delete it
@@ -2233,6 +2242,7 @@ pub async fn rename_gallery_image(
     }
 
     std::fs::rename(&old_path, &new_path)?;
+    super::video_drafts::move_record(&old_path, &new_path)?;
     crate::gallery_index::rename(&old_path, &new_path);
 
     if old_is_video {
@@ -2884,6 +2894,37 @@ pub async fn install_h3_turbo(
 
     if let Err(e) = &result {
         emit_progress("error", e, true);
+    }
+    result.map_err(AppError::Other)
+}
+
+/// VDN availability in the connected ComfyUI, including checkpoint discovery.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_h3_vdn_status(
+    precision: Option<crate::comfyui::h3_vdn::VdnPrecision>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::comfyui::h3_vdn::VdnStatus, AppError> {
+    Ok(state.h3_vdn_status(precision.unwrap_or_default()).await)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn install_h3_vdn(
+    precision: Option<crate::comfyui::h3_vdn::VdnPrecision>,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let emit = |step: &str, message: &str, done: bool| {
+        let _ = app.emit("install:progress", serde_json::json!({
+            "node_name": crate::comfyui::h3_vdn::PACKAGE, "step": step, "message": message, "done": done
+        }));
+    };
+    let result = state
+        .install_h3_vdn(precision.unwrap_or_default(), &emit)
+        .await;
+    if let Err(error) = &result {
+        emit("error", error, true);
     }
     result.map_err(AppError::Other)
 }

@@ -25,7 +25,7 @@ import { h3FormatOf } from "./h3Prompt.js";
  * prompt or the format spec it is written against. Old entries are left behind
  * rather than swept: they are a few kB, and a sweep would have to guess at keys.
  */
-const SKILL_VERSION = 1;
+const SKILL_VERSION = 2;
 
 const CACHE_PREFIX = "mooshieui.h3skill.";
 
@@ -112,6 +112,7 @@ Rules for your answer:
 - Plain text only. No markdown fences, no headings, no preamble, no closing remark. Start at the first bullet.
 - 6 to 12 bullets, each beginning "- ", each a single line, each an instruction to yourself.
 - Technique only: how to read the input, what to settle before you start writing, how to hold a long answer consistent to its last line, and how to check your work before you stop.
+- Favor concise motion direction: preserve the user's main action, use only necessary supporting movement, and avoid padding a simple shot with invented choreography or repeated constraints. Natural blinks are brief with eyes open between them unless the user asks otherwise.
 - Be specific about your own failure modes. If you tend to summarize where you were asked to describe, drift out of a required structure partway through, paraphrase text you were told to copy verbatim, or pad with abstract language, name it and say what you will do instead.
 - Do not restate, invent or contradict any format rule. Do not name output fields, do not show example output, do not write any fragment of a prompt.`;
 }
@@ -123,15 +124,15 @@ export function h3SkillAuthoringUser(
 ): string {
   const ref = h3FormatOf(ctx.taskType) === "ref";
   const shape = ref
-    ? "six named sections in a fixed order, several hundred words in total"
-    : "three named fields in a fixed order, several hundred words in total";
+    ? "six named sections in a fixed order, with a concise motion description"
+    : "three named fields in a fixed order, with a concise motion description";
   const vision = hasImage
     ? "The video's first frame will be attached as an image, and the opening of your description has to match what is actually visible in it."
     : "You will work from the user's text alone. No images are attached.";
 
   return `The job: rewrite a user's plain-language video idea into the MiniMax H3 ${ref ? "full-reference" : "base"} prompt format.
 
-The output is one continuous English block of ${shape}. It carries the whole audiovisual timeline in playback order - framing, subjects, setting, lighting, action, camera movement and the sound at each moment - and it reproduces any dialogue the user supplied word for word inside required tags. Prose, summary and commentary are all failures.
+The output is one English block of ${shape}. A simple shot needs only a brief visual anchor, the main action, essential supporting motion, camera behavior and sound. Do not force several hundred words, repeated pose constraints, slow eyelid choreography or an invented blink schedule into it. Expand only for requested complexity and reproduce the user's dialogue word for word inside required tags. Missing fields, invented actions and commentary are failures.
 
 ${vision}
 

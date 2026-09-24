@@ -13,8 +13,8 @@
     getConfig,
     installH3Teacache,
     installH3Turbo,
+    getH3UpscalerStatus,
     isH3TeacacheInstalled,
-    isH3TurboInstalled,
     readClipboardImageSafe,
     uploadImageBytes,
   } from "../../utils/api.js";
@@ -48,6 +48,7 @@
     H3_DEFAULT_TIER,
     H3_TIERS,
     H3_TURBO_LORA,
+    H3_TURBO_PRESETS,
     h3Stack,
     h3TierFiles,
     h3TierForDiffusionModel,
@@ -55,11 +56,12 @@
   import type { H3ModelCategory, H3ModelFile, H3TierId } from "../../utils/h3Models.js";
   import { RIFE_MULTIPLIERS, RIFE_SCALE_FACTORS, interpolatedFps } from "../../utils/rife.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import type { OutputImage, VideoAspectRatio, VideoVariant } from "../../types/index.js";
+  import type { OutputImage, VideoAcceleration, VideoAspectRatio, VideoVariant } from "../../types/index.js";
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import { uploadForVideo, videoReferenceSlotsFree } from "../../utils/galleryActions.js";
+
 
   /**
    * One upload target. `fl2va` exposes two (first frame / last frame), `ref2va`
@@ -112,6 +114,16 @@
   let computeCapability = $state<number | null>(null);
   /** Gate for the tier-resolving effect: probing decides the default tier. */
   let hardwareProbed = $state(false);
+  let canInstallLocally = $state(false);
+  $effect(() => {
+    const connected = connection.connected;
+    generation.videoDraftNodesReady = false;
+    let active = true;
+    if (connected) void getH3UpscalerStatus().then(status => {
+      if (active) generation.videoDraftNodesReady = status.nodes_ready;
+    }).catch(() => {});
+    return () => { active = false; };
+  });
 
   /** The quality tier driving all four model files. */
   let selectedTier = $state<H3TierId>(H3_DEFAULT_TIER);
@@ -138,6 +150,9 @@
   let teacacheInstallStep = $state("");
   let teacacheInstallMessage = $state("");
   let teacacheInstallError = $state<string | null>(null);
+
+  const accelerationBusy = $derived(generation.videoAccelerationInstalling || teacacheInstalling || rifeInstall.installing);
+  const fixedSampling = $derived(generation.videoAcceleration !== "standard");
 
   let previews = $state<Record<string, string | null>>({});
   let uploadingSlot = $state<string | null>(null);
@@ -237,7 +252,11 @@
       computeCapability < H3_BLACKWELL_COMPUTE_CAPABILITY,
   );
 
-  const turboLoraName = $derived(installedName(H3_TURBO_LORA));
+  const turboPreset = $derived(generation.effectiveVideoTurboPreset);
+  const lightxSelected = $derived(turboPreset.id !== "larryvrh");
+  let lightxNodesReady = $state(false);
+  const turboLoraName = $derived(installedName(turboPreset.file));
+  $effect(() => { generation.videoLightxLora = lightxSelected ? turboLoraName : null; });
   /** Whether a LoRA filename (any basename) is present in the LoRA list. */
   function loraInstalled(filename: string): boolean {
     const wanted = filename.toLowerCase();
@@ -252,8 +271,8 @@
    * the hard-coded standard file.
    */
   const turboReady = $derived(
-    turboInstalled === true &&
-      (selectedTier === "custom"
+    (lightxSelected ? lightxNodesReady : turboInstalled === true) &&
+      (selectedTier === "custom" && !lightxSelected
         ? loraInstalled(generation.videoTurboLora)
         : turboLoraName !== null),
   );
@@ -342,13 +361,13 @@
     void loadHardware();
     rifeInstall.listen();
     void rifeInstall.refresh();
-    void loadTurboState();
     void loadTeacacheState();
     const unlistenInstall = ipcListen("install:progress", (event: any) => {
       const data = event.payload as { node_name: string; step: string; message: string };
       if (data.node_name === TURBO_PACKAGE_NAME) {
         turboInstallStep = data.step;
         turboInstallMessage = data.message;
+
       } else if (data.node_name === TEACACHE_PACKAGE_NAME) {
         teacacheInstallStep = data.step;
         teacacheInstallMessage = data.message;
@@ -390,7 +409,9 @@
       detectedVramGb = null;
     }
     try {
-      vramMode = (await getConfig()).vram_mode;
+      const config = await getConfig();
+      vramMode = config.vram_mode;
+      canInstallLocally = config.server_mode === "autolaunch";
     } catch {
       vramMode = null;
     }
@@ -405,10 +426,36 @@
 
   async function loadTurboState() {
     try {
-      turboInstalled = await isH3TurboInstalled();
+      const ready = await Promise.all([TURBO_NODE_CLASS, "LoraLoaderModelOnly", "MiniMaxH3SigmaShift"].map(name => checkNodeAvailable(name)));
+      turboInstalled = ready[0];
+      lightxNodesReady = ready[1] && ready[2];
+      // Disk presence alone never enables an unloaded or broken package.
     } catch {
       turboInstalled = null;
+      lightxNodesReady = false;
     }
+  }
+
+  $effect(() => {
+    if (connection.connected) {
+      void loadTurboState();
+    } else {
+      turboInstalled = false;
+      lightxNodesReady = false;
+    }
+  });
+
+  $effect(() => {
+    generation.videoAccelerationReady = connection.connected && (
+      generation.videoAcceleration === "standard" ||
+      (generation.videoAcceleration === "turbo" && turboReady)
+    );
+  });
+
+  function selectAcceleration(event: Event) {
+    const mode = (event.currentTarget as HTMLSelectElement).value as VideoAcceleration;
+    generation.videoAcceleration = mode;
+    generation.saveSettings();
   }
 
   async function loadTeacacheState() {
@@ -520,7 +567,7 @@
     dlOrder = files.map((file) => file.filename);
     try {
       await Promise.all(
-        files.map((file) => downloadModel(file.url, file.category, file.filename)),
+        files.map((file) => downloadModel(file.url, file.category, file.filename, undefined, file.sha256)),
       );
     } finally {
       await models.refresh();
@@ -590,32 +637,18 @@
     input.checked = generation.videoRifeEnabled;
   }
 
-  /** Same contract as `toggleRife`: the store flag only turns on once usable. */
-  function toggleTurbo(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const next = input.checked;
-    turboInstallError = null;
-    if (!next) {
-      generation.videoTurboEnabled = false;
-      generation.saveSettings();
-    } else if (turboReady) {
-      generation.videoTurboEnabled = true;
-      generation.saveSettings();
-    } else {
-      void installTurbo();
-    }
-    input.checked = generation.videoTurboEnabled;
-  }
-
   /**
    * The node pack and the LoRA install independently. Only the pack needs a
    * ComfyUI restart (new Python classes); a LoRA file is picked up by a plain
    * `models.refresh()`, so an already-cloned pack skips the restart entirely.
    */
   async function installTurbo() {
+    if (accelerationBusy || progress.isGenerating || !canInstallLocally) return;
+    generation.videoAccelerationInstalling = true;
     turboInstalling = true;
     turboInstallError = null;
-    const needsPack = turboInstalled !== true;
+    const preset = turboPreset;
+    const needsPack = !lightxSelected && turboInstalled !== true;
     try {
       if (needsPack) {
         turboInstallStep = "clone";
@@ -623,10 +656,10 @@
         await installH3Turbo();
       }
 
-      if (installedName(H3_TURBO_LORA) === null) {
+      if (installedName(preset.file) === null) {
         turboInstallStep = "lora";
         turboInstallMessage = locale.t("generation.video.turbo_install_downloading");
-        await runDownloads([H3_TURBO_LORA]);
+        await runDownloads([preset.file]);
       }
 
       if (needsPack) {
@@ -644,15 +677,21 @@
         if (!available) throw new Error(locale.t("generation.video.turbo_install_not_loaded"));
       }
 
-      turboInstalled = true;
+      await loadTurboState();
+      const available = lightxSelected ? lightxNodesReady : turboInstalled;
+      if (!available) throw new Error(locale.t("generation.video.turbo_install_not_loaded"));
+      if (!lightxSelected && (selectedTier !== "custom" || !loraInstalled(generation.videoTurboLora))) {
+        generation.videoTurboLora = installedName(H3_TURBO_LORA) ?? H3_TURBO_LORA.filename;
+      }
       generation.videoTurboEnabled = true;
       generation.saveSettings();
     } catch (e) {
       turboInstallError = String(e);
-      turboInstalled = await isH3TurboInstalled().catch(() => false);
+      turboInstalled = await checkNodeAvailable(TURBO_NODE_CLASS).catch(() => false);
     } finally {
       await models.refresh();
       turboInstalling = false;
+      generation.videoAccelerationInstalling = false;
       turboInstallStep = "";
       turboInstallMessage = "";
     }
@@ -1323,7 +1362,7 @@
         type="checkbox"
         id="video-rife-enabled"
         checked={generation.videoRifeEnabled}
-        disabled={rifeInstall.installing}
+        disabled={rifeInstall.installing || generation.videoAccelerationInstalling}
         class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
         onchange={toggleRife}
       />
@@ -1492,31 +1531,49 @@
     {/if}
   </div>
 
-  <!-- Turbo LoRA -->
+  <!-- One exclusive sampling mode. Existing Turbo preferences are preserved. -->
   <div class="space-y-2">
-    <div class="flex items-center gap-2">
-      <input
-        type="checkbox"
-        id="video-turbo-enabled"
-        checked={generation.videoTurboEnabled}
-        disabled={turboInstalling}
-        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
-        onchange={toggleTurbo}
-      />
-      <label for="video-turbo-enabled" class="text-xs text-neutral-400">
-        {locale.t("generation.video.turbo")}<InfoTip
-          text={locale.t("generation.video.turbo_tip")}
-        />
-      </label>
-    </div>
+    <label class="flex min-h-11 items-center gap-2 text-xs text-neutral-300">
+      <input type="checkbox" bind:checked={generation.videoSaveDraft} onchange={() => generation.saveSettings()} />
+      {locale.t("generation.video.save_draft")}
+    </label>
+    <p class="text-[11px] text-neutral-500">{locale.t("generation.video.save_draft_hint")}</p>
+    {#if generation.videoSaveDraft && !generation.videoDraftFits}
+      <p class="text-[11px] text-amber-300">{locale.t("generation.video.draft_too_large")}</p>
+    {/if}
+    {#if generation.videoSaveDraft && !generation.videoDraftNodesReady}
+      <p class="text-[11px] text-amber-300">{locale.t("generation.video.draft_nodes")}</p>
+    {/if}
+  </div>
+  <div class="space-y-2">
+    <label for="video-acceleration" class="block text-xs text-neutral-400">
+      {locale.t("generation.video.acceleration")}
+    </label>
+    <select id="video-acceleration" value={generation.videoAcceleration}
+      disabled={accelerationBusy} onchange={selectAcceleration}
+      class="w-full min-h-11 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-100 disabled:opacity-50">
+      <option value="standard">{locale.t("generation.video.acceleration_standard")}</option>
+      <option value="turbo">{locale.t("generation.video.acceleration_turbo")}</option>
+    </select>
 
+    {#if generation.videoTurboEnabled}
+      <label for="video-turbo-preset" class="block text-xs text-neutral-400">{locale.t("generation.video.turbo_preset")}</label>
+      <select id="video-turbo-preset" value={turboPreset.id} disabled={accelerationBusy}
+        onchange={(e) => { generation.videoTurboPreset = e.currentTarget.value as typeof generation.videoTurboPreset; generation.saveSettings(); }}
+        class="w-full min-h-11 rounded-lg border border-neutral-700 bg-neutral-900 px-3 text-xs text-neutral-200">
+        {#each H3_TURBO_PRESETS.filter(p => !p.variant || p.variant === generation.videoVariant) as preset (preset.id)}
+          <option value={preset.id}>{preset.label}</option>
+        {/each}
+      </select>
+      {#if lightxSelected}<p class="text-[11px] text-neutral-400">{locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift })}</p>{/if}
+    {/if}
     <p class="text-[11px] text-neutral-500">
       {generation.videoTurboEnabled
-        ? locale.t("generation.video.turbo_on_hint", { steps: generation.videoTurboSteps })
+        ? locale.t("generation.video.turbo_on_hint", { steps: turboPreset.steps ?? generation.videoTurboSteps })
         : locale.t("generation.video.turbo_off_hint", { steps: H3_DEFAULT_STEPS })}
     </p>
 
-    {#if generation.videoTurboEnabled}
+    {#if generation.videoTurboEnabled && !lightxSelected}
       <div use:scrollCapture>
         <label
           class="flex items-center justify-between text-[11px] text-neutral-500 mb-1"
@@ -1547,12 +1604,21 @@
       </div>
     {/if}
 
-    {#if !turboReady && !turboInstalling && !generation.videoTurboEnabled}
+    {#if generation.videoTurboEnabled && !turboReady && !turboInstalling}
       <p class="text-[11px] text-neutral-500">
         {locale.t("generation.video.turbo_install_hint", {
-          size: locale.formatBytes(H3_TURBO_LORA.sizeBytes),
+          size: locale.formatBytes(turboPreset.file.sizeBytes),
         })}
       </p>
+      <button type="button" onclick={() => void installTurbo()} disabled={accelerationBusy || progress.isGenerating || !canInstallLocally}
+        class="min-h-11 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50">
+        {locale.t("generation.video.turbo_install_button")}
+      </button>
+      {#if !canInstallLocally}
+        <p class="text-[11px] text-neutral-400">{locale.t("generation.model.external_download_hint")}</p>
+      {/if}
+      <button type="button" onclick={() => { void loadTurboState(); void models.refresh(); }} disabled={accelerationBusy}
+        class="min-h-11 px-3 text-xs text-neutral-300 underline disabled:opacity-50">{locale.t("generation.video.acceleration_refresh")}</button>
     {/if}
 
     {#if turboInstalling}
@@ -1603,7 +1669,7 @@
         type="checkbox"
         id="video-teacache-enabled"
         checked={generation.videoTeacacheEnabled}
-        disabled={teacacheInstalling}
+        disabled={accelerationBusy}
         class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
         onchange={toggleTeacache}
       />
@@ -1778,7 +1844,8 @@
           </label>
           <select
             id="custom-turbo-lora"
-            value={generation.videoTurboLora}
+            disabled={lightxSelected}
+            value={lightxSelected ? turboLoraName ?? turboPreset.file.filename : generation.videoTurboLora}
             onchange={(e) => {
               generation.videoTurboLora = (e.currentTarget as HTMLSelectElement).value;
               generation.saveSettings();
@@ -1798,8 +1865,8 @@
           </label>
           <select
             id="custom-sampler"
-            value={generation.videoTurboEnabled ? "__turbo__" : generation.videoSampler ?? ""}
-            disabled={generation.videoTurboEnabled}
+            value={generation.videoTurboEnabled ? (lightxSelected ? "euler" : "__turbo__") : generation.videoSampler ?? ""}
+            disabled={fixedSampling}
             aria-describedby={generation.videoTurboEnabled ? "custom-turbo-sampling-hint" : undefined}
             onchange={(e) => {
               generation.videoSampler = (e.currentTarget as HTMLSelectElement).value || null;
@@ -1807,7 +1874,7 @@
             }}
             class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {#if generation.videoTurboEnabled}
+            {#if generation.videoTurboEnabled && !lightxSelected}
               <option value="__turbo__">{locale.t("generation.video.custom_sampler_turbo")}</option>
             {:else}
               <option value="">{locale.t("generation.video.custom_sampler_default")}</option>
@@ -1826,7 +1893,7 @@
           <select
             id="custom-scheduler"
             value={generation.videoTurboEnabled ? "simple" : generation.videoScheduler ?? ""}
-            disabled={generation.videoTurboEnabled}
+            disabled={fixedSampling}
             aria-describedby={generation.videoTurboEnabled ? "custom-turbo-sampling-hint" : undefined}
             onchange={(e) => {
               generation.videoScheduler = (e.currentTarget as HTMLSelectElement).value || null;
@@ -1834,7 +1901,7 @@
             }}
             class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {#if generation.videoTurboEnabled}
+            {#if generation.videoTurboEnabled && !lightxSelected}
               <option value="simple">simple</option>
             {:else}
               <option value="">{locale.t("generation.video.custom_scheduler_default")}</option>
@@ -1846,7 +1913,7 @@
         </div>
         {#if generation.videoTurboEnabled}
           <p id="custom-turbo-sampling-hint" class="text-[11px] text-neutral-400">
-            {locale.t("generation.video.custom_turbo_sampling_hint")}
+            {lightxSelected ? locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift }) : locale.t("generation.video.custom_turbo_sampling_hint")}
           </p>
         {/if}
       </div>

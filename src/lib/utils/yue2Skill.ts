@@ -95,6 +95,8 @@ The duration is a hard audio-generation ceiling, not an exact song-length contro
 
 export function musicWritingRequest(task: MusicWritingTask, context: MusicWritingContext) {
   const budget = musicLyricBudget(context.maxDuration);
+  // Explicitly generating lyrics can start a vocal song from an empty draft.
+  const instrumental = task === "style" && !context.lyrics.trim();
   const useDraft = context.useExistingLyrics === true && !!context.lyrics.trim();
   const planning = context.cover ? "melody" : context.planning ?? "full";
   const score = planning === "off" ? null : musicWritingScoreContext(context.abc ?? "");
@@ -109,7 +111,9 @@ ${score.coverage === "excerpt" ? "Only part of the score is available in this re
   const lyricTask = useDraft
     ? "Revise the supplied lyrics_or_idea using the user's topic_or_story as editing instructions. Preserve the draft's subject, voice and phrases where compatible with those instructions, and change what the user requests. If no instructions are supplied, refine the draft for singability and duration."
     : "Write a fresh, original, singable lyric draft about the user's topic_or_story, informed by their musical style. Follow any language, perspective, emotion or story details in the topic. If no topic is supplied, choose an original theme that fits the style.";
-  const duration = `The maximum is ${budget.maxDuration} seconds. Allow about ${budget.vocalSeconds} seconds for singing and leave the rest for breathing, transitions, instruments and a resolved ending.`;
+  const duration = instrumental
+    ? `The maximum is ${budget.maxDuration} seconds. Use the time for instrumental themes, development, transitions and a resolved ending.`
+    : `The maximum is ${budget.maxDuration} seconds. Allow about ${budget.vocalSeconds} seconds for singing and leave the rest for breathing, transitions, instruments and a resolved ending.`;
   const contract = task === "lyrics"
     ? `${lyricTask}
 Output ONLY the lyrics, starting with a section label such as [Verse] or [Chorus]. Put each label on its own line, each sung phrase on its own line, and a blank line between sections. Use labels such as [Verse 1], [Pre-Chorus], [Chorus], [Bridge] and [Outro] only when the time budget permits.
@@ -120,9 +124,9 @@ For space-delimited languages, aim for ${budget.targetUnits}–${budget.maxUnits
 For very short clips use just a brief hook or one short section; below 10 seconds use one short line. Add verse/chorus development only as the budget grows. Do not force a full verse/chorus/bridge song into a short clip.
 Write repeated lyrics out in full if they fit. Never use shorthand such as "repeat chorus", timestamps, word counts, stage directions or production notes in the sung text. Musical instructions belong in style.`
     : `Expand the user's style idea into one detailed, coherent musical direction. Use the lyrics only as context; do not rewrite or quote them.
-Output ONLY a single style paragraph, preferably 60–120 words and never more than 1,200 characters. Include the lyric language, genre/subgenre, mood and energy, lead vocal character and delivery, specific instruments and their roles, rhythm/groove, a suitable BPM, meter where useful, production texture and a compact arrangement arc. Preserve any supplied BPM, meter, instruments and exclusions. If a detail is unspecified, choose one that fits the brief, avoiding contradictory genres or instrument lists.
+Output ONLY a single style paragraph, preferably 60–120 words and never more than 1,200 characters. Include ${instrumental ? "an explicit purely instrumental direction, genre/subgenre, mood and energy, lead melody instruments and their delivery" : "the lyric language, genre/subgenre, mood and energy, lead vocal character and delivery"}, specific instruments and their roles, rhythm/groove, a suitable BPM, meter where useful, production texture and a compact arrangement arc. Preserve any supplied BPM, meter, instruments and exclusions. If a detail is unspecified, choose one that fits the brief, avoiding contradictory genres or instrument lists.
 ${duration}
-Adapt the arrangement to this limit: short clips need an immediate vocal entrance, a brief hook and a short resolved ending; avoid promising long intros, solos or multiple full verses. Longer songs can develop through the supplied lyric sections. Describe a musical ending rather than claiming an exact duration. Keep the existing lyric language and leave space for clear diction and natural phrasing.
+${instrumental ? "Blank lyrics mean purely instrumental music. This takes priority over any vocal or singer references in the old style or score. Request no vocals, singing, speech, humming or choir. Describe expressive instrumental leads instead; do not add lyrics or require a lyric language. Short clips need an immediate instrumental hook and a short resolved ending. Longer tracks can develop instrumental themes and solos within the duration ceiling. Treat a Vocal score part as a melody to realize with instruments; do not claim the score itself was edited." : "Adapt the arrangement to this limit: short clips need an immediate vocal entrance, a brief hook and a short resolved ending; avoid promising long intros, solos or multiple full verses. Longer songs can develop through the supplied lyric sections. Describe a musical ending rather than claiming an exact duration. Keep the existing lyric language and leave space for clear diction and natural phrasing."}
 Do not emit section labels, lyrics, bullet lists or pipeline instructions. Describe tempo in the style text rather than inventing request fields.`;
   return {
     system: `${writingSkill}\n\n${agentSkill}\n\n${scoreGuidance}\n\n${contract}`,
@@ -134,6 +138,7 @@ Do not emit section labels, lyrics, bullet lists or pipeline instructions. Descr
       maximum_seconds: budget.maxDuration,
       fallback_language: context.language,
       generation: {
+        instrumental,
         planning, cover: context.cover === true,
         score_source: score ? "supplied_abc" : planning === "off" ? "none" : context.cover ? "missing_cover_score" : "generated_plan",
       },

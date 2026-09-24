@@ -12,6 +12,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import VideoExportPopover from "./VideoExportPopover.svelte";
   import VideoInterpolatePopover from "./VideoInterpolatePopover.svelte";
+  import VideoDraftAction from "./VideoDraftAction.svelte";
 
   interface Props {
     /** Range-serving gallery URL. */
@@ -532,6 +533,7 @@
             {/if}
             {#if filename}
               <div class="ml-auto flex items-center gap-1">
+                {#key filename}<VideoDraftAction {filename} />{/key}
                 <div class="relative">
                   <button
                     class="px-2 py-1 rounded-lg text-xs text-neutral-100"

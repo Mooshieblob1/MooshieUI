@@ -1,11 +1,18 @@
 # Dependencies
 node_modules/
+/node_modules.windows-backup/
+.pnpm-store/
 
 # Build output
 dist/
 
 # Rust build artifacts
 src-tauri/target/
+
+# Linux/Nix local state and build outputs (keep flake.nix and flake.lock tracked)
+.direnv/
+/result
+/result-*
 
 # Environment
 .env
@@ -25,11 +32,15 @@ venv/
 *.swo
 *~
 
-# Claude Code local settings
+# Claude Code local settings and runtime state
 .claude/settings.local.json
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
 
 # Local dev scripts
 *.cmd
+/scripts/local/
 
 # OS
 .DS_Store
@@ -47,9 +58,9 @@ src-tauri/gen/
 
 # Logs
 *.log
+/logs/
 error-logs/
 .github/skills/rust-tauri/SKILL.md
-src-tauri/Cargo.toml
 # Ephemeral PR/release draft bodies (use gh pr create --body instead)
 PR_BODY*.md
 PR_AUTOBODY*.md

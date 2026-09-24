@@ -2,7 +2,7 @@
   "name": "comfyui-desktop",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "2.3.5",
+  "version": "2.3.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@jsquash/avif": "^2.1.1",
+    "@lucide/svelte": "^1.47.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2",

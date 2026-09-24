@@ -1,3 +1,22 @@
+export interface ReferenceSong {
+  id: number;
+  title: string;
+  artist: string;
+  album: string;
+  genre: string;
+  year: string;
+  duration_seconds: number | null;
+  url: string;
+}
+export interface MusicReferenceContext {
+  song: ReferenceSong;
+  sources: { title: string; url: string; text: string }[];
+}
+export interface MusicReferenceDraft {
+  style: string;
+  estimates: string[];
+}
+
 export interface MusicParams {
   title?: string;
   checkpoint: string;

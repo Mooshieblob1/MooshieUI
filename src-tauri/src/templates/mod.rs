@@ -14,6 +14,7 @@ pub mod upscale;
 pub mod upscale_standalone;
 pub mod video;
 pub mod video_interpolate;
+pub mod video_refine;
 
 use serde_json::{json, Value};
 
@@ -35,6 +36,49 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // image-only guards (input images, ControlNet, style transfer) never
     // fire on stale image-mode state.
     if params.mode == "video" {
+        if params.video_save_draft {
+            let (w, h) =
+                video::compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
+            if u64::from(w) * u64::from(h) * 4 > 2_200_000 {
+                return Err("Retained drafts require a smaller resolution (about 0.5 MP or less) for 2× refinement.".into());
+            }
+        }
+        if !matches!(video::acceleration(params), "standard" | "turbo" | "vdn") {
+            return Err("Unknown video acceleration mode. Choose Standard, Turbo or VDN.".into());
+        }
+        if video::acceleration(params) == "turbo" {
+            match params.video_turbo_preset.as_str() {
+                "" | "larryvrh" => (),
+                "lightx2v_fl2v_4" | "lightx2v_fl2v_8" if params.video_variant == "fl2va" => (),
+                "lightx2v_ref2v_8" if params.video_variant == "ref2va" => (),
+                _ => {
+                    return Err(
+                        "Choose a Turbo preset that matches the selected video variant.".into(),
+                    )
+                }
+            }
+            if let Some((filename, _, _)) = video::lightx_preset(params) {
+                if let Some(selected) = params
+                    .video_turbo_lora
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    if selected.replace('\\', "/").rsplit('/').next() != Some(filename) {
+                        return Err(
+                            "The LightX2V adapter does not match its sampling preset.".into()
+                        );
+                    }
+                }
+            }
+        }
+        if video::acceleration(params) == "vdn"
+            && params
+                .video_diffusion_model
+                .as_deref()
+                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".gguf"))
+        {
+            return Err("VDN requires a MiniMax H3 safetensors diffusion model; GGUF adapter merging is not supported by this integration.".into());
+        }
         if !matches!(params.video_variant.as_str(), "fl2va" | "ref2va") {
             return Err(format!(
                 "Unknown video variant \"{}\" — expected \"fl2va\" or \"ref2va\".",

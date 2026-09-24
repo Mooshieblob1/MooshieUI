@@ -142,13 +142,16 @@
   }
 
   async function handleGenerate() {
+    // Keyboard shortcuts reach this handler even when the button is disabled.
+    if (generation.mode === "video" && !generation.canGenerate) return;
+
     const sequential = isSequentialGenerateRun();
     if (sequential && isSubmitting) return;
     const runToken = ++submitRunToken;
     if (sequential) isSubmitting = true;
     errorMsg = null;
 
-    if (!generation.checkpoint) {
+    if (generation.mode !== "video" && !generation.checkpoint) {
       errorMsg = locale.t('generation.error_no_checkpoint');
       if (sequential) finishSubmitRun(runToken);
       return;
@@ -594,7 +597,7 @@
     generation.saveSettings();
   }
 
-  const canGenerate = $derived(!!generation.checkpoint);
+  const canGenerate = $derived(generation.canGenerate);
 
   /**
    * Anlas the pending request is expected to cost, or null outside NovelAI mode.

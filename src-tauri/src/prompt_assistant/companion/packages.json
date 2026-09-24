@@ -1,0 +1,68 @@
+{
+  "windows-x86_64": {
+    "version": "0.155.1",
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-x86_64-pc-windows-msvc.exe.zip",
+    "sha256": "99f220829a611756f41484839cfd086e32695afdfba5b1b9a2c04433557e7b16",
+    "binary": "codex-app-server-x86_64-pc-windows-msvc.exe"
+  },
+  "windows-aarch64": {
+    "version": "0.155.1",
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-aarch64-pc-windows-msvc.exe.zip",
+    "sha256": "f76f54cf578a84448c7fe51605644cd6b20193510e877bad5a09da3c40b3b7bd",
+    "binary": "codex-app-server-aarch64-pc-windows-msvc.exe"
+  },
+  "macos-x86_64": {
+    "version": "0.155.1",
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-x86_64-apple-darwin.tar.gz",
+    "sha256": "b7c1c6f752e4cac60400da166da90edefa427e78727c1d2b7a8cb4e7253034f5",
+    "binary": "codex-app-server-x86_64-apple-darwin"
+  },
+  "macos-aarch64": {
+    "version": "0.155.1",
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-aarch64-apple-darwin.tar.gz",
+    "sha256": "87112b957da07011f1bd871576bae4b7104da2e1f6f76822cfc652a7f5160c6d",
+    "binary": "codex-app-server-aarch64-apple-darwin"
+  },
+  "linux-x86_64": {
+    "version": "0.155.1",
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "d39ab92a1984248a6b55c14074540677d07007c5ef31a9dd37353499f829ea64",
+    "binary": "codex-app-server-x86_64-unknown-linux-musl"
+  },
+  "linux-aarch64": {
+    "version": "0.155.1",
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-app-server-aarch64-unknown-linux-musl.tar.gz",
+    "sha256": "d691db2deea4d72338ff656e41975d2c4de99e877279a106ce14f51360868116",
+    "binary": "codex-app-server-aarch64-unknown-linux-musl"
+  },
+  "antigravity-macos-aarch64": {
+    "version": "antigravity-1.1.1",
+    "url": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
+    "sha256": "fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189",
+    "binary": "agy_acp_server.par"
+  },
+  "antigravity-linux-x86_64": {
+    "version": "antigravity-1.1.1",
+    "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
+    "sha256": "38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df",
+    "binary": "agy_acp_server.par"
+  },
+  "antigravity-windows-x86_64": {
+    "version": "antigravity-1.1.1",
+    "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
+    "sha256": "47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8",
+    "binary": "agy_acp_server.exe"
+  },
+  "antigravity-linux-aarch64": {
+    "version": "antigravity-1.1.1",
+    "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
+    "sha256": "ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398",
+    "binary": "agy_acp_server.par"
+  },
+  "antigravity-windows-aarch64": {
+    "version": "antigravity-1.1.1",
+    "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+    "sha256": "35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc",
+    "binary": "agy_acp_server.exe"
+  }
+}

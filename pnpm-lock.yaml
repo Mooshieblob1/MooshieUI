@@ -11,6 +11,9 @@ importers:
       '@jsquash/avif':
         specifier: ^2.1.1
         version: 2.1.1
+      '@lucide/svelte':
+        specifier: ^1.47.0
+        version: 1.47.0(svelte@5.56.10)
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -264,6 +267,11 @@ packages:
 
   '@jsquash/avif@2.1.1':
     resolution: {integrity: sha512-LMRxd0fMgfCLtobDh0/sFYJMMiRJTNYSEEWvRDKXlAeZ08t3gI5V+1thIT0XjXJ+SVG7Zug9B0XPyx0Ti5VRNA==}
+
+  '@lucide/svelte@1.47.0':
+    resolution: {integrity: sha512-tpuE7JIK9FzYDWsJx6PxHj9ROyCpnDxZfvHu5q5yHGKS2CFNjzSyf1o9/Ypu2A27GLvkPGqZcIMrF6idM+eQZQ==}
+    peerDependencies:
+      svelte: ^5
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     resolution: {integrity: sha512-d6FinEBLdIiK+1uACUttJKfgZREXrF0Qc2SmLII7W2AD8FfiZ9Wjd+rD/iRuf5s5dWrr1GgwXCvPqOuDquOowA==}
@@ -1060,6 +1068,10 @@ snapshots:
   '@jsquash/avif@2.1.1':
     dependencies:
       wasm-feature-detect: 1.8.0
+
+  '@lucide/svelte@1.47.0(svelte@5.56.10)':
+    dependencies:
+      svelte: 5.56.10
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
     optional: true

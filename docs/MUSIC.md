@@ -1,6 +1,7 @@
 # Music studio
 
-This guide describes the music tools included in v2.3.5.
+This guide describes the music tools included in v2.3.6, including reference-song
+lookup, temporary song-link imports, audio style analysis and saved style profiles.
 
 ## Setup
 
@@ -24,7 +25,7 @@ do not require that assistant.
 
 ## Create and review a score
 
-1. Enter a style, sectioned lyrics and maximum recording length. Full planning
+1. Enter a style, optional sectioned lyrics and maximum recording length. Full planning
    requests melody and harmony; melody planning requests melody alone.
 2. Choose **Generate score first** to produce ABC without rendering audio. The
    resulting draft is saved with its style, lyrics, seed and available receipt.
@@ -35,6 +36,15 @@ do not require that assistant.
 You can also import ABC, type in the score editor, or generate directly with an
 empty score. Off planning generates without a score; clear ABC before using it.
 Saved plans are available from **Saved score drafts**.
+
+Leave **Lyrics** empty for a purely instrumental track. Whitespace-only
+lyrics also count as empty. MooshieUI requests instruments only, without vocals,
+singing, speech, humming or choir, in both score planning and audio generation.
+This also applies to covers and supplied scores. Your saved style and score stay
+editable; adding lyrics enables a vocal track again. **Enhance style** and reference
+song style drafts respect the instrumental intent. **Generate lyrics** still writes
+lyrics when you explicitly choose it. Rendered results depend on YuE2's adherence
+to the prompt; this is not a vocal-removal filter.
 
 The workbench interprets the native two-voice YuE2 format, checks bar lengths,
 ties, supported chords, key and meter changes, and shows the nominal duration.
@@ -58,6 +68,162 @@ For native transcription, select **ComfyUI SheetSage2** and an audio encoder.
 An administrator or moderator can download `sheetsage2_bf16.safetensors`
 (1.39 GB) into the host's `models/audio_encoders` folder. A remote transcription
 worker needs that encoder installed on its own machine.
+
+### Auto style from audio
+
+In **Styles**, enable **Auto style from audio**. Choose the current cover source,
+upload a separate style reference, or explicitly select one of your generated
+recordings. Choose **Analyze audio**, review what the model heard and its
+uncertainties, edit the proposed style, then choose **Apply to Styles**. Undo
+restores the previous style unless you have edited it since. Playing a song does
+not automatically upload it. Existing style text is never replaced automatically.
+
+You can also leave **Styles** empty, enable **Auto style from audio**, select a
+reference, and choose **Generate**. The app analyzes that reference, fills the
+empty style field and continues generation. A failed or cancelled analysis stops
+generation. Changes to the draft or reference while analysis is running stop
+automatic submission. If Styles already contains text, Generate uses it unchanged.
+
+In **Settings > Prompt Assistant**, choose **Gemini (Google sign-in)** and sign in
+from the desktop app, or configure an audio-input model using **OpenRouter** or a
+**Custom** Chat Completions endpoint that accepts MP3 `input_audio`. Gemini uses
+Google's official Antigravity companion and accepts the converted audio
+directly through its companion protocol. The app checks that the installed
+companion advertises audio support. OpenRouter's
+model catalog is checked for audio input; a custom endpoint must support this
+contract itself. Generic text/image models and speech-transcription endpoints
+are insufficient. The panel displays the model and destination before sending
+audio; account limits, any API charges and provider data-retention policies apply. Analysis sends
+the recording and the requested duration, instrumental/vocal mode and interface
+language, not your filename, full lyrics or existing style.
+
+**ChatGPT (subscription)** also supports assistant text and image requests, but
+does not provide music audio analysis. Claude remains an API-key provider.
+See [account sign-in](PROMPT-ASSISTANT-SIGN-IN.md) for setup and limits.
+
+Enable **Analyze a selected section** to enter start/end seconds. Load the audio
+preview, use **Start here** / **End here**, and **Play selection** to audition it.
+Only that excerpt is sent to the provider; the result records its exact range.
+The file still passes through your app's host in browser/server mode. Input is
+bounded to 64 MiB, and the analyzed section to six minutes. Without a section,
+recordings over six minutes are rejected instead of silently truncated. Ranges
+must fit inside the recording. This uses the startup prerequisite installer on Windows,
+macOS and Linux. No local music-analysis model is downloaded. Conversion files
+are deleted before the provider request; source uploads and cached previews stay
+only in the current panel/session. Replacing the source, changing accounts or
+selected songs, disabling the option or leaving the panel clears those
+references. Your saved generated recordings remain in the music library.
+
+Cancel stops local processing and drops the active provider request; it cannot
+recall audio already received by a provider. Jobs are private to each browser
+account and expire when polling stops. Changed inputs invalidate late results.
+Repeated analysis of the same source and target within the panel reuses the last
+profile without another paid request.
+
+The source description can mention vocals while the proposed output style
+remains instrumental when lyrics are blank. Genre, timbre and tempo descriptions
+are listening estimates, not exact measurements or song identification. This
+creates text guidance for YuE2; use the separate cover transcription workflow
+for a reviewed melody score. It does not transfer the original singer or add
+native audio conditioning.
+
+### Saved style profiles
+
+After analysis, name the accepted style and choose **Save style profile**. The
+saved record contains your edited style, the original source observations and
+uncertainties, audio hash/range, analyzer/model, date, and target duration,
+vocal mode and language. It never contains the source audio. Up to 100 profiles
+are stored in the device-local library, separately for each browser account.
+Replacing temporary audio does not delete these deliberately saved text profiles.
+
+Open **Saved style profiles** to reuse, rename or delete one. Reuse with the same
+target needs no provider request. If duration, vocal mode or language changes,
+**Adapt to this song** sends the saved text to your configured Prompt Assistant,
+then presents an editable draft with Apply/Undo. It does not resend or reanalyze
+audio, and it keeps the saved source observations unchanged. Saved profiles and
+comparison notes are currently device-local and are not included in project ZIPs.
+
+### Draft a style from a reference song
+
+In **Styles**, enable **Use a reference song**, enter a song title and optionally
+an artist and version/remix, then choose **Find song**. Select the matching
+recording from the results and choose **Find style**. The configured Prompt
+Assistant LLM creates a preview; **Apply to Styles** replaces the style field,
+and Undo restores it if you have not edited the applied text.
+
+Lookup uses the public US Apple Music/iTunes song catalog. Results show the
+artist, release and version so you can distinguish studio recordings, live
+performances, remixes and covers. Matching English Wikipedia song information is
+included when available; the source links remain visible. No Apple account or
+additional search API key is required. Catalog coverage and service availability
+can limit results. This lookup sends the search text to Apple and the selected
+song title/artist to Wikipedia; it sends the retrieved context and current music
+writing context to your configured LLM. It does not download or analyze audio.
+
+Catalog facts and retrieved song information provide context; the style paragraph
+is an AI draft, not a measured reconstruction. The preview lists inferred or
+suggested musical details. A broad catalog genre alone cannot verify exact BPM,
+key, instrumentation or production. If the model cannot describe that recording
+reliably, it leaves the style unchanged. Edits, recording changes, account changes
+and closing the panel invalidate late responses. Nothing is applied automatically.
+
+### Import a song link
+
+Under **Transcribe a source recording**, paste a link and choose **Import song**.
+YouTube, YouTube Music and Dailymotion download the linked recording. Spotify,
+Deezer and Tidal look up the public song title and artist, then search YouTube
+for an audio version. These three services are **matching inputs**, not direct
+downloads from their subscriptions. The source and original-song links are
+shown beside the preview. Listen to verify the artist, arrangement and version
+before transcribing; an automatic match can select the wrong recording.
+
+**Song and artist** optionally overrides the matching search, including when a
+service's public metadata is unavailable. Use a single track/video URL, not an
+album or playlist. Recordings are limited to six minutes and 64 MiB. Private,
+sign-in-only, unavailable and blocked recordings may fail; manual uploads remain
+available. The importer does not use account cookies or bypass DRM.
+
+MooshieUI automatically prepares **yt-dlp, FFmpeg, Deno and Node.js** in the
+background whenever it opens, including the headless server. Setup progress
+appears beside the song-link input. The rest of the app and manual uploads remain
+usable while setup runs; the importer becomes available immediately afterward.
+First use needs an internet connection. Connection failures retry automatically,
+then offer **Retry setup** without requiring an app restart.
+
+Tools are installed under the host's MooshieUI app-data folder (`bin/media`),
+without administrator privileges or system `PATH` changes. Working managed copies
+are verified and reused offline on later launches. Compatible existing FFmpeg,
+Deno and Node.js installations are reused; missing, outdated or damaged tools are
+installed automatically. The app uses a self-contained yt-dlp package with EJS,
+and passes both runtime paths explicitly. Browser clients use the host's tools.
+Supported automatic packages cover Windows x64, macOS x64/Apple Silicon and Linux
+x64/ARM64. Other hosts need compatible executables configured manually.
+
+Package versions, download URLs and published SHA-256 checksums are pinned in
+`src-tauri/src/media_tools_manifest.json`; every download is verified before
+extraction or execution. Windows FFmpeg comes from Gyan; macOS/Linux FFmpeg comes
+from Martin Riedl's builds. Other tools use their upstream release packages.
+Downloads respect the app's network proxy setting. Advanced host overrides use
+absolute `MOOSHIE_YT_DLP`, `MOOSHIE_FFMPEG`, `MOOSHIE_DENO` and `MOOSHIE_NODE` paths
+when no valid managed copy is present. An overridden Python yt-dlp installation
+should include `yt-dlp[default]`. Tool versions can require updating when services
+change; tool setup cannot guarantee that every public recording is downloadable.
+
+The importer converts audio to an MP3 preview and deletes its download and
+conversion files **before** delivering that preview. The preview stays in memory
+and is discarded when a different source is imported or manually uploaded, a
+different library song is selected, **Clear source** is used, this panel is left,
+or the app closes. It is not saved in settings, the song library or project files.
+Cancellation and normal desktop/server shutdown stop active imports and remove
+their working files. Disconnected browser imports expire after 30 seconds without
+polling (metadata requests have a 20-second timeout); unclaimed results also
+expire. An abrupt OS/process crash cannot run normal shutdown cleanup.
+
+After **Transcribe melody**, the transcription backend's separate temporary-upload
+lifecycle below applies, including queued native jobs that are cancelled before
+decoding. Converting/importing a link does not start transcription automatically.
+
+### Transcribe and review
 
 Native transcription uses `AudioEncoderLoader` and `SheetSage2AudioToABC` through
 ComfyUI's model manager, with a bounded temporary audio loader. Upload and job
@@ -150,26 +316,46 @@ conversion were abandoned after unsuccessful listening tests.
 
 ## Edit a composition
 
-**Edit composition** operates on the complete current score, or on a saved song
+**Edit composition** operates on the current draft, or on a saved song
 from its library menu or version comparison. When editing a recording, MooshieUI
 saves the original audio before requesting a proposal.
 
-Choose a starting request for reharmonization, tempo, transposition, form or lyric
-translation, then describe the intended change. Select which melodies, note
-timing, tempo, exact lyrics and section structure to preserve. The assistant
-returns complete ABC, style and lyrics. MooshieUI parses the proposal and checks
+Choose **Style and production only**, **Lyrics only**, **Notes and chords only**,
+or **Style, lyrics and score**. Style and lyric edits work without a score; note
+edits require a complete supported ABC score. The production, harmony, tempo,
+key, form and translation examples select a suitable starting scope. You can
+adjust the request and choose which melodies, note timing, tempo, exact lyrics
+and section structure to preserve. The assistant returns only selected fields;
+protected fields are copied unchanged by the app. MooshieUI checks
 the selected constraints before displaying it. Invalid replies get at most one
 correction attempt, retaining the complete original context.
 
-Review the proposal and choose **Apply to draft**, then generate a new version.
+Review the **Before** and **After** fields and choose **Apply to draft**, then
+generate a new version. Undo restores the previous draft if it has not changed.
 Closing the dialog discards any late reply. If the draft or account changes while
 the request is running, the result cannot overwrite it. Requests are bounded to
-64,000 characters of combined score/style/lyrics and 16,384 output tokens; large
+64,000 characters of supplied context and 16,384 output tokens for note edits
+(4,096 tokens for style/lyric edits); large
 or incomplete responses can fail validation and leave the draft intact.
 
 These checks verify symbolic score and text properties. They do not prove that
 the generated singing follows the score, that a translation fits perfectly, or
 that a new arrangement sounds better. Listen to the resulting versions.
+
+### Arrangement planner prototype
+
+Open **Arrangement planner · Prototype**, suggest sections or add your own, then
+reorder them, assign whole seconds and add optional musical directions. Suggestions
+use existing lyric section markers when present, or instrumental themes when
+lyrics are blank. **Fit to duration** adjusts section lengths to the current
+maximum length. A valid plan has 1–12 sections within that duration.
+
+**Preview style guidance** produces editable timing instructions; **Apply to
+Styles** and Undo work without a provider call. Section timing is approximate.
+This prototype changes style guidance for a new generation: it does not rewrite
+existing ABC, splice audio, continue a recording or preserve untouched audio.
+For a changed score structure, generate and review a new score. Planner rows are
+session-only; applied style text saves with the normal draft and generated song.
 
 ## Versions, comparisons and exports
 
@@ -180,9 +366,24 @@ the device-local library; their original audio is not overwritten.
 
 Open **Versions, compare and export**, select A and B, then play either recording.
 Starting one pauses the other. You can retain the playback position when
-switching or loop an excerpt. The same seconds may refer to different passages
+switching with **Play A** / **Play B**, including after pausing, or loop an excerpt
+within both recordings. Switching clamps the position to their shared duration.
+The same seconds may refer to different passages
 after a tempo or structure change. The comparison reports differences between
-the two symbolic melodies, timing and tempo separately from audio playback.
+the two symbolic melodies, timing and tempo separately from audio playback, and
+lists differing generation settings including actual seeds and sampling options.
+
+**Match listening volume** uses local FFmpeg to estimate integrated loudness
+from each converted recording, then attenuates the louder take during playback.
+It never boosts audio, changes the saved file or sends audio to an AI provider.
+The measurement accepts recordings up to six minutes / 64 MiB; silence and very
+short or unsupported files may not provide a usable measurement. Unchecking
+restores the previous player volumes; manual volume adjustment exits matching.
+
+Save your own votes for style match, sound clarity, arrangement and ending, plus
+listening notes. They persist for the recording pair on this device/account;
+swapping A and B preserves which recording received each vote. These are human
+listening judgments, not automatic quality scores.
 
 Export the selected recordings or every version in A's project as a ZIP. It
 contains original FLAC bytes, ABC, lyrics, style, request settings, actual seeds,

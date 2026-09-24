@@ -704,6 +704,7 @@ class MooshieSaveVideo:
             },
             "optional": {
                 "filename_prefix": ("STRING", {"default": "mooshie_video"}),
+                "draft_id": ("STRING", {"default": ""}),
                 # SwarmUI-shaped JSON built by templates/video.rs. Optional so a
                 # workflow from an older MooshieUI still validates.
                 "metadata_json": ("STRING", {"default": "", "multiline": True}),
@@ -716,7 +717,7 @@ class MooshieSaveVideo:
     CATEGORY = "mooshie"
     DESCRIPTION = "Saves the video as mp4 with a poster frame and notifies MooshieUI over WebSocket."
 
-    def save_video(self, video, filename_prefix="mooshie_video", metadata_json=""):
+    def save_video(self, video, filename_prefix="mooshie_video", metadata_json="", draft_id=""):
         from PIL import Image
         from comfy_api.latest import Types
         from server import PromptServer
@@ -788,6 +789,8 @@ class MooshieSaveVideo:
             poster_kwargs.pop("exif", None)
             poster.save(poster_path, **poster_kwargs)
 
+        from .h3_drafts import mark_complete
+        mark_complete(draft_id)
         payload = json.dumps(
             {
                 "video_path": os.path.abspath(video_path),
@@ -796,13 +799,17 @@ class MooshieSaveVideo:
                 "frame_count": frame_count,
                 "width": int(width),
                 "height": int(height),
+                "draft_id": draft_id,
+                "filename": video_file,
+                "subfolder": _subfolder,
+                "poster_filename": os.path.basename(poster_path),
             }
         ).encode("utf-8")
         PromptServer.instance.send_sync(MOOSHIE_VIDEO_EVENT_TYPE, payload)
         return {"ui": {"images": []}}
 
     @classmethod
-    def IS_CHANGED(cls, video, filename_prefix="mooshie_video", metadata_json=""):
+    def IS_CHANGED(cls, video, filename_prefix="mooshie_video", metadata_json="", draft_id=""):
         # Always re-execute — output nodes should never be cached. Without this,
         # a regenerate with identical inputs (e.g. a pinned seed) cache-hits the
         # whole upstream chain: save_video() never runs, no new file or event is
@@ -1402,6 +1409,10 @@ NODE_CLASS_MAPPINGS = {
     "MooshieSaveVideo": MooshieSaveVideo,
     "MooshieLoadVideoPath": MooshieLoadVideoPath,
 }
+
+from .h3_drafts import NODE_CLASS_MAPPINGS as H3_DRAFT_NODES, register_routes as register_h3_draft_routes
+NODE_CLASS_MAPPINGS.update(H3_DRAFT_NODES)
+register_h3_draft_routes()
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieYuE2Plan": "Mooshie YuE2 Score and Status",

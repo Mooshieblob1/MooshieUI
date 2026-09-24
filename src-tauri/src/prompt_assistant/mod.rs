@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod companion;
 pub mod grounding;
 pub mod hardware;
 pub mod local_llm;

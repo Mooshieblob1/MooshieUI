@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -316,11 +317,24 @@
   });
 </script>
 
-<div class="p-3 md:p-6 h-full overflow-y-auto will-change-scroll">
-  {#if gallery.loading}
-    <div class="flex items-center justify-center h-full text-neutral-500">{locale.t("gallery.loading")}</div>
+<div class="p-3 md:p-6 h-full flex flex-col overflow-y-auto will-change-scroll">
+  <div class="flex shrink-0 items-center justify-between gap-3 mb-3">
+    <h2 class="text-base font-semibold text-neutral-200">{locale.t("nav.gallery")}</h2>
+    <button
+      onclick={() => gallery.refresh()}
+      disabled={gallery.loading || gallery.refreshing}
+      title={locale.t("gallery.refresh")}
+      aria-label={locale.t("gallery.refresh")}
+      aria-busy={gallery.refreshing}
+      class="w-11 h-11 shrink-0 flex items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-white disabled:opacity-50 disabled:cursor-wait transition-colors"
+    >
+      <RefreshCw size={18} class={gallery.refreshing ? "animate-spin motion-reduce:animate-none" : ""} />
+    </button>
+  </div>
+  {#if gallery.loading && gallery.images.length === 0}
+    <div class="flex flex-1 items-center justify-center text-neutral-500">{locale.t("gallery.loading")}</div>
   {:else if gallery.images.length === 0}
-    <div class="flex items-center justify-center h-full text-neutral-500">{locale.t("gallery.empty_generate")}</div>
+    <div class="flex flex-1 items-center justify-center text-neutral-500">{locale.t("gallery.empty_generate")}</div>
   {:else}
     <div class="space-y-4">
       {#if gallery.hasExpiry}
@@ -394,7 +408,7 @@
             <button onclick={() => (galleryView = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.large_icons")}</button>
             <button onclick={() => (galleryView = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.small_icons")}</button>
             <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
-            <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200">{locale.t("gallery.rescan_metadata")}</button>
+            <button onclick={rescanGalleryMetadata} disabled={gallery.loading || gallery.refreshing} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200 disabled:opacity-50">{locale.t("gallery.rescan_metadata")}</button>
             <button onclick={sortGalleryByArtist} disabled={gallery.autoSorting} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50">{gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}</button>
             <label class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
               <input

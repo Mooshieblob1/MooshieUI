@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import type { Update } from "@tauri-apps/plugin-updater";
   import { isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
   import { stopComfyui } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -22,7 +23,7 @@
   let dismissed = $state(false);
   let expectedVersion = $state("");
 
-  let updateObj: any | null = null;
+  let updateObj: Update | null = null;
 
   /** Only admin/moderator should see the server update banner. */
   const canSeeUpdate = $derived(userRole === "admin" || userRole === "moderator");

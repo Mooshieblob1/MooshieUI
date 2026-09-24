@@ -1,4 +1,12 @@
-import type { VideoAspectRatio } from "../types/index.js";
+import type { VideoAcceleration, VideoAspectRatio } from "../types/index.js";
+
+/** Migrate removed VDN selections to Standard; retain the legacy Turbo flag. */
+export function resolveVideoAcceleration(value: unknown, legacyTurbo: unknown): VideoAcceleration {
+  if (value === "vdn") return "standard";
+  return value === "standard" || value === "turbo"
+    ? value
+    : legacyTurbo === true ? "turbo" : "standard";
+}
 
 /**
  * TypeScript mirror of the H3 geometry helpers in

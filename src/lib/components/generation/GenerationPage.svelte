@@ -2140,11 +2140,10 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {videoSettingsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
-      {#if videoSettingsSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
-          <VideoSettingsPanel />
-        </div>
-      {/if}
+      <!-- Keep readiness probes and installation listeners alive while collapsed. -->
+      <div hidden={!videoSettingsSectionOpen} class="px-3 pb-2 pt-0.5 space-y-3">
+        <VideoSettingsPanel />
+      </div>
     </div>
   {/snippet}
 

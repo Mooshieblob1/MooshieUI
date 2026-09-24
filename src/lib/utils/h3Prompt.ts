@@ -232,7 +232,7 @@ retention_analysis: one line per reference label, in the same meaning as subject
 <Picture 2> ([Shot 1] first frame): fully_preserved - ...
 Newly added actions, backgrounds or plot events are not losses of reference fidelity. Do not write speaker ids such as (S1) in this section.
 
-detailed_description: the main body, normally 350 to 500 English words even when the video is a single shot. State the visual style in one or two sentences BEFORE "[Shot 1]", not after it:
+detailed_description: the main body. For a simple single shot, aim for 60 to 120 words of concrete motion and essential visual anchors. Expand only when the user's requested actions, dialogue or multiple shots require it; there is no minimum word count. State the visual style briefly BEFORE "[Shot 1]", not after it:
 The target video is in a cinematic, literary style with soft lighting and a slightly desaturated color palette.
 [Shot 1] The scene opens in a crowded urban street ...
 Then describe every shot explicitly and in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, the sound at that moment, and where referenced content takes effect. Never reduce this to a plot summary or a list of reference relationships. Anchor frames with phrasings such as "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". Every shot after the first must also name where it starts from, so the cut does not drop the referenced look: "the shot begins from <Picture 2>", or where no picture fits, "the shot continues the appearance of <Subject 1>". When a referenced subject speaks, keep BOTH labels: <Subject 2> (S1) turns toward the woman and says, <d>[English] Last summer, I went to my grandfather's house.</d>. Assign each (Sx) once, in the order vocal events actually occur. Write [unclear] for spans you cannot make out; never guess. Standardize dialogue punctuation to , . ? ! and end every line with . ? or ! before </d>.
@@ -280,13 +280,24 @@ Where the attached frame and the user's text disagree about how something looks,
  * saying nothing: it will describe a frame it is imagining.
  */
 export function h3RewriteSystemPrompt(ctx: H3PromptContext, hasFirstFrameImage = false): string {
-  if (h3FormatOf(ctx.taskType) === "ref") return refSystemPrompt(ctx);
-  return baseSystemPrompt(ctx, hasFirstFrameImage ? h3FirstFrameNote(ctx.taskType) : "");
+  const format = h3FormatOf(ctx.taskType) === "ref"
+    ? refSystemPrompt(ctx)
+    : baseSystemPrompt(ctx, hasFirstFrameImage ? h3FirstFrameNote(ctx.taskType) : "");
+  return `${format}\n\n${H3_CONCISE_MOTION_RULES}`;
 }
 
+/** Shared by ordinary video enhancement and the Live2D idle envelope. */
+const H3_CONCISE_MOTION_RULES = `Concise motion direction:
+- Keep a simple single-shot motion description around 60 to 120 words, or shorter when sufficient. Retain every required field, picture label, alignment line and user-supplied spoken line. Use more words only for requested complexity, not to fill the clip's duration.
+- Establish the subject, framing and visual style briefly, then describe the requested action in a few direct sentences. With an attached image, preserve its appearance in one concise statement instead of repeatedly describing static details.
+- Prioritize one main action and at most one or two supporting motions unless the user asked for more. State the camera behavior once. Do not invent head turns, gestures, extra blinks, cuts, music or new events to make the description longer.
+- When natural blinking is appropriate, describe quick natural blinks with eyes open between them. Do not stretch a blink across the clip, prescribe a slow eyelid cycle, or invent an exact count or schedule. Preserve explicitly requested closed eyes, slow blinks or other deliberate actions.
+- Describe the motion positively and concretely. Avoid repeated pose-lock instructions, exhaustive lists of prohibitions, and second-by-second choreography for a simple action. Use timing only where it helps the requested sequence and keep it within the supplied duration.
+- Honor the connected keyframes: do not invent a matching last frame or promise a seamless loop when only a first frame is supplied.`;
+
 /**
- * Generous ceiling for a rewrite. ref2va alone targets 350-500 words across six
- * sections; the backend clamps this to [64, 4096] regardless.
+ * Ceiling leaves room for requested dialogue and multiple shots, not a target
+ * length for a simple motion brief. The backend clamps to [64, 4096].
  */
 export const H3_MAX_TOKENS = 2048;
 
@@ -560,12 +571,6 @@ function validateRefSpecific(body: string): H3ValidationResult {
 
   if (!section("subject_definitions"))
     return fail('The "subject_definitions:" section must not be empty.');
-
-  const words = detailed.split(/\s+/).filter(Boolean).length;
-  if (words < 200)
-    return fail(
-      `detailed_description is only ${words} words. It must be roughly 350 to 500 English words, describing every shot explicitly rather than summarizing the plot.`,
-    );
 
   return OK;
 }

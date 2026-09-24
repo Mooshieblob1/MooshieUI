@@ -360,11 +360,44 @@ async fn handle_video_output(
             return None;
         }
     };
-    let video_path = std::path::PathBuf::from(payload.get("video_path")?.as_str()?);
-    let poster_path = payload
+    let mut video_path = std::path::PathBuf::from(payload.get("video_path")?.as_str()?);
+    let mut poster_path = payload
         .get("poster_path")
         .and_then(|v| v.as_str())
         .map(std::path::PathBuf::from);
+    let external = !matches!(
+        state.config.read().await.server_mode,
+        crate::config::ServerMode::AutoLaunch
+    );
+    if external || !video_path.is_file() {
+        match crate::commands::video_drafts::fetch_output(state, &payload, prompt_id, false).await {
+            Ok(path) => video_path = path,
+            Err(error) => {
+                log::warn!("Remote video download failed: {error}");
+                return None;
+            }
+        }
+        poster_path = crate::commands::video_drafts::fetch_output(state, &payload, prompt_id, true)
+            .await
+            .ok();
+        // Manual-save discovery expects a sibling poster with this name.
+        if let Some(poster) = poster_path.take() {
+            let dest = video_path.with_file_name(format!(
+                "{}_poster.webp",
+                video_path.file_stem()?.to_string_lossy()
+            ));
+            if tokio::fs::rename(&poster, &dest).await.is_ok() {
+                poster_path = Some(dest);
+            }
+        }
+    }
+    if let Some(id) = payload["draft_id"].as_str().filter(|id| !id.is_empty()) {
+        if let Err(error) =
+            crate::commands::video_drafts::attach_record(state, &video_path, id, prompt_id).await
+        {
+            log::warn!("Could not attach retained draft: {error}");
+        }
+    }
     let fps = payload.get("fps").and_then(|v| v.as_f64()).unwrap_or(24.0);
     let frame_count = payload
         .get("frame_count")

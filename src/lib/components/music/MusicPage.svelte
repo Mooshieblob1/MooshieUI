@@ -6,7 +6,7 @@
   import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { getConfig } from "../../utils/api.js";
-  import { isBrowserMode } from "../../utils/ipc.js";
+  import { getAuthUser, isBrowserMode } from "../../utils/ipc.js";
   import { insertLyricSection } from "../../utils/musicLyrics.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import type { MusicWritingTask } from "../../utils/yue2Skill.js";
@@ -15,6 +15,10 @@
   import MusicLibrary from "./MusicLibrary.svelte";
   import MusicSongDialog from "./MusicSongDialog.svelte";
   import MusicCover from "./MusicCover.svelte";
+  import MusicStyleReference from "./MusicStyleReference.svelte";
+  import MusicAudioStyle from "./MusicAudioStyle.svelte";
+  import MusicStyleProfiles from "./MusicStyleProfiles.svelte";
+  import MusicArrangement from "./MusicArrangement.svelte";
   import MusicScoreTools from "./MusicScoreTools.svelte";
   import MusicSampling from "./MusicSampling.svelte";
   import MusicEdit from "./MusicEdit.svelte";
@@ -27,6 +31,8 @@
   let managedRuntime = $state(false);
   let lyricsEl: HTMLTextAreaElement | undefined = $state();
   let settingsEl: HTMLDetailsElement | undefined = $state();
+  let audioStyle: MusicAudioStyle | undefined = $state();
+  let preparingStyle = $state(false);
   let writing = $state<MusicWritingTask | null>(null);
   let writingError = $state("");
   let lyricsDialog: HTMLDialogElement | undefined = $state();
@@ -95,6 +101,18 @@
     music.params[task] = previous.before;
     writingUndo = { ...writingUndo, [task]: undefined };
     music.saveSettings();
+  }
+  async function generate() {
+    if (preparingStyle || writing || musicCover.busy || music.busy || !connection.connected || !music.ready || !music.coverReady) return;
+    if (audioStyle?.isEnabled() && !music.params.style.trim()) {
+      const before = JSON.stringify(music.params), owner = getAuthUser(), song = music.selectedResult?.prompt_id;
+      const current = () => active && music.view === "generate" && owner === getAuthUser()
+        && song === music.selectedResult?.prompt_id && before === JSON.stringify(music.params);
+      preparingStyle = true;
+      try { if (!await audioStyle.prepareForGeneration(current)) return; }
+      finally { preparingStyle = false; }
+    }
+    if (active && music.view === "generate" && connection.connected && !writing && !musicCover.busy) await music.generate();
   }
   async function addSection(section: "verse" | "chorus") {
     const result = insertLyricSection(music.params.lyrics, section, lyricsEl?.selectionStart ?? music.params.lyrics.length);
@@ -209,7 +227,7 @@
     {/if}
 
     <div class="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-8">
-      <form class="min-w-0 space-y-4" onsubmit={(event) => { event.preventDefault(); if (!writing && !musicCover.busy) void music.generate(); }} onchange={() => music.saveSettings()}>
+      <form class="min-w-0 space-y-4" onsubmit={(event) => { event.preventDefault(); void generate(); }} onchange={() => music.saveSettings()}>
         <div class="flex gap-2" role="group" aria-label={locale.t("music.cover_mode")}>
           {#each [false, true] as cover}
             <button type="button" class={`touch-target rounded-full px-4 text-sm ${!!music.params.cover === cover ? 'bg-neutral-200 text-neutral-950' : 'text-neutral-400 hover:bg-neutral-900'}`} aria-pressed={!!music.params.cover === cover} disabled={music.busy || (musicCover.busy && !cover) || !!writing} onclick={() => music.setCover(cover)}>{locale.t(cover ? "music.cover" : "music.original")}</button>
@@ -222,7 +240,10 @@
             <label for="music-style" class="text-sm font-medium text-neutral-200">{locale.t("music.style")}</label>
             {@render writingActions("style")}
           </div>
-          <textarea id="music-style" class={inputClass} rows="4" maxlength="16000" bind:value={music.params.style} placeholder={locale.t("music.style_placeholder")} required></textarea>
+          <textarea id="music-style" class={inputClass} rows="4" maxlength="16000" bind:value={music.params.style} placeholder={locale.t("music.style_placeholder")} required={!audioStyle?.isEnabled()}></textarea>
+          <MusicStyleReference />
+          <MusicAudioStyle bind:this={audioStyle} />
+          <MusicStyleProfiles />
         </div>
         <div>
           <div class="flex flex-wrap items-center justify-between gap-x-3">
@@ -237,12 +258,14 @@
               {/each}
             </div>
           </div>
-          <textarea id="music-lyrics" class={`${inputClass} min-h-48 leading-7`} rows="8" maxlength="64000" bind:this={lyricsEl} bind:value={music.params.lyrics} placeholder={locale.t("music.lyrics_placeholder")} aria-describedby="music-writing-help" required></textarea>
+          <textarea id="music-lyrics" class={`${inputClass} min-h-48 leading-7`} rows="8" maxlength="64000" bind:this={lyricsEl} bind:value={music.params.lyrics} placeholder={locale.t("music.lyrics_placeholder")} aria-describedby="music-instrumental-help music-writing-help"></textarea>
+          <p id="music-instrumental-help" class="mt-2 text-xs leading-relaxed text-neutral-400">{locale.t("music.instrumental_help")}</p>
           <p id="music-writing-help" class="mt-2 text-xs leading-relaxed text-neutral-500">{locale.t("music.lyrics_dialog_help")}</p>
           {#if music.params.abc.trim()}<p class="mt-2 text-xs leading-relaxed text-amber-300">{locale.t("music.assistant_score_help")}</p>{/if}
         </div>
         {#if writingError}<p class="whitespace-pre-wrap break-words border-l-2 border-red-400 pl-3 text-xs leading-relaxed text-red-300" role="alert">{writingError}</p>{/if}
         <MusicScoreTools />
+        <MusicArrangement />
         <div class="space-y-1.5">
           <div class="flex items-center justify-between gap-3">
             <label for="music-duration" class="text-sm font-medium text-neutral-300">{locale.t("music.max_length")}</label>
@@ -302,9 +325,9 @@
         <label class="flex items-center justify-between gap-3 text-xs text-neutral-400"><span>{locale.t("music.candidates")}</span><select class={`${inputClass} max-w-28`} bind:value={music.candidateCount} disabled={music.busy}>{#each [1, 2, 4, 8] as count}<option value={count}>{count}</option>{/each}</select></label>
         <p class="text-xs text-neutral-500">{locale.t("music.candidates_help")}</p>
         <div class="flex items-center gap-3">
-          <button type="submit" class="touch-target inline-flex min-h-12 flex-1 items-center justify-center gap-2.5 rounded-md bg-indigo-500 px-4 text-sm font-semibold text-[var(--theme-accent-foreground)] transition-colors hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 disabled:opacity-40" disabled={!connection.connected || !music.ready || !music.coverReady || music.busy || musicCover.busy || !!writing}>
+          <button type="submit" class="touch-target inline-flex min-h-12 flex-1 items-center justify-center gap-2.5 rounded-md bg-indigo-500 px-4 text-sm font-semibold text-[var(--theme-accent-foreground)] transition-colors hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 disabled:opacity-40" disabled={!connection.connected || !music.ready || !music.coverReady || music.busy || musicCover.busy || !!writing || preparingStyle || audioStyle?.isAnalyzing()}>
             <svg class={`h-4 w-4 ${music.busy ? 'motion-safe:animate-pulse' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 17V6l10-2v11M9 10l10-2"/><ellipse cx="6" cy="17" rx="3" ry="2"/><ellipse cx="16" cy="15" rx="3" ry="2"/></svg>
-            {locale.t(music.busy ? "music.generating" : music.params.cover ? "music.cover_generate" : "music.generate")}
+            {locale.t(preparingStyle ? "music.audio_style_analyzing" : music.busy ? "music.generating" : music.params.cover ? "music.cover_generate" : "music.generate")}
           </button>
           {#if music.busy}<button type="button" class="touch-target rounded-sm px-3 text-sm text-neutral-400 hover:bg-neutral-900 disabled:opacity-40" disabled={music.cancelling} onclick={() => music.cancel()}>{locale.t("common.cancel")}</button>{/if}
         </div>
