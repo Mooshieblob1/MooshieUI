@@ -535,6 +535,69 @@ fn push_model_install_dir(
     }
 }
 
+/// Reject a model download destination that could land outside the model
+/// folders: `category` must be a single path component, `filename` a relative
+/// path of plain components, and an explicit `install_dir` one of the
+/// category's configured model folders. Model requests filed by LAN users
+/// carry all three, so an unchecked `../custom_nodes` category would write a
+/// file that ComfyUI later executes.
+pub(crate) fn validate_model_download_target(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+    install_dir: Option<&str>,
+) -> Result<(), AppError> {
+    if !is_safe_path_component(category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+    if !is_safe_relative_model_path(filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+    if let Some(dir) = install_dir {
+        let allowed = model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?;
+        if !allowed
+            .iter()
+            .any(|d| std::path::Path::new(&d.path) == std::path::Path::new(dir))
+        {
+            return Err(AppError::Other(
+                "Install folder is not one of this category's model folders".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod model_download_target_tests {
+    use super::validate_model_download_target;
+
+    #[test]
+    fn download_targets_stay_inside_model_folders() {
+        let ok = |cat: &str, file: &str| {
+            validate_model_download_target("/comfy", None, cat, file, None).is_ok()
+        };
+        assert!(ok("loras", "style.safetensors"));
+        assert!(ok("checkpoints", "sub/model.safetensors"));
+        assert!(!ok("../custom_nodes", "x.py"));
+        assert!(!ok("loras/../../custom_nodes", "x.py"));
+        assert!(!ok("/etc", "x"));
+        assert!(!ok("loras", "../../custom_nodes/x.py"));
+        assert!(!ok("loras", "/tmp/x.safetensors"));
+        assert!(!ok("", "x.safetensors"));
+    }
+
+    #[test]
+    fn install_dir_must_be_a_configured_model_folder() {
+        let check = |dir: &str| {
+            validate_model_download_target("/comfy", None, "loras", "a.safetensors", Some(dir))
+        };
+        assert!(check("/comfy/models/loras").is_ok());
+        assert!(check("/comfy/custom_nodes").is_err());
+        assert!(check("/tmp").is_err());
+    }
+}
+
 pub(crate) fn model_install_dirs_for_config(
     comfyui_path: &str,
     extra_model_paths: Option<&str>,
@@ -1124,6 +1187,16 @@ pub async fn download_model(
     install_dir: Option<String>,
     expected_sha256: Option<String>,
 ) -> Result<(), AppError> {
+    {
+        let cfg = state.config.read().await;
+        validate_model_download_target(
+            &cfg.comfyui_path,
+            cfg.extra_model_paths.as_deref(),
+            &category,
+            &filename,
+            install_dir.as_deref(),
+        )?;
+    }
     state
         .download_model_file(
             &app,
@@ -1651,8 +1724,10 @@ pub fn save_video_to_gallery(
 /// `save_video_to_gallery` logic, and returns the resulting gallery filename.
 /// Available in both the desktop and server builds; the desktop command is
 /// gated with `#[cfg(feature = "desktop")]`.
+#[allow(clippy::too_many_arguments)]
 pub async fn save_video_to_gallery_manual_inner(
     username: Option<&str>,
+    allowed_roots: &[std::path::PathBuf],
     video_path: String,
     prompt_id: String,
     fps: f64,
@@ -1661,6 +1736,14 @@ pub async fn save_video_to_gallery_manual_inner(
     height: u32,
 ) -> Result<String, AppError> {
     let path = std::path::PathBuf::from(&video_path);
+    // The path comes from the client, so it must be one `handle_video_output`
+    // could have announced; otherwise any caller could move an arbitrary .mp4
+    // on the host (another user's gallery, the owner's files) into their own.
+    if !is_path_under_any(&path, allowed_roots) {
+        return Err(AppError::Other(
+            "Only held-back ComfyUI video outputs can be saved to the gallery".into(),
+        ));
+    }
     if !path.is_file() {
         return Err(AppError::Other(format!(
             "Video not found at {}",
@@ -1697,6 +1780,7 @@ pub async fn save_video_to_gallery_manual_inner(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_video_to_gallery_manual(
+    state: State<'_, Arc<AppState>>,
     video_path: String,
     prompt_id: String,
     fps: f64,
@@ -1704,9 +1788,83 @@ pub async fn save_video_to_gallery_manual(
     width: u32,
     height: u32,
 ) -> Result<String, AppError> {
+    let roots = manual_save_video_roots(&*state.config.read().await);
     // Desktop: no owner — videos go to the root gallery directory.
-    save_video_to_gallery_manual_inner(None, video_path, prompt_id, fps, frame_count, width, height)
-        .await
+    save_video_to_gallery_manual_inner(
+        None,
+        &roots,
+        video_path,
+        prompt_id,
+        fps,
+        frame_count,
+        width,
+        height,
+    )
+    .await
+}
+
+/// Folders a clip held back by `manual_save_mode` can live in: ComfyUI's
+/// output directory, where `MooshieSaveVideo` writes, and the cache remote
+/// outputs are downloaded into (`video_drafts::fetch_output`).
+pub(crate) fn manual_save_video_roots(cfg: &crate::config::AppConfig) -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    if !cfg.comfyui_path.is_empty() {
+        roots.push(std::path::Path::new(&cfg.comfyui_path).join("output"));
+    }
+    let mut args = cfg.extra_args.iter();
+    while let Some(arg) = args.next() {
+        if let Some(dir) = arg.strip_prefix("--output-directory=") {
+            roots.push(std::path::PathBuf::from(dir));
+        } else if arg == "--output-directory" {
+            if let Some(dir) = args.next() {
+                roots.push(std::path::PathBuf::from(dir));
+            }
+        }
+    }
+    if let Some(data_dir) = crate::config::app_data_dir() {
+        roots.push(data_dir.join("video-output-cache"));
+    }
+    roots
+}
+
+/// Whether `path` resolves (symlinks and `..` included) to somewhere inside
+/// one of `roots`. Paths or roots that do not exist never match.
+fn is_path_under_any(path: &std::path::Path, roots: &[std::path::PathBuf]) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .any(|root| path.starts_with(root))
+}
+
+#[cfg(test)]
+mod manual_save_video_tests {
+    use super::is_path_under_any;
+
+    #[test]
+    fn only_paths_inside_the_roots_match() {
+        let base =
+            std::env::temp_dir().join(format!("mooshie-manual-save-{}", uuid::Uuid::new_v4()));
+        let output = base.join("output");
+        let outside = base.join("elsewhere");
+        std::fs::create_dir_all(&output).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(output.join("clip.mp4"), b"x").unwrap();
+        std::fs::write(outside.join("clip.mp4"), b"x").unwrap();
+        let roots = vec![output.clone()];
+
+        assert!(is_path_under_any(&output.join("clip.mp4"), &roots));
+        assert!(!is_path_under_any(&outside.join("clip.mp4"), &roots));
+        assert!(!is_path_under_any(
+            &output.join("../elsewhere/clip.mp4"),
+            &roots
+        ));
+        assert!(!is_path_under_any(&output.join("missing.mp4"), &roots));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 #[cfg(feature = "desktop")]

@@ -2184,21 +2184,17 @@ pub async fn move_installation(
     {
         let mut cfg = state.config.write().await;
         // Replace the old base path with the new one in comfyui_path and venv_path
-        let current_str = current.to_string_lossy().to_string();
-        let dest_str = dest.to_string_lossy().to_string();
-
-        if cfg.comfyui_path.starts_with(&current_str) {
-            cfg.comfyui_path = cfg.comfyui_path.replacen(&current_str, &dest_str, 1);
-        } else {
+        // Compare by path components, not string prefix: `/x/Mooshie` must
+        // not match `/x/Mooshie-old/comfyui`.
+        cfg.comfyui_path = match Path::new(&cfg.comfyui_path).strip_prefix(&current) {
+            Ok(rest) => dest.join(rest).to_string_lossy().to_string(),
             // Default layout
-            cfg.comfyui_path = dest.join("comfyui").to_string_lossy().to_string();
-        }
-
-        if cfg.venv_path.starts_with(&current_str) {
-            cfg.venv_path = cfg.venv_path.replacen(&current_str, &dest_str, 1);
-        } else {
-            cfg.venv_path = dest.join("venv").to_string_lossy().to_string();
-        }
+            Err(_) => dest.join("comfyui").to_string_lossy().to_string(),
+        };
+        cfg.venv_path = match Path::new(&cfg.venv_path).strip_prefix(&current) {
+            Ok(rest) => dest.join(rest).to_string_lossy().to_string(),
+            Err(_) => dest.join("venv").to_string_lossy().to_string(),
+        };
 
         // Preserve gallery at its current location instead of copying it
         if let Some(ref gp) = preserved_gallery_path {
@@ -2262,10 +2258,18 @@ pub async fn move_installation(
 
     emit(&app, "move", "Cleaning up old location...", 90);
 
-    // Remove old directory
-    if let Err(e) = std::fs::remove_dir_all(&current) {
+    // Remove the old install, but keep the gallery the config now points at
+    // (a default gallery stays in place rather than being copied) and the
+    // bootstrap pointer written above (it lives here when this was the
+    // platform default data dir). Removing the whole tree deleted both.
+    let keep: Vec<PathBuf> = preserved_gallery_path
+        .iter()
+        .cloned()
+        .chain(std::iter::once(current.join("data_dir.txt")))
+        .collect();
+    if let Err(e) = remove_dir_contents_except(&current, &keep) {
         log::warn!(
-            "Could not remove old data directory {}: {}. You may want to delete it manually.",
+            "Could not fully remove old data directory {}: {}. You may want to delete it manually.",
             current.display(),
             e
         );
@@ -2284,6 +2288,39 @@ pub async fn move_installation(
 /// to prevent infinite recursion if source/destination overlap detection
 /// is somehow bypassed.
 const MAX_COPY_DEPTH: u32 = 64;
+
+/// Delete everything inside `dir` except the `keep` paths and the folders
+/// leading to them, then remove `dir` itself if nothing was kept. Symlinks
+/// are removed, never followed.
+fn remove_dir_contents_except(dir: &Path, keep: &[PathBuf]) -> std::io::Result<()> {
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let keep: Vec<PathBuf> = keep.iter().map(|k| canon(k)).collect();
+    remove_dir_contents_except_inner(&canon(dir), &keep)
+}
+
+fn remove_dir_contents_except_inner(dir: &Path, keep: &[PathBuf]) -> std::io::Result<()> {
+    let mut kept_any = false;
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if keep.iter().any(|k| *k == path) {
+            kept_any = true;
+            continue;
+        }
+        let file_type = std::fs::symlink_metadata(&path)?.file_type();
+        if file_type.is_dir() && keep.iter().any(|k| k.starts_with(&path)) {
+            remove_dir_contents_except_inner(&path, keep)?;
+            kept_any = true;
+        } else if file_type.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    if !kept_any {
+        std::fs::remove_dir(dir)?;
+    }
+    Ok(())
+}
 
 /// Recursively copy a directory and all its contents.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -2742,9 +2779,50 @@ pub async fn update_comfyui(
 mod tests {
     use super::{
         amd_windows_rocm_model_supported, device_vram_bytes, parse_vram_from_drm_root,
-        venv_python_version,
+        remove_dir_contents_except, venv_python_version,
     };
     use std::fs;
+
+    #[test]
+    fn moving_an_install_keeps_the_in_place_gallery_and_pointer() {
+        let current = unique_temp_dir("move-cleanup");
+        fs::create_dir_all(current.join("gallery/users/bob")).unwrap();
+        fs::write(current.join("gallery/a.jxl"), b"img").unwrap();
+        fs::write(current.join("gallery/users/bob/b.jxl"), b"img").unwrap();
+        fs::write(current.join("gallery/index.sqlite"), b"db").unwrap();
+        fs::create_dir_all(current.join("comfyui/models")).unwrap();
+        fs::write(current.join("comfyui/models/m.safetensors"), b"m").unwrap();
+        fs::write(current.join("config.json"), b"{}").unwrap();
+        fs::write(current.join("data_dir.txt"), b"/new").unwrap();
+
+        let keep = vec![current.join("gallery"), current.join("data_dir.txt")];
+        remove_dir_contents_except(&current, &keep).unwrap();
+
+        assert!(current.join("gallery/a.jxl").is_file());
+        assert!(current.join("gallery/users/bob/b.jxl").is_file());
+        assert!(current.join("gallery/index.sqlite").is_file());
+        assert!(current.join("data_dir.txt").is_file());
+        assert!(!current.join("comfyui").exists());
+        assert!(!current.join("config.json").exists());
+        let _ = fs::remove_dir_all(&current);
+    }
+
+    #[test]
+    fn move_cleanup_keeps_nested_paths_and_removes_empty_dirs() {
+        let current = unique_temp_dir("move-cleanup-nested");
+        fs::create_dir_all(current.join("data/pics")).unwrap();
+        fs::write(current.join("data/pics/a.jxl"), b"img").unwrap();
+        fs::write(current.join("data/other.txt"), b"x").unwrap();
+        remove_dir_contents_except(&current, &[current.join("data/pics")]).unwrap();
+        assert!(current.join("data/pics/a.jxl").is_file());
+        assert!(!current.join("data/other.txt").exists());
+
+        let empty = unique_temp_dir("move-cleanup-empty");
+        fs::create_dir_all(empty.join("sub")).unwrap();
+        remove_dir_contents_except(&empty, &[empty.join("data_dir.txt")]).unwrap();
+        assert!(!empty.exists());
+        let _ = fs::remove_dir_all(&current);
+    }
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(

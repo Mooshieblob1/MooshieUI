@@ -95,6 +95,169 @@ fn is_localhost(addr: &SocketAddr) -> bool {
     ip.is_loopback()
 }
 
+/// Strip the port from a `Host` header value, keeping IPv6 literals intact.
+fn host_without_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    match host.rsplit_once(':') {
+        Some((name, port)) if port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
+    }
+}
+
+/// Whether the `Host` header names this machine by a name no website can
+/// point at it: `localhost`, a `*.localhost` name, or an IP literal. DNS
+/// rebinding needs an attacker-controlled domain name, so it never passes.
+/// A missing header (non-browser clients) is accepted.
+fn host_header_is_local(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(axum::http::header::HOST) else {
+        return true;
+    };
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    let name = host_without_port(host.trim()).to_ascii_lowercase();
+    name == "localhost" || name.ends_with(".localhost") || name.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Whether a browser request came from a page served by this server. Browsers
+/// send `Origin` on every cross-origin request and on all POSTs, and
+/// `Sec-Fetch-Site` on every request, so a cross-site page cannot pass this.
+/// Requests without either header (curl, scripts) are accepted.
+fn request_is_same_origin(headers: &HeaderMap) -> bool {
+    if headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("cross-site"))
+    {
+        return false;
+    }
+    let Some(origin) = headers.get(axum::http::header::ORIGIN) else {
+        return true;
+    };
+    let Some(host) = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    origin
+        .to_str()
+        .ok()
+        .and_then(|o| {
+            o.strip_prefix("http://")
+                .or_else(|| o.strip_prefix("https://"))
+        })
+        .is_some_and(|authority| authority.eq_ignore_ascii_case(host.trim()))
+}
+
+/// Whether a request gets the implicit owner trust that localhost (and
+/// localhost-only mode) grants without a token. Being on loopback is not
+/// enough on its own: a website the owner visits can reach 127.0.0.1 (CSRF),
+/// DNS rebinding makes a foreign domain resolve to it, and a same-host reverse
+/// proxy or tunnel sidecar makes every internet request arrive from loopback.
+/// Those callers fall through to token auth instead.
+fn is_trusted_local_request(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> bool {
+    (is_localhost(remote) || !state.lan_enabled)
+        && host_header_is_local(headers)
+        && request_is_same_origin(headers)
+}
+
+#[cfg(test)]
+mod local_trust_tests {
+    use super::{
+        host_header_is_local, host_without_port, is_safe_static_path, request_is_same_origin,
+    };
+    use axum::http::HeaderMap;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, value.parse().unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn host_port_is_stripped() {
+        assert_eq!(host_without_port("localhost:3200"), "localhost");
+        assert_eq!(host_without_port("[::1]:3200"), "::1");
+        assert_eq!(host_without_port("127.0.0.1"), "127.0.0.1");
+        assert_eq!(host_without_port("example.com"), "example.com");
+    }
+
+    #[test]
+    fn only_loopback_names_and_ip_literals_are_local_hosts() {
+        for host in [
+            "localhost:3200",
+            "LOCALHOST",
+            "127.0.0.1:3200",
+            "[::1]:3200",
+            "app.localhost:3200",
+            "192.168.1.5:3200",
+        ] {
+            assert!(host_header_is_local(&headers(&[("host", host)])), "{host}");
+        }
+        for host in [
+            "attacker.example:3200",
+            "localhost.attacker.example",
+            "mooshie.example.com",
+        ] {
+            assert!(!host_header_is_local(&headers(&[("host", host)])), "{host}");
+        }
+        assert!(host_header_is_local(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn cross_site_requests_are_not_same_origin() {
+        let host = ("host", "localhost:3200");
+        assert!(request_is_same_origin(&headers(&[host])));
+        assert!(request_is_same_origin(&headers(&[
+            host,
+            ("origin", "http://localhost:3200")
+        ])));
+        assert!(request_is_same_origin(&headers(&[
+            host,
+            ("origin", "http://localhost:3200"),
+            ("sec-fetch-site", "same-origin"),
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("origin", "https://evil.example")
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("origin", "http://localhost:8080")
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("origin", "null")
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("sec-fetch-site", "cross-site")
+        ])));
+    }
+
+    #[test]
+    fn static_paths_cannot_leave_dist() {
+        for ok in ["index.html", "assets/app-1a2b.js", "icons/icon.png"] {
+            assert!(is_safe_static_path(ok), "{ok}");
+        }
+        for bad in [
+            "../secret.txt",
+            "assets/../../etc/passwd",
+            "C:/Windows/win.ini",
+            "..\\x",
+            "a\\b",
+            "./index.html",
+        ] {
+            assert!(!is_safe_static_path(bad), "{bad}");
+        }
+    }
+}
+
 /// Extract the bearer token from request headers.
 fn extract_token(headers: &HeaderMap) -> Option<String> {
     headers
@@ -106,12 +269,9 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
 
 /// Determine the user's role from the request context.
 fn resolve_role(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> UserRole {
-    // Localhost always gets admin
-    if is_localhost(remote) {
-        return UserRole::Admin;
-    }
-    // LAN not enabled → admin (shouldn't happen since LAN users can't reach us, but be safe)
-    if !state.lan_enabled {
+    // The machine owner (localhost, or anyone in localhost-only mode) gets
+    // admin, unless the request looks cross-site or DNS-rebound.
+    if is_trusted_local_request(state, headers, remote) {
         return UserRole::Admin;
     }
     // Check bearer token — all remote users must authenticate
@@ -134,7 +294,7 @@ fn resolve_role(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> U
 /// Resolve the username for the current request.
 /// Returns None for localhost/admin (they use the shared gallery root).
 fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> Option<String> {
-    if is_localhost(remote) || !state.lan_enabled {
+    if is_trusted_local_request(state, headers, remote) {
         return None; // admin — uses root gallery
     }
     if let Some(token) = extract_token(headers) {
@@ -177,6 +337,29 @@ fn preserve_config_secrets_for_role(
         incoming
             .novelai_api_key
             .clone_from(&current.novelai_api_key);
+        // Settings that decide what the host executes, which of its folders
+        // the app reads and writes, or how the server is exposed. A moderator
+        // changing them could run code as the host user (venv, launch args,
+        // pip index) or aim downloads and gallery writes at any folder.
+        incoming.comfyui_path.clone_from(&current.comfyui_path);
+        incoming.venv_path.clone_from(&current.venv_path);
+        incoming.extra_args.clone_from(&current.extra_args);
+        incoming
+            .extra_model_paths
+            .clone_from(&current.extra_model_paths);
+        incoming.gallery_path.clone_from(&current.gallery_path);
+        incoming.pip_index_url.clone_from(&current.pip_index_url);
+        incoming
+            .interrogator_custom_models
+            .clone_from(&current.interrogator_custom_models);
+        incoming.tls_cert_path.clone_from(&current.tls_cert_path);
+        incoming.tls_key_path.clone_from(&current.tls_key_path);
+        incoming
+            .report_endpoint
+            .clone_from(&current.report_endpoint);
+        incoming.lan_enabled = current.lan_enabled;
+        incoming.browser_mode = current.browser_mode;
+        incoming.ui_server_port = current.ui_server_port;
     }
 }
 
@@ -203,7 +386,7 @@ fn resolve_username_with_query_token(
     remote: &SocketAddr,
     query: &str,
 ) -> Option<Option<String>> {
-    if !state.lan_enabled || is_localhost(remote) {
+    if is_trusted_local_request(state, headers, remote) {
         return Some(None);
     }
 
@@ -230,7 +413,7 @@ fn proxy_request_authed(
     remote: &SocketAddr,
     query: &str,
 ) -> bool {
-    if !state.lan_enabled || is_localhost(remote) {
+    if is_trusted_local_request(state, headers, remote) {
         return true;
     }
     if resolve_role(state, headers, remote) != UserRole::Anonymous {
@@ -260,8 +443,8 @@ fn is_gallery_image_filename(name: &str) -> bool {
 }
 
 /// Commands that moderators (and admins) can execute.
-/// Moderators have full operational access; filesystem/server panels are
-/// hidden in the UI for mods but all commands are permitted at the API level.
+/// Moderators have operational access; commands that touch arbitrary host
+/// paths or run arbitrary code are in `ADMIN_COMMANDS` instead.
 const MODERATOR_COMMANDS: &[&str] = &[
     // server / config control
     "update_config",
@@ -283,15 +466,27 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "connect_llm_oauth",
     "cancel_llm_oauth",
     "list_external_llm_models",
-    // previously admin-only: mode switching, filesystem, node install
-    "switch_to_app_mode",
-    "set_gallery_path",
+    // node installs; `install_custom_node` is further limited to the packs
+    // the UI offers (see STAFF_INSTALLABLE_NODE_PACKS)
     "install_custom_node",
     "install_rife",
     "install_h3_turbo",
     "install_h3_teacache",
     "install_h3_vdn",
     "install_h3_upscaler",
+    "delete_model_file",
+    "move_model_file",
+    "create_model_folder",
+    "civitai_bulk_scan",
+    "civitai_bulk_scan_cancel",
+];
+
+/// Commands only an admin may run. Each one reads or writes an arbitrary host
+/// path, changes how the server itself runs, or is a desktop-only GUI action,
+/// so granting it to a moderator would hand them the host account.
+const ADMIN_COMMANDS: &[&str] = &[
+    "switch_to_app_mode",
+    "set_gallery_path",
     "import_image_directory",
     "open_directory",
     "move_installation",
@@ -299,12 +494,36 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "save_image_file",
     "save_text_file",
     "upload_image",
-    "delete_model_file",
-    "move_model_file",
-    "create_model_folder",
-    "civitai_bulk_scan",
-    "civitai_bulk_scan_cancel",
 ];
+
+/// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
+/// INT8, style transfer). Moderators may install only these: any other repo
+/// runs its own code, and its pip requirements, on the host.
+const STAFF_INSTALLABLE_NODE_PACKS: &[(&str, &str)] = &[
+    (
+        "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
+        "ComfyUI_IPAdapter_plus",
+    ),
+    (
+        "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+        "comfyui_controlnet_aux",
+    ),
+    (
+        "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
+        "ComfyUI-INT8-Fast",
+    ),
+    (
+        "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+        "ComfyUi-Untwisting-RoPE",
+    ),
+    (
+        "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+        "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
+    ),
+];
+
+/// Pip specs the UI installs on demand; the only ones a moderator may install.
+const STAFF_INSTALLABLE_PIP_PACKAGES: &[&str] = &["ultralytics==8.4.34"];
 
 /// Model Hub commands that require explicit per-user access for regular users.
 const MODELHUB_COMMANDS: &[&str] = &[
@@ -325,7 +544,9 @@ fn is_modelhub_command(command: &str) -> bool {
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
 fn min_role_for_command(command: &str) -> UserRole {
-    if MODERATOR_COMMANDS.contains(&command) {
+    if ADMIN_COMMANDS.contains(&command) {
+        UserRole::Admin
+    } else if MODERATOR_COMMANDS.contains(&command) {
         UserRole::Moderator
     } else {
         UserRole::User
@@ -355,7 +576,7 @@ fn require_remote_lan_auth(
     headers: &HeaderMap,
     remote: &SocketAddr,
 ) -> Option<Response> {
-    if state.lan_enabled && !is_localhost(remote) {
+    if !is_trusted_local_request(state, headers, remote) {
         let role = resolve_role(state, headers, remote);
         if role == UserRole::Anonymous {
             return Some(unauthorized_response("Authentication required"));
@@ -966,6 +1187,17 @@ fn resolve_dist_dir() -> PathBuf {
     candidates[0].clone()
 }
 
+/// Whether a URL path (leading `/` stripped) names a file inside the dist
+/// directory. The path is not percent-decoded, so `..`, backslashes and
+/// Windows drive prefixes arrive literally; any of them would let
+/// `dist_dir.join` escape the directory (a drive prefix replaces it outright).
+fn is_safe_static_path(rel_path: &str) -> bool {
+    !rel_path.contains(['\\', ':', '\0'])
+        && std::path::Path::new(rel_path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 /// Serve static files from the dist directory, falling back to assets
 /// embedded into the binary at compile time.
 ///
@@ -986,6 +1218,10 @@ async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Respons
     } else {
         raw_path
     };
+
+    if !is_safe_static_path(rel_path) {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
 
     // 1. On-disk first so hot-reloaded dev builds override any stale
     //    compile-time embed.
@@ -1493,7 +1729,7 @@ async fn heartbeat_stop_handler(
 
     // Cancel in-progress generation. Remote LAN users must only stop their own
     // prompts; localhost keeps the legacy browser-mode "stop everything" behavior.
-    if state.lan_enabled && !is_localhost(&remote) {
+    if !is_trusted_local_request(&state, &headers, &remote) {
         let _ = state.app.interrupt_user_prompts(username.as_deref()).await;
     } else {
         let _ = state.app.gpu_manager.interrupt(None).await;
@@ -2123,7 +2359,7 @@ async fn command_handler(
     // client is on the same machine as the server: localhost-only web mode, or a
     // localhost request on a LAN-enabled server. A remote LAN client must never
     // pop a window on the operator's screen.
-    let caller_is_local = !state.lan_enabled || is_localhost(&remote);
+    let caller_is_local = is_trusted_local_request(&state, &headers, &remote);
 
     match dispatch_command(
         state.app.clone(),
@@ -3681,6 +3917,17 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing nodeName")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&node_name) {
+                return Err("Invalid node folder name".into());
+            }
+            if git_url.starts_with('-') {
+                return Err("Invalid git URL".into());
+            }
+            if caller_role != UserRole::Admin
+                && !STAFF_INSTALLABLE_NODE_PACKS.contains(&(git_url.as_str(), node_name.as_str()))
+            {
+                return Err("Only an admin can install node packs the app does not offer".into());
+            }
 
             let config = state.config.read().await;
             let custom_nodes_dir = std::path::Path::new(&config.comfyui_path).join("custom_nodes");
@@ -3789,6 +4036,16 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing package")?
                 .to_string();
+            // A leading `-` would be read as a pip option (`-e git+...`,
+            // `--index-url ...`) rather than a package name.
+            if package.trim().is_empty() || package.starts_with('-') {
+                return Err("Invalid package name".into());
+            }
+            if caller_role != UserRole::Admin
+                && !STAFF_INSTALLABLE_PIP_PACKAGES.contains(&package.as_str())
+            {
+                return Err("Only an admin can install packages the app does not offer".into());
+            }
             let config = state.config.read().await;
             let venv_path = config.venv_path.clone();
             let network_proxy = config.network_proxy.clone();
@@ -4817,6 +5074,18 @@ async fn dispatch_command(
             let install_dir = args["installDir"].as_str().map(|s| s.to_string());
             let expected_sha256 = args["expectedSha256"].as_str().map(|s| s.to_string());
 
+            {
+                let cfg = state.config.read().await;
+                commands::api::validate_model_download_target(
+                    &cfg.comfyui_path,
+                    cfg.extra_model_paths.as_deref(),
+                    &category,
+                    &filename,
+                    install_dir.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
             // Resolve destination directory
             let models_dir = if let Some(ref dir) = install_dir {
                 std::path::PathBuf::from(dir)
@@ -5669,8 +5938,10 @@ async fn dispatch_command(
             let frame_count = args["frameCount"].as_u64().unwrap_or(0);
             let width = args["width"].as_u64().unwrap_or(0) as u32;
             let height = args["height"].as_u64().unwrap_or(0) as u32;
+            let roots = crate::commands::api::manual_save_video_roots(&*state.config.read().await);
             let filename = crate::commands::api::save_video_to_gallery_manual_inner(
                 username,
+                &roots,
                 video_path,
                 prompt_id,
                 fps,
