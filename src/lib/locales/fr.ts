@@ -3705,6 +3705,15 @@ const fr: Record<string, string> = {
   "errors.report.opening": "Ouverture...",
 
   "errors.report.copied_hint": "Diagnostics copiés dans le presse-papiers. Collez-les dans le corps du problème.",
+  "errors.report.intro_service": "Votre rapport est envoyé au service de signalement de MooshieUI, qui le publie sous forme de ticket GitHub public. Tout le monde peut le lire.",
+  "errors.report.include_log": "Inclure le journal de diagnostic",
+  "errors.report.include_log_hint": "Le journal contient la version de l'application, votre système d'exploitation, le nom de l'ordinateur, les chemins de dossiers, les modèles installés et les journaux récents de l'application. Vérifiez-le avant l'envoi.",
+  "errors.report.preview_log": "Afficher ce qui sera envoyé",
+  "errors.report.hide_log": "Masquer le journal",
+  "errors.report.loading_log": "Collecte des diagnostics...",
+  "errors.report.submit_service": "Envoyer le rapport",
+  "errors.report.sending": "Envoi...",
+  "errors.report.sent": "Rapport envoyé. Merci de contribuer à améliorer MooshieUI.",
 
   "generation.video.role_fl2va": "Modèle premier/dernier cadre",
 

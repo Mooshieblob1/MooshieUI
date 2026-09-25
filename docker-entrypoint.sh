@@ -12,15 +12,17 @@ if [ -n "$MOOSHIEUI_ADMIN_USER" ] || [ -n "$MOOSHIEUI_ADMIN_PASS" ]; then
         echo "ERROR: MOOSHIEUI_ADMIN_PASS is too short (minimum 4 characters)." >&2
         exit 1
     fi
-    if [ "$MOOSHIEUI_ADMIN_PASS" = "changeme" ]; then
-        echo "" >&2
-        echo "========================================================" >&2
-        echo "  WARNING: Using default admin password 'changeme'." >&2
-        echo "  Change MOOSHIEUI_ADMIN_PASS before exposing this" >&2
-        echo "  server to the network!" >&2
-        echo "========================================================" >&2
-        echo "" >&2
-    fi
+    case "$(printf '%s' "$MOOSHIEUI_ADMIN_PASS" | tr '[:upper:]' '[:lower:]')" in
+        changeme|replace_me)
+            echo "" >&2
+            echo "========================================================" >&2
+            echo "  WARNING: MOOSHIEUI_ADMIN_PASS is a placeholder." >&2
+            echo "  The server will not create an admin account with it." >&2
+            echo "  Set a strong password before exposing this server." >&2
+            echo "========================================================" >&2
+            echo "" >&2
+            ;;
+    esac
 fi
 
 # Ensure the persistent models directory exists.

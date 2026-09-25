@@ -3708,6 +3708,15 @@ const es: Record<string, string> = {
   "errors.report.opening": "Abriendo...",
 
   "errors.report.copied_hint": "Diagnósticos copiados al portapapeles. Pégalos en el cuerpo del issue.",
+  "errors.report.intro_service": "Tu informe se envía al servicio de informes de MooshieUI, que lo publica como una incidencia pública en GitHub. Cualquiera puede leerlo.",
+  "errors.report.include_log": "Incluir registro de diagnóstico",
+  "errors.report.include_log_hint": "El registro contiene la versión de la aplicación, el sistema operativo, el nombre del equipo, rutas de carpetas, modelos instalados y registros recientes de la aplicación. Revísalo antes de enviarlo.",
+  "errors.report.preview_log": "Mostrar lo que se enviará",
+  "errors.report.hide_log": "Ocultar registro",
+  "errors.report.loading_log": "Recopilando diagnósticos...",
+  "errors.report.submit_service": "Enviar informe",
+  "errors.report.sending": "Enviando...",
+  "errors.report.sent": "Informe enviado. Gracias por ayudar a mejorar MooshieUI.",
 
   "generation.video.role_fl2va": "Modelo de primer/último fotograma",
 

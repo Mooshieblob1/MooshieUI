@@ -3680,6 +3680,15 @@ const zh: Record<string, string> = {
   "errors.report.opening": "正在打开...",
 
   "errors.report.copied_hint": "诊断信息已复制到剪贴板。请将其粘贴到问题正文中。",
+  "errors.report.intro_service": "您的反馈将发送到 MooshieUI 反馈服务，并以公开的 GitHub Issue 发布，任何人都可以查看。",
+  "errors.report.include_log": "附带诊断日志",
+  "errors.report.include_log_hint": "日志包含您的应用版本、操作系统、计算机名称、文件夹路径、已安装的模型和最近的应用日志。发送前请先检查。",
+  "errors.report.preview_log": "显示将要发送的内容",
+  "errors.report.hide_log": "隐藏日志",
+  "errors.report.loading_log": "正在收集诊断信息...",
+  "errors.report.submit_service": "发送反馈",
+  "errors.report.sending": "正在发送...",
+  "errors.report.sent": "反馈已发送。感谢您帮助改进 MooshieUI。",
 
   "generation.video.role_fl2va": "首/尾帧模型",
 

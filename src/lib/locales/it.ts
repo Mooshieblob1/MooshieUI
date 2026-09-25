@@ -3679,6 +3679,15 @@ const it: Record<string, string> = {
   "errors.report.opening": "Apertura in corso...",
 
   "errors.report.copied_hint": "Diagnostica copiata negli appunti. Incollala nel corpo della segnalazione.",
+  "errors.report.intro_service": "Il tuo report viene inviato al servizio di segnalazione di MooshieUI, che lo pubblica come issue pubblica su GitHub. Chiunque può leggerlo.",
+  "errors.report.include_log": "Includi il log di diagnostica",
+  "errors.report.include_log_hint": "Il log contiene la versione dell'app, il sistema operativo, il nome del computer, i percorsi delle cartelle, i modelli installati e i log recenti dell'app. Controllalo prima di inviarlo.",
+  "errors.report.preview_log": "Mostra cosa verrà inviato",
+  "errors.report.hide_log": "Nascondi log",
+  "errors.report.loading_log": "Raccolta della diagnostica...",
+  "errors.report.submit_service": "Invia report",
+  "errors.report.sending": "Invio in corso...",
+  "errors.report.sent": "Report inviato. Grazie per aiutarci a migliorare MooshieUI.",
 
   "generation.video.role_fl2va": "Modello primo/ultimo fotogramma",
 

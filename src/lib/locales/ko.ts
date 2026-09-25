@@ -3679,6 +3679,15 @@ const ko: Record<string, string> = {
   "errors.report.opening": "열리는 중...",
 
   "errors.report.copied_hint": "진단 정보가 클립보드에 복사되었습니다. 이슈 본문에 붙여넣으세요.",
+  "errors.report.intro_service": "보고서는 MooshieUI 보고 서비스로 전송되며, 공개 GitHub 이슈로 게시됩니다. 누구나 읽을 수 있습니다.",
+  "errors.report.include_log": "진단 로그 포함",
+  "errors.report.include_log_hint": "로그에는 앱 버전, 운영체제, 컴퓨터 이름, 폴더 경로, 설치된 모델, 최근 앱 로그가 포함됩니다. 보내기 전에 확인하세요.",
+  "errors.report.preview_log": "전송될 내용 보기",
+  "errors.report.hide_log": "로그 숨기기",
+  "errors.report.loading_log": "진단 정보를 수집하는 중...",
+  "errors.report.submit_service": "보고서 보내기",
+  "errors.report.sending": "보내는 중...",
+  "errors.report.sent": "보고서를 보냈습니다. MooshieUI 개선에 도움을 주셔서 감사합니다.",
 
   "generation.video.role_fl2va": "첫 번째/마지막 프레임 모델",
 

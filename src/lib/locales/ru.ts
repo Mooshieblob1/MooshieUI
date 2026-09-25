@@ -3679,6 +3679,15 @@ const ru: Record<string, string> = {
   "errors.report.opening": "Открытие...",
 
   "errors.report.copied_hint": "Диагностика скопирована в буфер обмена. Вставьте её в тело тикета.",
+  "errors.report.intro_service": "Отчёт будет отправлен в службу отчётов MooshieUI, которая опубликует его как публичную задачу на GitHub. Его сможет прочитать любой.",
+  "errors.report.include_log": "Приложить диагностический журнал",
+  "errors.report.include_log_hint": "Журнал содержит версию приложения, ОС, имя компьютера, пути к папкам, установленные модели и недавние журналы приложения. Проверьте его перед отправкой.",
+  "errors.report.preview_log": "Показать, что будет отправлено",
+  "errors.report.hide_log": "Скрыть журнал",
+  "errors.report.loading_log": "Сбор диагностических данных...",
+  "errors.report.submit_service": "Отправить отчёт",
+  "errors.report.sending": "Отправка...",
+  "errors.report.sent": "Отчёт отправлен. Спасибо, что помогаете улучшать MooshieUI.",
 
   "generation.video.role_fl2va": "Модель первого/последнего кадра",
 

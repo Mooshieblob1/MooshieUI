@@ -2278,6 +2278,9 @@ pub fn generate_thumbnail(
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
     let img = decode_gallery_image(&bytes)?;
+    // `size` comes from the request URL, and `thumbnail` scales up as well
+    // as down: `size=100000` asked for a ~40 GB buffer. The UI uses 256-1024.
+    let max_size = max_size.clamp(16, 2048);
     let thumb = img.thumbnail(max_size, max_size);
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -6986,7 +6989,7 @@ fn append_env_section(output: &mut String) {
             found = true;
             // Proxy vars can embed credentials (user:pass@host); redact them.
             let shown = if var.ends_with("PROXY") {
-                redact_proxy_credentials(&val)
+                redact_url_secrets(&val)
             } else {
                 val
             };
@@ -7003,15 +7006,48 @@ fn append_env_section(output: &mut String) {
     let _ = writeln!(output);
 }
 
-/// Redact any `user:pass@` credentials from a proxy URL so the log never carries
-/// proxy secrets while still showing the host being used.
-#[cfg(any(feature = "desktop", feature = "server"))]
-fn redact_proxy_credentials(url: &str) -> String {
-    match (url.find("://"), url.find('@')) {
-        (Some(scheme_end), Some(at)) if at > scheme_end + 3 => {
-            format!("{}://***@{}", &url[..scheme_end], &url[at + 1..])
+/// Strip secret-shaped parts of a URL before it goes into the diagnostic log
+/// (which in-app error reports post publicly): `user:pass@` credentials and
+/// the query string, where API keys often ride. The host stays visible.
+/// Works without a scheme (`user:pass@proxy:3128`), and everything up to the
+/// last `@` counts as credentials, so a password containing `@` or `/` is
+/// never partly shown.
+fn redact_url_secrets(url: &str) -> String {
+    let (scheme, rest) = match url.find("://") {
+        Some(i) => url.split_at(i + 3),
+        None => ("", url),
+    };
+    let query_start = rest.find(['?', '#']).unwrap_or(rest.len());
+    let (before_query, query) = rest.split_at(query_start);
+    let before_query = match before_query.rfind('@') {
+        Some(at) => format!("***@{}", &before_query[at + 1..]),
+        None => before_query.to_string(),
+    };
+    let query = if query.is_empty() { "" } else { "?***" };
+    format!("{scheme}{before_query}{query}")
+}
+
+#[cfg(test)]
+mod redact_url_secrets_tests {
+    use super::redact_url_secrets;
+
+    #[test]
+    fn credentials_and_queries_never_reach_the_log() {
+        let cases = [
+            ("http://127.0.0.1:8188", "http://127.0.0.1:8188"),
+            ("http://user:secret@proxy:3128", "http://***@proxy:3128"),
+            ("user:secret@proxy:3128", "***@proxy:3128"),
+            ("http://u:p@ss@host/v1", "http://***@host/v1"),
+            ("http://u:pa/ss@host/v1", "http://***@host/v1"),
+            (
+                "https://api.example.com/v1?key=sk-123",
+                "https://api.example.com/v1?***",
+            ),
+            ("https://host/v1#token=abc", "https://host/v1?***"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_url_secrets(input), expected, "{input}");
         }
-        _ => url.to_string(),
     }
 }
 
@@ -7129,7 +7165,11 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
             }
         );
         let _ = writeln!(output, "Server mode: {:?}", config.server_mode);
-        let _ = writeln!(output, "Server URL: {}", config.server_url);
+        let _ = writeln!(
+            output,
+            "Server URL: {}",
+            redact_url_secrets(&config.server_url)
+        );
         let _ = writeln!(output, "Server port: {}", config.server_port);
         let _ = writeln!(output, "VRAM mode: {}", config.vram_mode);
         let _ = writeln!(output, "Attention backend: {}", config.attention_backend);
@@ -7264,9 +7304,9 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
                 output,
                 "Prompt assistant: external endpoint, base_url={}, model={}, api_key={}",
                 if config.llm_external_base_url.is_empty() {
-                    "(unset)"
+                    "(unset)".to_string()
                 } else {
-                    &config.llm_external_base_url
+                    redact_url_secrets(&config.llm_external_base_url)
                 },
                 if config.llm_external_model.is_empty() {
                     "(unset)"

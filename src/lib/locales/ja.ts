@@ -3704,6 +3704,15 @@ const ja: Record<string, string> = {
   "errors.report.opening": "開いています...",
 
   "errors.report.copied_hint": "診断情報がクリップボードにコピーされました。Issue の本文に貼り付けてください。",
+  "errors.report.intro_service": "レポートはMooshieUIのレポートサービスに送信され、公開のGitHub Issueとして投稿されます。誰でも閲覧できます。",
+  "errors.report.include_log": "診断ログを含める",
+  "errors.report.include_log_hint": "ログにはアプリのバージョン、OS、コンピューター名、フォルダーのパス、インストール済みのモデル、最近のアプリログが含まれます。送信前に確認してください。",
+  "errors.report.preview_log": "送信内容を表示",
+  "errors.report.hide_log": "ログを隠す",
+  "errors.report.loading_log": "診断情報を収集しています...",
+  "errors.report.submit_service": "レポートを送信",
+  "errors.report.sending": "送信中...",
+  "errors.report.sent": "レポートを送信しました。MooshieUIの改善にご協力いただきありがとうございます。",
 
   "generation.video.role_fl2va": "最初/最後のフレームモデル",
 

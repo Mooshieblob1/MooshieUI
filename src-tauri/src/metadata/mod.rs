@@ -270,12 +270,7 @@ pub fn embed_png_metadata(
         .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info().clone();
 
-    let mut buf = vec![
-        0u8;
-        reader
-            .output_buffer_size()
-            .expect("PNG output buffer size unavailable")
-    ];
+    let mut buf = png_frame_buffer(reader.output_buffer_size())?;
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG frame read error: {}", e))?;
@@ -416,13 +411,13 @@ pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
             info.utf8_text
                 .iter()
                 .find(|c| c.keyword == "parameters")
-                .and_then(|c| c.get_text().ok())
+                .and_then(itxt_text)
         })
         .or_else(|| {
             info.compressed_latin1_text
                 .iter()
                 .find(|c| c.keyword == "parameters")
-                .and_then(|c| c.get_text().ok())
+                .and_then(ztxt_text)
         });
 
     let Some(raw_text) = raw_text else {
@@ -474,16 +469,56 @@ fn png_text_chunks(info: &png::Info<'_>) -> HashMap<String, String> {
         chunks.insert(chunk.keyword.clone(), chunk.text.clone());
     }
     for chunk in &info.compressed_latin1_text {
-        if let Ok(text) = chunk.get_text() {
+        if let Some(text) = ztxt_text(chunk) {
             chunks.insert(chunk.keyword.clone(), text);
         }
     }
     for chunk in &info.utf8_text {
-        if let Ok(text) = chunk.get_text() {
+        if let Some(text) = itxt_text(chunk) {
             chunks.insert(chunk.keyword.clone(), text);
         }
     }
     chunks
+}
+
+/// Largest decompressed zTXt/iTXt chunk we will read. Real prompts and
+/// workflows are kilobytes; `get_text()` inflates without any bound, so a
+/// small crafted chunk could expand to gigabytes.
+const MAX_TEXT_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Text of a zTXt chunk, or `None` if it is corrupt or inflates past
+/// [`MAX_TEXT_CHUNK_BYTES`].
+fn ztxt_text(chunk: &png::text_metadata::ZTXtChunk) -> Option<String> {
+    let mut chunk = chunk.clone();
+    chunk
+        .decompress_text_with_limit(MAX_TEXT_CHUNK_BYTES)
+        .ok()?;
+    chunk.get_text().ok()
+}
+
+/// Text of an iTXt chunk, or `None` if it is corrupt or inflates past
+/// [`MAX_TEXT_CHUNK_BYTES`].
+fn itxt_text(chunk: &png::text_metadata::ITXtChunk) -> Option<String> {
+    let mut chunk = chunk.clone();
+    chunk
+        .decompress_text_with_limit(MAX_TEXT_CHUNK_BYTES)
+        .ok()?;
+    chunk.get_text().ok()
+}
+
+/// Largest decoded PNG frame we will allocate: 1 GiB, enough for a 16384 x
+/// 16384 RGBA8 image. The size comes straight from the header, and a 68-byte
+/// file can claim billions of rows; allocating that aborts the process.
+const MAX_PNG_FRAME_BYTES: usize = 1024 * 1024 * 1024;
+
+/// Allocate the output buffer for one decoded PNG frame, refusing headers
+/// that claim more than [`MAX_PNG_FRAME_BYTES`].
+fn png_frame_buffer(size: Option<usize>) -> Result<Vec<u8>, String> {
+    match size {
+        Some(n) if n <= MAX_PNG_FRAME_BYTES => Ok(vec![0u8; n]),
+        Some(n) => Err(format!("PNG too large to decode ({n} bytes)")),
+        None => Err("PNG output buffer size unavailable".into()),
+    }
 }
 
 /// The 8 bytes every PNG starts with.
@@ -774,12 +809,7 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
         4
     };
 
-    let mut buf = vec![
-        0u8;
-        reader
-            .output_buffer_size()
-            .expect("PNG output buffer size unavailable")
-    ];
+    let mut buf = png_frame_buffer(reader.output_buffer_size())?;
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG frame read error: {}", e))?;
@@ -1290,11 +1320,97 @@ fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     encoder.finish()
 }
 
+/// Largest stealth-alpha payload we will inflate. The JSON it carries is
+/// kilobytes, but the gzip stream is attacker-supplied and a megabyte of
+/// pixels can inflate to gigabytes.
+const MAX_STEALTH_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024;
+
 fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut decoder = flate2::read::GzDecoder::new(Cursor::new(data));
+    let decoder = flate2::read::GzDecoder::new(Cursor::new(data));
     let mut out = Vec::new();
-    decoder.read_to_end(&mut out)?;
+    decoder
+        .take(MAX_STEALTH_PAYLOAD_BYTES + 1)
+        .read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_STEALTH_PAYLOAD_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stealth metadata payload is too large",
+        ));
+    }
     Ok(out)
+}
+
+#[cfg(test)]
+mod hostile_input_tests {
+    use super::*;
+
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let mut crc = flate2::Crc::new();
+        crc.update(kind);
+        crc.update(data);
+        out.extend_from_slice(&crc.sum().to_be_bytes());
+    }
+
+    fn zlib(data: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    /// Hand-built 8-bit RGBA PNG, so the header can claim any size.
+    fn png_with(w: u32, h: u32, extra: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+        let mut out = PNG_SIGNATURE.to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&w.to_be_bytes());
+        ihdr.extend_from_slice(&h.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        chunk(&mut out, b"IHDR", &ihdr);
+        for (kind, data) in extra {
+            chunk(&mut out, kind, data);
+        }
+        chunk(&mut out, b"IDAT", &zlib(&[0u8; 5]));
+        chunk(&mut out, b"IEND", &[]);
+        out
+    }
+
+    #[test]
+    fn png_claiming_a_huge_frame_is_refused_not_allocated() {
+        // 68 bytes on disk, ~2.7e17 bytes of claimed pixels: allocating that
+        // used to abort the whole process.
+        let png = png_with(16_000_000, 0xFFFF_FFFF, &[]);
+        assert!(read_stealth_alpha(&png).is_err());
+        assert!(embed_png_metadata(&png, &HashMap::new(), MetadataMode::StealthAlpha).is_err());
+        let _ = read_png_metadata(&png);
+    }
+
+    #[test]
+    fn compressed_text_chunks_are_inflated_with_a_limit() {
+        let mut bomb = b"parameters\0\0".to_vec();
+        bomb.extend_from_slice(&zlib(&vec![b'A'; MAX_TEXT_CHUNK_BYTES + 1]));
+        let mut small = b"Comment\0\0".to_vec();
+        small.extend_from_slice(&zlib(b"hello"));
+        let png = png_with(1, 1, &[(*b"zTXt", bomb), (*b"zTXt", small)]);
+
+        let reader = png::Decoder::new(Cursor::new(&png)).read_info().unwrap();
+        let chunks = &reader.info().compressed_latin1_text;
+        assert_eq!(ztxt_text(&chunks[0]), None);
+        assert_eq!(ztxt_text(&chunks[1]).as_deref(), Some("hello"));
+
+        let texts = png_text_chunks(reader.info());
+        assert!(!texts.contains_key("parameters"));
+        assert_eq!(texts.get("Comment").map(String::as_str), Some("hello"));
+    }
+
+    #[test]
+    fn stealth_gzip_payload_is_inflated_with_a_limit() {
+        let bomb = gzip_compress(&vec![b' '; MAX_STEALTH_PAYLOAD_BYTES as usize + 1]).unwrap();
+        assert!(gzip_decompress(&bomb).is_err());
+        let ok = gzip_compress(b"{\"sui_image_params\":{}}").unwrap();
+        assert_eq!(gzip_decompress(&ok).unwrap(), b"{\"sui_image_params\":{}}");
+    }
 }
 
 // ---------------------------------------------------------------------------

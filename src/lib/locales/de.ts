@@ -3681,6 +3681,15 @@ const de: Record<string, string> = {
   "errors.report.opening": "Wird geöffnet...",
 
   "errors.report.copied_hint": "Diagnose in die Zwischenablage kopiert. Füge sie in den Issue-Text ein.",
+  "errors.report.intro_service": "Dein Bericht wird an den MooshieUI-Meldedienst gesendet, der ihn als öffentliches GitHub-Issue veröffentlicht. Jeder kann ihn lesen.",
+  "errors.report.include_log": "Diagnoseprotokoll anhängen",
+  "errors.report.include_log_hint": "Das Protokoll enthält deine App-Version, dein Betriebssystem, den Computernamen, Ordnerpfade, installierte Modelle und aktuelle App-Protokolle. Prüfe es vor dem Senden.",
+  "errors.report.preview_log": "Anzeigen, was gesendet wird",
+  "errors.report.hide_log": "Protokoll ausblenden",
+  "errors.report.loading_log": "Diagnosedaten werden gesammelt...",
+  "errors.report.submit_service": "Bericht senden",
+  "errors.report.sending": "Wird gesendet...",
+  "errors.report.sent": "Bericht gesendet. Danke, dass du hilfst, MooshieUI zu verbessern.",
 
   "generation.video.role_fl2va": "Erstes-/Letztes-Bild-Modell",
 
