@@ -25,6 +25,7 @@ pub struct Config {
     pub github_repo: String,
     pub rate_limit_per_min: u32,
     pub global_writes_per_min: u32,
+    pub web_origin_writes_per_min: u32,
     pub max_body_bytes: usize,
     pub bind_addr: String,
 }
@@ -41,6 +42,9 @@ impl Config {
             // Issue creations + comments per minute across ALL clients. 8/min stays
             // under GitHub's 500 content-creating requests/hour secondary limit.
             global_writes_per_min: var("GLOBAL_WRITES_PER_MIN", "8").parse().unwrap_or(8),
+            // The share of that budget reports from web origins (browser mode, or
+            // any other website) may take, so they can never starve the app's.
+            web_origin_writes_per_min: var("WEB_ORIGIN_WRITES_PER_MIN", "3").parse().unwrap_or(3),
             // 1 MiB: the app still sends its whole diagnostic log, but the proxy only
             // keeps the last `report::MAX_LOG_TAIL_CHARS` of it, so anything much
             // bigger is wasted parsing.
@@ -60,4 +64,6 @@ pub struct AppState {
     pub github: GithubClient,
     pub limiter: Arc<RateLimiter>,
     pub budget: Arc<WriteBudget>,
+    /// Taken (in addition to `budget`) by reports from web origins.
+    pub web_budget: Arc<WriteBudget>,
 }

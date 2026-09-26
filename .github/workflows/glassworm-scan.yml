@@ -54,7 +54,10 @@ jobs:
 
           # UTF-8 byte sequences for U+FE00–U+FE0F  → EF B8 80–EF B8 8F
           # UTF-8 byte sequences for U+E0100–U+E01EF → F3 A0 84 80–F3 A0 87 AF
-          TARGET_EXTS = {".py", ".js", ".ts", ".svelte", ".rs"}
+          # Everything that can execute or configure execution: source, scripts,
+          # workflows and manifests (package.json scripts, Cargo/pyproject tables).
+          TARGET_EXTS = {".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".svelte", ".rs",
+                         ".sh", ".ps1", ".yml", ".yaml", ".toml", ".json"}
 
           hits = []
           for root, dirs, files in os.walk("."):
@@ -151,7 +154,8 @@ jobs:
           # ── 4. Obfuscated eval scan ────────────────────────────────────────
           print("\n── Check 4: Obfuscated eval() calls ────────────────────────")
 
-          EVAL_EXTS = {".py", ".js", ".ts", ".svelte"}
+          EVAL_EXTS = {".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".svelte",
+                       ".sh", ".ps1", ".yml", ".yaml", ".toml", ".json"}
           KEYWORDS = r"decode|atob|fromCharCode|Buffer\.from|base64"
           # Match eval( followed within 120 chars by one of the keywords
           EVAL_RE = re.compile(

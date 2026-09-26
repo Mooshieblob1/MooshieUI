@@ -37,6 +37,35 @@ The file /home/blob/report-proxy/.env (perms 600) holds:
 cloudflared shares the proxy's network namespace and forwards
 report.mooshieblob.com to localhost:8091.
 
+## Origin policy (CORS)
+
+Reports come from two kinds of client, and only one has a fixed origin:
+
+- The desktop app posts from its webview: `tauri://localhost` (macOS/Linux),
+  `http://tauri.localhost` or `https://tauri.localhost` (Windows).
+- Browser mode posts from wherever the user's own MooshieUI server is reachable:
+  localhost, a LAN address, a tunnel or custom domain. No allowlist can name these.
+
+So the proxy (src/origin.rs) does not restrict to a list, and instead:
+
+- Accepts the Tauri origins and any plain `http(s)://host[:port]` origin at the
+  CORS preflight. Every report must carry `X-Mooshie-App: 1`, which forces that
+  preflight in a browser.
+- Refuses `Origin: null` (sandboxed iframes, file: pages), extension and other
+  schemes, and malformed values, both at the preflight and in the handler (403).
+- Accepts requests with no Origin header (curl, scripts). CORS never limited
+  those; the header gate, per-IP rate limit and budgets do.
+- Charges reports from web origins (browser mode, or any website that makes its
+  visitors' browsers post) against a separate share of the global write budget,
+  `WEB_ORIGIN_WRITES_PER_MIN` (default 3 of the 8 per minute). A page abusing
+  this can therefore create at most that many issues or comments a minute, and
+  can never use up the budget the desktop app depends on.
+
+Tighten further (for example only the Tauri origins) if browser-mode reports ever
+become abuse: `allowed_by_cors` and `classify` in src/origin.rs are the one place
+to change, and browser-mode users would then fall back to the prefilled GitHub
+issue path.
+
 ## Smoke test
     curl -s -X POST https://report.mooshieblob.com/report \
       -H "X-Mooshie-App: 1" -H "Content-Type: application/json" \

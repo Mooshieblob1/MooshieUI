@@ -1,8 +1,9 @@
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::json;
 
+use crate::origin::{self, OriginClass};
 use crate::types::{AppState, ReportPayload};
 use crate::{dedup, github, ratelimit};
 
@@ -127,8 +128,13 @@ pub async fn report_handler(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // 1. App header gate.
-    if headers.get("x-mooshie-app").and_then(|v| v.to_str().ok()) != Some("1") {
+    // 1. App header gate, and the origin policy (origin.rs). Browsers already
+    //    stop refused origins at the preflight the header forces; this covers
+    //    anything that reaches the handler without one.
+    let origin_class = origin::classify(headers.get(header::ORIGIN));
+    if headers.get("x-mooshie-app").and_then(|v| v.to_str().ok()) != Some("1")
+        || origin_class == OriginClass::Rejected
+    {
         return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
     }
 
@@ -165,7 +171,12 @@ pub async fn report_handler(
     // 4. Global GitHub write budget, shared by every client. Taken before the
     //    dedup lookup so reads are bounded by it too. This covers the issue (or
     //    the first comment on a duplicate); further comments take their own.
-    if !state.budget.try_take(now_secs()) {
+    //    A web origin first takes from its own smaller share, so reports any
+    //    website makes its visitors send can never use up the app's budget.
+    let now = now_secs();
+    if (origin_class == OriginClass::Web && !state.web_budget.try_take(now))
+        || !state.budget.try_take(now)
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({ "error": "report service busy, try again later" })),

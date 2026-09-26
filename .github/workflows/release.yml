@@ -76,20 +76,33 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # --ignore-scripts: no dependency lifecycle script runs in the job that
-      # later holds the updater signing key. Only esbuild (platform binary comes
-      # from its optional dependency) and fsevents (macOS only) declare one; the
-      # Docker frontend stage already builds this way.
+      # --ignore-scripts: no dependency lifecycle script runs during the release
+      # build. Only esbuild (platform binary comes from its optional dependency)
+      # and fsevents (macOS only) declare one; the Docker frontend stage already
+      # builds this way.
       - name: Install frontend dependencies
         run: npm ci --ignore-scripts
 
+      # Blocking: a high or critical advisory in a shipped (non-dev) dependency
+      # stops the release. Dev-only advisories are left to Dependabot.
       - name: Audit npm dependencies
-        run: npm audit --audit-level=high
-        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
 
+      # Blocking on vulnerabilities. Informational advisories (unmaintained,
+      # unsound, yanked) only warn: most come from the gtk-rs/webkit stack Tauri
+      # pins on Linux (glib, gtk, unic-*) and have no release to move to. Fix a
+      # vulnerability with `cargo update -p <crate>`; only one with no fixed
+      # release reachable from our dependency tree goes on the ignore list below,
+      # with the reason, and comes off again once a fix lands.
       - name: Audit Rust dependencies
-        run: cargo install cargo-audit --locked && cd src-tauri && cargo audit
-        continue-on-error: true
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked
+          cd src-tauri
+          ignored=(
+            # --ignore RUSTSEC-YYYY-NNNN  # crate: why there is no fix yet
+          )
+          cargo audit "${ignored[@]}"
 
       # Built as three separate `tauri build` invocations (one process per format)
       # instead of one `--target ... ` call with `targets: "all"`. Tauri's bundler
@@ -101,33 +114,29 @@ jobs:
       # how the Windows job already isolates to `--bundles nsis` — removes that
       # shared state entirely. AppImage is built first since it's the only format
       # our updater manifest (latest.json) actually distributes.
+      #
+      # The updater signing key never enters this job: createUpdaterArtifacts is
+      # switched off (with it on, `tauri build` needs the key in its environment,
+      # where every npm/Vite plugin, build.rs and proc macro can read it). That
+      # setting only gates the signing pass after bundling, so the installers are
+      # built exactly as before; the sign-updaters job below signs the same files
+      # `tauri build` would have. The override is a file so no JSON quoting has
+      # to survive PowerShell and npx on Windows.
       - name: Build Tauri app (Linux, AppImage)
         if: runner.os == 'Linux'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target ${{ matrix.target }} --bundles appimage
+        run: npx tauri build --target ${{ matrix.target }} --bundles appimage --config .github/tauri-no-updater-artifacts.json
 
       - name: Build Tauri app (Linux, deb)
         if: runner.os == 'Linux'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target ${{ matrix.target }} --bundles deb
+        run: npx tauri build --target ${{ matrix.target }} --bundles deb --config .github/tauri-no-updater-artifacts.json
 
       - name: Build Tauri app (Linux, rpm)
         if: runner.os == 'Linux'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target ${{ matrix.target }} --bundles rpm
+        run: npx tauri build --target ${{ matrix.target }} --bundles rpm --config .github/tauri-no-updater-artifacts.json
 
       - name: Build Tauri app (Windows, NSIS only)
         if: runner.os == 'Windows'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target ${{ matrix.target }} --bundles nsis
+        run: npx tauri build --target ${{ matrix.target }} --bundles nsis --config .github/tauri-no-updater-artifacts.json
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -137,17 +146,84 @@ jobs:
           if-no-files-found: error
 
   # Enable only after the physical-Mac acceptance checks in docs/MACOS.md.
+  # No secrets: the Mac build, like the others, runs without the updater key.
   build-macos:
     if: vars.MACOS_RELEASE_ENABLED == 'true'
     uses: ./.github/workflows/macos-native.yml
     with:
       source_ref: ${{ github.event.inputs.tag || github.ref_name }}
       release: true
-    secrets: inherit
 
-  release:
+  # The only job that sees TAURI_SIGNING_PRIVATE_KEY. It runs on a fresh runner
+  # and never builds anything, so no build script, and nothing a build step
+  # could leave behind (a patched node_modules, GITHUB_ENV or GITHUB_PATH
+  # entries), shares its environment. It signs exactly what `tauri build` signed
+  # with createUpdaterArtifacts on (the AppImage, deb, rpm and NSIS installers,
+  # and the Mac .app.tar.gz) using the same CLI code path (`tauri signer sign`,
+  # from the lockfile-pinned @tauri-apps/cli), then publishes only the `.sig`
+  # files. The release job merges them back next to the installers.
+  sign-updaters:
     needs: [build, build-macos]
     if: ${{ !cancelled() && needs.build.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+
+      # Only the Tauri CLI is ever run from this install.
+      - name: Install Tauri CLI
+        run: npm ci --ignore-scripts
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          pattern: artifacts-*
+          merge-multiple: true
+
+      - name: Sign updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          INCLUDE_MACOS: ${{ needs.build-macos.result == 'success' }}
+        run: |
+          macos=()
+          if [ "$INCLUDE_MACOS" = 'true' ]; then macos=(--macos); fi
+          python3 scripts/updater_artifacts.py list --source artifacts "${macos[@]}" > "$RUNNER_TEMP/updater-files"
+          while IFS= read -r file; do
+            rm -f "$file.sig"
+            npx tauri signer sign "$file"
+          done < "$RUNNER_TEMP/updater-files"
+
+      # Fails the release if any file `tauri build` would have signed has no
+      # well-formed signature beside it.
+      - name: Check updater signatures
+        env:
+          INCLUDE_MACOS: ${{ needs.build-macos.result == 'success' }}
+        run: |
+          macos=()
+          if [ "$INCLUDE_MACOS" = 'true' ]; then macos=(--macos); fi
+          python3 scripts/updater_artifacts.py check --source artifacts --config src-tauri/tauri.conf.json "${macos[@]}"
+
+      - name: Upload updater signatures
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: artifacts-updater-signatures
+          path: artifacts/**/*.sig
+          if-no-files-found: error
+
+  release:
+    needs: [build-macos, sign-updaters]
+    if: ${{ !cancelled() && needs.sign-updaters.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
     # Creates/edits the GitHub Release and uploads its assets (gh uses GITHUB_TOKEN).
     permissions:
