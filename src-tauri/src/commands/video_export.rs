@@ -847,7 +847,7 @@ pub async fn copy_file_to_clipboard(path: String) -> Result<(), AppError> {
             .map_err(|e| AppError::Other(format!("Could not run xclip to copy the path: {e}")))?;
         if let Some(ref mut stdin) = child.stdin {
             stdin
-                .write_all(path.as_bytes())
+                .write_all(p.to_string_lossy().as_bytes())
                 .map_err(|e| AppError::Other(format!("xclip stdin write failed: {e}")))?;
         }
         drop(child.stdin.take());
