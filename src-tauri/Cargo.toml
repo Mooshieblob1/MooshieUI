@@ -100,3 +100,8 @@ tar = "0.4"
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# Dependency debug info is most of target/debug's size and is rarely stepped
+# through. Our own crate keeps full debug info for debugging and backtraces.
+[profile.dev.package."*"]
+debug = false
