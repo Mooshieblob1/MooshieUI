@@ -10,9 +10,9 @@ on:
         description: 'Release tag (e.g. v0.1.0)'
         required: true
 
+# Read-only by default. Only the jobs that publish get write scopes, below.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 # All jobs run on GitHub-hosted runners. The self-hosted NUC path is kept behind
 # this flag (flip back to the repository/actor check to re-enable it).
@@ -37,6 +37,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -75,8 +76,12 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # --ignore-scripts: no dependency lifecycle script runs in the job that
+      # later holds the updater signing key. Only esbuild (platform binary comes
+      # from its optional dependency) and fsevents (macOS only) declare one; the
+      # Docker frontend stage already builds this way.
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Audit npm dependencies
         run: npm audit --audit-level=high
@@ -144,12 +149,16 @@ jobs:
     needs: [build, build-macos]
     if: ${{ !cancelled() && needs.build.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
+    # Creates/edits the GitHub Release and uploads its assets (gh uses GITHUB_TOKEN).
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout release scripts and notes
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -253,6 +262,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
 
       - name: Prepare local build caches (NUC)
         if: env.USE_NUC_RUNNER == 'true'
@@ -308,6 +318,10 @@ jobs:
   docker-publish:
     needs: build-server
     runs-on: ubuntu-latest
+    # Pushes the image and its :buildcache tag to GHCR.
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Prepare local Docker build cache (NUC)
@@ -328,6 +342,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0

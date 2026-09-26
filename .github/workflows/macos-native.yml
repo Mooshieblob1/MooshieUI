@@ -37,6 +37,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
@@ -84,7 +85,9 @@ jobs:
       - name: Install the native managed runtime and check nodes
         run: |
           mkdir -p macos-runtime/bin
-          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          # Same pinned uv release and SHA-256 as UV_VERSION/UV_ASSETS in src-tauri/src/setup.rs.
+          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/download/0.12.19/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          echo "a9a8df1eedeb192f2e47e40e2faabfb387db4b850209118786d42f89dde3e0ba  macos-runtime/uv.tar.gz" | shasum -a 256 -c -
           tar -xzf macos-runtime/uv.tar.gz --strip-components=1 -C macos-runtime/bin
           python3 scripts/macos/setup_runtime.py --uv "$PWD/macos-runtime/bin/uv" --work-dir "$PWD/macos-runtime"
       - name: Upload candidate and evidence

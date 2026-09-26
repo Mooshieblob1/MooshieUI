@@ -5,6 +5,7 @@ mod report;
 mod types;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method};
@@ -13,7 +14,7 @@ use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 
 use github::GithubClient;
-use ratelimit::RateLimiter;
+use ratelimit::{RateLimiter, WriteBudget};
 use types::{AppState, Config};
 
 #[tokio::main]
@@ -28,18 +29,30 @@ async fn main() {
     let bind_addr = config.bind_addr.clone();
     let max_body = config.max_body_bytes;
 
+    // Bounded timeouts: a stalled GitHub call must not pin a request (and its
+    // per-IP / global budget) open indefinitely.
+    let http = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("failed to build HTTP client");
     let github = GithubClient::new(
-        reqwest::Client::new(),
+        http,
         config.github_token.clone(),
         config.github_repo.clone(),
     );
     let limiter = Arc::new(RateLimiter::new(config.rate_limit_per_min));
+    let budget = Arc::new(WriteBudget::new(config.global_writes_per_min));
 
-    let state = AppState { github, limiter };
+    let state = AppState {
+        github,
+        limiter,
+        budget,
+    };
 
     // Permissive-but-header-gated CORS: browser mode posts cross-origin, and the
     // custom X-Mooshie-App header forces a preflight. Abuse control is the header
-    // gate + rate limit, not the origin.
+    // gate + per-IP rate limit + global GitHub write budget + log cap, not the origin.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::POST, Method::OPTIONS])

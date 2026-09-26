@@ -2,6 +2,7 @@
 //! The Python source is embedded at compile time and written to disk before ComfyUI starts.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -12,6 +13,13 @@ use super::types::GenerationParams;
 struct RequiredCustomNodePackage {
     name: &'static str,
     git_url: &'static str,
+    /// Full commit SHA the pack is installed at. Third-party packs run
+    /// arbitrary Python inside ComfyUI and pull their own pip requirements,
+    /// so installs are pinned (like the VDN pack in `h3_vdn.rs`) instead of
+    /// taking whatever the default branch points at. Bump deliberately after
+    /// reviewing upstream changes, and keep the Dockerfile's copy in step
+    /// (checked by `dockerfile_node_pins_match`).
+    git_rev: &'static str,
     verify_nodes: &'static [&'static str],
     /// Requirements file to pip-install from, relative to the package root.
     /// Almost every pack ships `requirements.txt`, but not all
@@ -24,12 +32,14 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "ComfyUi-Untwisting-RoPE",
         git_url: "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+        git_rev: "b62f39cd22c0d72c83af4b1da7d6c95b6f1e26f3",
         verify_nodes: &["RFInversion", "UntwistingRoPE"],
         requirements_file: "requirements.txt",
     },
     RequiredCustomNodePackage {
         name: "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
         git_url: "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+        git_rev: "79e831097bb7a76ade3a28359300e62332086c42",
         verify_nodes: &["ImageScaleToTotalPixelsX"],
         requirements_file: "requirements.txt",
     },
@@ -39,6 +49,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "ComfyUI-Cosmos-Reference",
         git_url: "https://github.com/Mirumo0u0/ComfyUI-Cosmos-Reference.git",
+        git_rev: "6fd6b27e7c72847d69ad74f4c9cb68ce91b319df",
         verify_nodes: &["ApplyCosmosReferenceLatent"],
         requirements_file: "requirements.txt",
     },
@@ -57,6 +68,7 @@ pub const ANIMA_EDIT_LORA_URL: &str = "https://civitai.com/api/download/models/3
 const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: "ComfyUI-GGUF",
     git_url: "https://github.com/city96/ComfyUI-GGUF.git",
+    git_rev: "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
     verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
     requirements_file: "requirements.txt",
 }];
@@ -69,6 +81,7 @@ const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
 const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: "comfyui_controlnet_aux",
     git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+    git_rev: "59b1fc411ede8623b2997855b8018f0b3b6cf49f",
     verify_nodes: &[
         "CannyEdgePreprocessor",
         "DepthAnythingV2Preprocessor",
@@ -89,6 +102,7 @@ const RIFE_PACKAGE_DIR: &str = "ComfyUI-Frame-Interpolation";
 const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: RIFE_PACKAGE_DIR,
     git_url: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git",
+    git_rev: "26545cc2dd95bc3d27f056016300673bdeee78f5",
     verify_nodes: &["RIFE VFI", "GMFSS Fortuna VFI"],
     // The pack ships no requirements.txt. `requirements-with-cupy.txt` pulls a
     // multi-hundred-MB CUDA-version-specific cupy wheel; the no-cupy file
@@ -135,6 +149,7 @@ const H3_TURBO_PACKAGE_DIR: &str = "ComfyUI-MiniMax-H3-Turbo";
 const H3_TURBO_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: H3_TURBO_PACKAGE_DIR,
     git_url: "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git",
+    git_rev: "4274783a23afcfdbea3b4876cb79effd6c510785",
     verify_nodes: &["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
     // The pack ships no requirements file at all — it imports torch and comfy's
     // own modules only, so the clone is the entire install.
@@ -161,6 +176,7 @@ const H3_TEACACHE_PACKAGE_DIR: &str = "ComfyUI-MiniMaxH3-TeaCache";
 const H3_TEACACHE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: H3_TEACACHE_PACKAGE_DIR,
     git_url: "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
+    git_rev: "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f",
     verify_nodes: &["MiniMaxH3TeaCache"],
     // The pack's pyproject.toml declares no dependencies beyond ComfyUI itself
     // (pure torch, already provided by the host), and it ships no
@@ -208,6 +224,7 @@ pub const MISSING_IPADAPTER_PLUS_NODES_MARKER: &str =
 const INT8_FAST_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: "ComfyUI-INT8-Fast",
     git_url: "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
+    git_rev: "48a88b2fde88e986c6444fa1f51589b6089d04f3",
     verify_nodes: &["OTUNetLoaderW8A8"],
     requirements_file: "requirements.txt",
 }];
@@ -222,6 +239,7 @@ const IPADAPTER_PLUS_PACKAGE_DIR: &str = "ComfyUI_IPAdapter_plus";
 const IPADAPTER_PLUS_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: IPADAPTER_PLUS_PACKAGE_DIR,
     git_url: "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
+    git_rev: "a0f451a5113cf9becb0847b92884cb10cbdec0ef",
     verify_nodes: &["IPAdapterUnifiedLoader", "IPAdapterAdvanced"],
     requirements_file: "requirements.txt",
 }];
@@ -1549,11 +1567,12 @@ async fn ensure_custom_node_package(
 
     if !target_dir.exists() {
         log::info!(
-            "Installing required custom node '{}' from {}",
+            "Installing required custom node '{}' from {} at {}",
             package.name,
-            package.git_url
+            package.git_url,
+            package.git_rev
         );
-        clone_custom_node(package.git_url, &target_dir, network_proxy).await?;
+        clone_custom_node(package.git_url, package.git_rev, &target_dir, network_proxy).await?;
     }
 
     let requirements = target_dir.join(package.requirements_file);
@@ -1599,28 +1618,104 @@ pub(crate) fn apply_pip_install_options(
     Ok(())
 }
 
+/// Upper bound for one git step of a node-pack install. Installs run under the
+/// ComfyUI lifecycle lock, so a hung fetch must not block startup forever.
+const NODE_GIT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Run one non-interactive git command in `dir` for a node-pack install. Never
+/// prompts: `GIT_TERMINAL_PROMPT=0` plus an empty credential helper list means
+/// a renamed or deleted (now auth-walled) repo fails fast instead of opening a
+/// credential window on every launch. Returns trimmed stdout.
+async fn run_node_git(
+    dir: &Path,
+    args: &[&str],
+    network_proxy: Option<&str>,
+) -> Result<String, String> {
+    let mut cmd = tokio_command_no_window("git");
+    cmd.args(["-c", "credential.helper=", "-c", "core.hooksPath=/dev/null"])
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .kill_on_drop(true);
+    apply_network_proxy(&mut cmd, network_proxy);
+    let output = tokio::time::timeout(NODE_GIT_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| {
+            format!(
+                "git {} timed out after {}s. Check the connection and network proxy, then retry.",
+                args.first().copied().unwrap_or_default(),
+                NODE_GIT_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| format!("git failed to start: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(command_output_excerpt(&output))
+    }
+}
+
+/// Install `git_url` at commit `git_rev` into `target_dir`.
+///
+/// A depth-1 clone of the default branch cannot check out an arbitrary commit,
+/// so this initialises an empty repo, fetches exactly `git_rev` (GitHub serves
+/// reachable commits by SHA) and checks it out detached. Work happens in a
+/// sibling staging directory that is only renamed into place once complete, so
+/// an interrupted install never leaves a half-populated pack that the "already
+/// installed" check would then skip forever.
 async fn clone_custom_node(
     git_url: &str,
+    git_rev: &str,
     target_dir: &Path,
     network_proxy: Option<&str>,
 ) -> Result<(), String> {
-    let mut cmd = tokio_command_no_window("git");
-    cmd.args(["clone", "--depth=1", git_url]).arg(target_dir);
-    apply_network_proxy(&mut cmd, network_proxy);
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| format!("git clone failed to start for {}: {}", git_url, e))?;
+    let parent = target_dir
+        .parent()
+        .ok_or_else(|| format!("Invalid custom node path '{}'", target_dir.display()))?;
+    let staging = parent.join(format!(".mooshie-clone-{}", uuid::Uuid::new_v4()));
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "git clone failed for {}: {}",
-            git_url,
-            command_output_excerpt(&output)
-        ))
+    let result = async {
+        std::fs::create_dir_all(&staging)
+            .map_err(|e| format!("cannot create '{}': {e}", staging.display()))?;
+        run_node_git(&staging, &["init", "-q"], network_proxy).await?;
+        run_node_git(
+            &staging,
+            &["remote", "add", "origin", git_url],
+            network_proxy,
+        )
+        .await?;
+        run_node_git(
+            &staging,
+            &["fetch", "--depth=1", "origin", git_rev],
+            network_proxy,
+        )
+        .await?;
+        run_node_git(
+            &staging,
+            &["checkout", "-q", "--detach", "FETCH_HEAD"],
+            network_proxy,
+        )
+        .await?;
+        let head = run_node_git(&staging, &["rev-parse", "HEAD"], network_proxy).await?;
+        if !head.eq_ignore_ascii_case(git_rev) {
+            return Err(format!("checked out {head}, expected {git_rev}"));
+        }
+        std::fs::rename(&staging, target_dir).map_err(|e| {
+            format!(
+                "cannot move the checkout into '{}': {e}",
+                target_dir.display()
+            )
+        })
     }
+    .await;
+
+    // Only the uniquely named staging directory is ever removed.
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result.map_err(|e| format!("git install failed for {git_url} at {git_rev}: {e}"))
 }
 
 async fn install_requirements_if_needed(
@@ -2008,5 +2103,141 @@ mod tests {
             class_source.contains("\"ui\": {\"text\":"),
             "MooshieFaceDetect must report through ui.text, which is what Rust reads"
         );
+    }
+
+    fn all_node_packages() -> Vec<RequiredCustomNodePackage> {
+        [
+            STYLE_TRANSFER_PACKAGES,
+            GGUF_PACKAGES,
+            REQUIRED_CONTROLNET_PACKAGES,
+            RIFE_PACKAGES,
+            H3_TURBO_PACKAGES,
+            H3_TEACACHE_PACKAGES,
+            INT8_FAST_PACKAGES,
+            IPADAPTER_PLUS_PACKAGES,
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn every_node_package_is_pinned_to_a_full_commit_sha() {
+        for package in all_node_packages() {
+            assert_eq!(package.git_rev.len(), 40, "{} rev", package.name);
+            assert!(
+                package
+                    .git_rev
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "{} rev must be a lowercase commit SHA",
+                package.name
+            );
+            assert!(package.git_url.starts_with("https://github.com/"));
+        }
+    }
+
+    /// The Docker image pre-installs some of the same packs. Its pins must match
+    /// or the server image and the desktop app run different third-party code.
+    #[test]
+    fn dockerfile_node_pins_match() {
+        const DOCKERFILE: &str = include_str!("../../../Dockerfile");
+        let packages = all_node_packages();
+        let mut seen = 0;
+        for line in DOCKERFILE.lines() {
+            let Some(rest) = line.trim().strip_prefix("clone_pinned ") else {
+                continue;
+            };
+            let mut parts = rest.split_whitespace();
+            let (url, rev) = (parts.next().unwrap(), parts.next().unwrap());
+            let package = packages
+                .iter()
+                .find(|p| p.git_url == url)
+                .unwrap_or_else(|| panic!("Dockerfile installs unknown pack {url}"));
+            assert_eq!(rev, package.git_rev, "Dockerfile pin for {url}");
+            seen += 1;
+        }
+        assert!(seen >= 3, "expected the Dockerfile to pin its node packs");
+        assert!(
+            !DOCKERFILE.contains("git clone"),
+            "Dockerfile must not clone node packs from an unpinned HEAD"
+        );
+    }
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A throwaway upstream repo with one commit; returns (root, url, sha).
+    fn local_upstream() -> (PathBuf, String, String) {
+        let root = std::env::temp_dir().join(format!("mooshie-node-pin-{}", uuid::Uuid::new_v4()));
+        let upstream = root.join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        git_in(&upstream, &["init", "-q"]);
+        std::fs::write(upstream.join("__init__.py"), "NODE_CLASS_MAPPINGS = {}\n").unwrap();
+        git_in(&upstream, &["add", "__init__.py"]);
+        git_in(&upstream, &["commit", "-q", "-m", "init"]);
+        let sha = git_in(&upstream, &["rev-parse", "HEAD"]);
+        // file:// (not a bare path) so --depth is honoured like a remote.
+        let url = format!("file://{}", upstream.display()).replace('\\', "/");
+        std::fs::create_dir_all(root.join("custom_nodes")).unwrap();
+        (root, url, sha)
+    }
+
+    fn leftover_staging_dirs(custom_nodes: &Path) -> usize {
+        std::fs::read_dir(custom_nodes)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".mooshie-clone-")
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn clone_custom_node_checks_out_the_pinned_commit() {
+        if !git_available() {
+            return;
+        }
+        let (root, url, sha) = local_upstream();
+        let target = root.join("custom_nodes").join("Pack");
+        clone_custom_node(&url, &sha, &target, None).await.unwrap();
+        assert!(target.join("__init__.py").is_file());
+        assert_eq!(git_in(&target, &["rev-parse", "HEAD"]), sha);
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn failed_pinned_clone_leaves_nothing_behind() {
+        if !git_available() {
+            return;
+        }
+        let (root, url, _) = local_upstream();
+        let target = root.join("custom_nodes").join("Pack");
+        let err = clone_custom_node(&url, &"0".repeat(40), &target, None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("git install failed"), "{err}");
+        // No half-populated pack for the "already installed" check to trust.
+        assert!(!target.exists());
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

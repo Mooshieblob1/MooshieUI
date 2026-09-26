@@ -112,27 +112,71 @@ fn venv_python(base: &Path) -> PathBuf {
     }
 }
 
-fn uv_download_url() -> &'static str {
+/// uv release the setup bootstraps. Pinned instead of `releases/latest` so the
+/// archive can be checksum-verified before it is extracted and run; bump it
+/// deliberately together with [`UV_ASSETS`].
+const UV_VERSION: &str = "0.12.19";
+
+/// (release asset, SHA-256) for every platform setup supports, copied from the
+/// `sha256.sum` published with the uv release above (each also matches the
+/// asset's own `.sha256` file).
+const UV_ASSETS: &[(&str, &str)] = &[
+    (
+        "uv-x86_64-unknown-linux-gnu.tar.gz",
+        "23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8",
+    ),
+    (
+        "uv-aarch64-unknown-linux-gnu.tar.gz",
+        "0804e9b164c64b6914182d5920c08551958a095986f10a3731056df701126436",
+    ),
+    (
+        "uv-x86_64-apple-darwin.tar.gz",
+        "cb5fa57bafe68fc0fb94b17f06bee0b0b9a7feb94ccbd110445afa0696e39273",
+    ),
+    (
+        "uv-aarch64-apple-darwin.tar.gz",
+        "a9a8df1eedeb192f2e47e40e2faabfb387db4b850209118786d42f89dde3e0ba",
+    ),
+    (
+        "uv-x86_64-pc-windows-msvc.zip",
+        "6dbb02d79e419522f1c500f0adb1cddcff0cda7d59b0d66ea7f5e3b4a1b2f5f0",
+    ),
+];
+
+fn uv_asset_name() -> &'static str {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz"
+        "uv-x86_64-unknown-linux-gnu.tar.gz"
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {
-        "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-unknown-linux-gnu.tar.gz"
+        "uv-aarch64-unknown-linux-gnu.tar.gz"
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-apple-darwin.tar.gz"
+        "uv-x86_64-apple-darwin.tar.gz"
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz"
+        "uv-aarch64-apple-darwin.tar.gz"
     }
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+        "uv-x86_64-pc-windows-msvc.zip"
     }
+}
+
+/// Download URL and expected SHA-256 of the pinned uv archive for `asset`.
+fn uv_download(asset: &str) -> Option<(String, &'static str)> {
+    UV_ASSETS
+        .iter()
+        .find(|(name, _)| *name == asset)
+        .map(|(name, sha256)| {
+            (
+                format!("https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{name}"),
+                *sha256,
+            )
+        })
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -336,13 +380,73 @@ async fn run_command_logged(
     Ok(())
 }
 
-/// Download a file with streaming progress events.
+/// Longest wait for response headers, and for each body chunk, before a
+/// download is declared stalled. reqwest's default client has no read timeout,
+/// and setup holds `SETUP_LOCK` for the whole transfer, so a silent stall would
+/// otherwise wedge setup (and every retry) forever. Mirrors
+/// `download_model_file` in comfyui/client.rs.
+const DOWNLOAD_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DOWNLOAD_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How to treat the response to a GET that may have carried `Range: bytes={resume_from}-`.
+#[derive(Debug, PartialEq, Eq)]
+enum ResumeCheck {
+    /// The server sent exactly the missing tail: append it to the `.part`.
+    Append,
+    /// Fresh transfer (nothing to resume, or the server ignored the Range and
+    /// sent the whole file): write the `.part` from scratch.
+    Restart,
+    /// The `.part` cannot be trusted (416, or a 206 for some other range):
+    /// discard it and request the whole file again.
+    Discard,
+}
+
+/// Start offset of a `Content-Range: bytes <start>-<end>/<total>` value.
+fn content_range_start(value: &str) -> Option<u64> {
+    let range = value.trim().strip_prefix("bytes ")?;
+    let (span, _total) = range.split_once('/')?;
+    let (start, _end) = span.split_once('-')?;
+    start.trim().parse().ok()
+}
+
+fn check_resume(status: u16, resume_from: u64, content_range: Option<&str>) -> ResumeCheck {
+    if resume_from == 0 {
+        return ResumeCheck::Restart;
+    }
+    match status {
+        // A 206 is only safe to append when it starts exactly where the
+        // `.part` ends; anything else would splice mismatched bytes together.
+        206 if content_range.and_then(content_range_start) == Some(resume_from) => {
+            ResumeCheck::Append
+        }
+        206 => ResumeCheck::Discard,
+        // 416 says the range is past the end of the current file. That does not
+        // prove the `.part` is that file (it may be a stale partial of an older
+        // or larger one), so never promote it to complete.
+        416 => ResumeCheck::Discard,
+        _ => ResumeCheck::Restart,
+    }
+}
+
+/// Lowercase hex SHA-256 of a file, hashed off the async runtime.
+async fn file_sha256(path: &Path) -> Result<String, String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        crate::comfyui::client::sha256_file(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Hash task failed: {e}"))?
+}
+
+/// Download a file with streaming progress events. With `expected_sha256`, the
+/// finished file must match it or it is deleted and the download fails.
 async fn download_file(
     app: &AppHandle,
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
     label: &str,
+    expected_sha256: Option<&str>,
 ) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -356,42 +460,51 @@ async fn download_file(
         Some(ext) => format!("{}.part", ext),
         None => "part".to_string(),
     });
-    let resume_from = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    let mut resume_from = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
-    let mut req = client.get(url);
-    if resume_from > 0 {
-        req = req.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("Download failed: {}", e))?;
+    // At most two requests: a resume attempt, then (only if the server's answer
+    // shows the `.part` cannot be trusted) one full download without a Range.
+    let (resp, resuming) = loop {
+        let mut req = client.get(url);
+        if resume_from > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
+        }
+        let resp = tokio::time::timeout(DOWNLOAD_RESPONSE_TIMEOUT, req.send())
+            .await
+            .map_err(|_| {
+                format!(
+                    "Download of {label} timed out: no response within {} seconds",
+                    DOWNLOAD_RESPONSE_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|e| format!("Download failed: {}", e))?;
+        let content_range = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok());
+        match check_resume(resp.status().as_u16(), resume_from, content_range) {
+            ResumeCheck::Append => break (resp, true),
+            ResumeCheck::Restart => break (resp, false),
+            ResumeCheck::Discard => {
+                log::warn!(
+                    "Discarding unusable partial download of {label} ({} after {resume_from} bytes)",
+                    resp.status()
+                );
+                std::fs::remove_file(&part)
+                    .map_err(|e| format!("Failed to discard partial download: {}", e))?;
+                resume_from = 0;
+            }
+        }
+    };
 
-    use reqwest::StatusCode;
     let status = resp.status();
-    // 416 means the server considers the existing `.part` already complete.
-    if status == StatusCode::RANGE_NOT_SATISFIABLE && resume_from > 0 {
-        std::fs::rename(&part, dest).map_err(|e| format!("Failed to finalize download: {}", e))?;
-        app.emit(
-            "download:progress",
-            DownloadProgress {
-                filename: label.to_string(),
-                downloaded: resume_from,
-                total: resume_from,
-                done: true,
-            },
-        )
-        .ok();
-        return Ok(());
-    }
     if !status.is_success() {
         return Err(format!("Download returned status {}", status));
     }
 
     use std::io::Write;
-    // The server honors the Range request (206) → append; a plain 200 ignores
-    // it (or there was nothing to resume) → start the `.part` over from scratch.
-    let resuming = status == StatusCode::PARTIAL_CONTENT && resume_from > 0;
+    // The server honored the Range request (206 at the right offset) → append;
+    // a plain 200 ignores it (or there was nothing to resume) → start over.
     let mut downloaded: u64 = if resuming { resume_from } else { 0 };
     let total = resp.content_length().unwrap_or(0) + downloaded;
     let mut file = if resuming {
@@ -415,12 +528,17 @@ async fn download_file(
     )
     .ok();
 
-    // Stream chunks
+    // Stream chunks. A stall keeps the `.part` so the next attempt can resume.
     let mut last_emit: u64 = downloaded;
     let mut resp = resp;
-    while let Some(chunk) = resp
-        .chunk()
+    while let Some(chunk) = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, resp.chunk())
         .await
+        .map_err(|_| {
+            format!(
+                "Download of {label} stalled: no data received for {} seconds",
+                DOWNLOAD_STALL_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Download read error: {}", e))?
     {
         file.write_all(&chunk)
@@ -443,9 +561,19 @@ async fn download_file(
         }
     }
 
-    // Flush and atomically move the completed file into place.
+    // Flush, verify, and atomically move the completed file into place.
     file.flush().map_err(|e| format!("Flush error: {}", e))?;
     drop(file);
+    if let Some(expected) = expected_sha256 {
+        let actual = file_sha256(&part).await?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            // Never keep (or later resume) bytes that failed verification.
+            let _ = std::fs::remove_file(&part);
+            return Err(format!(
+                "{label} download failed checksum verification (expected {expected}, got {actual}). Please retry."
+            ));
+        }
+    }
     std::fs::rename(&part, dest).map_err(|e| format!("Failed to finalize download: {}", e))?;
 
     app.emit(
@@ -476,12 +604,15 @@ async fn step_download_uv(
     let bin_dir = base.join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
 
-    let url = uv_download_url();
+    let asset = uv_asset_name();
+    let (url, sha256) = uv_download(asset)
+        .ok_or_else(|| format!("No pinned uv {UV_VERSION} download for {asset}"))?;
+    let url = url.as_str();
 
     #[cfg(not(target_os = "windows"))]
     {
         let archive = base.join("_uv.tar.gz");
-        download_file(app, client, url, &archive, "uv").await?;
+        download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
 
         run_logged(
             app,
@@ -511,7 +642,7 @@ async fn step_download_uv(
     {
         let archive = base.join("_uv.zip");
         let temp_dir = base.join("_uv_extract");
-        download_file(app, client, url, &archive, "uv").await?;
+        download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
 
         let ps_cmd = format!(
             "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
@@ -641,7 +772,7 @@ async fn step_download_comfyui(
     emit_log(app, "Git clone failed, falling back to zip download...");
     let zip_url = comfyui_archive_url();
     let zip_path = base.join("_comfyui.zip");
-    download_file(app, client, &zip_url, &zip_path, "ComfyUI").await?;
+    download_file(app, client, &zip_url, &zip_path, "ComfyUI", None).await?;
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -2778,8 +2909,9 @@ pub async fn update_comfyui(
 #[cfg(test)]
 mod tests {
     use super::{
-        amd_windows_rocm_model_supported, device_vram_bytes, parse_vram_from_drm_root,
-        remove_dir_contents_except, venv_python_version,
+        amd_windows_rocm_model_supported, check_resume, content_range_start, device_vram_bytes,
+        parse_vram_from_drm_root, remove_dir_contents_except, uv_asset_name, uv_download,
+        venv_python_version, ResumeCheck, UV_ASSETS, UV_VERSION,
     };
     use std::fs;
 
@@ -2822,6 +2954,55 @@ mod tests {
         remove_dir_contents_except(&empty, &[empty.join("data_dir.txt")]).unwrap();
         assert!(!empty.exists());
         let _ = fs::remove_dir_all(&current);
+    }
+
+    #[test]
+    fn uv_download_is_pinned_and_hashed_for_this_platform() {
+        let (url, sha256) = uv_download(uv_asset_name()).expect("platform asset is pinned");
+        assert!(url.contains(&format!("/releases/download/{UV_VERSION}/")));
+        assert!(!url.contains("latest"));
+        assert!(url.ends_with(uv_asset_name()));
+        assert_eq!(sha256.len(), 64);
+        for (asset, sha256) in UV_ASSETS {
+            assert!(asset.starts_with("uv-"), "{asset}");
+            assert_eq!(sha256.len(), 64, "{asset}");
+            assert!(sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{asset}");
+        }
+        assert!(uv_download("uv-unknown.tar.gz").is_none());
+    }
+
+    #[test]
+    fn content_range_start_parses_byte_ranges() {
+        assert_eq!(content_range_start("bytes 100-199/200"), Some(100));
+        assert_eq!(content_range_start("bytes 0-9/*"), Some(0));
+        assert_eq!(content_range_start("bytes */200"), None);
+        assert_eq!(content_range_start("items 1-2/3"), None);
+    }
+
+    #[test]
+    fn resume_only_appends_a_matching_partial_response() {
+        assert_eq!(check_resume(200, 0, None), ResumeCheck::Restart);
+        assert_eq!(
+            check_resume(206, 100, Some("bytes 100-199/200")),
+            ResumeCheck::Append
+        );
+        // Wrong offset or no Content-Range: splicing would corrupt the file.
+        assert_eq!(
+            check_resume(206, 100, Some("bytes 0-199/200")),
+            ResumeCheck::Discard
+        );
+        assert_eq!(check_resume(206, 100, None), ResumeCheck::Discard);
+        // Server ignored the Range and sent the whole file.
+        assert_eq!(check_resume(200, 100, None), ResumeCheck::Restart);
+    }
+
+    #[test]
+    fn range_not_satisfiable_never_marks_a_partial_complete() {
+        assert_eq!(
+            check_resume(416, 100, Some("bytes */50")),
+            ResumeCheck::Discard
+        );
+        assert_eq!(check_resume(416, 100, None), ResumeCheck::Discard);
     }
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
