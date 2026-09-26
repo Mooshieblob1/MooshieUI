@@ -1113,10 +1113,7 @@ async fn run_local_post_process(
 
     // From here the ComfyUI websocket owns the prompt: it resolves the alias
     // back to `prompt_id`, finishes the queue entry and releases the worker.
-    if state
-        .prompt_queue
-        .bind_alias(prompt_id, &response.prompt_id)
-    {
+    if state.bind_prompt_alias(prompt_id, &response.prompt_id) {
         // Completion or error beat the bind. The queue entry is already gone,
         // so the worker has to be released here.
         state

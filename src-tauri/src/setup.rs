@@ -1048,6 +1048,7 @@ async fn detect_gpu_type() -> String {
 /// RX 7700 XT is explicitly NOT supported even though plain RX 7700 is, so
 /// the XT variant is checked first to keep the shorter "rx 7700" substring
 /// from false-matching it.
+#[cfg(any(target_os = "windows", test))]
 fn amd_windows_rocm_model_supported(name_lower: &str) -> bool {
     if name_lower.contains("rx 7700 xt") {
         return false;
@@ -1089,11 +1090,6 @@ async fn detect_amd_windows_rocm_supported() -> bool {
         );
     }
     eligible
-}
-
-#[cfg(not(target_os = "windows"))]
-async fn detect_amd_windows_rocm_supported() -> bool {
-    false
 }
 
 // AMD's ROCm-on-Windows PyTorch preview ships as direct wheel/tarball

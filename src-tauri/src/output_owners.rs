@@ -233,6 +233,26 @@ impl OutputOwners {
         self.dirty.store(true, Ordering::Release);
     }
 
+    /// Give `owner` every record of `prompt_id` that was saved without one
+    /// (its outputs arrived before the prompt was bound to its account).
+    /// Records that already name an owner are left alone. Returns how many
+    /// records changed.
+    pub fn assign_owner(&self, prompt_id: &str, owner: &str) -> usize {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut changed = 0;
+        for record in inner.entries.values_mut() {
+            if record.owner.is_none() && record.prompt_id == prompt_id {
+                record.owner = Some(owner.to_string());
+                changed += 1;
+            }
+        }
+        drop(inner);
+        if changed > 0 {
+            self.dirty.store(true, Ordering::Release);
+        }
+        changed
+    }
+
     /// The record for an output file, if one is known and has not expired.
     pub fn lookup(&self, subfolder: &str, filename: &str) -> Option<OutputRecord> {
         self.lookup_at(subfolder, filename, Instant::now())
@@ -476,6 +496,34 @@ mod output_owner_tests {
         owners.record("videos\\clips", "v.mp4", "p1", Some("bob".into()));
         assert!(owners.lookup("videos/clips", "v.mp4").is_some());
         assert!(owners.lookup("/videos/clips/", "v.mp4").is_some());
+    }
+
+    #[test]
+    fn assign_owner_fills_in_only_unowned_records_of_that_prompt() {
+        let owners = OutputOwners::new();
+        owners.record("", "early-1.png", "p1", None);
+        owners.record("", "early-2.png", "p1", None);
+        owners.record("", "named.png", "p1", Some("alice".into()));
+        owners.record("", "other.png", "p2", None);
+        owners.dirty.store(false, Ordering::Release);
+
+        assert_eq!(owners.assign_owner("p1", "bob"), 2);
+        assert!(owners.dirty.load(Ordering::Acquire));
+        for file in ["early-1.png", "early-2.png"] {
+            assert_eq!(
+                owners.lookup("", file).unwrap().owner.as_deref(),
+                Some("bob")
+            );
+        }
+        assert_eq!(
+            owners.lookup("", "named.png").unwrap().owner.as_deref(),
+            Some("alice")
+        );
+        assert_eq!(owners.lookup("", "other.png").unwrap().owner, None);
+
+        owners.dirty.store(false, Ordering::Release);
+        assert_eq!(owners.assign_owner("p1", "carol"), 0);
+        assert!(!owners.dirty.load(Ordering::Acquire));
     }
 
     #[test]

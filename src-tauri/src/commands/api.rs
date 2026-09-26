@@ -2839,8 +2839,7 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
 
     #[cfg(target_os = "macos")]
     {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
+        use std::process::Command;
 
         // Write bytes to pasteboard using osascript + temp approach,
         // or pipe PNG data via pbcopy alternative. For reliability,

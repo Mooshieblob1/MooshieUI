@@ -1287,6 +1287,20 @@ impl AppState {
         Ok(())
     }
 
+    /// Bind a placeholder to ComfyUI's prompt id ([`PromptQueue::bind_alias`],
+    /// whose return value this passes on) and hand the prompt's owner any
+    /// output files recorded for that id before the bind. A cached prompt can
+    /// finish before `/prompt` returns, so its outputs may be recorded while
+    /// the owner is still unknown; without this they would be admin-only once
+    /// the prompt queue forgets the id (after a restart, for instance).
+    pub fn bind_prompt_alias(&self, placeholder_id: &str, comfyui_id: &str) -> bool {
+        let was_deferred = self.prompt_queue.bind_alias(placeholder_id, comfyui_id);
+        if let Some(owner) = self.prompt_queue.owner_of(comfyui_id) {
+            self.output_owners.assign_owner(comfyui_id, &owner);
+        }
+        was_deferred
+    }
+
     /// Broadcast an event to SSE clients.
     pub fn broadcast(&self, event: &str, payload: serde_json::Value) {
         let _ = self.event_tx.send(BroadcastEvent {

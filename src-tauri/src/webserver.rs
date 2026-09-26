@@ -1179,8 +1179,7 @@ pub async fn start_server(
                         Ok((worker_id, response)) => {
                             // Bind alias immediately to prevent race with WebSocket events
                             let was_deferred = drain_state
-                                .prompt_queue
-                                .bind_alias(&hp.placeholder_id, &response.prompt_id);
+                                .bind_prompt_alias(&hp.placeholder_id, &response.prompt_id);
                             if was_deferred {
                                 // Completion/error arrived before bind_alias; release worker.
                                 drain_state
@@ -3436,9 +3435,8 @@ async fn dispatch_command(
                         .await
                     {
                         Ok((worker_id, response)) => {
-                            let was_deferred = bg_state
-                                .prompt_queue
-                                .bind_alias(&bg_placeholder, &response.prompt_id);
+                            let was_deferred =
+                                bg_state.bind_prompt_alias(&bg_placeholder, &response.prompt_id);
                             if was_deferred {
                                 // Completion/error arrived in the window before bind_alias.
                                 // Placeholder is already removed from the queue; release worker.
@@ -8653,6 +8651,30 @@ mod lan_access_scope_tests {
         assert!(ensure_output_owned(&restarted, "a.png", "", Some("alice")).is_ok());
         assert!(ensure_output_owned(&restarted, "a.png", "", Some("bob")).is_err());
         assert!(ensure_output_owned(&restarted, "a.png", "", None).is_ok());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn output_recorded_before_the_bind_keeps_its_owner_across_a_restart() {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshie-owners-early-output-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = dir.join(crate::output_owners::OUTPUT_OWNERS_FILE);
+
+        let state = AppState::new(crate::config::AppConfig::default());
+        state.output_owners.enable_persistence(path.clone());
+        state.prompt_queue.insert("ph-bob", Some("bob".to_string()));
+        // A cached prompt: `executed` lands before /prompt has returned.
+        record_output_owners(&state, "real-bob", &executed("real-bob", "b.png"));
+        assert!(!state.bind_prompt_alias("ph-bob", "real-bob"));
+        state.output_owners.flush();
+
+        let restarted = AppState::new(crate::config::AppConfig::default());
+        restarted.output_owners.enable_persistence(path);
+        assert!(ensure_output_owned(&restarted, "b.png", "", Some("bob")).is_ok());
+        assert!(ensure_output_owned(&restarted, "b.png", "", Some("carol")).is_err());
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
