@@ -40,6 +40,7 @@ SOURCES=(
     "$SCRIPT_DIR/h3_drafts.py"
     "$SCRIPT_DIR/h3_upscaler.py"
     "$SCRIPT_DIR/h3_upscaler.LICENSE"
+    "$SCRIPT_DIR/h3_preview.py"
     "$SCRIPT_DIR/nodes_tiled_diffusion.py"
     "$SCRIPT_DIR/nodes_guidance.py"
     "$SCRIPT_DIR/nodes_anima_teacache.py"
@@ -72,11 +73,12 @@ CUSTOM_NODES="$COMFYUI_PATH/custom_nodes"
 echo "Installing MooshieUI nodes into: $COMFYUI_PATH"
 mkdir -p "$CUSTOM_NODES"
 
-# 1. mooshie-nodes package (save/load, detailers, guidance helpers, H3 drafts)
+# 1. mooshie-nodes package (save/load, detailers, guidance helpers, H3 drafts
+#    and live previews)
 echo "  - mooshie-nodes/"
 mkdir -p "$CUSTOM_NODES/mooshie-nodes"
 cp "$MOOSHIE_NODES_INIT" "$CUSTOM_NODES/mooshie-nodes/__init__.py"
-for name in h3_drafts.py h3_upscaler.py h3_upscaler.LICENSE; do
+for name in h3_drafts.py h3_upscaler.py h3_upscaler.LICENSE h3_preview.py; do
     cp "$SCRIPT_DIR/$name" "$CUSTOM_NODES/mooshie-nodes/$name"
 done
 printf '%s\n' "$MOOSHIE_NODES_REQUIREMENTS" > "$CUSTOM_NODES/mooshie-nodes/requirements.txt"
