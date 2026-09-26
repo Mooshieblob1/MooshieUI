@@ -10,10 +10,12 @@
 //! process. NovelAI's terms of service do not allow several humans to share
 //! one key, so each account brings its own and the server never mixes them.
 //!
-//! Data stored at `{app_data_dir}/users/{sanitized}-{8hex}/secrets.json`,
-//! where `{sanitized}-{8hex}` is `sanitize_username`'s output: the username
-//! filtered to alphanumerics/`_`/`-`, suffixed with the first 8 hex
-//! characters of the SHA-256 of the lowercased raw username.
+//! Data stored at `{app_data_dir}/users/{sanitized}-{32hex}/secrets.json`,
+//! where `{sanitized}-{32hex}` is `sanitize_username`'s output: the username
+//! filtered to alphanumerics/`_`/`-`, suffixed with the first 32 hex
+//! characters (128 bits) of the SHA-256 of the lowercased raw username.
+//! Directories written before that used an 8-hex suffix; see
+//! `migrate_legacy_in` for how they are carried over.
 //!
 //! **Threat model.** The master key lives on the same host as the ciphertext,
 //! so this is obfuscation-grade against a full host compromise, not a vault.
@@ -264,10 +266,26 @@ fn tmp_path_for(path: &std::path::Path) -> PathBuf {
 /// two distinct accounts, e.g. `bob` and `b.o.b`, both filter down to `bob`
 /// and would otherwise collide on the same `secrets.json`, silently
 /// clobbering each other's stored key. To keep lookalikes apart, the filtered
-/// string is suffixed with `-` and the first 8 hex characters of the SHA-256
-/// of the *lowercased raw* username (matching how `auth` stores it, not the
-/// filtered form), giving each raw username its own directory.
+/// string is suffixed with `-` and the first 32 hex characters (128 bits) of
+/// the SHA-256 of the *lowercased raw* username (matching how `auth` stores
+/// it, not the filtered form), giving each raw username its own directory.
+///
+/// The suffix has to be long enough that nobody can *search* for a lookalike:
+/// with the old 32-bit suffix, a moderator could brute-force a username that
+/// filters to the victim's and shares its suffix in minutes, then overwrite or
+/// delete the victim's `secrets.json` through their own account.
 fn sanitize_username(username: &str) -> Option<String> {
+    user_dir_name(username, SUFFIX_HEX)
+}
+
+/// Hex characters of the username digest in a directory name: 128 bits.
+const SUFFIX_HEX: usize = 32;
+
+/// The suffix length directories were created with before, kept only so they
+/// can be found and migrated.
+const LEGACY_SUFFIX_HEX: usize = 8;
+
+fn user_dir_name(username: &str, suffix_hex: usize) -> Option<String> {
     // Auth treats ASCII case variants as one account, including deletions.
     // Normalize the directory too so this holds on case-sensitive filesystems.
     let username = username.to_ascii_lowercase();
@@ -280,7 +298,7 @@ fn sanitize_username(username: &str) -> Option<String> {
     }
     let digest = Sha256::digest(username.as_bytes());
     let suffix = hex::encode(digest);
-    Some(format!("{safe}-{}", &suffix[..8]))
+    Some(format!("{safe}-{}", &suffix[..suffix_hex]))
 }
 
 /// The storage layer takes its root directory and master key as parameters
@@ -293,18 +311,26 @@ fn secrets_path_in(root: &std::path::Path, username: &str) -> Option<PathBuf> {
     Some(root.join("users").join(safe).join("secrets.json"))
 }
 
-fn load_file_in(root: &std::path::Path, username: &str) -> Option<SecretsFile> {
-    let path = secrets_path_in(root, username)?;
-    let bytes = std::fs::read(&path).ok()?;
+/// Where this username's secrets lived under the old 32-bit suffix. Another
+/// account can share this path, so nothing here is trusted until
+/// [`sealed_for`] says it was written for this exact username.
+fn legacy_secrets_path_in(root: &std::path::Path, username: &str) -> Option<PathBuf> {
+    let safe = user_dir_name(username, LEGACY_SUFFIX_HEX)?;
+    Some(root.join("users").join(safe).join("secrets.json"))
+}
+
+fn read_file(path: &std::path::Path) -> Option<SecretsFile> {
+    let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
-fn load_nai_key_in(
-    root: &std::path::Path,
-    master: &[u8; KEY_LEN],
-    username: &str,
-) -> Option<String> {
-    let sealed = load_file_in(root, username)?.novelai_api_key?;
+fn load_file_in(root: &std::path::Path, username: &str) -> Option<SecretsFile> {
+    read_file(&secrets_path_in(root, username)?)
+}
+
+/// Decrypt the stored NovelAI key with `username` as the AAD.
+fn open_nai_key(file: &SecretsFile, master: &[u8; KEY_LEN], username: &str) -> Option<String> {
+    let sealed = file.novelai_api_key.as_ref()?;
     let nonce = base64::engine::general_purpose::STANDARD
         .decode(&sealed.nonce)
         .ok()?;
@@ -314,12 +340,68 @@ fn load_nai_key_in(
     open(master, &username.to_ascii_lowercase(), &nonce, &ct)
 }
 
+/// Whether `file` was written for exactly `username`. The AAD binds every
+/// sealed value to the lowercased username, so a file that opens was saved by
+/// this account and not by a lookalike that happens to share its directory.
+/// A file with nothing sealed in it proves nothing and counts as foreign.
+fn sealed_for(file: &SecretsFile, master: &[u8; KEY_LEN], username: &str) -> bool {
+    open_nai_key(file, master, username).is_some()
+}
+
+/// Carry a pre-128-bit secrets file over to this username's new directory.
+///
+/// Only a file that [`sealed_for`] proves belongs to `username` moves; one
+/// sealed for a colliding lookalike stays where it is, untouched. Nothing
+/// happens once the new file exists. The old directory is removed if that
+/// leaves it empty. Every failure is ignored: the worst case is that the user
+/// is asked for the key again, exactly as for any unreadable file.
+fn migrate_legacy_in(root: &std::path::Path, master: &[u8; KEY_LEN], username: &str) {
+    let (Some(new_path), Some(old_path)) = (
+        secrets_path_in(root, username),
+        legacy_secrets_path_in(root, username),
+    ) else {
+        return;
+    };
+    if new_path.exists() || !old_path.exists() {
+        return;
+    }
+    let Some(file) = read_file(&old_path) else {
+        return;
+    };
+    if !sealed_for(&file, master, username) {
+        return;
+    }
+    if let Some(parent) = new_path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    if std::fs::rename(&old_path, &new_path).is_ok() {
+        if let Some(old_dir) = old_path.parent() {
+            // Non-recursive: only succeeds when nothing else is in there.
+            let _ = std::fs::remove_dir(old_dir);
+        }
+    }
+}
+
+fn load_nai_key_in(
+    root: &std::path::Path,
+    master: &[u8; KEY_LEN],
+    username: &str,
+) -> Option<String> {
+    migrate_legacy_in(root, master, username);
+    open_nai_key(&load_file_in(root, username)?, master, username)
+}
+
 fn save_nai_key_in(
     root: &std::path::Path,
     master: &[u8; KEY_LEN],
     username: &str,
     api_key: Option<&str>,
 ) -> Result<(), String> {
+    // First, so a clear really clears: a legacy file left in place would still
+    // hold the key the user just asked to remove.
+    migrate_legacy_in(root, master, username);
     let path = secrets_path_in(root, username).ok_or_else(|| "Invalid username".to_string())?;
     let mut file = load_file_in(root, username).unwrap_or_default();
     file.version = 1;
@@ -378,16 +460,33 @@ fn save_nai_key_in(
     Ok(())
 }
 
-fn delete_all_in(root: &std::path::Path, username: &str) -> Result<(), String> {
+/// Remove this account's secrets. A legacy (32-bit suffix) file is removed
+/// too, but only when `master` is available to prove it was sealed for this
+/// username: that path may belong to a lookalike account instead.
+fn delete_all_in(
+    root: &std::path::Path,
+    master: Option<&[u8; KEY_LEN]>,
+    username: &str,
+) -> Result<(), String> {
     let path = match secrets_path_in(root, username) {
         Some(p) => p,
         None => return Ok(()),
     };
-    match std::fs::remove_file(&path) {
+    let remove = |path: &std::path::Path| match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
+    };
+    remove(&path)?;
+    if let (Some(master), Some(legacy)) = (master, legacy_secrets_path_in(root, username)) {
+        if read_file(&legacy).is_some_and(|file| sealed_for(&file, master, username)) {
+            remove(&legacy)?;
+            if let Some(dir) = legacy.parent() {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
     }
+    Ok(())
 }
 
 // --- public API ---------------------------------------------------------
@@ -430,7 +529,7 @@ pub fn delete_all(username: &str) -> Result<(), String> {
         Some(r) => r,
         None => return Ok(()),
     };
-    delete_all_in(&root, username)
+    delete_all_in(&root, master_key().as_ref(), username)
 }
 
 #[cfg(test)]
@@ -499,9 +598,10 @@ mod tests {
         for name in ["alice", "_admin", "bob-2"] {
             let result = sanitize_username(name).unwrap();
             assert!(result.starts_with(&format!("{name}-")));
-            // 8 hex characters after the filtered name and its separator.
+            // 32 hex characters (128 bits) after the filtered name and its
+            // separator: long enough that a lookalike cannot be searched for.
             let suffix = &result[name.len() + 1..];
-            assert_eq!(suffix.len(), 8);
+            assert_eq!(suffix.len(), 32);
             assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
             assert!(!result.contains('/'));
             assert!(!result.contains('\\'));
@@ -545,7 +645,7 @@ mod tests {
             load_nai_key_in(&root, &KEY, "ALICE").as_deref(),
             Some("alice-token")
         );
-        delete_all_in(&root, "aLiCe").unwrap();
+        delete_all_in(&root, Some(&KEY), "aLiCe").unwrap();
         assert!(!secrets_path_in(&root, "alice").unwrap().exists());
         assert!(load_nai_key_in(&root, &KEY, "alice").is_none());
         let _ = std::fs::remove_dir_all(&root);
@@ -598,10 +698,10 @@ mod tests {
         save_nai_key_in(&root, &KEY, "alice", Some("pst-secret-token")).unwrap();
         let path = secrets_path_in(&root, "alice").unwrap();
         assert!(path.exists());
-        delete_all_in(&root, "alice").unwrap();
+        delete_all_in(&root, Some(&KEY), "alice").unwrap();
         assert!(!path.exists());
         // Deleting an account that never had a key is not an error.
-        delete_all_in(&root, "alice").unwrap();
+        delete_all_in(&root, Some(&KEY), "alice").unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -627,6 +727,99 @@ mod tests {
         let b_o_b = secrets_path_in(&root, "b.o.b").unwrap();
         assert_ne!(bob, b_o_b);
         assert_eq!(secrets_path_in(&root, "bob").unwrap(), bob);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Write a secrets file the way the 32-bit-suffix build did, sealed for
+    /// `sealed_for_user`, at `owner`'s legacy path.
+    fn write_legacy(root: &std::path::Path, owner: &str, sealed_for_user: &str, token: &str) {
+        let nonce: [u8; NONCE_LEN] = random_bytes();
+        let ct = seal_with_nonce(&KEY, sealed_for_user, token, &nonce).unwrap();
+        let file = SecretsFile {
+            version: 1,
+            novelai_api_key: Some(SealedValue {
+                nonce: base64::engine::general_purpose::STANDARD.encode(nonce),
+                ct: base64::engine::general_purpose::STANDARD.encode(&ct),
+            }),
+        };
+        let path = legacy_secrets_path_in(root, owner).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn legacy_and_new_directories_differ_only_in_suffix_length() {
+        let root = scratch("legacy-shape");
+        let new = secrets_path_in(&root, "alice").unwrap();
+        let old = legacy_secrets_path_in(&root, "alice").unwrap();
+        assert_ne!(new, old);
+        let new_dir = new.parent().unwrap().file_name().unwrap().to_string_lossy();
+        let old_dir = old.parent().unwrap().file_name().unwrap().to_string_lossy();
+        assert!(new_dir.starts_with(old_dir.as_ref()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_legacy_key_of_the_same_user_migrates_on_load() {
+        let root = scratch("migrate-own");
+        write_legacy(&root, "alice", "alice", "alice-legacy-token");
+        let legacy = legacy_secrets_path_in(&root, "alice").unwrap();
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "Alice").as_deref(),
+            Some("alice-legacy-token")
+        );
+        assert!(secrets_path_in(&root, "alice").unwrap().exists());
+        assert!(!legacy.exists());
+        // The emptied legacy directory goes with it.
+        assert!(!legacy.parent().unwrap().exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clearing_a_key_also_clears_its_legacy_copy() {
+        let root = scratch("migrate-clear");
+        write_legacy(&root, "alice", "alice", "alice-legacy-token");
+        save_nai_key_in(&root, &KEY, "alice", None).unwrap();
+        assert!(load_nai_key_in(&root, &KEY, "alice").is_none());
+        assert!(!legacy_secrets_path_in(&root, "alice").unwrap().exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_colliding_lookalike_neither_migrates_nor_deletes_the_victims_legacy_file() {
+        // Simulates a brute-forced 32-bit collision: the file at "mallory"'s
+        // legacy path was sealed for someone else (the victim).
+        let root = scratch("migrate-foreign");
+        write_legacy(&root, "mallory", "victim", "victims-token");
+        let legacy = legacy_secrets_path_in(&root, "mallory").unwrap();
+        assert!(load_nai_key_in(&root, &KEY, "mallory").is_none());
+        save_nai_key_in(&root, &KEY, "mallory", Some("mallorys-token")).unwrap();
+        delete_all_in(&root, Some(&KEY), "mallory").unwrap();
+        // Untouched, and still sealed for the victim.
+        let file = read_file(&legacy).expect("the victim's file was removed");
+        assert!(sealed_for(&file, &KEY, "victim"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn deleting_an_account_removes_its_verified_legacy_file() {
+        let root = scratch("delete-legacy");
+        write_legacy(&root, "alice", "alice", "alice-legacy-token");
+        delete_all_in(&root, Some(&KEY), "alice").unwrap();
+        assert!(!legacy_secrets_path_in(&root, "alice").unwrap().exists());
+        assert!(load_nai_key_in(&root, &KEY, "alice").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_existing_new_file_wins_over_a_legacy_one() {
+        let root = scratch("migrate-existing");
+        save_nai_key_in(&root, &KEY, "alice", Some("current-token")).unwrap();
+        write_legacy(&root, "alice", "alice", "stale-token");
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "alice").as_deref(),
+            Some("current-token")
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

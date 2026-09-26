@@ -7239,7 +7239,7 @@ fn append_env_section(output: &mut String) {
 /// Works without a scheme (`user:pass@proxy:3128`), and everything up to the
 /// last `@` counts as credentials, so a password containing `@` or `/` is
 /// never partly shown.
-fn redact_url_secrets(url: &str) -> String {
+pub(crate) fn redact_url_secrets(url: &str) -> String {
     let (scheme, rest) = match url.find("://") {
         Some(i) => url.split_at(i + 3),
         None => ("", url),

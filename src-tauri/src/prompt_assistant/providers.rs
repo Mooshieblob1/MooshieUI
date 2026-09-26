@@ -428,28 +428,66 @@ fn needs_refresh(expires_at: i64, now: i64) -> bool {
 /// error beats masking it with a refresh error. The token is simply left alone
 /// for the next attempt to retry.
 pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppConfig>) {
-    let (provider_id, refresh_token, client_id, expires_at) = {
-        let cfg = config.read().await;
-        (
-            cfg.llm_provider.clone(),
-            cfg.llm_oauth_refresh_token.clone(),
-            cfg.llm_oauth_client_id.clone(),
-            cfg.llm_oauth_expires_at,
-        )
-    };
+    ensure_fresh_token_with(config, |provider_id, client_id, refresh_token| async move {
+        // Which issuer to go back to is a property of the provider, not of the
+        // stored session: both write the same three fields, and redeeming a
+        // Portal refresh token at xAI (or the reverse) would just burn it.
+        match provider_id.as_str() {
+            "nous" => Some(super::oauth::refresh_nous(client, &client_id, &refresh_token).await),
+            "xai-oauth" => {
+                Some(super::oauth::refresh_xai(client, &client_id, &refresh_token).await)
+            }
+            // Every other provider holds a key that does not expire, so there
+            // is nothing to refresh even if a stale session is still on disk.
+            _ => None,
+        }
+    })
+    .await
+}
+
+/// Serialises token refreshes. Without it, several requests that notice the
+/// same near-expiry token at once each redeem the same refresh token; a
+/// provider that rotates refresh tokens with reuse detection treats the second
+/// redemption as a replayed credential and revokes the whole session.
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Snapshot of the stored OAuth session fields a refresh depends on.
+async fn session_snapshot(config: &RwLock<AppConfig>) -> (String, String, String, i64) {
+    let cfg = config.read().await;
+    (
+        cfg.llm_provider.clone(),
+        cfg.llm_oauth_refresh_token.clone(),
+        cfg.llm_oauth_client_id.clone(),
+        cfg.llm_oauth_expires_at,
+    )
+}
+
+/// [`ensure_fresh_token`] with the network call supplied by the caller, so the
+/// single-flight behaviour can be tested without a provider. `refresh` gets
+/// the provider id, client id and refresh token, and answers `None` for a
+/// provider that has nothing to refresh.
+async fn ensure_fresh_token_with<F, Fut>(config: &RwLock<AppConfig>, refresh: F)
+where
+    F: FnOnce(String, String, String) -> Fut,
+    Fut: std::future::Future<Output = Option<Result<super::oauth::OauthSession, AppError>>>,
+{
+    // Fast path without the lock: the common case is a token with time left.
+    let (_, refresh_token, _, expires_at) = session_snapshot(config).await;
     if refresh_token.is_empty() || !needs_refresh(expires_at, chrono::Utc::now().timestamp()) {
         return;
     }
 
-    // Which issuer to go back to is a property of the provider, not of the
-    // stored session: both write the same three fields, and redeeming a Portal
-    // refresh token at xAI (or the reverse) would just burn it.
-    let attempt = match provider_id.as_str() {
-        "nous" => super::oauth::refresh_nous(client, &client_id, &refresh_token).await,
-        "xai-oauth" => super::oauth::refresh_xai(client, &client_id, &refresh_token).await,
-        // Every other provider holds a key that does not expire, so there is
-        // nothing to refresh even if a stale session is still on disk.
-        _ => return,
+    // Held across the network call. Re-read after acquiring it: whoever held
+    // it before us may already have minted a new token, in which case the one
+    // we saw above has been rotated away and must not be spent again.
+    let _single_flight = REFRESH_LOCK.lock().await;
+    let (provider_id, refresh_token, client_id, expires_at) = session_snapshot(config).await;
+    if refresh_token.is_empty() || !needs_refresh(expires_at, chrono::Utc::now().timestamp()) {
+        return;
+    }
+
+    let Some(attempt) = refresh(provider_id.clone(), client_id, refresh_token.clone()).await else {
+        return;
     };
     let refreshed = match attempt {
         Ok(s) => s,
@@ -459,10 +497,9 @@ pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppCon
         }
     };
 
-    // Re-check under the write lock: a concurrent request may have refreshed
-    // while we were on the wire, and clobbering its newer token with ours would
-    // waste a rotation. Providers that rotate the refresh token invalidate the
-    // old one, so the loser of that race must not write.
+    // Re-check under the write lock: a sign-out or a new sign-in may have
+    // replaced the session while we were on the wire, and writing our token
+    // over it would resurrect a credential the user got rid of.
     let mut cfg = config.write().await;
     if cfg.llm_oauth_refresh_token != refresh_token {
         return;
@@ -485,7 +522,16 @@ pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppCon
 /// blocked polling: it is the whole point of the flow, and nothing else will
 /// show it. Both transports fire because a desktop instance can have LAN
 /// browser clients attached at the same time.
-pub async fn connect_xai_session(state: &Arc<AppState>) -> Result<LlmProviderState, AppError> {
+///
+/// The SSE copy is addressed to `requested_by` only (`None` is the instance
+/// owner's own connection): whoever approves the code first binds the
+/// instance's provider session to *their* xAI account, so it must never reach
+/// every LAN client that happens to be connected.
+pub async fn connect_xai_session(
+    state: &Arc<AppState>,
+    requested_by: Option<&str>,
+) -> Result<LlmProviderState, AppError> {
+    let target_user = requested_by.map(str::to_string);
     let (client_id, scope) = {
         let cfg = state.config.read().await;
         (cfg.llm_xai_client_id.clone(), cfg.llm_xai_scope.clone())
@@ -497,22 +543,39 @@ pub async fn connect_xai_session(state: &Arc<AppState>) -> Result<LlmProviderSta
     let emitter = Arc::clone(state);
 
     let session = super::oauth::connect_xai(&state.http_client, &client_id, &scope, move |auth| {
-        let payload = serde_json::json!({
-            "provider": "xai-oauth",
-            "user_code": auth.user_code,
-            "verification_uri": auth.verification_uri,
-            "verification_uri_complete": auth.best_uri(),
-        });
-        emitter.broadcast("llm:device_code", payload.clone());
+        let payload = device_code_payload(auth);
         #[cfg(feature = "desktop")]
         if let Some(app) = app.as_ref() {
             use tauri::Emitter;
-            let _ = app.emit("llm:device_code", payload);
+            let _ = app.emit("llm:device_code", payload.clone());
         }
+        emitter.broadcast(
+            "llm:device_code",
+            addressed_to(payload, target_user.as_deref()),
+        );
     })
     .await?;
 
     store_oauth_session(&state.config, "xai-oauth", session).await
+}
+
+/// What the settings UI shows while the device grant polls. `connect_xai` has
+/// already checked both URIs point at xAI over https.
+fn device_code_payload(auth: &super::oauth::DeviceAuth) -> serde_json::Value {
+    serde_json::json!({
+        "provider": "xai-oauth",
+        "user_code": auth.user_code,
+        "verification_uri": auth.verification_uri,
+        "verification_uri_complete": auth.best_uri(),
+    })
+}
+
+/// Mark an SSE payload for one account (`None` is the instance owner's own
+/// connection); the SSE handler drops it for everyone else and strips the
+/// marker before delivery.
+fn addressed_to(mut payload: serde_json::Value, user: Option<&str>) -> serde_json::Value {
+    payload["_target_user"] = serde_json::json!(user);
+    payload
 }
 
 /// Store the operator-supplied xAI OAuth client id and scope.
@@ -674,6 +737,81 @@ mod tests {
         // more usable than one already dead.
         assert!(needs_refresh(expires_at, expires_at - REFRESH_SKEW_SECS));
         assert!(needs_refresh(expires_at, expires_at + 1));
+    }
+}
+
+#[cfg(test)]
+mod refresh_single_flight_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn expiring_session() -> AppConfig {
+        AppConfig {
+            llm_provider: "nous".into(),
+            llm_external_api_key: "old-access".into(),
+            llm_oauth_refresh_token: "refresh-1".into(),
+            llm_oauth_client_id: "client".into(),
+            // Already inside the skew window.
+            llm_oauth_expires_at: chrono::Utc::now().timestamp() + 10,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_redeem_a_refresh_token_once() {
+        let config = RwLock::new(expiring_session());
+        let calls = AtomicUsize::new(0);
+        let refresh = |_provider: String, _client: String, token: String| {
+            let calls = &calls;
+            async move {
+                assert_eq!(token, "refresh-1", "a rotated-away token was redeemed");
+                calls.fetch_add(1, Ordering::SeqCst);
+                // Stay on the "wire" long enough for the other callers to
+                // pile up behind the lock.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                Some(Ok(crate::prompt_assistant::oauth::OauthSession {
+                    access_token: "new-access".into(),
+                    refresh_token: "refresh-2".into(),
+                    client_id: "client".into(),
+                    expires_at: chrono::Utc::now().timestamp() + 3600,
+                }))
+            }
+        };
+        tokio::join!(
+            ensure_fresh_token_with(&config, refresh),
+            ensure_fresh_token_with(&config, refresh),
+            ensure_fresh_token_with(&config, refresh),
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let cfg = config.read().await;
+        assert_eq!(cfg.llm_external_api_key, "new-access");
+        assert_eq!(cfg.llm_oauth_refresh_token, "refresh-2");
+    }
+
+    #[tokio::test]
+    async fn a_fresh_token_is_never_sent_for_refresh() {
+        let mut fresh = expiring_session();
+        fresh.llm_oauth_expires_at = chrono::Utc::now().timestamp() + 3600;
+        let config = RwLock::new(fresh);
+        let calls = AtomicUsize::new(0);
+        ensure_fresh_token_with(&config, |_, _, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { None }
+        })
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_device_code_is_addressed_to_the_requesting_account_only() {
+        let payload = serde_json::json!({ "user_code": "ABCD-EFGH" });
+        assert_eq!(
+            addressed_to(payload.clone(), Some("mod"))["_target_user"],
+            "mod"
+        );
+        // The instance owner's own connection, never a broadcast.
+        let owner = addressed_to(payload, None);
+        assert!(owner.get("_target_user").is_some_and(|v| v.is_null()));
     }
 }
 

@@ -2497,15 +2497,15 @@ async fn dispatch_command(
             }
             #[cfg(feature = "desktop")]
             {
-                // Step 1: Save config. Snapshot under the guard, then write to
-                // disk after dropping it so the blocking file write doesn't hold
-                // the config write lock.
-                let cfg = {
+                // Step 1: Save config while still holding the write lock. Saving
+                // a snapshot after dropping it lets a concurrent `update_config`
+                // land in between and then be overwritten on disk by this
+                // older copy.
+                {
                     let mut cfg = state.config.write().await;
                     cfg.browser_mode = false;
-                    cfg.clone()
-                };
-                config::save_config(&cfg)?;
+                    config::save_config(&cfg)?;
+                }
 
                 // Step 2: Disarm heartbeat watchdog
                 state
@@ -5646,7 +5646,9 @@ async fn dispatch_command(
                         .to_string(),
                 );
             }
-            let s = crate::prompt_assistant::providers::connect_xai_session(&state)
+            // Only the caller sees the code: whoever approves it first binds
+            // the instance's session to their own xAI account.
+            let s = crate::prompt_assistant::providers::connect_xai_session(&state, username)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(s).map_err(|e| e.to_string())
