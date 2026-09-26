@@ -1144,7 +1144,6 @@ const ko: Record<string, string> = {
   "generation.video.vdn_teacache": "VDN 선택 시 TeaCache가 비활성화됩니다. 기존 설정은 유지됩니다.",
   "generation.video.turbo_install_button": "Turbo 설치",
   "generation.video.turbo": "Turbo LoRA",
-  "generation.video.turbo_tip": "20단계 대신 4~8단계로 샘플링하는 증류 어댑터로 약 5배 빠릅니다. 움직임은 전체 모델과 비슷하게 유지되지만 가장 미세한 디테일은 약간 부드러워집니다.",
   "generation.video.turbo_on_hint": "{standard}단계 대신 {steps}단계로 샘플링합니다.",
   "generation.video.turbo_off_hint": "{steps}단계로 전체 품질 샘플링을 합니다.",
   "generation.video.turbo_steps": "Turbo 단계",

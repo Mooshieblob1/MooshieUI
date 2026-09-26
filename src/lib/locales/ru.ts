@@ -1144,7 +1144,6 @@ const ru: Record<string, string> = {
   "generation.video.vdn_teacache": "TeaCache неактивен при выбранном VDN. Ваши настройки сохраняются.",
   "generation.video.turbo_install_button": "Установить Turbo",
   "generation.video.turbo": "Turbo LoRA",
-  "generation.video.turbo_tip": "Дистиллированный адаптер, который сэмплирует за 4-8 шагов вместо 20, примерно в пять раз быстрее. Движение остаётся близким к полной модели, но мельчайшие детали немного смягчаются.",
   "generation.video.turbo_on_hint": "Сэмплирование за {steps} шагов вместо {standard}.",
   "generation.video.turbo_off_hint": "Сэмплирование за {steps} шагов с полным качеством.",
   "generation.video.turbo_steps": "Шаги Turbo",

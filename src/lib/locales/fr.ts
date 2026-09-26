@@ -1159,7 +1159,6 @@ const fr: Record<string, string> = {
   "generation.video.vdn_teacache": "TeaCache est inactif avec VDN. Votre préférence est conservée.",
   "generation.video.turbo_install_button": "Installer Turbo",
   "generation.video.turbo": "LoRA Turbo",
-  "generation.video.turbo_tip": "Un adaptateur distillé qui échantillonne en 4 à 8 étapes au lieu de 20, environ cinq fois plus vite. Le mouvement reste proche du modèle complet ; les détails les plus fins s'adoucissent un peu.",
   "generation.video.turbo_on_hint": "Échantillonnage en {steps} étapes au lieu de {standard}.",
   "generation.video.turbo_off_hint": "Échantillonnage en {steps} étapes en qualité complète.",
   "generation.video.turbo_steps": "Étapes Turbo",

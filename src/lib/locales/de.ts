@@ -1165,7 +1165,6 @@ const de: Record<string, string> = {
   "generation.video.vdn_teacache": "TeaCache ist bei ausgewähltem VDN inaktiv. Die Einstellung bleibt gespeichert.",
   "generation.video.turbo_install_button": "Turbo installieren",
   "generation.video.turbo": "Turbo-LoRA",
-  "generation.video.turbo_tip": "Ein destillierter Adapter, der in 4 bis 8 Schritten statt in 20 sampelt, etwa fünfmal schneller. Die Bewegung bleibt nah am vollen Modell; feinste Details werden etwas weicher.",
   "generation.video.turbo_on_hint": "Sampling in {steps} statt {standard} Schritten.",
   "generation.video.turbo_off_hint": "Sampling in {steps} Schritten bei voller Qualität.",
   "generation.video.turbo_steps": "Turbo-Schritte",

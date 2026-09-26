@@ -1144,7 +1144,6 @@ const zh: Record<string, string> = {
   "generation.video.vdn_teacache": "选择 VDN 时 TeaCache 不启用，原有设置会保留。",
   "generation.video.turbo_install_button": "安装 Turbo",
   "generation.video.turbo": "Turbo LoRA",
-  "generation.video.turbo_tip": "蒸馏适配器，用 4 到 8 步代替 20 步采样，速度约快五倍。运动效果接近完整模型，最细微的细节会略微变柔。",
   "generation.video.turbo_on_hint": "以 {steps} 步采样，而非 {standard} 步。",
   "generation.video.turbo_off_hint": "以 {steps} 步进行完整质量采样。",
   "generation.video.turbo_steps": "Turbo 步数",

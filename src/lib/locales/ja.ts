@@ -1159,7 +1159,6 @@ const ja: Record<string, string> = {
   "generation.video.vdn_teacache": "VDN選択中はTeaCacheが無効になります。設定は保持されます。",
   "generation.video.turbo_install_button": "Turboをインストール",
   "generation.video.turbo": "Turbo LoRA",
-  "generation.video.turbo_tip": "20ステップの代わりに4〜8ステップでサンプリングする蒸留アダプターで、約5倍高速です。動きはフルモデルに近いまま保たれますが、細部はわずかに甘くなります。",
   "generation.video.turbo_on_hint": "{standard} ステップではなく {steps} ステップでサンプリングします。",
   "generation.video.turbo_off_hint": "{steps} ステップでフル品質サンプリングします。",
   "generation.video.turbo_steps": "Turbo ステップ数",
