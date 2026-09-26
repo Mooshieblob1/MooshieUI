@@ -3229,6 +3229,7 @@ const zhTw: Record<string, string> = {
   "settings.lan.temp_password_min": "臨時密碼至少需要 4 個字元。",
   "settings.lan.reset_failed": "重設密碼失敗。",
   "settings.lan.account_validation": "需要使用者名稱，密碼至少需要 4 個字元。",
+  "settings.lan.username_invalid": "使用者名稱只能包含英文字母 (A-Z)、數字、- 和 _（最多 {max} 個字元）。",
   "settings.lan.time.never": "從未",
   "settings.lan.time.unknown": "未知",
   "settings.lan.time.weeks_ago": "{weeks} 週前",

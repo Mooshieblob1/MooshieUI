@@ -82,10 +82,11 @@ fn classify_upload_error(url: &str, status: u16, body: &str) -> AppError {
     if is_proxy_upload_rejection(status, body) {
         let host = host_from_url(url);
         // Keep the raw body available but cap it so it doesn't flood logs.
-        let truncated = if body.len() > 300 {
-            format!("{}... (truncated)", &body[..300])
-        } else {
-            body.to_string()
+        // Cut on a char boundary: a byte slice panics when a proxy's error
+        // page puts a multibyte character across the 300-byte mark.
+        let truncated = match body.char_indices().nth(300) {
+            Some((end, _)) => format!("{}... (truncated)", &body[..end]),
+            None => body.to_string(),
         };
         log::warn!(
             "Upload rejected by proxy at {}: HTTP {} -- {}",
@@ -153,6 +154,44 @@ fn percent_decode(input: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether `filename` and `subfolder` name a file inside ComfyUI's output
+/// directory for a `/view` request.
+///
+/// The filename must be one plain path component. The subfolder may nest
+/// (ComfyUI reports `audio` or `a/b`, with backslashes on Windows), but it must
+/// be relative and every piece of it a plain component: no `..`, no root, no
+/// drive prefix.
+fn is_safe_view_target(filename: &str, subfolder: &str) -> bool {
+    use crate::commands::api::is_single_safe_filename;
+    is_single_safe_filename(filename)
+        && !subfolder.starts_with(['/', '\\'])
+        && subfolder
+            .split(['/', '\\'])
+            .filter(|part| !part.is_empty())
+            .all(is_single_safe_filename)
+}
+
+/// Build the `/view` request for an output image.
+///
+/// Both values reach us from REST callers. Anything that is not a plain
+/// output-relative name is refused, and reqwest encodes the query so a
+/// `&type=input` smuggled into either value stays inside that value.
+fn output_view_request(
+    client: &reqwest::Client,
+    base_url: &str,
+    filename: &str,
+    subfolder: &str,
+) -> Result<reqwest::RequestBuilder, AppError> {
+    if !is_safe_view_target(filename, subfolder) {
+        return Err(AppError::Other("Invalid output image path".to_string()));
+    }
+    Ok(client.get(format!("{base_url}/view")).query(&[
+        ("filename", filename),
+        ("subfolder", subfolder),
+        ("type", "output"),
+    ]))
 }
 
 /// Reject path separators / traversal so a server-supplied filename can never
@@ -887,13 +926,10 @@ impl AppState {
         filename: &str,
         subfolder: &str,
     ) -> Result<Vec<u8>, AppError> {
-        let url = format!(
-            "{}/view?filename={}&subfolder={}&type=output",
-            self.base_url().await,
-            filename,
-            subfolder
-        );
-        let resp = self.http_client.get(&url).send().await?;
+        let base_url = self.base_url().await;
+        let resp = output_view_request(&self.http_client, &base_url, filename, subfolder)?
+            .send()
+            .await?;
         if !resp.status().is_success() {
             return Err(AppError::ApiError {
                 status: resp.status().as_u16(),
@@ -981,5 +1017,72 @@ mod tests {
     fn proxy_rejection_unsupported_media_type_phrase_in_body() {
         let body = "413 - Request Entity Too Large: unsupported media type for upload";
         assert!(is_proxy_upload_rejection(413, body));
+    }
+}
+
+#[cfg(test)]
+mod view_request_tests {
+    use super::{classify_upload_error, is_safe_view_target, output_view_request};
+    use crate::error::AppError;
+
+    #[test]
+    fn view_targets_must_stay_inside_the_output_dir() {
+        assert!(is_safe_view_target("ComfyUI_00001_.png", ""));
+        assert!(is_safe_view_target("mooshie_yue2_00001_.flac", "audio"));
+        assert!(is_safe_view_target("x.png", "a/b"));
+        assert!(is_safe_view_target("x.png", "a\\b"));
+
+        assert!(!is_safe_view_target("", ""));
+        assert!(!is_safe_view_target("../x.png", ""));
+        assert!(!is_safe_view_target("a/x.png", ""));
+        assert!(!is_safe_view_target("D:x.png", ""));
+        assert!(!is_safe_view_target("x.png", ".."));
+        assert!(!is_safe_view_target("x.png", "a/../.."));
+        assert!(!is_safe_view_target("x.png", "/etc"));
+        assert!(!is_safe_view_target("x.png", "\\server"));
+        assert!(!is_safe_view_target("x.png", "C:\\Windows"));
+    }
+
+    #[test]
+    fn view_query_keeps_injected_params_inside_their_value() {
+        let client = reqwest::Client::new();
+        let req = output_view_request(&client, "http://127.0.0.1:8188", "x.png&type=input", "")
+            .expect("valid target")
+            .build()
+            .expect("request builds");
+        let pairs: Vec<(String, String)> = req
+            .url()
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("filename".to_string(), "x.png&type=input".to_string()),
+                ("subfolder".to_string(), String::new()),
+                ("type".to_string(), "output".to_string()),
+            ]
+        );
+        assert_eq!(req.url().path(), "/view");
+    }
+
+    #[test]
+    fn view_request_refuses_traversal() {
+        let client = reqwest::Client::new();
+        assert!(
+            output_view_request(&client, "http://127.0.0.1:8188", "x.png", "../input").is_err()
+        );
+    }
+
+    #[test]
+    fn proxy_error_body_truncation_is_char_safe() {
+        // 2-byte chars put a char boundary on every even byte; 3-byte ones
+        // put the 300th byte in the middle of a char.
+        for body in ["\u{e9}".repeat(400), "\u{20ac}".repeat(400)] {
+            match classify_upload_error("http://127.0.0.1:8188", 415, &body) {
+                AppError::Other(msg) => assert!(msg.contains("(truncated)")),
+                other => panic!("unexpected error: {other:?}"),
+            }
+        }
     }
 }

@@ -244,6 +244,41 @@ pub fn export_temp_dir() -> PathBuf {
     std::env::temp_dir().join("mooshie-export")
 }
 
+/// The export directory for one caller. Desktop and the browser-mode admin
+/// (`None`) use the root export dir; a LAN user gets `users/{name}/` under it,
+/// so export names (which are deterministic) cannot be fetched across users.
+/// `None` when the name cannot safely become one path component.
+pub fn export_dir_for(username: Option<&str>) -> Option<PathBuf> {
+    let base = export_temp_dir();
+    match username {
+        None => Some(base),
+        Some(name) => {
+            let safe = name.to_ascii_lowercase();
+            crate::commands::api::is_single_safe_filename(&safe)
+                .then(|| base.join("users").join(safe))
+        }
+    }
+}
+
+/// The loop modes the encoder implements (see `apply_loop_mode` in
+/// `video_export.py`). The mode also lands in the output filename, so an
+/// unrecognised value falls back to the default instead of reaching the path.
+pub fn normalize_loop_mode(mode: &str) -> &'static str {
+    match mode {
+        "none" => "none",
+        "trim" => "trim",
+        "crossfade" => "crossfade",
+        "pingpong" => "pingpong",
+        _ => "auto",
+    }
+}
+
+/// The output filename for an export. Every piece is either a number, a
+/// whitelisted loop mode, a fixed extension, or the source file's own stem.
+fn export_file_name(stem: &str, out_w: u32, fps: u32, loop_mode: &str, ext: &str) -> String {
+    format!("{stem}_{out_w}w_{fps}fps_{loop_mode}.{ext}")
+}
+
 /// Delete last session's exports. Called once from setup; failures are logged
 /// and ignored, because a stale temp file is not worth blocking startup over.
 pub fn sweep_export_temp_dir() {
@@ -359,6 +394,7 @@ fn source_metadata_json(source: &Path) -> String {
 pub(crate) async fn run_export(
     #[cfg(feature = "desktop")] app: Option<&tauri::AppHandle>,
     state: &AppState,
+    username: Option<&str>,
     source: &Path,
     format: &str,
     fps: u32,
@@ -374,6 +410,9 @@ pub(crate) async fn run_export(
             "That video is no longer in the gallery.".into(),
         ));
     }
+    // Whitelisted up front: the mode is echoed into the output filename and
+    // the job, and REST callers send it unvalidated.
+    let loop_mode = normalize_loop_mode(loop_mode);
     let python = resolve_python(state).await?;
 
     // Source dimensions come from the gallery index; if the row is missing we
@@ -406,7 +445,8 @@ pub(crate) async fn run_export(
         None => fps,
     };
 
-    let dir = export_temp_dir();
+    let dir = export_dir_for(username)
+        .ok_or_else(|| AppError::Other("Invalid export directory".into()))?;
     std::fs::create_dir_all(&dir)?;
     let stem = source
         .file_stem()
@@ -416,7 +456,15 @@ pub(crate) async fn run_export(
     // Deterministic: re-exporting the same settings overwrites rather than
     // piling temp files up. The export temp dir is never the gallery dir, so an
     // MP4 export cannot collide with the mp4 it is reading.
-    let out_path = dir.join(format!("{stem}_{out_w}w_{fps}fps_{loop_mode}.{ext}"));
+    let out_name = export_file_name(&stem, out_w, fps, loop_mode, ext);
+    let out_path = dir.join(&out_name);
+    // Belt and braces: the name must land as a direct child of `dir`, never
+    // somewhere a separator or drive prefix in it would steer the write.
+    if out_path.file_name() != Some(std::ffi::OsStr::new(&out_name))
+        || out_path.parent() != Some(dir.as_path())
+    {
+        return Err(AppError::Other("Invalid export filename".into()));
+    }
 
     // Audio only survives on MP4, and not under ping-pong; asking for it anywhere
     // else is silently ignored rather than treated as an error, so the popover
@@ -597,6 +645,7 @@ pub async fn export_video_animation(
         #[cfg(feature = "desktop")]
         Some(&app),
         state.inner(),
+        None,
         &source,
         &format,
         fps,
@@ -947,5 +996,40 @@ mod tests {
         assert!(read.contains("31337"), "got: {read}");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod export_path_tests {
+    use super::{export_dir_for, export_file_name, export_temp_dir, normalize_loop_mode};
+
+    #[test]
+    fn loop_mode_is_whitelisted_to_what_the_encoder_implements() {
+        for mode in ["auto", "none", "trim", "crossfade", "pingpong"] {
+            assert_eq!(normalize_loop_mode(mode), mode);
+        }
+        for bad in ["", "PINGPONG", "..\\..\\x", "a/b", "C:evil", "trim\0"] {
+            assert_eq!(normalize_loop_mode(bad), "auto", "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn export_file_name_is_one_plain_component() {
+        let name = export_file_name("clip", 640, 24, normalize_loop_mode("..\\..\\x"), "avif");
+        assert_eq!(name, "clip_640w_24fps_auto.avif");
+        assert!(crate::commands::api::is_single_safe_filename(&name));
+    }
+
+    #[test]
+    fn exports_are_namespaced_per_lan_user() {
+        let base = export_temp_dir();
+        assert_eq!(export_dir_for(None), Some(base.clone()));
+        assert_eq!(
+            export_dir_for(Some("Bob")),
+            Some(base.join("users").join("bob"))
+        );
+        assert_eq!(export_dir_for(Some("..")), None);
+        assert_eq!(export_dir_for(Some("D:x")), None);
+        assert_eq!(export_dir_for(Some("a/b")), None);
     }
 }

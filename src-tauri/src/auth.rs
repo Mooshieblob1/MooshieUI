@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -37,6 +38,21 @@ const MAX_LOGIN_ATTEMPTS: u32 = 15;
 /// Lockout duration after too many failed logins.
 const LOGIN_LOCKOUT: Duration = Duration::from_secs(15 * 60);
 
+/// Failed logins from one client address before that address is refused for
+/// `LOGIN_LOCKOUT`. Kept below `MAX_LOGIN_ATTEMPTS` so a single client can
+/// never trip another account's lockout on its own.
+const MAX_IP_LOGIN_ATTEMPTS: u32 = 10;
+
+/// A client address's failures are forgotten after this long without another.
+const IP_LOGIN_WINDOW: Duration = LOGIN_LOCKOUT;
+
+/// Upper bound on tracked client addresses, so a flood of distinct sources
+/// cannot grow the limiter without bound.
+const MAX_TRACKED_LOGIN_IPS: usize = 4096;
+
+/// Longest username accepted for a new account.
+const MAX_USERNAME_LEN: usize = 32;
+
 /// Persisted sessions file format (v2 stores hashed token keys).
 const SESSIONS_FORMAT_VERSION: u32 = 2;
 
@@ -44,6 +60,145 @@ const SESSIONS_FORMAT_VERSION: u32 = 2;
 struct LoginAttemptState {
     failures: u32,
     locked_until: Option<Instant>,
+    last_failure: Instant,
+}
+
+impl LoginAttemptState {
+    fn new(now: Instant) -> Self {
+        Self {
+            failures: 0,
+            locked_until: None,
+            last_failure: now,
+        }
+    }
+
+    /// The lockout error, while a lockout is running.
+    fn lockout_error(&self, now: Instant) -> Option<String> {
+        let until = self.locked_until.filter(|until| now < *until)?;
+        let mins = until.saturating_duration_since(now).as_secs().div_ceil(60);
+        Some(format!(
+            "Too many failed login attempts. Try again in about {} minute(s).",
+            mins.max(1)
+        ))
+    }
+
+    fn is_locked(&self, now: Instant) -> bool {
+        self.locked_until.is_some_and(|until| now < until)
+    }
+
+    fn lock_expired(&self, now: Instant) -> bool {
+        self.locked_until.is_some_and(|until| now >= until)
+    }
+}
+
+/// Whether `username` may be given to a NEW account: 1 to `MAX_USERNAME_LEN`
+/// ASCII letters, digits, `_` or `-`. The name becomes a directory under the
+/// gallery and export dirs, so nothing a path parser could read as structure
+/// is allowed. Only enforced at creation, so older accounts keep working.
+pub fn is_valid_new_username(username: &str) -> bool {
+    !username.is_empty()
+        && username.len() <= MAX_USERNAME_LEN
+        && username
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// The error for a name `is_valid_new_username` rejects.
+pub fn invalid_new_username_error() -> String {
+    format!(
+        "Usernames may only contain letters, numbers, '-' and '_' (up to {} characters)",
+        MAX_USERNAME_LEN
+    )
+}
+
+/// The key a client address is rate-limited under. IPv4-mapped IPv6 folds onto
+/// plain IPv4, and IPv6 is grouped by /64, since a single host can hand itself
+/// any address inside its prefix. `None` for loopback, which is the local
+/// operator and is never limited.
+fn login_ip_key(ip: IpAddr) -> Option<IpAddr> {
+    match ip.to_canonical() {
+        ip if ip.is_loopback() => None,
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            Some(IpAddr::V6(Ipv6Addr::new(
+                s[0], s[1], s[2], s[3], 0, 0, 0, 0,
+            )))
+        }
+        v4 => Some(v4),
+    }
+}
+
+/// Count one failed login against an account. Returns true when this failure
+/// started a lockout. Failures for names that are not accounts are ignored,
+/// and expired lockouts are pruned (the next failure would reset them anyway,
+/// so the counting itself is unchanged).
+fn record_account_failure(
+    attempts: &mut HashMap<String, LoginAttemptState>,
+    username: String,
+    exists: bool,
+    now: Instant,
+) -> bool {
+    attempts.retain(|_, state| !state.lock_expired(now));
+    if !exists {
+        return false;
+    }
+    let state = attempts
+        .entry(username)
+        .or_insert_with(|| LoginAttemptState::new(now));
+    if state.is_locked(now) {
+        return false;
+    }
+    state.failures = state.failures.saturating_add(1);
+    state.last_failure = now;
+    if state.failures >= MAX_LOGIN_ATTEMPTS {
+        state.locked_until = Some(now + LOGIN_LOCKOUT);
+        return true;
+    }
+    false
+}
+
+/// Count one failed login against a client address. Returns true when this
+/// failure started a lockout. Stale entries are pruned first and the map is
+/// capped at `MAX_TRACKED_LOGIN_IPS`.
+fn record_ip_failure(
+    attempts: &mut HashMap<IpAddr, LoginAttemptState>,
+    key: IpAddr,
+    now: Instant,
+) -> bool {
+    attempts.retain(|k, state| {
+        *k == key
+            || state.is_locked(now)
+            || now.saturating_duration_since(state.last_failure) < IP_LOGIN_WINDOW
+    });
+    if !attempts.contains_key(&key) && attempts.len() >= MAX_TRACKED_LOGIN_IPS {
+        // Evict the quietest address, preferring ones that are not locked out.
+        let victim = attempts
+            .iter()
+            .min_by_key(|(_, state)| (state.is_locked(now), state.last_failure))
+            .map(|(k, _)| *k);
+        if let Some(victim) = victim {
+            attempts.remove(&victim);
+        }
+    }
+    let state = attempts
+        .entry(key)
+        .or_insert_with(|| LoginAttemptState::new(now));
+    if state.is_locked(now) {
+        return false;
+    }
+    if state.lock_expired(now)
+        || now.saturating_duration_since(state.last_failure) >= IP_LOGIN_WINDOW
+    {
+        state.locked_until = None;
+        state.failures = 0;
+    }
+    state.failures = state.failures.saturating_add(1);
+    state.last_failure = now;
+    if state.failures >= MAX_IP_LOGIN_ATTEMPTS {
+        state.locked_until = Some(now + LOGIN_LOCKOUT);
+        return true;
+    }
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -119,8 +274,11 @@ pub struct AuthState {
     sessions: RwLock<HashMap<String, SessionEntry>>,
     /// Per-user last activity timestamp (username → Instant).
     last_activity: RwLock<HashMap<String, std::time::Instant>>,
-    /// Failed login counters (username → attempt state).
+    /// Failed login counters (username → attempt state). Only existing
+    /// accounts are tracked, so this is bounded by the account list.
     login_attempts: RwLock<HashMap<String, LoginAttemptState>>,
+    /// Failed login counters per client address (see `login_ip_key`).
+    ip_login_attempts: RwLock<HashMap<IpAddr, LoginAttemptState>>,
 }
 
 impl Default for AuthState {
@@ -255,6 +413,7 @@ impl AuthState {
             sessions: RwLock::new(sessions),
             last_activity: RwLock::new(HashMap::new()),
             login_attempts: RwLock::new(HashMap::new()),
+            ip_login_attempts: RwLock::new(HashMap::new()),
         }
     }
 
@@ -262,39 +421,58 @@ impl AuthState {
     pub fn check_login_allowed(&self, username: &str) -> Result<(), String> {
         let username = username.to_ascii_lowercase();
         let attempts = self.login_attempts.read().unwrap();
-        let Some(state) = attempts.get(&username) else {
+        match attempts
+            .get(&username)
+            .and_then(|state| state.lockout_error(Instant::now()))
+        {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
+    /// Returns an error while `ip` is refused for too many failed logins.
+    pub fn check_ip_login_allowed(&self, ip: IpAddr) -> Result<(), String> {
+        let Some(key) = login_ip_key(ip) else {
             return Ok(());
         };
-        if let Some(until) = state.locked_until {
-            if Instant::now() < until {
-                let secs = until.saturating_duration_since(Instant::now()).as_secs();
-                let mins = secs.div_ceil(60);
-                return Err(format!(
-                    "Too many failed login attempts. Try again in about {} minute(s).",
-                    mins.max(1)
-                ));
-            }
+        let attempts = self.ip_login_attempts.read().unwrap();
+        match attempts
+            .get(&key)
+            .and_then(|state| state.lockout_error(Instant::now()))
+        {
+            Some(err) => Err(err),
+            None => Ok(()),
         }
-        Ok(())
+    }
+
+    /// Count a failed login from `ip`, whatever username it named.
+    pub fn record_failed_login_ip(&self, ip: IpAddr) {
+        let Some(key) = login_ip_key(ip) else {
+            return;
+        };
+        let mut attempts = self.ip_login_attempts.write().unwrap();
+        if record_ip_failure(&mut attempts, key, Instant::now()) {
+            log::warn!(
+                "Login lockout triggered for a client address after {} failed attempts",
+                MAX_IP_LOGIN_ATTEMPTS
+            );
+        }
     }
 
     pub fn record_failed_login(&self, username: &str) {
         let username = username.to_ascii_lowercase();
+        // Only real accounts are counted: otherwise anyone could grow this map
+        // with made-up names, and a name that does not exist has nothing to
+        // protect. Looked up before taking `login_attempts` so the two locks
+        // are never held together.
+        let exists = {
+            let db = self.db.read().unwrap();
+            db.accounts
+                .iter()
+                .any(|a| a.username.eq_ignore_ascii_case(&username))
+        };
         let mut attempts = self.login_attempts.write().unwrap();
-        let state = attempts.entry(username).or_insert(LoginAttemptState {
-            failures: 0,
-            locked_until: None,
-        });
-        if let Some(until) = state.locked_until {
-            if Instant::now() < until {
-                return;
-            }
-            state.locked_until = None;
-            state.failures = 0;
-        }
-        state.failures = state.failures.saturating_add(1);
-        if state.failures >= MAX_LOGIN_ATTEMPTS {
-            state.locked_until = Some(Instant::now() + LOGIN_LOCKOUT);
+        if record_account_failure(&mut attempts, username, exists, Instant::now()) {
             log::warn!(
                 "Login lockout triggered after {} failed attempts",
                 MAX_LOGIN_ATTEMPTS
@@ -431,6 +609,11 @@ impl AuthState {
             .any(|a| a.username.eq_ignore_ascii_case(&username))
         {
             return Err("Username already exists".to_string());
+        }
+        // After the duplicate check, so re-seeding an older account whose name
+        // predates this rule still reports "already exists".
+        if !is_valid_new_username(&username) {
+            return Err(invalid_new_username_error());
         }
         db.accounts.push(Account {
             username: username.clone(),
@@ -1088,6 +1271,7 @@ mod tests {
             sessions: RwLock::new(HashMap::new()),
             last_activity: RwLock::new(HashMap::new()),
             login_attempts: RwLock::new(HashMap::new()),
+            ip_login_attempts: RwLock::new(HashMap::new()),
         }
     }
 
@@ -1108,5 +1292,174 @@ mod tests {
             .upgrade_password_encryption("alice", "correct")
             .expect("correct password should be accepted");
         assert!(!already_modern);
+    }
+}
+
+#[cfg(test)]
+mod login_limit_tests {
+    use super::*;
+
+    fn empty_auth() -> AuthState {
+        AuthState {
+            db: RwLock::new(AuthDatabase::default()),
+            sessions: RwLock::new(HashMap::new()),
+            last_activity: RwLock::new(HashMap::new()),
+            login_attempts: RwLock::new(HashMap::new()),
+            ip_login_attempts: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
+        IpAddr::from([a, b, c, d])
+    }
+
+    #[test]
+    fn unknown_usernames_are_never_counted() {
+        let auth = empty_auth();
+        for _ in 0..(MAX_LOGIN_ATTEMPTS * 3) {
+            auth.record_failed_login("ghost");
+        }
+        assert!(auth.login_attempts.read().unwrap().is_empty());
+        assert!(auth.check_login_allowed("ghost").is_ok());
+    }
+
+    #[test]
+    fn real_accounts_keep_the_existing_lockout() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        for i in 1..MAX_LOGIN_ATTEMPTS {
+            assert!(!record_account_failure(&mut map, "admin".into(), true, t0));
+            assert_eq!(map["admin"].failures, i);
+        }
+        assert!(record_account_failure(&mut map, "admin".into(), true, t0));
+        assert!(map["admin"].lockout_error(t0).is_some());
+        // Further failures during the lockout neither extend nor re-trigger it.
+        assert!(!record_account_failure(&mut map, "admin".into(), true, t0));
+        // Once the lockout has run out the entry is pruned and counting restarts.
+        let later = t0 + LOGIN_LOCKOUT;
+        assert!(map["admin"].lockout_error(later).is_none());
+        assert!(!record_account_failure(
+            &mut map,
+            "admin".into(),
+            true,
+            later
+        ));
+        assert_eq!(map["admin"].failures, 1);
+    }
+
+    #[test]
+    fn expired_account_lockouts_are_pruned() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        for _ in 0..MAX_LOGIN_ATTEMPTS {
+            record_account_failure(&mut map, "bob".into(), true, t0);
+        }
+        assert!(map.contains_key("bob"));
+        record_account_failure(&mut map, "ghost".into(), false, t0 + LOGIN_LOCKOUT);
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn a_single_address_cannot_trip_an_account_lockout_alone() {
+        const { assert!(MAX_IP_LOGIN_ATTEMPTS < MAX_LOGIN_ATTEMPTS) };
+    }
+
+    #[test]
+    fn address_limiter_locks_only_the_noisy_address() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        let noisy = v4(192, 168, 1, 50);
+        for _ in 1..MAX_IP_LOGIN_ATTEMPTS {
+            assert!(!record_ip_failure(&mut map, noisy, t0));
+        }
+        assert!(record_ip_failure(&mut map, noisy, t0));
+        assert!(map[&noisy].lockout_error(t0).is_some());
+        assert!(!map.contains_key(&v4(192, 168, 1, 51)));
+        // The lockout ends and the count starts over.
+        let later = t0 + LOGIN_LOCKOUT;
+        assert!(map[&noisy].lockout_error(later).is_none());
+        record_ip_failure(&mut map, noisy, later);
+        assert_eq!(map[&noisy].failures, 1);
+    }
+
+    #[test]
+    fn address_failures_decay_after_the_window() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        let ip = v4(10, 0, 0, 7);
+        for _ in 1..MAX_IP_LOGIN_ATTEMPTS {
+            record_ip_failure(&mut map, ip, t0);
+        }
+        record_ip_failure(&mut map, ip, t0 + IP_LOGIN_WINDOW);
+        assert_eq!(map[&ip].failures, 1);
+        assert!(map[&ip].locked_until.is_none());
+    }
+
+    #[test]
+    fn stale_addresses_are_pruned_and_the_map_is_capped() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        for i in 0..(MAX_TRACKED_LOGIN_IPS as u32 + 50) {
+            let ip = IpAddr::from((0x0a00_0000 + i).to_be_bytes());
+            record_ip_failure(&mut map, ip, t0);
+        }
+        assert_eq!(map.len(), MAX_TRACKED_LOGIN_IPS);
+        record_ip_failure(&mut map, v4(172, 16, 0, 1), t0 + IP_LOGIN_WINDOW);
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn address_keys_fold_mapped_v4_and_group_v6_by_prefix() {
+        assert_eq!(login_ip_key(v4(127, 0, 0, 1)), None);
+        assert_eq!(login_ip_key("::1".parse().unwrap()), None);
+        assert_eq!(login_ip_key("::ffff:127.0.0.1".parse().unwrap()), None);
+        assert_eq!(
+            login_ip_key("::ffff:192.168.1.9".parse().unwrap()),
+            Some(v4(192, 168, 1, 9))
+        );
+        assert_eq!(
+            login_ip_key("2001:db8:1:2:aaaa:bbbb:cccc:dddd".parse().unwrap()),
+            login_ip_key("2001:db8:1:2::1".parse().unwrap())
+        );
+        assert_ne!(
+            login_ip_key("2001:db8:1:2::1".parse().unwrap()),
+            login_ip_key("2001:db8:1:3::1".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn auth_state_refuses_a_locked_address_but_never_loopback() {
+        let auth = empty_auth();
+        let remote = v4(192, 168, 1, 50);
+        let local = v4(127, 0, 0, 1);
+        for _ in 0..MAX_IP_LOGIN_ATTEMPTS {
+            auth.record_failed_login_ip(remote);
+            auth.record_failed_login_ip(local);
+        }
+        assert!(auth.check_ip_login_allowed(remote).is_err());
+        assert!(auth.check_ip_login_allowed(v4(192, 168, 1, 51)).is_ok());
+        assert!(auth.check_ip_login_allowed(local).is_ok());
+    }
+
+    #[test]
+    fn new_usernames_are_restricted_to_a_safe_charset() {
+        let longest = "a".repeat(MAX_USERNAME_LEN);
+        for ok in ["alice", "Bob_2", "a-b", "x", longest.as_str()] {
+            assert!(is_valid_new_username(ok), "{ok} should be accepted");
+        }
+        let too_long = "a".repeat(MAX_USERNAME_LEN + 1);
+        for bad in [
+            "",
+            "john.doe",
+            "D:x",
+            "a/b",
+            "a\\b",
+            "..",
+            "with space",
+            "caf\u{e9}",
+            too_long.as_str(),
+        ] {
+            assert!(!is_valid_new_username(bad), "{bad:?} should be rejected");
+        }
     }
 }

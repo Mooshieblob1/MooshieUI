@@ -3254,6 +3254,7 @@ const ja: Record<string, string> = {
   "settings.lan.temp_password_min": "一時パスワードは 4 文字以上である必要があります。",
   "settings.lan.reset_failed": "パスワードのリセットに失敗しました。",
   "settings.lan.account_validation": "ユーザー名が必要です。パスワードは 4 文字以上である必要があります。",
+  "settings.lan.username_invalid": "ユーザー名に使えるのは英字 (A-Z)、数字、- と _ のみです（最大 {max} 文字）。",
   "settings.lan.time.never": "なし",
   "settings.lan.time.unknown": "不明",
   "settings.lan.time.weeks_ago": "{weeks} 週間前",

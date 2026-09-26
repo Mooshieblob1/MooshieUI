@@ -22,6 +22,7 @@ use serde::Deserialize;
 
 use crate::auth::AuthState;
 use crate::commands;
+use crate::commands::api::is_single_safe_filename;
 use crate::config;
 use crate::state::AppState;
 
@@ -454,6 +455,10 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "install_pip_package",
     "install_attention_backend",
     "clear_all_queues",
+    // the ComfyUI socket is shared by every user, so dropping or replacing it
+    // interrupts everyone's progress/results stream
+    "connect_ws",
+    "disconnect_ws",
     // external LLM provider settings: these mutate config and spend the
     // instance's API key, so they follow `update_config` rather than the
     // enhance/compose commands every user may run
@@ -622,6 +627,15 @@ async fn resolve_tls_config(
     }
 }
 
+/// The first 8 characters of a prompt id, for log lines.
+///
+/// Prompt ids come back from ComfyUI, which may be remote, so they are not
+/// guaranteed to be ASCII UUIDs. Cutting by characters rather than bytes keeps
+/// a multibyte id from panicking (and permanently killing) the cleanup reactor.
+fn short_id(id: &str) -> &str {
+    id.char_indices().nth(8).map_or(id, |(end, _)| &id[..end])
+}
+
 /// Start the embedded web server.
 ///
 /// Attempts to bind to `port`; if that port is already in use, tries the
@@ -669,7 +683,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                     let owner = cleanup_state.prompt_queue.owner_of(&pid);
                                     log::info!(
                                         "[gen] completed prompt={} user={}",
-                                        &pid[..8.min(pid.len())],
+                                        short_id(&pid),
                                         owner.as_deref().unwrap_or("admin"),
                                     );
                                     let finished = cleanup_state.prompt_queue.finish(&pid);
@@ -706,7 +720,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                 let owner = cleanup_state.prompt_queue.owner_of(&pid);
                                 log::warn!(
                                     "[gen] error prompt={} user={}",
-                                    &pid[..8.min(pid.len())],
+                                    short_id(&pid),
                                     owner.as_deref().unwrap_or("admin"),
                                 );
                                 if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
@@ -1750,7 +1764,7 @@ async fn thumbnail_handler(
         .map(|s| s.into_owned())
         .unwrap_or(filename);
 
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(&filename) {
         return (StatusCode::BAD_REQUEST, "Invalid filename").into_response();
     }
 
@@ -1801,7 +1815,7 @@ async fn gallery_image_handler(
         .map(|s| s.into_owned())
         .unwrap_or(filename);
 
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(&filename) {
         return (StatusCode::BAD_REQUEST, "Invalid filename").into_response();
     }
 
@@ -1899,12 +1913,27 @@ async fn gallery_image_handler(
 /// bytes back. Basename only, and only from that one directory - a path with
 /// any separator in it is rejected outright rather than normalised.
 async fn export_download_handler(
-    axum::extract::Path(filename): axum::extract::Path<String>,
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    Path(filename): Path<String>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
 ) -> Response {
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(&filename) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let path = crate::commands::video_export::export_temp_dir().join(&filename);
+    // Same gate as the gallery endpoints: this is a plain `<a href>` download,
+    // so a `?token=` query param is accepted alongside the Authorization header.
+    let query = req.uri().query().unwrap_or("");
+    let username = match resolve_username_with_query_token(&state, &headers, &remote, query) {
+        Some(username) => username,
+        None => return unauthorized_response("Authentication required"),
+    };
+    // Each LAN user only ever sees their own exports.
+    let Some(dir) = crate::commands::video_export::export_dir_for(username.as_deref()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let path = dir.join(&filename);
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -1934,7 +1963,7 @@ async fn export_download_handler(
 }
 
 /// Serve an mp4 with single-range support so `<video>` seeking works.
-/// Open-ended ranges are capped (see `http_range::OPEN_END_CHUNK`) — players
+/// Every range is capped (see `http_range::OPEN_END_CHUNK`) — players
 /// re-request as they play, so the server never reads a whole multi-hundred-MB
 /// file for one request.
 async fn serve_video_file(
@@ -3016,7 +3045,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3031,7 +3060,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3054,7 +3083,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3094,7 +3123,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3807,7 +3836,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3843,13 +3872,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing newFilename")?
                 .to_string();
-            if old.contains('/')
-                || old.contains('\\')
-                || old.contains("..")
-                || new_name.contains('/')
-                || new_name.contains('\\')
-                || new_name.contains("..")
-            {
+            if !is_single_safe_filename(&old) || !is_single_safe_filename(&new_name) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3870,7 +3893,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -5271,10 +5294,7 @@ async fn dispatch_command(
                             .as_str()
                             .ok_or("Missing filename")?
                             .to_string();
-                        if filename.contains('/')
-                            || filename.contains('\\')
-                            || filename.contains("..")
-                        {
+                        if !is_single_safe_filename(&filename) {
                             return Err("Invalid filename".to_string());
                         }
                         // Resolve within the caller's own gallery directory so a LAN
@@ -5719,6 +5739,7 @@ async fn dispatch_command(
                 #[cfg(feature = "desktop")]
                 None,
                 &state,
+                username,
                 &dir.join(&name),
                 args["format"].as_str().unwrap_or("avif"),
                 args["fps"].as_u64().unwrap_or(24) as u32,
@@ -6364,9 +6385,16 @@ async fn auth_logout_handler(
 /// POST /internal-api/_auth/login — authenticate and return a session token.
 async fn auth_login_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
     Json(req): Json<AuthRequest>,
 ) -> Response {
-    if let Err(e) = state.auth.check_login_allowed(&req.username) {
+    // Per-address first, so one client guessing across many usernames is
+    // stopped even though unknown names are not counted per username.
+    if let Err(e) = state
+        .auth
+        .check_ip_login_allowed(remote.ip())
+        .and_then(|()| state.auth.check_login_allowed(&req.username))
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": e })),
@@ -6375,6 +6403,8 @@ async fn auth_login_handler(
     }
     match state.auth.login(&req.username, &req.password) {
         Ok((token, must_change)) => {
+            // The per-address count is left to decay on its own: clearing it
+            // here would let a client with one valid account reset its budget.
             state.auth.clear_login_attempts(&req.username);
             (
                 StatusCode::OK,
@@ -6386,6 +6416,7 @@ async fn auth_login_handler(
                 .into_response()
         }
         Err(e) => {
+            state.auth.record_failed_login_ip(remote.ip());
             state.auth.record_failed_login(&req.username);
             (
                 StatusCode::UNAUTHORIZED,
@@ -6411,6 +6442,13 @@ async fn auth_register_handler(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Username required, password must be at least 4 characters" })),
+        )
+            .into_response();
+    }
+    if !crate::auth::is_valid_new_username(&req.username) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": crate::auth::invalid_new_username_error() })),
         )
             .into_response();
     }
@@ -6605,6 +6643,7 @@ async fn auth_delete_account_handler(
 /// Accepts `{ password }` when authenticated, or `{ username, password }` on the login gate.
 async fn auth_upgrade_password_encryption_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<serde_json::Value>,
 ) -> Response {
@@ -6655,7 +6694,11 @@ async fn auth_upgrade_password_encryption_handler(
         (username, password, false)
     };
 
-    if let Err(e) = state.auth.check_login_allowed(&username) {
+    if let Err(e) = state
+        .auth
+        .check_ip_login_allowed(remote.ip())
+        .and_then(|()| state.auth.check_login_allowed(&username))
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": e })),
@@ -6696,6 +6739,7 @@ async fn auth_upgrade_password_encryption_handler(
         )
             .into_response(),
         Err(e) => {
+            state.auth.record_failed_login_ip(remote.ip());
             state.auth.record_failed_login(&username);
             (
                 StatusCode::BAD_REQUEST,
@@ -6959,13 +7003,20 @@ fn get_lan_ips() -> Vec<String> {
 pub(crate) fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
     let base = config::gallery_dir()?;
     match username {
-        Some(name) => {
-            // Sanitise the username to prevent path traversal
-            let safe = name.to_ascii_lowercase().replace(['/', '\\', '.'], "_");
-            Some(base.join("users").join(safe))
-        }
+        Some(name) => Some(base.join("users").join(user_gallery_subdir(name)?)),
         None => Some(base),
     }
+}
+
+/// The per-user gallery subdirectory name for `username`, or `None` when the
+/// name cannot safely become one path component.
+fn user_gallery_subdir(username: &str) -> Option<String> {
+    // Sanitise the username to prevent path traversal
+    let safe = username.to_ascii_lowercase().replace(['/', '\\', '.'], "_");
+    // The replace above leaves `:` alone, and `D:x` makes `PathBuf::join`
+    // escape the gallery on Windows. Refuse anything that is still not one
+    // plain path component.
+    is_single_safe_filename(&safe).then_some(safe)
 }
 
 /// Save image bytes to a specific gallery directory with metadata embedding.
@@ -8230,5 +8281,39 @@ mod nai_key_tests {
 
         assert_eq!(value["novelai_api_key"], serde_json::Value::Null);
         assert_eq!(value["novelai_api_key_configured"], serde_json::json!(true));
+    }
+}
+
+#[cfg(test)]
+mod lan_hardening_tests {
+    use super::{min_role_for_command, short_id, user_gallery_subdir, UserRole};
+
+    #[test]
+    fn shared_comfyui_socket_commands_need_a_moderator() {
+        assert_eq!(min_role_for_command("connect_ws"), UserRole::Moderator);
+        assert_eq!(min_role_for_command("disconnect_ws"), UserRole::Moderator);
+    }
+
+    #[test]
+    fn short_id_cuts_on_char_boundaries() {
+        assert_eq!(short_id("0123456789abcdef"), "01234567");
+        assert_eq!(short_id("abc"), "abc");
+        assert_eq!(short_id(""), "");
+        // Each of these is 3 bytes, so a byte slice at 8 would panic.
+        assert_eq!(
+            short_id("\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}"),
+            "\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}"
+        );
+        assert_eq!(short_id("ab\u{e9}"), "ab\u{e9}");
+    }
+
+    #[test]
+    fn user_gallery_subdir_keeps_existing_names_and_refuses_unsafe_ones() {
+        assert_eq!(user_gallery_subdir("Alice").as_deref(), Some("alice"));
+        assert_eq!(user_gallery_subdir("john.doe").as_deref(), Some("john_doe"));
+        assert_eq!(user_gallery_subdir("../x").as_deref(), Some("___x"));
+        assert_eq!(user_gallery_subdir("D:x"), None);
+        assert_eq!(user_gallery_subdir(""), None);
+        assert_eq!(user_gallery_subdir("a\0b"), None);
     }
 }

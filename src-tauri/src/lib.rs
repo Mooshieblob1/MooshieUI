@@ -307,7 +307,7 @@ pub fn run() {
                     .map(|s| s.into_owned())
                     .unwrap_or_else(|_| filename_encoded.to_string());
 
-                if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                if !commands::api::is_single_safe_filename(&filename) {
                     responder.respond(
                         tauri::http::Response::builder()
                             .status(400)

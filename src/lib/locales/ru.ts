@@ -3229,6 +3229,7 @@ const ru: Record<string, string> = {
   "settings.lan.temp_password_min": "Временный пароль должен содержать не менее 4 символов.",
   "settings.lan.reset_failed": "Не удалось сбросить пароль.",
   "settings.lan.account_validation": "Требуется имя пользователя, пароль должен содержать не менее 4 символов.",
+  "settings.lan.username_invalid": "Имя пользователя может содержать только латинские буквы A-Z, цифры, - и _ (не более {max} символов).",
   "settings.lan.time.never": "Никогда",
   "settings.lan.time.unknown": "Неизвестно",
   "settings.lan.time.weeks_ago": "{weeks} нед. назад",

@@ -580,6 +580,11 @@
       lanAuthError = locale.t("settings.lan.account_validation");
       return;
     }
+    // Mirrors is_valid_new_username in src-tauri/src/auth.rs.
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(lanNewUser.trim())) {
+      lanAuthError = locale.t("settings.lan.username_invalid", { max: 32 });
+      return;
+    }
     lanAuthBusy = true;
     lanAuthError = null;
     try {

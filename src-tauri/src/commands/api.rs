@@ -2216,8 +2216,27 @@ impl std::fmt::Display for GalleryPathResolveError {
     }
 }
 
+/// Whether `name` is exactly one plain path component that `Path::join` can
+/// never walk out of its base directory with, on any platform.
+///
+/// Rejects separators of either platform, `:` (a Windows drive-relative name
+/// like `D:x` replaces the whole base in `PathBuf::join`, and `name:stream`
+/// addresses an NTFS alternate data stream), NUL, and the `.` / `..` entries.
+/// The component check backs the character checks up, so a name only passes
+/// when the platform's own parser also sees one `Normal` component.
+pub(crate) fn is_single_safe_filename(name: &str) -> bool {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
+        return false;
+    }
+    let mut components = std::path::Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
+
 pub fn validate_gallery_filename(filename: &str) -> Result<(), GalleryPathResolveError> {
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(filename) {
         return Err(GalleryPathResolveError::InvalidFilename);
     }
     Ok(())
@@ -2349,6 +2368,57 @@ mod gallery_path_tests {
             validate_gallery_filename("alice\\image.png"),
             Err(GalleryPathResolveError::InvalidFilename)
         );
+    }
+}
+
+#[cfg(test)]
+mod safe_filename_tests {
+    use super::{is_single_safe_filename, validate_gallery_filename};
+
+    #[test]
+    fn accepts_plain_basenames() {
+        for name in [
+            "image.png",
+            "MooshieUI_00001_.jxl",
+            "clip_poster.webp",
+            "a..b.png",
+            ".hidden",
+            "name with spaces.png",
+        ] {
+            assert!(is_single_safe_filename(name), "{name} should pass");
+            assert!(
+                validate_gallery_filename(name).is_ok(),
+                "{name} should pass"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_traversal_and_drive_relative_names() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../x.png",
+            "a/b.png",
+            "a\\b.png",
+            "/abs.png",
+            "\\abs.png",
+            "D:x.png",
+            "C:",
+            "C:\\Windows\\win.ini",
+            "file.png:stream",
+            "nul\0.png",
+        ] {
+            assert!(
+                !is_single_safe_filename(name),
+                "{name:?} should be rejected"
+            );
+            assert!(
+                validate_gallery_filename(name).is_err(),
+                "{name:?} should be rejected"
+            );
+        }
     }
 }
 

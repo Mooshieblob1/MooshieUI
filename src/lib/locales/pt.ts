@@ -3230,6 +3230,7 @@ const pt: Record<string, string> = {
   "settings.lan.temp_password_min": "A senha temporária deve ter pelo menos 4 caracteres.",
   "settings.lan.reset_failed": "Falha ao redefinir a senha.",
   "settings.lan.account_validation": "Nome de usuário obrigatório; a senha deve ter pelo menos 4 caracteres.",
+  "settings.lan.username_invalid": "Nomes de usuário só podem conter letras A-Z, números, - e _ (até {max} caracteres).",
   "settings.lan.time.never": "Nunca",
   "settings.lan.time.unknown": "Desconhecido",
   "settings.lan.time.weeks_ago": "há {weeks} sem.",

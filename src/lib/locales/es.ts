@@ -3258,6 +3258,7 @@ const es: Record<string, string> = {
   "settings.lan.temp_password_min": "La contraseña temporal debe tener al menos 4 caracteres.",
   "settings.lan.reset_failed": "No se pudo restablecer la contraseña.",
   "settings.lan.account_validation": "Se requiere nombre de usuario; la contraseña debe tener al menos 4 caracteres.",
+  "settings.lan.username_invalid": "Los nombres de usuario solo pueden contener letras A-Z, números, - y _ (máximo {max} caracteres).",
   "settings.lan.time.never": "Nunca",
   "settings.lan.time.unknown": "Desconocido",
   "settings.lan.time.weeks_ago": "hace {weeks} sem.",

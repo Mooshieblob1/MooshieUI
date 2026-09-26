@@ -3255,6 +3255,7 @@ const fr: Record<string, string> = {
   "settings.lan.temp_password_min": "Le mot de passe temporaire doit comporter au moins 4 caractères.",
   "settings.lan.reset_failed": "Échec de la réinitialisation du mot de passe.",
   "settings.lan.account_validation": "Nom d'utilisateur requis, le mot de passe doit comporter au moins 4 caractères.",
+  "settings.lan.username_invalid": "Les noms d'utilisateur ne peuvent contenir que des lettres A-Z, des chiffres, - et _ ({max} caractères maximum).",
   "settings.lan.time.never": "Jamais",
   "settings.lan.time.unknown": "Inconnu",
   "settings.lan.time.weeks_ago": "il y a {weeks} sem.",

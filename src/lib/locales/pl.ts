@@ -3296,6 +3296,7 @@ const pl: Record<string, string> = {
   "settings.lan.temp_password_min": "Tymczasowe hasło musi mieć co najmniej 4 znaki.",
   "settings.lan.reset_failed": "Nie powiodło się resetowanie hasła.",
   "settings.lan.account_validation": "Nazwa użytkownika jest wymagana, hasło musi mieć co najmniej 4 znaki.",
+  "settings.lan.username_invalid": "Nazwa użytkownika może zawierać tylko litery A-Z, cyfry, - i _ (maksymalnie {max} znaków).",
   "settings.lan.time.never": "Nigdy",
   "settings.lan.time.unknown": "Nieznany",
   "settings.lan.time.weeks_ago": "{weeks} tyg. temu",

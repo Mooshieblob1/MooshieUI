@@ -3232,6 +3232,7 @@ const de: Record<string, string> = {
   "settings.lan.temp_password_min": "Das temporäre Passwort muss mindestens 4 Zeichen lang sein.",
   "settings.lan.reset_failed": "Passwort konnte nicht zurückgesetzt werden.",
   "settings.lan.account_validation": "Benutzername erforderlich, Passwort muss mindestens 4 Zeichen lang sein.",
+  "settings.lan.username_invalid": "Benutzernamen dürfen nur Buchstaben A-Z, Ziffern, - und _ enthalten (höchstens {max} Zeichen).",
   "settings.lan.time.never": "Nie",
   "settings.lan.time.unknown": "Unbekannt",
   "settings.lan.time.weeks_ago": "vor {weeks} W.",

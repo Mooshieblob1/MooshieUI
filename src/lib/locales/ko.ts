@@ -3229,6 +3229,7 @@ const ko: Record<string, string> = {
   "settings.lan.temp_password_min": "임시 비밀번호는 최소 4자 이상이어야 합니다.",
   "settings.lan.reset_failed": "비밀번호 재설정에 실패했습니다.",
   "settings.lan.account_validation": "사용자 이름이 필요하며, 비밀번호는 최소 4자 이상이어야 합니다.",
+  "settings.lan.username_invalid": "사용자 이름에는 영문자(A-Z), 숫자, - 및 _만 사용할 수 있습니다(최대 {max}자).",
   "settings.lan.time.never": "없음",
   "settings.lan.time.unknown": "알 수 없음",
   "settings.lan.time.weeks_ago": "{weeks}주 전",

@@ -1,4 +1,4 @@
-import { ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
+import { getAuthToken, ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import type { ExportFormat } from "./videoExport.js";
 import { locale } from "../stores/locale.svelte.js";
@@ -1270,10 +1270,14 @@ export async function copyFileTo(srcPath: string, destPath: string): Promise<voi
 /**
  * Browser-mode download URL for an export. The encode ran on the server, so the
  * browser fetches the produced file by basename out of the export temp dir.
+ * A plain link cannot send an Authorization header, so the token rides along
+ * as a query param, exactly like the gallery image URLs.
  */
 export function exportDownloadUrl(path: string): string {
   const name = path.split(/[\\/]/).pop() ?? "";
-  return `/internal-api/_export/${encodeURIComponent(name)}`;
+  const base = `/internal-api/_export/${encodeURIComponent(name)}`;
+  const token = getAuthToken();
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
 export async function interrogateGalleryImage(filename: string): Promise<InterrogationResult> {

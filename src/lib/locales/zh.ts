@@ -3230,6 +3230,7 @@ const zh: Record<string, string> = {
   "settings.lan.temp_password_min": "临时密码至少需要 4 个字符。",
   "settings.lan.reset_failed": "重置密码失败。",
   "settings.lan.account_validation": "需要用户名，密码至少需要 4 个字符。",
+  "settings.lan.username_invalid": "用户名只能包含英文字母 (A-Z)、数字、- 和 _（最多 {max} 个字符）。",
   "settings.lan.time.never": "从未",
   "settings.lan.time.unknown": "未知",
   "settings.lan.time.weeks_ago": "{weeks} 周前",
