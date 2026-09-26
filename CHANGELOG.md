@@ -1,5 +1,36 @@
 # Changelog
 
+## What's New in v2.3.8
+
+### Video
+- **Live preview**: turn on **Live preview** in the video settings to watch a rough animated preview of the whole clip while H3 samples. The first time, it downloads the 23 MB taeh3 autoencoder into `models/vae_approx` with no restart. On a remote ComfyUI server, put the file there yourself.
+- **PDD 8-step Turbo presets**: **PDD FL2VA · 8** and **PDD Ref2VA · 8** use Alibaba PAI's Parallel Decoding Distillation adapters for 8-step first/last-frame and reference video. The adapters are pinned and SHA-256 checked. TeaCache is skipped with these presets, and ComfyUI servers older than v0.35.0 get a clear message.
+- **ComfyUI v0.37.0**: managed installs now use ComfyUI v0.37.0, which includes YuE2 natively.
+
+### Security and privacy
+- **Browser and LAN mode hardening**: websites you visit can no longer send commands to a MooshieUI server running on your computer, and the server no longer serves files from outside its web folder. Automatic owner access now needs the app opened at `localhost` or an IP address on the same computer.
+- **Per-account privacy**: in LAN mode each account sees only its own generated images, exports, model requests and browser settings. API keys and other secrets are sent only to the admin.
+- **Safer roles**: moderators can install only MooshieUI's own node packs, and can no longer change the settings that decide what the host runs, which folders it uses or how the server is exposed. Moving the installation, changing the gallery folder and saving to arbitrary paths are admin-only. Regular accounts can no longer manage the local LLM, see host file paths or reconnect the shared ComfyUI connection.
+- **Sign-in**: changing a password signs out your other sessions, and repeated failed logins from one address are slowed down.
+- **Untrusted files**: malformed or oversized images, videos, NovelAI imports and archives are refused instead of freezing or crashing the app.
+- **Verified downloads**: model downloads are checked for size, hash and format before use, and truncated files from earlier interrupted downloads are detected and downloaded again. Node packs, tools and Docker images are pinned to exact versions.
+
+### Fixes
+- **Generation**: remote-mode LoRA and model lookups, Flux Redux and IP-Adapter weights, img2img and inpaint batch size, upscale tile overlap, Face Fix and segment detail conditioning and regional prompts all work correctly, and seeds up to 2^64 are accepted. Refine works while a run is paused, and Refine and regional inpaint no longer fail with style transfer on.
+- **Video**: RIFE interpolation keeps the correct frame rate, and Anima TeaCache resets between runs.
+- **Gallery and files**: saving an image twice creates a `_1` copy instead of overwriting it, Move Installation keeps the default gallery, and the gallery index follows gallery moves.
+- **Connection and stability**: several races and deadlocks in the ComfyUI connection and queue are fixed, and the server binary stops cleanly when Docker or Kubernetes stops it.
+- **Error reports**: the report dialog says that reports become public GitHub issues, previews what is sent and lets you leave logs out.
+
+### Changes for self-hosters
+- **Docker and Kubernetes**: the image now runs as user 10001. Existing `/data` volumes and `./models` folders from older images need a one-time `chown -R 10001:10001`; the container explains this and exits if they are not writable. A placeholder admin password now stops the container.
+- **Tunnels and reverse proxies** on the same computer now need a login, and opening the server by machine name no longer grants admin automatically. Requests relayed with a forwarding header such as `X-Forwarded-For` are never treated as local. A proxy that rewrites the host name to `127.0.0.1` without adding one, as a bare nginx `proxy_pass` does, still looks local: add `proxy_set_header X-Forwarded-For $remote_addr;`, or turn off the new **Sign in automatically on this computer** setting in App Mode (`MOOSHIEUI_TRUST_LOCALHOST=false` on the headless server). It stays on until an admin account exists.
+- **Usernames**: new LAN accounts use letters, numbers, `_` and `-`, up to 32 characters.
+- **Custom LLM servers**: changing a custom server's host asks for its key again.
+- **Pinned versions**: node packs, uv, SageAttention wheels and Docker base images no longer update on their own. SageAttention installs only for supported CUDA and PyTorch builds.
+
+---
+
 ## What's New in v2.3.7
 
 ### Artist favourites and Style Creator
