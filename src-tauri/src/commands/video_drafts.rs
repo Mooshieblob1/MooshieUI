@@ -94,6 +94,18 @@ pub(crate) fn move_record(from: &Path, to: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Whether a ComfyUI output `subfolder` is a relative path whose every piece is
+/// one plain component (the same rule `is_single_safe_filename` applies to a
+/// filename). It may nest (`video/a`, with backslashes on Windows) or be empty,
+/// but never start at a root and never hold `..`, a drive prefix or NUL.
+fn is_safe_output_subfolder(subfolder: &str) -> bool {
+    !subfolder.starts_with(['/', '\\'])
+        && subfolder
+            .split(['/', '\\'])
+            .filter(|part| !part.is_empty())
+            .all(crate::commands::api::is_single_safe_filename)
+}
+
 /// Fetch remote outputs via ComfyUI's view API; never interpret remote absolute
 /// paths as files on the machine running MooshieUI.
 pub(crate) async fn fetch_output(
@@ -109,7 +121,7 @@ pub(crate) async fn fetch_output(
         "filename"
     }]
     .as_str()
-    .filter(|name| !name.is_empty() && !name.contains(['/', '\\', ':']) && !name.contains(".."))
+    .filter(|name| crate::commands::api::is_single_safe_filename(name))
     .ok_or_else(|| {
         AppError::Other("Remote video output requires updated MooshieUI nodes".into())
     })?;
@@ -119,7 +131,7 @@ pub(crate) async fn fetch_output(
         None => state.base_url().await,
     };
     let subfolder = payload["subfolder"].as_str().unwrap_or("");
-    if subfolder.contains("..") || subfolder.contains(':') || subfolder.starts_with(['/', '\\']) {
+    if !is_safe_output_subfolder(subfolder) {
         return Err(AppError::Other("Invalid remote output folder".into()));
     }
     let mut response = state
@@ -466,5 +478,25 @@ mod tests {
         }
         assert!(!valid_id(&"a".repeat(33)));
         assert!(!valid_id(&"z".repeat(32)));
+    }
+
+    #[test]
+    fn output_subfolders_nest_but_never_escape() {
+        for ok in ["", "video", "video/a", "video\\a", "a//b", "a/"] {
+            assert!(is_safe_output_subfolder(ok), "{ok:?}");
+        }
+        for bad in [
+            "/abs",
+            "\\abs",
+            "..",
+            "a/../b",
+            "a\\..\\b",
+            "D:x",
+            "video/C:evil",
+            "a/./b",
+            "nul\0byte",
+        ] {
+            assert!(!is_safe_output_subfolder(bad), "{bad:?}");
+        }
     }
 }

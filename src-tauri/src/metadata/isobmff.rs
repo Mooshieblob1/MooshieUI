@@ -57,10 +57,11 @@ pub(super) fn boxes(slice: &[u8]) -> Vec<BoxHeader> {
         kind.copy_from_slice(&slice[off + 4..off + 8]);
 
         let (size, header) = match size32 {
-            // 1 means the real size is a 64-bit value after the type.
-            1 => match u64_at(slice, off + 8) {
-                Some(large) => (large as usize, 16usize),
-                None => break,
+            // 1 means the real size is a 64-bit value after the type. One
+            // that does not even fit a usize is certainly past the slice.
+            1 => match u64_at(slice, off + 8).map(usize::try_from) {
+                Some(Ok(large)) => (large, 16usize),
+                _ => break,
             },
             // 0 means the box runs to the end of the enclosing slice.
             0 => (slice.len() - off, 8usize),
@@ -68,20 +69,76 @@ pub(super) fn boxes(slice: &[u8]) -> Vec<BoxHeader> {
         };
 
         // A box cannot be smaller than its own header, and cannot claim to
-        // extend past the slice that contains it.
-        if size < header || off + size > slice.len() {
-            break;
-        }
+        // extend past the slice that contains it. A 64-bit size near the top
+        // of the range must not wrap the sum around to a small offset.
+        let end = match off.checked_add(size) {
+            Some(end) if size >= header && end <= slice.len() => end,
+            _ => break,
+        };
 
         out.push(BoxHeader {
             kind,
             start: off,
             body: off + header,
-            end: off + size,
+            end,
         });
-        off += size;
+        off = end;
     }
     out
+}
+
+/// One top-level box of a file walked by [`file_boxes`]. Offsets are absolute
+/// file positions, the counterpart of [`BoxHeader`] for data not in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct FileBox {
+    pub kind: [u8; 4],
+    pub start: u64,
+    pub body: u64,
+    pub end: u64,
+}
+
+/// Enumerate the top-level boxes of a `len`-byte file by reading each header
+/// and seeking past its payload, so a multi-gigabyte `mdat` is never read.
+///
+/// Same rules as [`boxes`]: the walk stops at the first header that is
+/// truncated, smaller than itself, or claims to run past the end.
+pub(super) fn file_boxes<R: std::io::Read + std::io::Seek>(
+    reader: &mut R,
+    len: u64,
+) -> std::io::Result<Vec<FileBox>> {
+    use std::io::SeekFrom;
+    let mut out = Vec::new();
+    let mut off = 0u64;
+    while len.saturating_sub(off) >= 8 && out.len() < MAX_SIBLINGS {
+        reader.seek(SeekFrom::Start(off))?;
+        let mut head = [0u8; 16];
+        let avail = if len - off >= 16 { 16 } else { 8 };
+        reader.read_exact(&mut head[..avail])?;
+        let head = &head[..avail];
+        let mut kind = [0u8; 4];
+        kind.copy_from_slice(&head[4..8]);
+        let (size, header) = match u32_at(head, 0) {
+            Some(1) => match u64_at(head, 8) {
+                Some(large) => (large, 16u64),
+                None => break,
+            },
+            Some(0) => (len - off, 8u64),
+            Some(n) => (u64::from(n), 8u64),
+            None => break,
+        };
+        let end = match off.checked_add(size) {
+            Some(end) if size >= header && end <= len => end,
+            _ => break,
+        };
+        out.push(FileBox {
+            kind,
+            start: off,
+            body: off + header,
+            end,
+        });
+        off = end;
+    }
+    Ok(out)
 }
 
 /// The payload of the box reached by following `path` from `slice`.
@@ -162,13 +219,14 @@ fn mdta_key_index(keys: &[u8], name: &[u8]) -> Option<u32> {
     let mut off = 8usize;
     for i in 0..count {
         let size = u32_at(keys, off)? as usize;
-        if size < 8 || off + size > keys.len() {
+        let end = off.checked_add(size)?;
+        if size < 8 || end > keys.len() {
             return None;
         }
-        if keys.get(off + 8..off + size)? == name {
+        if keys.get(off + 8..end)? == name {
             return Some(i + 1);
         }
-        off += size;
+        off = end;
     }
     None
 }
@@ -190,6 +248,14 @@ fn read_qt_comment(bytes: &[u8]) -> Option<String> {
 /// where its bytes are. Only construction method 0 (an offset into the file) is
 /// handled, which is what libavif and therefore Pillow write.
 pub(super) fn read_avif_exif(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (offset, length) = avif_exif_extent(bytes)?;
+    exif_from_item_payload(bytes.get(offset..offset.checked_add(length)?)?)
+}
+
+/// Where the AVIF `Exif` item's bytes sit in the file, as an absolute
+/// `(offset, length)`. `bytes` only has to hold the top-level `meta` box, so a
+/// caller walking a file can hand over just that box.
+pub(super) fn avif_exif_extent(bytes: &[u8]) -> Option<(usize, usize)> {
     let meta = find_path(bytes, &[b"meta"])?.get(4..)?;
     let item_id = exif_item_id(find_path(meta, &[b"iinf"])?)?;
     let (offset, length) = item_extent(find_path(meta, &[b"iloc"])?, item_id)?;
@@ -197,8 +263,11 @@ pub(super) fn read_avif_exif(bytes: &[u8]) -> Option<Vec<u8>> {
     if length == 0 || length > MAX_PAYLOAD {
         return None;
     }
-    let payload = bytes.get(offset..offset.checked_add(length)?)?;
+    Some((offset, length))
+}
 
+/// The TIFF stream inside an AVIF `Exif` item payload.
+pub(super) fn exif_from_item_payload(payload: &[u8]) -> Option<Vec<u8>> {
     // The item payload is a 4-byte tiff_header_offset followed by the TIFF
     // stream, but writers disagree about whether the offset is included. Find
     // the byte-order mark near the front instead of trusting the count.
@@ -342,9 +411,11 @@ fn xmp_packet(json: &str) -> String {
 
 /// The JSON payload from a top-level Adobe XMP `uuid` box.
 pub(super) fn read_uuid_xmp(bytes: &[u8]) -> Option<String> {
-    let found = boxes(bytes)
-        .into_iter()
-        .find(|b| b.kind == *b"uuid" && bytes.get(b.body..b.body + 16) == Some(&XMP_UUID[..]))?;
+    let found = boxes(bytes).into_iter().find(|b| {
+        bytes
+            .get(b.body..)
+            .is_some_and(|body| is_xmp_uuid(b.kind, body))
+    })?;
     let packet = bytes.get(found.body + 16..found.end)?;
     if packet.len() > MAX_PAYLOAD {
         return None;
@@ -372,6 +443,11 @@ pub(super) fn read_uuid_xmp(bytes: &[u8]) -> Option<String> {
 /// alone, and since `read_uuid_xmp` takes the first match, their copy keeps
 /// winning. That is the same canonical-first rule the container-native reader
 /// follows.
+///
+/// This is the in-memory reference for what `mirror_uuid_sidecar` does to a
+/// file on disk (which appends in place instead of copying a whole video), so
+/// it only builds for tests and fixtures.
+#[cfg(test)]
 pub(super) fn append_uuid_xmp(bytes: &[u8], json: &str) -> Option<Vec<u8>> {
     let found = boxes(bytes);
     // A real ISOBMFF file starts with `ftyp` and the walk covers all of it.
@@ -380,19 +456,32 @@ pub(super) fn append_uuid_xmp(bytes: &[u8], json: &str) -> Option<Vec<u8>> {
         return None;
     }
 
-    let keep =
-        if last.kind == *b"uuid" && bytes.get(last.body..last.body + 16) == Some(&XMP_UUID[..]) {
-            last.start
-        } else {
-            bytes.len()
-        };
+    let keep = if is_xmp_uuid(last.kind, bytes.get(last.body..)?) {
+        last.start
+    } else {
+        bytes.len()
+    };
 
+    let uuid_box = uuid_xmp_box(json)?;
+    let mut out = Vec::with_capacity(keep + uuid_box.len());
+    out.extend_from_slice(bytes.get(..keep)?);
+    out.extend_from_slice(&uuid_box);
+    Some(out)
+}
+
+/// Whether a box of `kind` whose payload starts with `body` is an Adobe XMP
+/// `uuid` box. `body` may run on past the 16-byte identifier.
+pub(super) fn is_xmp_uuid(kind: [u8; 4], body: &[u8]) -> bool {
+    kind == *b"uuid" && body.get(..16) == Some(&XMP_UUID[..])
+}
+
+/// A complete top-level Adobe XMP `uuid` box carrying `json`.
+pub(super) fn uuid_xmp_box(json: &str) -> Option<Vec<u8>> {
     let packet = xmp_packet(json);
     let body_len = 16 + packet.len();
     let size = u32::try_from(8 + body_len).ok()?;
 
-    let mut out = Vec::with_capacity(keep + 8 + body_len);
-    out.extend_from_slice(bytes.get(..keep)?);
+    let mut out = Vec::with_capacity(8 + body_len);
     out.extend_from_slice(&size.to_be_bytes());
     out.extend_from_slice(b"uuid");
     out.extend_from_slice(&XMP_UUID);
@@ -697,6 +786,28 @@ mod tests {
     }
 
     #[test]
+    fn avif_exif_is_read_and_mirrored_from_a_file() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("seed".to_string(), "31".to_string());
+        let json = super::super::format_swarmui_json(&params);
+        let buf = avif_with_exif(&super::super::build_exif_user_comment_blob(&json));
+
+        let dir = std::env::temp_dir().join(format!("mooshie-avif-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("anim.avif");
+        std::fs::write(&path, &buf).unwrap();
+
+        let read = super::super::read_file_metadata(&path).unwrap();
+        assert_eq!(read.get("seed").map(String::as_str), Some("31"));
+
+        assert!(super::super::mirror_uuid_sidecar(&path));
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(&after[..buf.len()], &buf[..]);
+        assert_eq!(read_uuid_xmp(&after).as_deref(), Some(json.as_str()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn returns_none_when_an_extent_points_past_the_file() {
         let tiff = b"II\x2a\x00\x08\x00\x00\x00";
         let mut buf = avif_with_exif(tiff);
@@ -757,6 +868,95 @@ mod tests {
         buf.extend_from_slice(&bx(b"moov", b"index"));
 
         assert!(read_uuid_xmp(&buf).is_none());
+    }
+
+    #[test]
+    fn a_64_bit_size_that_would_overflow_the_offset_stops_the_walk() {
+        // `off + largesize` used to overflow: a panic in debug builds and a
+        // wrapped, bogus end offset in release.
+        for large in [u64::MAX, u64::MAX - 7, 1u64 << 63] {
+            let mut buf = ftyp(b"isom");
+            buf.extend_from_slice(&1u32.to_be_bytes());
+            buf.extend_from_slice(b"mdat");
+            buf.extend_from_slice(&large.to_be_bytes());
+            buf.extend_from_slice(b"data");
+
+            let found = boxes(&buf);
+            assert_eq!(found.len(), 1, "largesize {large:#x}");
+            assert!(read_udta_comment(&buf).is_none());
+            assert!(read_uuid_xmp(&buf).is_none());
+            assert!(append_uuid_xmp(&buf, "{}").is_none());
+            let walked = file_boxes(&mut std::io::Cursor::new(&buf), buf.len() as u64).unwrap();
+            assert_eq!(walked.len(), 1, "largesize {large:#x}");
+        }
+    }
+
+    #[test]
+    fn an_mdta_key_size_that_would_overflow_is_refused() {
+        let mut keys = vec![0u8; 4];
+        keys.extend_from_slice(&1u32.to_be_bytes());
+        keys.extend_from_slice(&u32::MAX.to_be_bytes());
+        keys.extend_from_slice(b"mdtacomment");
+        assert!(mdta_key_index(&keys, b"comment").is_none());
+    }
+
+    #[test]
+    fn walking_a_file_matches_walking_its_bytes() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&bx(b"mdat", b"frames"));
+        buf.extend_from_slice(&bx(b"moov", b"index"));
+        // A 64-bit sized box and a to-the-end box.
+        buf.extend_from_slice(&1u32.to_be_bytes());
+        buf.extend_from_slice(b"free");
+        buf.extend_from_slice(&20u64.to_be_bytes());
+        buf.extend_from_slice(b"pad!");
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"skip");
+        buf.extend_from_slice(b"rest");
+
+        let from_bytes: Vec<FileBox> = boxes(&buf)
+            .into_iter()
+            .map(|b| FileBox {
+                kind: b.kind,
+                start: b.start as u64,
+                body: b.body as u64,
+                end: b.end as u64,
+            })
+            .collect();
+        let from_file = file_boxes(&mut std::io::Cursor::new(&buf), buf.len() as u64).unwrap();
+        assert_eq!(from_file, from_bytes);
+        assert_eq!(from_file.len(), 5);
+        assert_eq!(from_file.last().unwrap().end, buf.len() as u64);
+    }
+
+    #[test]
+    fn walking_a_file_stops_at_malformed_headers() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&3u32.to_be_bytes()); // smaller than its header
+        buf.extend_from_slice(b"moov");
+        buf.extend_from_slice(&[0u8; 12]);
+        let walked = file_boxes(&mut std::io::Cursor::new(&buf), buf.len() as u64).unwrap();
+        assert_eq!(walked.len(), 1);
+
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&1u32.to_be_bytes()); // largesize, truncated
+        buf.extend_from_slice(b"mdat");
+        buf.extend_from_slice(&[0u8; 4]);
+        let walked = file_boxes(&mut std::io::Cursor::new(&buf), buf.len() as u64).unwrap();
+        assert_eq!(walked.len(), 1);
+    }
+
+    #[test]
+    fn the_uuid_box_helpers_agree_with_the_in_memory_writer() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&bx(b"moov", b"index"));
+        let appended = append_uuid_xmp(&buf, "{\"a\":1}").unwrap();
+        let uuid_box = uuid_xmp_box("{\"a\":1}").unwrap();
+        assert_eq!(&appended[buf.len()..], &uuid_box[..]);
+        assert!(is_xmp_uuid(*b"uuid", &uuid_box[8..]));
+        assert!(!is_xmp_uuid(*b"uuid", &uuid_box[8..20]));
+        assert!(!is_xmp_uuid(*b"free", &uuid_box[8..]));
+        assert_eq!(read_uuid_xmp(&uuid_box).as_deref(), Some("{\"a\":1}"));
     }
 
     #[test]

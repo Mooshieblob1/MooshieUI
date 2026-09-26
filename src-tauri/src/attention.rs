@@ -316,11 +316,14 @@ fn parse_version2(s: &str) -> Option<(u32, u32)> {
 /// "cp310" → (3, 10). CPython major versions are single-digit.
 fn parse_cp_tag(s: &str) -> Option<(u32, u32)> {
     let digits = s.strip_prefix("cp")?;
-    if digits.len() < 2 {
+    // ASCII digits only: `digits[..1]` on a multi-byte first character (the
+    // tag comes from a filename) was a char-boundary panic, and `parse` alone
+    // would also accept a sign.
+    if digits.len() < 2 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let major = digits[..1].parse().ok()?;
-    let minor = digits[1..].parse().ok()?;
+    let major = digits.get(..1)?.parse().ok()?;
+    let minor = digits.get(1..)?.parse().ok()?;
     Some((major, minor))
 }
 
@@ -333,6 +336,18 @@ mod tests {
             torch,
             cuda: cuda.to_string(),
             python,
+        }
+    }
+
+    #[test]
+    fn cp_tags_parse_ascii_digits_and_refuse_everything_else() {
+        assert_eq!(parse_cp_tag("cp310"), Some((3, 10)));
+        assert_eq!(parse_cp_tag("cp39"), Some((3, 9)));
+        // A multi-byte first character used to panic on `digits[..1]`.
+        for bad in [
+            "cpé1", "cp3é", "cp٣١٠", "cp+1", "cp3-", "cp3", "cp", "py310", "",
+        ] {
+            assert_eq!(parse_cp_tag(bad), None, "{bad:?}");
         }
     }
 

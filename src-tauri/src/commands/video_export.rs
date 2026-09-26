@@ -260,6 +260,114 @@ pub fn export_dir_for(username: Option<&str>) -> Option<PathBuf> {
     }
 }
 
+/// Create `dir` (the export root or a directory under it) and every missing
+/// level between, each private to the current user, and refuse to use any
+/// level that is not.
+///
+/// The export root lives in the shared system temp dir under a fixed name,
+/// so on a multi-user machine someone else can create it first: as a symlink
+/// steering our writes elsewhere, or as a directory they own and can read
+/// every export from. Each level must be a real directory (never a symlink)
+/// owned by us, and on Unix it is created 0700 and tightened to 0700 if an
+/// earlier version left it wider.
+pub fn ensure_private_export_dir(root: &Path, dir: &Path) -> std::io::Result<()> {
+    let rel = dir.strip_prefix(root).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "export directory is outside the export root",
+        )
+    })?;
+    // Vet the whole subpath before creating anything.
+    let parts = rel
+        .components()
+        .map(|component| match component {
+            std::path::Component::Normal(part) => Ok(part),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "export directory is not a plain subpath",
+            )),
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let mut current = root.to_path_buf();
+    ensure_private_dir(&current)?;
+    for part in parts {
+        current.push(part);
+        ensure_private_dir(&current)?;
+    }
+    Ok(())
+}
+
+/// Create one directory level 0700 if it is missing, then vet it.
+fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
+    if let Err(e) = std::fs::symlink_metadata(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(e);
+        }
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        // Not `create_dir_all`: each level is created, and vetted, on its own.
+        match builder.create(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    check_private_dir(path)
+}
+
+/// A directory is private when it is a real directory, not a symlink, owned by
+/// the current user. On Unix any group or other permission bits are removed.
+fn check_private_dir(path: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("{} is not a plain directory", path.display()),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if meta.uid() != current_uid()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{} is owned by another user", path.display()),
+            ));
+        }
+        if meta.mode() & 0o077 != 0 {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(())
+}
+
+/// The effective uid of this process, without a libc dependency: the owner
+/// of a file this process has just created exclusively (`O_EXCL`, random
+/// name), read back through its own handle so nothing can swap it underneath.
+#[cfg(unix)]
+fn current_uid() -> std::io::Result<u32> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    static UID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    if let Some(uid) = UID.get() {
+        return Ok(*uid);
+    }
+    let probe = std::env::temp_dir().join(format!(".mooshie-uid-{}", uuid::Uuid::new_v4()));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&probe)?;
+    let meta = file.metadata();
+    drop(file);
+    let _ = std::fs::remove_file(&probe);
+    let uid = meta?.uid();
+    Ok(*UID.get_or_init(|| uid))
+}
+
 /// The loop modes the encoder implements (see `apply_loop_mode` in
 /// `video_export.py`). The mode also lands in the output filename, so an
 /// unrecognised value falls back to the default instead of reaching the path.
@@ -379,10 +487,13 @@ pub(crate) async fn probe_export_inner(state: &AppState) -> ExportCapability {
 /// of truth, it works on videos generated before metadata shipped, and the
 /// reader has to exist for drag-and-drop anyway. A column would be faster and
 /// would create two places that can disagree.
+///
+/// The source is a gallery video of up to a few gigabytes, so this goes
+/// through the streaming reader (box headers plus the small metadata boxes)
+/// rather than loading the file. Blocking I/O: `run_export` calls it on a
+/// blocking thread.
 fn source_metadata_json(source: &Path) -> String {
-    std::fs::read(source)
-        .ok()
-        .and_then(|bytes| crate::metadata::read_image_metadata(&bytes).ok().flatten())
+    crate::metadata::read_file_metadata(source)
         .map(|params| crate::metadata::format_swarmui_json(&params))
         .unwrap_or_default()
 }
@@ -447,7 +558,8 @@ pub(crate) async fn run_export(
 
     let dir = export_dir_for(username)
         .ok_or_else(|| AppError::Other("Invalid export directory".into()))?;
-    std::fs::create_dir_all(&dir)?;
+    ensure_private_export_dir(&export_temp_dir(), &dir)
+        .map_err(|e| AppError::Other(format!("Export directory is unusable: {e}")))?;
     let stem = source
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -471,6 +583,12 @@ pub(crate) async fn run_export(
     // can leave the toggle's state alone when the user switches formats.
     let keep_audio = keep_audio && supports_audio(ext, loop_mode);
 
+    let metadata_json = {
+        let source = source.to_path_buf();
+        tokio::task::spawn_blocking(move || source_metadata_json(&source))
+            .await
+            .unwrap_or_default()
+    };
     let job = serde_json::json!({
         "source": source.to_string_lossy(),
         "out": out_path.to_string_lossy(),
@@ -485,7 +603,7 @@ pub(crate) async fn run_export(
         "loop_mode": loop_mode,
         "crossfade_frames": crossfade_frames,
         "auto_threshold": AUTO_SEAM_THRESHOLD,
-        "metadata_json": source_metadata_json(source),
+        "metadata_json": metadata_json,
     });
 
     let mut cmd = crate::comfyui::process::tokio_command_no_window(&python);
@@ -580,7 +698,10 @@ pub(crate) async fn run_export(
     // chat-client upload. WebP and GIF have no equivalent box and keep only the
     // container-native carrier Python just wrote.
     if matches!(ext, "mp4" | "avif") {
-        crate::metadata::mirror_uuid_sidecar(&out_path);
+        let out_path = out_path.clone();
+        let _ =
+            tokio::task::spawn_blocking(move || crate::metadata::mirror_uuid_sidecar(&out_path))
+                .await;
     }
 
     Ok(result)
@@ -686,9 +807,20 @@ pub async fn copy_file_to_clipboard(path: String) -> Result<(), AppError> {
         // osascript, not objc2: this is the mechanism `native_clipboard_write` already
         // uses for macOS, and it adds no dependency. `POSIX file` puts a file reference
         // on the pasteboard, so Finder and chat clients paste the file itself.
-        let script = format!("set the clipboard to POSIX file \"{}\"", p.display());
+        //
+        // The path goes in as an argument to the script's run handler, never
+        // spliced into its source: a `"` or `\` in a filename would otherwise
+        // end the string literal and run the rest as AppleScript.
         let status = std::process::Command::new("osascript")
-            .args(["-e", &script])
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "set the clipboard to POSIX file (item 1 of argv)",
+                "-e",
+                "end run",
+            ])
+            .arg(&p)
             .status()
             .map_err(|e| AppError::Other(format!("osascript failed: {e}")))?;
         if !status.success() {
@@ -745,6 +877,11 @@ pub async fn copy_file_to(src_path: String, dest_path: String) -> Result<(), App
         .map_err(|e| AppError::Other(format!("Source file not found: {e}")))?;
 
     let export_dir = export_temp_dir();
+    // The containment check below is only meaningful if the root is ours: a
+    // root that is a symlink (to `/`, say) canonicalizes to wherever it points
+    // and would let any source pass.
+    check_private_dir(&export_dir)
+        .map_err(|e| AppError::Other(format!("Export directory is unusable: {e}")))?;
     // Canonicalize the temp dir when it exists. If it does not, fall back to
     // the raw path - any source that actually exists under a non-existent dir
     // cannot pass the canonicalize step above, so this branch is unreachable
@@ -1031,5 +1168,109 @@ mod export_path_tests {
         assert_eq!(export_dir_for(Some("..")), None);
         assert_eq!(export_dir_for(Some("D:x")), None);
         assert_eq!(export_dir_for(Some("a/b")), None);
+    }
+}
+
+#[cfg(test)]
+mod private_dir_tests {
+    use super::ensure_private_export_dir;
+    use std::path::PathBuf;
+
+    /// A fresh parent for a stand-in export root; the root itself is left
+    /// for the code under test to create.
+    fn scratch() -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("mooshie-export-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[test]
+    fn creates_every_level_private() {
+        let parent = scratch();
+        let root = parent.join("mooshie-export");
+        let dir = root.join("users").join("bob");
+        ensure_private_export_dir(&root, &dir).unwrap();
+        assert!(dir.is_dir());
+        #[cfg(unix)]
+        for level in [&root, &root.join("users"), &dir] {
+            assert_eq!(mode(level), 0o700, "{}", level.display());
+        }
+        // Idempotent.
+        ensure_private_export_dir(&root, &dir).unwrap();
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tightens_a_root_left_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let parent = scratch();
+        let root = parent.join("mooshie-export");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).unwrap();
+        ensure_private_export_dir(&root, &root).unwrap();
+        assert_eq!(mode(&root), 0o700);
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_symlinked_root_or_level() {
+        let parent = scratch();
+        let elsewhere = parent.join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+
+        let root = parent.join("mooshie-export");
+        std::os::unix::fs::symlink(&elsewhere, &root).unwrap();
+        assert!(ensure_private_export_dir(&root, &root.join("users")).is_err());
+        assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+
+        let root2 = parent.join("mooshie-export-2");
+        std::fs::create_dir(&root2).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root2.join("users")).unwrap();
+        assert!(ensure_private_export_dir(&root2, &root2.join("users").join("bob")).is_err());
+        assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[test]
+    fn refuses_a_dir_outside_the_root_or_a_file_in_the_way() {
+        let parent = scratch();
+        let root = parent.join("mooshie-export");
+        assert!(ensure_private_export_dir(&root, &parent.join("other")).is_err());
+        assert!(ensure_private_export_dir(&root, &root.join("..").join("x")).is_err());
+        // Refused before anything was created.
+        assert!(!root.exists());
+
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("users"), b"not a dir").unwrap();
+        assert!(ensure_private_export_dir(&root, &root.join("users").join("bob")).is_err());
+        std::fs::remove_dir_all(&parent).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_root_owned_by_another_user() {
+        // Only root can hand a directory to someone else; skip otherwise.
+        if super::current_uid().unwrap() != 0 {
+            return;
+        }
+        let parent = scratch();
+        let root = parent.join("mooshie-export");
+        std::fs::create_dir(&root).unwrap();
+        std::os::unix::fs::chown(&root, Some(54_321), None).unwrap();
+        assert!(ensure_private_export_dir(&root, &root).is_err());
+        std::fs::remove_dir_all(&parent).ok();
     }
 }

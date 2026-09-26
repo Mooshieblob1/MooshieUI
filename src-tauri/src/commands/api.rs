@@ -6975,6 +6975,7 @@ pub async fn import_image_directory(
 }
 
 /// Recursively collect all image files (PNG, JPG, WebP) from a directory.
+#[cfg(feature = "desktop")]
 fn collect_image_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, AppError> {
     let mut files = Vec::new();
     collect_image_files_recursive(dir, &mut files)?;
@@ -6987,16 +6988,51 @@ fn collect_image_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>,
     Ok(files)
 }
 
+/// How many directory levels below the chosen folder an import descends.
+/// Real photo libraries nest a handful of levels; this only has to stop a
+/// pathological tree.
+#[cfg(any(feature = "desktop", test))]
+const IMPORT_MAX_DEPTH: usize = 32;
+
+#[cfg(any(feature = "desktop", test))]
 fn collect_image_files_recursive(
     dir: &std::path::Path,
     files: &mut Vec<std::path::PathBuf>,
 ) -> Result<(), AppError> {
+    collect_image_files_at_depth(dir, files, 0)
+}
+
+/// Directory symlinks are never followed: `entry.file_type()` reports the link
+/// itself, so a loop (Wine's `dosdevices/z: -> /`, say) can neither recurse
+/// forever nor pull the whole filesystem into the gallery. A symlink to a
+/// single image file is still imported.
+#[cfg(any(feature = "desktop", test))]
+fn collect_image_files_at_depth(
+    dir: &std::path::Path,
+    files: &mut Vec<std::path::PathBuf>,
+    depth: usize,
+) -> Result<(), AppError> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
         let path = entry.path();
-        if path.is_dir() {
-            collect_image_files_recursive(&path, files)?;
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        if file_type.is_dir() {
+            if depth < IMPORT_MAX_DEPTH {
+                collect_image_files_at_depth(&path, files, depth + 1)?;
+            } else {
+                log::warn!(
+                    "Import: not descending past {} levels into {}",
+                    IMPORT_MAX_DEPTH,
+                    path.display()
+                );
+            }
+            continue;
+        }
+        let is_file = file_type.is_file() || (file_type.is_symlink() && path.is_file());
+        if !is_file {
+            continue;
+        }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_ascii_lowercase().as_str() {
                 "png" | "jpg" | "jpeg" | "webp" => files.push(path),
                 _ => {}
@@ -7004,6 +7040,83 @@ fn collect_image_files_recursive(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod import_walk_tests {
+    use super::{collect_image_files_recursive, IMPORT_MAX_DEPTH};
+    use std::path::PathBuf;
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mooshie-import-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(files: &[PathBuf]) -> Vec<String> {
+        let mut names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn collects_nested_images_only() {
+        let root = scratch();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("top.PNG"), b"x").unwrap();
+        std::fs::write(root.join("a/mid.jpg"), b"x").unwrap();
+        std::fs::write(root.join("a/b/deep.webp"), b"x").unwrap();
+        std::fs::write(root.join("a/notes.txt"), b"x").unwrap();
+        // A directory named like an image is still a directory.
+        std::fs::create_dir(root.join("a/folder.png")).unwrap();
+
+        let mut files = Vec::new();
+        collect_image_files_recursive(&root, &mut files).unwrap();
+        assert_eq!(names(&files), ["deep.webp", "mid.jpg", "top.PNG"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_symlinks_are_not_followed() {
+        let root = scratch();
+        let outside = scratch();
+        std::fs::write(outside.join("elsewhere.png"), b"x").unwrap();
+        std::fs::write(root.join("here.png"), b"x").unwrap();
+        // A loop back to the root (Wine's `dosdevices/z: -> /` shape) and a
+        // link out to another tree: neither is walked.
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        // A link to a single image file is still an image.
+        std::os::unix::fs::symlink(outside.join("elsewhere.png"), root.join("linked.png")).unwrap();
+        // A dangling link is skipped rather than failing the import.
+        std::os::unix::fs::symlink(root.join("missing.png"), root.join("dangling.png")).unwrap();
+
+        let mut files = Vec::new();
+        collect_image_files_recursive(&root, &mut files).unwrap();
+        assert_eq!(names(&files), ["here.png", "linked.png"]);
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn descent_stops_at_the_depth_cap() {
+        let root = scratch();
+        let mut dir = root.clone();
+        for level in 0..=IMPORT_MAX_DEPTH + 1 {
+            dir = dir.join(format!("d{level}"));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join(format!("img{level}.png")), b"x").unwrap();
+        }
+        let mut files = Vec::new();
+        collect_image_files_recursive(&root, &mut files).unwrap();
+        // d0 sits at depth 1; the deepest walked directory is at the cap.
+        assert_eq!(files.len(), IMPORT_MAX_DEPTH);
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
 
 /// Export application logs and system information for troubleshooting. Collects:
