@@ -12,6 +12,7 @@
   import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import { prepareOutputImageForEditMode } from "../../utils/editImagePreparation.js";
   import { uploadImageBytes } from "../../utils/api.js";
+  import { userScopedKey } from "../../utils/ipc.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import type { OutputImage } from "../../types/index.js";
 
@@ -21,6 +22,8 @@
 
   let { onSwitchToGenerate }: Props = $props();
 
+  // Per LAN account (`userScopedKey`): `boardFilter` names one of the
+  // account's own boards.
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
 
   let galleryImagesPerRow = $state(5);
@@ -126,7 +129,7 @@
 
   function loadGalleryPrefs() {
     try {
-      const raw = localStorage.getItem(GALLERY_PREFS_KEY);
+      const raw = localStorage.getItem(userScopedKey(GALLERY_PREFS_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         imagesPerRow?: number;
@@ -303,7 +306,7 @@
     void galleryView;
     try {
       localStorage.setItem(
-        GALLERY_PREFS_KEY,
+        userScopedKey(GALLERY_PREFS_KEY),
         JSON.stringify({
           imagesPerRow: galleryImagesPerRow,
           sortBy: gallerySortBy,

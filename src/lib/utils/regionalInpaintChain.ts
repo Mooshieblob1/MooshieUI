@@ -76,6 +76,18 @@ export async function runRegionalInpaintChain(
   baseParams.facefix_enabled = false;
   const segmentsOnFinal = baseParams.detail_segments;
   baseParams.detail_segments = [];
+  // Upscale likewise runs once, on the final image. Upscaling every step would
+  // compound the scale and hand the next inpaint an image larger than its
+  // mask.
+  const upscaleOnFinal = baseParams.upscale_enabled;
+  const savePreUpscaleOnFinal = baseParams.save_pre_upscale_image;
+  baseParams.upscale_enabled = false;
+  baseParams.save_pre_upscale_image = false;
+  // Every step has to finish its schedule: a paused base pass would hand a
+  // half-denoised preview to the first inpaint. (Resume stages only apply to
+  // txt2img and are rejected on the inpaint steps.)
+  baseParams.pause_at_step = null;
+  baseParams.resume_stages = [];
 
   const regionalContext = buildRegionalContextPrompt(
     baseParams.positive_prompt,
@@ -134,6 +146,8 @@ export async function runRegionalInpaintChain(
       differential_diffusion: generation.isAnima || generation.differentialDiffusion,
       facefix_enabled: isFinalOutput && facefixOnFinal,
       detail_segments: isFinalOutput ? segmentsOnFinal : [],
+      upscale_enabled: isFinalOutput && upscaleOnFinal,
+      save_pre_upscale_image: isFinalOutput && savePreUpscaleOnFinal,
     };
 
     const regionResult = await callbacks.submit(regionParams, {

@@ -158,9 +158,10 @@ pub(crate) fn video_metadata_params(
     let (width, height) =
         compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
     let steps = sampling_steps(params);
-    // RIFE doubles H3's native 24 fps without changing the clip's duration.
+    // Interpolation multiplies H3's native 24 fps (2x-4x) without changing the
+    // clip's duration; the same rate the graph hands `CreateVideo`.
     let fps = if params.video_rife_enabled {
-        48.0
+        crate::templates::rife::RifeSettings::from_params(params).output_fps(24.0)
     } else {
         24.0
     };
@@ -1256,7 +1257,18 @@ mod tests {
             assert_eq!(rife["inputs"]["multiplier"], json!(multiplier));
             let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
             assert_eq!(create_video["inputs"]["fps"], json!(expected_fps));
+            // The embedded metadata reports the rate the clip was saved at.
+            assert_eq!(
+                video_metadata_params(&params, 1)["mooshie_video_fps"],
+                format!("{expected_fps}")
+            );
         }
+        let mut params = video_params("fl2va");
+        params.video_rife_enabled = true;
+        params.video_rife_multiplier = 2;
+        assert_eq!(video_metadata_params(&params, 1)["mooshie_video_fps"], "48");
+        params.video_rife_enabled = false;
+        assert_eq!(video_metadata_params(&params, 1)["mooshie_video_fps"], "24");
     }
 
     #[test]

@@ -95,11 +95,22 @@ pub struct PositiveRegion {
 /// Seeds are 63-bit and exceed JavaScript's 2^53 safe-integer range, so they
 /// must cross the IPC/JSON boundary as strings. Serializes an i64 as a decimal
 /// string; accepts a string or a bare number (old persisted settings/clients).
+///
+/// A negative seed means "pick one at random". ComfyUI itself takes any seed
+/// in `0..=u64::MAX`, so a seed copied from it can be above `i64::MAX`. Such a
+/// seed is folded into range by clearing its top bit: the same input always
+/// gives the same seed, rather than failing the whole request or wrapping to a
+/// negative number that would quietly turn into a random seed.
 pub mod seed_string {
     use serde::{de, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(v: &i64, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&v.to_string())
+    }
+
+    /// A ComfyUI (unsigned 64-bit) seed as a non-negative i64.
+    fn fold_u64(v: u64) -> i64 {
+        (v & i64::MAX as u64) as i64
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
@@ -113,13 +124,26 @@ pub mod seed_string {
                 Ok(v)
             }
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> {
-                Ok(v as i64)
+                Ok(fold_u64(v))
             }
             fn visit_f64<E: de::Error>(self, v: f64) -> Result<i64, E> {
-                Ok(v as i64)
+                // `as` saturates (and maps NaN to 0), so only the sign matters.
+                Ok(if v < 0.0 {
+                    v as i64
+                } else {
+                    fold_u64(v as u64)
+                })
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
-                v.trim().parse::<i64>().map_err(de::Error::custom)
+                let v = v.trim();
+                v.parse::<i64>()
+                    .or_else(|_| v.parse::<u64>().map(fold_u64))
+                    .map_err(|_| {
+                        E::custom(format!(
+                            "invalid seed \"{v}\": use -1 for a random seed or a whole number from 0 to {}",
+                            u64::MAX
+                        ))
+                    })
             }
         }
         d.deserialize_any(SeedVisitor)
@@ -762,4 +786,54 @@ fn default_facefix_bbox_padding() -> f64 {
 
 fn default_facefix_feather() -> u32 {
     20
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct Seeded {
+        #[serde(with = "super::seed_string")]
+        seed: i64,
+    }
+
+    fn seed(value: serde_json::Value) -> Result<i64, serde_json::Error> {
+        serde_json::from_value::<Seeded>(serde_json::json!({ "seed": value })).map(|s| s.seed)
+    }
+
+    fn fold(v: u64) -> i64 {
+        (v & i64::MAX as u64) as i64
+    }
+
+    #[test]
+    fn random_and_in_range_seeds_are_unchanged() {
+        assert_eq!(seed("-1".into()).unwrap(), -1);
+        assert_eq!(seed((-1).into()).unwrap(), -1);
+        assert_eq!(seed(" 42 ".into()).unwrap(), 42);
+        assert_eq!(seed(i64::MAX.to_string().into()).unwrap(), i64::MAX);
+        assert_eq!(seed(i64::MAX.into()).unwrap(), i64::MAX);
+    }
+
+    #[test]
+    fn a_comfyui_seed_above_i64_max_is_folded_not_rejected_or_randomised() {
+        // String form, as the frontend sends it.
+        assert_eq!(seed(u64::MAX.to_string().into()).unwrap(), i64::MAX);
+        assert_eq!(seed("9223372036854775808".into()).unwrap(), 0);
+        assert_eq!(
+            seed("12345678901234567890".into()).unwrap(),
+            fold(12345678901234567890)
+        );
+        // A bare JSON number must not wrap negative (negative means random).
+        assert_eq!(seed(u64::MAX.into()).unwrap(), i64::MAX);
+        assert_eq!(seed(((1u64 << 63) + 7).into()).unwrap(), 7);
+        assert_eq!(seed(1.0e19.into()).unwrap(), fold(1.0e19 as u64));
+    }
+
+    #[test]
+    fn a_seed_outside_the_comfyui_range_says_what_is_accepted() {
+        let err = seed("99999999999999999999999".into()).unwrap_err();
+        assert!(err.to_string().contains("-1 for a random seed"), "{err}");
+        assert!(seed("12abc".into()).is_err());
+    }
 }

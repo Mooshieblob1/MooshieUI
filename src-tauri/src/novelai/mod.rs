@@ -957,6 +957,45 @@ async fn run_upscale(
     Ok(RunOutcome::Completed)
 }
 
+/// Absolute path for a local pass model that lives in a folder that does not
+/// match what it is (a split-file model in checkpoints/, or a full checkpoint
+/// in diffusion_models/), so the path loaders can take over. Anything
+/// correctly filed skips this entirely.
+///
+/// Skipped for a remote ComfyUI too, the same as the generate command: a path
+/// on this machine means nothing to that server, and the file need not exist
+/// here. Without `resolved_model_path` the stock loaders address the model by
+/// name.
+fn resolve_local_pass_model_path(
+    config: &crate::config::AppConfig,
+    derived: &mut GenerationParams,
+) -> Result<(), AppError> {
+    let Some(category) = derived.model_source_category.clone() else {
+        return Ok(());
+    };
+    if !crate::commands::api::generation_models_are_local(config) {
+        return Ok(());
+    }
+    let filename = if derived.use_split_model {
+        derived.diffusion_model.clone().unwrap_or_default()
+    } else {
+        derived.checkpoint.clone()
+    };
+    let path = crate::commands::api::resolve_model_path(
+        &config.comfyui_path,
+        config.extra_model_paths.as_deref(),
+        &category,
+        &filename,
+    )
+    .ok_or_else(|| {
+        AppError::Other(format!(
+            "Local post-process model not found: {category}/{filename}"
+        ))
+    })?;
+    derived.resolved_model_path = Some(path.to_string_lossy().to_string());
+    Ok(())
+}
+
 /// Run the local ComfyUI upscale/face-fix chain.
 ///
 /// With NovelAI faces enabled, collect the result privately and return it for
@@ -993,36 +1032,7 @@ async fn run_local_post_process(
     };
     let mut derived = crate::templates::upscale_standalone::build_params(params, &input_name)
         .ok_or_else(|| AppError::Other("Local post-process is not applicable".into()))?;
-    // The local model lives in a folder that does not match what it is (a
-    // split-file model in checkpoints/, or a full checkpoint in
-    // diffusion_models/), so the path loaders take over and need an absolute
-    // path. Anything correctly filed skips this entirely.
-    if let Some(category) = derived.model_source_category.clone() {
-        let filename = if derived.use_split_model {
-            derived.diffusion_model.clone().unwrap_or_default()
-        } else {
-            derived.checkpoint.clone()
-        };
-        let resolved = {
-            let config = state.config.read().await;
-            crate::commands::api::resolve_model_path(
-                &config.comfyui_path,
-                config.extra_model_paths.as_deref(),
-                &category,
-                &filename,
-            )
-        };
-        match resolved {
-            Some(path) => {
-                derived.resolved_model_path = Some(path.to_string_lossy().to_string());
-            }
-            None => {
-                return Err(AppError::Other(format!(
-                    "Local post-process model not found: {category}/{filename}"
-                )));
-            }
-        }
-    }
+    resolve_local_pass_model_path(&*state.config.read().await, &mut derived)?;
     // A split-file model needs all three names. An unresolved companion reaches
     // ComfyUI as `clip_name: ""`, which is rejected during graph validation with
     // no mention of the model that caused it, so refuse it here where the
@@ -1516,5 +1526,44 @@ mod tests {
     #[test]
     fn snapping_never_overflows() {
         assert_eq!(snap_dimension(u32::MAX), u32::MAX / 64 * 64);
+    }
+
+    fn misplaced_local_model(
+        mode: crate::config::ServerMode,
+    ) -> Result<GenerationParams, AppError> {
+        let config = crate::config::AppConfig {
+            server_mode: mode,
+            comfyui_path: std::env::temp_dir()
+                .join("mooshie-local-pass-model-test-empty")
+                .to_string_lossy()
+                .to_string(),
+            extra_model_paths: None,
+            ..Default::default()
+        };
+        let mut derived = GenerationParams {
+            checkpoint: "only-on-the-server.safetensors".into(),
+            model_source_category: Some("diffusion_models".into()),
+            ..Default::default()
+        };
+        resolve_local_pass_model_path(&config, &mut derived).map(|()| derived)
+    }
+
+    #[test]
+    fn a_remote_server_local_pass_model_is_not_looked_up_on_this_machine() {
+        let derived = misplaced_local_model(crate::config::ServerMode::Remote)
+            .expect("a remote server's model need not exist here");
+        assert!(
+            derived.resolved_model_path.is_none(),
+            "stock loaders by name"
+        );
+    }
+
+    #[test]
+    fn a_local_server_still_needs_the_local_pass_model_on_disk() {
+        let err = misplaced_local_model(crate::config::ServerMode::AutoLaunch)
+            .expect_err("missing locally");
+        assert!(err
+            .to_string()
+            .contains("Local post-process model not found"));
     }
 }

@@ -203,10 +203,31 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         );
     }
 
+    // Any other family would fall through to a plain txt2img graph that
+    // ignores the reference image entirely.
+    if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
+        return Err(format!(
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            params.model_architecture
+        ));
+    }
+
     if let Some(cn) = params.controlnet.as_ref() {
         if cn.enabled && cn.image.as_deref().map(str::trim).unwrap_or("").is_empty() {
             return Err(
                 "ControlNet is enabled but no reference image was provided — please upload one or disable ControlNet.".into(),
+            );
+        }
+        if cn.enabled
+            && cn
+                .controlnet_model
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            return Err(
+                "ControlNet is enabled but no ControlNet model is selected — please pick one or disable ControlNet.".into(),
             );
         }
         if cn.enabled
@@ -1188,6 +1209,16 @@ fn inject_resume_stage(result: &mut WorkflowResult, params: &GenerationParams, s
     }
 }
 
+/// Seed for an appended refinement sampler: the generation seed plus the
+/// chain's fixed offset (`+1` upscale, `+2` face fix, `+3 + i` per segment).
+///
+/// ComfyUI seeds are unsigned 64-bit, and a resolved seed can be as large as
+/// `i64::MAX`, so the sum is taken in `u64` and wraps within that range
+/// instead of overflowing.
+pub(crate) fn offset_seed(seed: i64, offset: u64) -> u64 {
+    (seed as u64).wrapping_add(offset)
+}
+
 fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: i64) -> Value {
     // A stage that stops partway through the schedule produces a half-denoised
     // preview for the user to look at, not a finished image: upscaling,
@@ -1416,8 +1447,8 @@ pub fn merge_regional_encode_text(context: &str, region_text: &str) -> String {
 
 /// Remove `<lora:name:weight>` tags from text bound for core `CLIPTextEncode`,
 /// which has no LoRA syntax and would encode them as literal prompt text. The
-/// frontend puts them into regional prompt context; the LoRAs themselves are
-/// applied by the loader chain.
+/// frontend puts them into regional prompt context, and users type them into
+/// the prompt itself; the LoRAs are applied by the loader chain.
 ///
 /// Like the frontend's tag matcher, a `<` right after `:` is not a tag (the
 /// `:<` emoticon escape), and an unterminated tag is left alone. Commas left
@@ -1619,6 +1650,126 @@ mod regional_prompt_tests {
     }
 }
 
+#[cfg(test)]
+mod validation_and_seed_tests {
+    use super::graph_test_util::{build, linked, nodes, params, single};
+    use super::*;
+    use crate::comfyui::types::{ControlNetParam, DetailSegment};
+
+    #[test]
+    fn refinement_seeds_wrap_within_comfyuis_unsigned_range() {
+        let mut p = params("txt2img", "sdxl");
+        p.upscale_enabled = true;
+        p.upscale_method = "latent".to_string();
+        p.upscale_scale = 1.5;
+        p.facefix_enabled = true;
+        p.detail_segments = vec![DetailSegment {
+            target: "hand".to_string(),
+            prompt: String::new(),
+            creativity: 0.4,
+            threshold: 0.5,
+        }];
+        // Would overflow (and panic in debug builds) with plain i64 addition.
+        let workflow = build_workflow(&p, i64::MAX, false);
+        let top = 1u64 << 63;
+
+        let samplers = nodes(&workflow, "KSampler");
+        let mut seeds: Vec<u64> = samplers
+            .iter()
+            .map(|(_, n)| n["inputs"]["seed"].as_u64().unwrap())
+            .collect();
+        seeds.sort_unstable();
+        assert_eq!(seeds, vec![i64::MAX as u64, top], "base and upscale");
+        assert_eq!(
+            single(&workflow, "MooshieFaceDetailer")["inputs"]["seed"],
+            top + 1
+        );
+        assert_eq!(
+            single(&workflow, "MooshieSegmentDetailer")["inputs"]["seed"],
+            top + 2
+        );
+        assert_eq!(offset_seed(-1, 1), 0, "wraps instead of overflowing");
+    }
+
+    #[test]
+    fn image_edit_rejects_a_family_without_an_edit_graph() {
+        let mut p = params("image_edit", "sdxl");
+        p.edit_reference_images = vec!["ref.png".to_string()];
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("Image Edit mode needs"), "{err}");
+        assert!(err.contains("sdxl"), "{err}");
+
+        for arch in ["qwen_edit", "qwen_edit_plus", "flux1kontext", "anima"] {
+            p.model_architecture = arch.to_string();
+            assert!(validate_generation_params(&p).is_ok(), "{arch}");
+        }
+    }
+
+    #[test]
+    fn controlnet_without_a_model_is_rejected_not_skipped() {
+        let mut p = params("txt2img", "sdxl");
+        let mut cn = ControlNetParam {
+            enabled: true,
+            preset: None,
+            controlnet_model: None,
+            image: Some("pose.png".to_string()),
+            preprocessor: None,
+            strength: 1.0,
+            start_percent: 0.0,
+            end_percent: 1.0,
+        };
+        p.controlnet = Some(cn.clone());
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("no ControlNet model"), "{err}");
+
+        cn.controlnet_model = Some("  ".to_string());
+        p.controlnet = Some(cn.clone());
+        assert!(validate_generation_params(&p).is_err());
+
+        cn.controlnet_model = Some("pose.safetensors".to_string());
+        p.controlnet = Some(cn.clone());
+        assert!(validate_generation_params(&p).is_ok());
+
+        // A disabled panel is still ignored.
+        cn.enabled = false;
+        cn.controlnet_model = None;
+        p.controlnet = Some(cn);
+        assert!(validate_generation_params(&p).is_ok());
+    }
+
+    #[test]
+    fn typed_lora_tags_never_reach_the_main_prompt_encodes() {
+        let mut p = params("txt2img", "sdxl");
+        p.positive_prompt = "1girl, <lora:style.safetensors:0.8>, smiling".to_string();
+        p.negative_prompt = "blurry, <lora:neg:1>".to_string();
+        p.positive_segments = vec![PromptSegment {
+            text: "snowing <lora:snow:0.5>".to_string(),
+            start: 0.5,
+            end: 1.0,
+        }];
+        let workflow = build(&p);
+        for (_, node) in nodes(&workflow, "CLIPTextEncode") {
+            let text = node["inputs"]["text"].as_str().unwrap();
+            assert!(!text.contains("<lora:"), "LoRA tag reached CLIP: {text}");
+        }
+        let sampler = single(&workflow, "KSampler");
+        assert_eq!(
+            linked(&workflow, &sampler["inputs"]["negative"])["inputs"]["text"],
+            "blurry"
+        );
+
+        // Qwen Image Edit encodes through its own node.
+        let mut edit = params("image_edit", "qwen_edit");
+        edit.edit_reference_images = vec!["ref.png".to_string()];
+        edit.positive_prompt = "make it red <lora:x:1>".to_string();
+        let workflow = build(&edit);
+        let encodes = nodes(&workflow, "TextEncodeQwenImageEdit");
+        assert!(encodes
+            .iter()
+            .any(|(_, n)| n["inputs"]["prompt"] == "make it red"));
+    }
+}
+
 /// Build a conditioning output that combines a base prompt with optional timestep-scheduled segments.
 ///
 /// When `segments` is empty, this creates a single `CLIPTextEncode` and returns its output —
@@ -1626,6 +1777,10 @@ mod regional_prompt_tests {
 ///
 /// When segments are present, each segment gets its own `CLIPTextEncode` → `ConditioningSetTimestepRange`,
 /// then all are chained together with `ConditioningCombine`.
+///
+/// `<lora:name:weight>` tags typed into the prompt are removed from every
+/// encoded text (see [`strip_lora_tags`]): the frontend sends them as typed,
+/// and only the LoRA panel's entries are loaded.
 ///
 /// Returns `(conditioning_source, next_id)`.
 pub fn build_scheduled_conditioning(
@@ -1643,7 +1798,7 @@ pub fn build_scheduled_conditioning(
             "class_type": "CLIPTextEncode",
             "inputs": {
                 "clip": [clip_source.0, clip_source.1],
-                "text": base_prompt
+                "text": strip_lora_tags(base_prompt)
             }
         }),
     );
@@ -1665,7 +1820,7 @@ pub fn build_scheduled_conditioning(
                 "class_type": "CLIPTextEncode",
                 "inputs": {
                     "clip": [clip_source.0, clip_source.1],
-                    "text": segment.text
+                    "text": strip_lora_tags(&segment.text)
                 }
             }),
         );
@@ -2263,11 +2418,18 @@ mod tests {
         assert_eq!(nodes_of_class(workflow, "VAEDecode").len(), 1);
         assert_eq!(nodes_of_class(workflow, "MooshieSaveImage").len(), 1);
         assert!(
-            nodes_of_class(workflow, "FaceDetailer").is_empty()
+            nodes_of_class(workflow, "MooshieFaceDetailer").is_empty()
                 && nodes_of_class(workflow, "LatentUpscaleBy").is_empty()
                 && nodes_of_class(workflow, "ImageScaleBy").is_empty(),
             "upscale and face fix wait for the stage that finishes the schedule"
         );
+
+        // The same settings do run them once the schedule finishes.
+        params.pause_at_step = None;
+        let full = build_workflow(&params, 42, false);
+        let full = full.as_object().unwrap();
+        assert_eq!(nodes_of_class(full, "MooshieFaceDetailer").len(), 1);
+        assert_eq!(nodes_of_class(full, "ImageScaleBy").len(), 1);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from "svelte";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe, userScopedKey } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
@@ -1021,6 +1021,8 @@
   let metadataPanelCollapsed = $state(false);
   const METADATA_MIN_WIDTH = 260;
   const METADATA_MAX_WIDTH = 600;
+  // Per LAN account (`userScopedKey`): `boardFilter` names one of the
+  // account's own boards.
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
 
   /** Dir picker shown when manualSaveMode is on and 2+ dirs are configured. */
@@ -2021,7 +2023,7 @@
 
   function loadGalleryPrefs() {
     try {
-      const raw = localStorage.getItem(GALLERY_PREFS_KEY);
+      const raw = localStorage.getItem(userScopedKey(GALLERY_PREFS_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         imagesPerRow?: number;
@@ -2076,7 +2078,7 @@
 
     try {
       localStorage.setItem(
-        GALLERY_PREFS_KEY,
+        userScopedKey(GALLERY_PREFS_KEY),
         JSON.stringify({
           imagesPerRow: galleryImagesPerRow,
           sortBy: gallerySortBy,

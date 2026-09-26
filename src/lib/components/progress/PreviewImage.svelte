@@ -307,6 +307,11 @@
       const params = generation.toParams() as GenerationParams;
       params.mode = "img2img";
       params.input_image = uploadName;
+      // A refine is a separate one-pass job. An armed pause or a paused
+      // txt2img run belongs to the text-to-image flow, and the backend rejects
+      // resume stages outside it.
+      params.pause_at_step = null;
+      params.resume_stages = [];
       // Force refine-only mode so we don't re-do the main img2img sampler —
       // the upscale chain alone is the refiner pass.
       params.refine_only = true;

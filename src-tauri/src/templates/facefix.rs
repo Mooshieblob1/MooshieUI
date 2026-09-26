@@ -21,7 +21,9 @@ fn link(value: &Value) -> Option<(String, u32)> {
 /// (`FluxGuidance`, a Flux Redux `StyleModelApply`) are kept, re-applied to
 /// the stripped conditioning when a spatial layer sat underneath. Conditioning
 /// without spatial layers comes back unchanged.
-fn without_spatial_conditioning(
+///
+/// Shared with the `<segment:...>` detailer, which crops the same way.
+pub(super) fn without_spatial_conditioning(
     workflow: &mut Map<String, Value>,
     next_id: &mut u32,
     source: (String, u32),
@@ -72,7 +74,7 @@ fn without_spatial_conditioning(
 
 /// The model before an Anima ControlNet-LLLite patch, which (like a ControlNet
 /// hint) steers the whole frame and would be rescaled onto each face crop.
-fn without_full_image_model_patch(
+pub(super) fn without_full_image_model_patch(
     workflow: &Map<String, Value>,
     model: (String, u32),
 ) -> (String, u32) {
@@ -161,7 +163,7 @@ pub fn append_facefix_chain(
                 "positive": [positive_source.0, positive_source.1],
                 "negative": [face_negative.0, face_negative.1],
                 "detector_model": detector_model,
-                "seed": seed + 2,
+                "seed": super::offset_seed(seed, 2),
                 "steps": params.facefix_steps,
                 "cfg": params.cfg,
                 "sampler_name": params.sampler_name,
