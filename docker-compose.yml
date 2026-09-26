@@ -15,6 +15,7 @@ services:
       - MOOSHIEUI_ADMIN_PASS=${MOOSHIEUI_ADMIN_PASS:-changeme}
       - NVIDIA_VISIBLE_DEVICES=all
       - RUST_LOG=${RUST_LOG:-info}
+      - MOOSHIEUI_TRUST_LOCALHOST=${MOOSHIEUI_TRUST_LOCALHOST:-true}
     deploy:
       resources:
         reservations:

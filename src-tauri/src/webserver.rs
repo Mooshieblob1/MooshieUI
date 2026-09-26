@@ -153,22 +153,65 @@ fn request_is_same_origin(headers: &HeaderMap) -> bool {
         .is_some_and(|authority| authority.eq_ignore_ascii_case(host.trim()))
 }
 
+/// Headers a reverse proxy or tunnel adds to say who the real client is.
+/// Browsers never send them, so their presence means the request was relayed.
+const FORWARDING_HEADERS: &[&str] = &[
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+    "cf-connecting-ip",
+    "true-client-ip",
+];
+
+/// Whether a proxy relayed this request on behalf of another client.
+fn request_was_forwarded(headers: &HeaderMap) -> bool {
+    FORWARDING_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+}
+
+/// The per-request half of the local trust check. `from_this_machine` is a
+/// loopback connection, or any connection in localhost-only mode.
+fn local_request_is_trusted(from_this_machine: bool, headers: &HeaderMap) -> bool {
+    from_this_machine
+        && host_header_is_local(headers)
+        && request_is_same_origin(headers)
+        && !request_was_forwarded(headers)
+}
+
+/// Whether implicit local admin applies at all. It stays on while no admin
+/// account exists even when the setting is off, so turning it off can never
+/// leave a server nobody can administer from a browser.
+fn local_trust_active(enabled: bool, has_admin_account: impl FnOnce() -> bool) -> bool {
+    enabled || !has_admin_account()
+}
+
 /// Whether a request gets the implicit owner trust that localhost (and
 /// localhost-only mode) grants without a token. Being on loopback is not
 /// enough on its own: a website the owner visits can reach 127.0.0.1 (CSRF),
 /// DNS rebinding makes a foreign domain resolve to it, and a same-host reverse
 /// proxy or tunnel sidecar makes every internet request arrive from loopback.
-/// Those callers fall through to token auth instead.
+/// Those callers fall through to token auth instead. A proxy that rewrites
+/// `Host` to the upstream address and adds no forwarding headers is
+/// indistinguishable from a local client, which is what the `trust_localhost`
+/// setting is for.
 fn is_trusted_local_request(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> bool {
-    (is_localhost(remote) || !state.lan_enabled)
-        && host_header_is_local(headers)
-        && request_is_same_origin(headers)
+    local_request_is_trusted(is_localhost(remote) || !state.lan_enabled, headers)
+        && local_trust_active(
+            state
+                .app
+                .trust_localhost
+                .load(std::sync::atomic::Ordering::SeqCst),
+            || state.auth.has_admin_account(),
+        )
 }
 
 #[cfg(test)]
 mod local_trust_tests {
     use super::{
-        host_header_is_local, host_without_port, is_safe_static_path, request_is_same_origin,
+        host_header_is_local, host_without_port, is_safe_static_path, local_request_is_trusted,
+        local_trust_active, request_is_same_origin, request_was_forwarded,
     };
     use axum::http::HeaderMap;
 
@@ -256,6 +299,63 @@ mod local_trust_tests {
         ] {
             assert!(!is_safe_static_path(bad), "{bad}");
         }
+    }
+
+    /// What a browser on the server's own computer sends for the app's own page.
+    const LOCAL_BROWSER: &[(&str, &str)] = &[
+        ("host", "127.0.0.1:3200"),
+        ("origin", "http://127.0.0.1:3200"),
+        ("sec-fetch-site", "same-origin"),
+    ];
+
+    #[test]
+    fn a_plain_local_browser_request_stays_trusted() {
+        assert!(!request_was_forwarded(&headers(LOCAL_BROWSER)));
+        assert!(local_request_is_trusted(true, &headers(LOCAL_BROWSER)));
+        // Scripts on the same computer send no browser headers at all.
+        assert!(local_request_is_trusted(
+            true,
+            &headers(&[("host", "localhost:3200")])
+        ));
+    }
+
+    #[test]
+    fn forwarded_loopback_requests_are_not_trusted() {
+        // A proxy that rewrites Host to the upstream address (nginx's
+        // `proxy_pass http://127.0.0.1:3200;`) looks local; a forwarding
+        // header is what gives it away.
+        for (name, value) in [
+            ("forwarded", "for=203.0.113.7"),
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-forwarded-host", "mooshie.example.com"),
+            ("x-real-ip", "203.0.113.7"),
+            ("cf-connecting-ip", "203.0.113.7"),
+            ("true-client-ip", "203.0.113.7"),
+        ] {
+            let mut pairs = LOCAL_BROWSER.to_vec();
+            pairs.push((name, value));
+            assert!(request_was_forwarded(&headers(&pairs)), "{name}");
+            assert!(!local_request_is_trusted(true, &headers(&pairs)), "{name}");
+        }
+        // Without a browser: curl through that proxy.
+        assert!(!local_request_is_trusted(
+            true,
+            &headers(&[("host", "127.0.0.1:3200"), ("x-real-ip", "203.0.113.7")])
+        ));
+    }
+
+    #[test]
+    fn remote_connections_are_never_trusted() {
+        assert!(!local_request_is_trusted(false, &headers(LOCAL_BROWSER)));
+    }
+
+    #[test]
+    fn turning_local_trust_off_needs_an_admin_account() {
+        assert!(local_trust_active(true, || false));
+        assert!(local_trust_active(true, || true));
+        assert!(!local_trust_active(false, || true));
+        // No admin to sign in as: keep trusting this computer.
+        assert!(local_trust_active(false, || false));
     }
 }
 
@@ -362,6 +462,7 @@ fn preserve_config_secrets_for_role(
             .report_endpoint
             .clone_from(&current.report_endpoint);
         incoming.lan_enabled = current.lan_enabled;
+        incoming.trust_localhost = current.trust_localhost;
         incoming.browser_mode = current.browser_mode;
         incoming.ui_server_port = current.ui_server_port;
     }
@@ -2587,6 +2688,10 @@ async fn dispatch_command(
             let mut current = state.config.write().await;
             preserve_config_secrets_for_role(&mut new_config, &current, caller_role);
             config::save_config(&new_config)?;
+            state.trust_localhost.store(
+                config::local_trust_enabled(new_config.trust_localhost),
+                std::sync::atomic::Ordering::SeqCst,
+            );
             *current = new_config;
             Ok(serde_json::json!(null))
         }
@@ -7759,7 +7864,9 @@ const WATCHDOG_RESUME_JUMP: Duration = Duration::from_secs(20);
 ///   had no chance to ping, so the heartbeat clock is reset rather than counted
 ///   against the tab.
 /// * The `browser_auto_shutdown` opt-out, re-read every tick so the Settings
-///   toggle takes effect without a restart.
+///   toggle takes effect without a restart. Turning off `trust_localhost`
+///   opts out too: every tab must sign in before its heartbeats count, so a
+///   server waiting at the login page would otherwise shut itself down.
 pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
     tokio::spawn(async move {
         let timeout = Duration::from_secs(timeout_secs);
@@ -7788,7 +7895,10 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
             let app_mode = state
                 .app_mode_active
                 .load(std::sync::atomic::Ordering::SeqCst);
-            let auto_shutdown = { state.config.read().await.browser_auto_shutdown };
+            let auto_shutdown = { state.config.read().await.browser_auto_shutdown }
+                && state
+                    .trust_localhost
+                    .load(std::sync::atomic::Ordering::SeqCst);
             let elapsed = {
                 let hb = state.last_heartbeat.lock().await;
                 hb.elapsed()

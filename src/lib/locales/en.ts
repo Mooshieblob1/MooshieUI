@@ -3047,6 +3047,8 @@ const en: Record<string, string> = {
   "settings.lan.enable_desc": "Allow other devices on your network to access the UI. Requires authentication when enabled.",
   "settings.browser_shutdown.enable": "Shut Down When Tab Closes",
   "settings.browser_shutdown.enable_desc": "Stop MooshieUI and ComfyUI when the browser tab stops responding for two minutes. Turn this off if your machine sleeps or your browser freezes background tabs.",
+  "settings.trust_localhost.enable": "Sign in automatically on this computer",
+  "settings.trust_localhost.enable_desc": "Opening MooshieUI at localhost or an IP address on this computer makes you the admin without signing in. Turn this off if a reverse proxy on this computer forwards other people's requests to MooshieUI; everyone, including you, then signs in with an account. It stays on until an admin account exists.",
   "settings.lan.warning": "Warning: Enabling LAN access exposes the UI to your local network. Add at least one account to require authentication.",
   "settings.lan.access_at": "Access from other devices at:",
   "settings.lan.accounts": "Accounts",

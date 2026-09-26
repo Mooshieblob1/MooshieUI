@@ -1123,7 +1123,7 @@
   }
 
   const sections = [
-    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui" },
+    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
@@ -2079,6 +2079,24 @@
                   <input
                     type="checkbox"
                     bind:checked={config.browser_auto_shutdown}
+                    onchange={() => autoSave()}
+                    class="sr-only peer"
+                  />
+                  <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+              <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
+                <div>
+                  <label for="settings-trust-localhost" class="text-xs text-neutral-300 font-medium">{locale.t('settings.trust_localhost.enable')}</label>
+                  <p class="text-xs text-neutral-500 mt-0.5">
+                    {locale.t('settings.trust_localhost.enable_desc')}
+                  </p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    id="settings-trust-localhost"
+                    type="checkbox"
+                    bind:checked={config.trust_localhost}
                     onchange={() => autoSave()}
                     class="sr-only peer"
                   />

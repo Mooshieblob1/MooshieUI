@@ -2808,6 +2808,8 @@ const zh: Record<string, string> = {
   "settings.lan.enable_desc": "允许网络上的其他设备访问界面。启用后需要身份验证。",
   "settings.browser_shutdown.enable": "标签页关闭时退出",
   "settings.browser_shutdown.enable_desc": "当浏览器标签页两分钟没有响应时，停止 MooshieUI 和 ComfyUI。如果电脑会休眠，或浏览器会冻结后台标签页，请关闭此选项。",
+  "settings.trust_localhost.enable": "在这台电脑上自动登录",
+  "settings.trust_localhost.enable_desc": "在这台电脑上通过 localhost 或 IP 地址打开 MooshieUI 时，无需登录即为管理员。如果这台电脑上的反向代理会把其他人的请求转发给 MooshieUI，请关闭此选项，届时包括你在内的所有人都需用账号登录。在创建管理员账号之前会保持开启。",
   "settings.lan.warning": "警告：启用局域网访问会在本地网络暴露界面。请至少添加一个账户以要求身份验证。",
   "settings.lan.access_at": "其他设备访问地址：",
   "settings.lan.accounts": "账户",

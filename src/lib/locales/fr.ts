@@ -2793,6 +2793,8 @@ const fr: Record<string, string> = {
   "settings.lan.enable_desc": "Permet aux autres appareils de votre réseau d'accéder à l'interface. Authentification requise lorsque activé.",
   "settings.browser_shutdown.enable": "Arrêter à la fermeture de l'onglet",
   "settings.browser_shutdown.enable_desc": "Arrêter MooshieUI et ComfyUI lorsque l'onglet du navigateur ne répond plus pendant deux minutes. Désactivez cette option si votre machine se met en veille ou si votre navigateur gèle les onglets en arrière-plan.",
+  "settings.trust_localhost.enable": "Connexion automatique sur cet ordinateur",
+  "settings.trust_localhost.enable_desc": "Ouvrir MooshieUI sur cet ordinateur via localhost ou une adresse IP vous donne les droits d'administrateur sans vous connecter. Désactivez cette option si un proxy inverse sur cet ordinateur transmet à MooshieUI les requêtes d'autres personnes ; tout le monde, vous compris, se connecte alors avec un compte. Reste activé tant qu'aucun compte administrateur n'existe.",
   "settings.lan.warning": "Attention : activer l'accès LAN expose l'interface sur votre réseau local. Ajoutez au moins un compte pour exiger une authentification.",
   "settings.lan.access_at": "Accès depuis d'autres appareils à :",
   "settings.lan.accounts": "Comptes",

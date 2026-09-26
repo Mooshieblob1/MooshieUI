@@ -2995,6 +2995,8 @@ const pl: Record<string, string> = {
   "settings.lan.enable_desc": "Zezwól innym urządzeniom w sieci na dostęp do interfejsu. Wymaga uwierzytelnienia po włączeniu.",
   "settings.browser_shutdown.enable": "Zamknij po zamknięciu karty",
   "settings.browser_shutdown.enable_desc": "Zatrzymaj MooshieUI i ComfyUI, gdy karta przeglądarki przestanie odpowiadać przez dwie minuty. Wyłącz tę opcję, jeśli komputer przechodzi w stan uśpienia lub przeglądarka zamraża karty w tle.",
+  "settings.trust_localhost.enable": "Automatyczne logowanie na tym komputerze",
+  "settings.trust_localhost.enable_desc": "Otwarcie MooshieUI na tym komputerze przez localhost lub adres IP daje uprawnienia administratora bez logowania. Wyłącz tę opcję, jeśli odwrotne proxy na tym komputerze przekazuje do MooshieUI żądania innych osób; wtedy wszyscy, łącznie z Tobą, logują się na konto. Pozostaje włączona, dopóki nie istnieje konto administratora.",
   "settings.lan.warning": "Ostrzeżenie: Włączenie dostępu LAN udostępnia interfejs w sieci lokalnej. Dodaj co najmniej jedno konto, aby wymagać uwierzytelnienia.",
   "settings.lan.access_at": "Dostęp z innych urządzeń pod adresem:",
   "settings.lan.accounts": "Konta",
