@@ -2015,6 +2015,23 @@ async fn export_download_handler(
         return StatusCode::NOT_FOUND.into_response();
     };
     let path = dir.join(&filename);
+    // Vet the directory the way the export writer does: the root sits in the
+    // shared temp dir under a fixed name, so another local account could have
+    // pre-created it (or a level under it) as a symlink or a directory it owns.
+    // The file itself must be a regular file, never a symlink.
+    let vetted = tokio::task::spawn_blocking({
+        let dir = dir.clone();
+        let path = path.clone();
+        move || {
+            let root = crate::commands::video_export::export_temp_dir();
+            crate::commands::video_export::ensure_private_export_dir(&root, &dir)?;
+            std::fs::symlink_metadata(&path).map(|meta| meta.file_type().is_file())
+        }
+    })
+    .await;
+    if !matches!(vetted, Ok(Ok(true))) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };

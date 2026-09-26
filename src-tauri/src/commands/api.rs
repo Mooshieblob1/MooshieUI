@@ -2851,16 +2851,27 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
             "image/webp" => "webp",
             _ => "png",
         };
-        let tmp_path = tmp_dir.join(format!("mooshie_clipboard.{}", ext));
+        // A unique name, so two copies at once cannot clobber each other's file.
+        let tmp_path = tmp_dir.join(format!(
+            "mooshie_clipboard-{}.{}",
+            uuid::Uuid::new_v4().simple(),
+            ext
+        ));
         std::fs::write(&tmp_path, image_bytes)
             .map_err(|e| AppError::Other(format!("Failed to write temp file: {}", e)))?;
 
-        let script = format!(
-            "set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)",
-            tmp_path.display()
-        );
+        // The path goes in as an argument to the run handler, never spliced
+        // into the script source, so a `"` in it cannot end the string literal.
         let status = Command::new("osascript")
-            .args(["-e", &script])
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)",
+                "-e",
+                "end run",
+            ])
+            .arg(&tmp_path)
             .status()
             .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
         let _ = std::fs::remove_file(&tmp_path);
@@ -2964,13 +2975,27 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
         use std::process::{Command, Stdio};
 
         // Use osascript to check if clipboard has an image and write it to temp
-        let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
-        let script = format!(
-            "set imgData to the clipboard as «class PNGf»\nset f to open for access POSIX file \"{}\" with write permission\nwrite imgData to f\nclose access f",
-            tmp_path.display()
-        );
+        let tmp_path = std::env::temp_dir().join(format!(
+            "mooshie_clipboard_read-{}.png",
+            uuid::Uuid::new_v4().simple()
+        ));
+        // Path passed as a run-handler argument, not spliced into the source.
         let status = Command::new("osascript")
-            .args(["-e", &script])
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "set imgData to the clipboard as «class PNGf»",
+                "-e",
+                "set f to open for access POSIX file (item 1 of argv) with write permission",
+                "-e",
+                "write imgData to f",
+                "-e",
+                "close access f",
+                "-e",
+                "end run",
+            ])
+            .arg(&tmp_path)
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .status()
@@ -2994,13 +3019,17 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
 
-        let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
-        let script = format!(
-            "$img = Get-Clipboard -Format Image; if ($img) {{ $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png) }} else {{ exit 1 }}",
-            tmp_path.display()
-        );
+        let tmp_path = std::env::temp_dir().join(format!(
+            "mooshie_clipboard_read-{}.png",
+            uuid::Uuid::new_v4().simple()
+        ));
+        // The path reaches PowerShell through the environment rather than
+        // the command text, so an apostrophe in the profile path (O'Brien)
+        // cannot end the quoted string.
+        let script = "$img = Get-Clipboard -Format Image; if ($img) { $img.Save($env:MOOSHIE_CLIPBOARD_PATH, [System.Drawing.Imaging.ImageFormat]::Png) } else { exit 1 }";
         let status = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
+            .args(["-NoProfile", "-Command", script])
+            .env("MOOSHIE_CLIPBOARD_PATH", &tmp_path)
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
