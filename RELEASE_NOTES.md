@@ -5,6 +5,7 @@
 - **PDD 8-step Turbo presets**: **PDD FL2VA · 8** and **PDD Ref2VA · 8** use Alibaba PAI's Parallel Decoding Distillation adapters for 8-step first/last-frame and reference video. The adapters are pinned and SHA-256 checked. TeaCache is skipped with these presets, and ComfyUI servers older than v0.35.0 get a clear message.
 - **ComfyUI v0.37.0**: managed installs now use ComfyUI v0.37.0, which includes YuE2 natively.
 - **Timeline stills mid-clip**: with **Use timeline** on in the first/last-frame workflow, a shot whose still starts partway through the clip is now pinned at that frame instead of dropped. This needs ComfyUI v0.34.0 or newer; how closely H3 follows a mid-clip anchor has not yet been measured on a GPU.
+- **Retake part of a clip**: on a clip with a retained draft, **Retake or refine** now has **Retake a range**, which regenerates only the chosen seconds with a new seed and creates a new clip. The rest of the video and the whole soundtrack stay exactly as they were. The ComfyUI server needs v0.34.0 or newer and the updated MooshieUI nodes.
 
 ### Security and privacy
 - **Browser and LAN mode hardening**: websites you visit can no longer send commands to a MooshieUI server running on your computer, and the server no longer serves files from outside its web folder. Automatic owner access now needs the app opened at `localhost` or an IP address on the same computer.
