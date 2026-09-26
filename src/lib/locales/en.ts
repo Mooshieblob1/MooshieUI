@@ -1297,7 +1297,7 @@ const en: Record<string, string> = {
   "generation.video.turbo_install_button": "Install Turbo",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "A distilled adapter that samples in 4 to 8 steps instead of 20, around five times faster. Motion stays close to the full model; the finest detail softens a little.",
-  "generation.video.turbo_on_hint": "Sampling in {steps} steps, around five times faster.",
+  "generation.video.turbo_on_hint": "Sampling in {steps} steps instead of {standard}.",
   "generation.video.turbo_off_hint": "Sampling in {steps} steps at full quality.",
   "generation.video.turbo_steps": "Turbo Steps",
   "generation.video.turbo_steps_tip": "How many steps the distilled model takes. 4 is the fastest; 6 to 8 recovers most of the detail. Above 8 nothing improves.",

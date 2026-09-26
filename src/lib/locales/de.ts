@@ -1166,7 +1166,7 @@ const de: Record<string, string> = {
   "generation.video.turbo_install_button": "Turbo installieren",
   "generation.video.turbo": "Turbo-LoRA",
   "generation.video.turbo_tip": "Ein destillierter Adapter, der in 4 bis 8 Schritten statt in 20 sampelt, etwa fünfmal schneller. Die Bewegung bleibt nah am vollen Modell; feinste Details werden etwas weicher.",
-  "generation.video.turbo_on_hint": "Sampling in {steps} Schritten, etwa fünfmal schneller.",
+  "generation.video.turbo_on_hint": "Sampling in {steps} statt {standard} Schritten.",
   "generation.video.turbo_off_hint": "Sampling in {steps} Schritten bei voller Qualität.",
   "generation.video.turbo_steps": "Turbo-Schritte",
   "generation.video.turbo_steps_tip": "Wie viele Schritte das destillierte Modell macht. 4 ist am schnellsten; 6 bis 8 holen die meisten Details zurück. Über 8 verbessert sich nichts mehr.",

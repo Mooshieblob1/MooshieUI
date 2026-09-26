@@ -1145,7 +1145,7 @@ const it: Record<string, string> = {
   "generation.video.turbo_install_button": "Installa Turbo",
   "generation.video.turbo": "LoRA Turbo",
   "generation.video.turbo_tip": "Un adattatore distillato che campiona in 4-8 passi invece di 20, circa cinque volte più veloce. Il movimento resta vicino al modello completo; i dettagli più fini si ammorbidiscono un po'.",
-  "generation.video.turbo_on_hint": "Campionamento in {steps} passi, circa cinque volte più veloce.",
+  "generation.video.turbo_on_hint": "Campionamento in {steps} passi invece di {standard}.",
   "generation.video.turbo_off_hint": "Campionamento in {steps} passi a qualità piena.",
   "generation.video.turbo_steps": "Passi Turbo",
   "generation.video.turbo_steps_tip": "Quanti passi compie il modello distillato. 4 è il più veloce; da 6 a 8 recupera gran parte del dettaglio. Oltre 8 non migliora nulla.",

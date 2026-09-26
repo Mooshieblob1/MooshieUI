@@ -1145,7 +1145,7 @@ const ru: Record<string, string> = {
   "generation.video.turbo_install_button": "Установить Turbo",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "Дистиллированный адаптер, который сэмплирует за 4-8 шагов вместо 20, примерно в пять раз быстрее. Движение остаётся близким к полной модели, но мельчайшие детали немного смягчаются.",
-  "generation.video.turbo_on_hint": "Сэмплирование за {steps} шагов, примерно в пять раз быстрее.",
+  "generation.video.turbo_on_hint": "Сэмплирование за {steps} шагов вместо {standard}.",
   "generation.video.turbo_off_hint": "Сэмплирование за {steps} шагов с полным качеством.",
   "generation.video.turbo_steps": "Шаги Turbo",
   "generation.video.turbo_steps_tip": "Сколько шагов делает дистиллированная модель. 4 - самый быстрый вариант, 6-8 возвращают большую часть деталей. Выше 8 улучшений нет.",

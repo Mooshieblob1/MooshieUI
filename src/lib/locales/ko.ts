@@ -1145,7 +1145,7 @@ const ko: Record<string, string> = {
   "generation.video.turbo_install_button": "Turbo 설치",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "20단계 대신 4~8단계로 샘플링하는 증류 어댑터로 약 5배 빠릅니다. 움직임은 전체 모델과 비슷하게 유지되지만 가장 미세한 디테일은 약간 부드러워집니다.",
-  "generation.video.turbo_on_hint": "{steps}단계로 샘플링합니다. 약 5배 빠릅니다.",
+  "generation.video.turbo_on_hint": "{standard}단계 대신 {steps}단계로 샘플링합니다.",
   "generation.video.turbo_off_hint": "{steps}단계로 전체 품질 샘플링을 합니다.",
   "generation.video.turbo_steps": "Turbo 단계",
   "generation.video.turbo_steps_tip": "증류 모델이 수행하는 단계 수입니다. 4가 가장 빠르고 6~8이면 대부분의 디테일이 돌아옵니다. 8을 넘으면 나아지지 않습니다.",

@@ -1570,7 +1570,7 @@
     {/if}
     <p class="text-[11px] text-neutral-500">
       {generation.videoTurboEnabled
-        ? locale.t("generation.video.turbo_on_hint", { steps: turboPreset.steps ?? generation.videoTurboSteps })
+        ? locale.t("generation.video.turbo_on_hint", { steps: turboPreset.steps ?? generation.videoTurboSteps, standard: H3_DEFAULT_STEPS })
         : locale.t("generation.video.turbo_off_hint", { steps: H3_DEFAULT_STEPS })}
     </p>
 

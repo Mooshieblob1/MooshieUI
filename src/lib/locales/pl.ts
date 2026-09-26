@@ -1262,7 +1262,7 @@ const pl: Record<string, string> = {
   "generation.video.turbo_install_button": "Zainstaluj Turbo",
   "generation.video.turbo": "LoRA Turbo",
   "generation.video.turbo_tip": "Destylowany adapter, który próbkuje w 4 do 8 kroków zamiast 20, około pięć razy szybciej. Ruch pozostaje zbliżony do pełnego modelu, a najdrobniejsze detale nieco się wygładzają.",
-  "generation.video.turbo_on_hint": "Próbkowanie w {steps} krokach, około pięć razy szybciej.",
+  "generation.video.turbo_on_hint": "Próbkowanie w {steps} krokach zamiast {standard}.",
   "generation.video.turbo_off_hint": "Próbkowanie w {steps} krokach w pełnej jakości.",
   "generation.video.turbo_steps": "Kroki Turbo",
   "generation.video.turbo_steps_tip": "Ile kroków wykonuje destylowany model. 4 jest najszybsze, 6 do 8 przywraca większość detali. Powyżej 8 nic się nie poprawia.",

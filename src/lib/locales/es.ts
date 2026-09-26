@@ -1192,7 +1192,7 @@ const es: Record<string, string> = {
   "generation.video.turbo_install_button": "Instalar Turbo",
   "generation.video.turbo": "LoRA Turbo",
   "generation.video.turbo_tip": "Un adaptador destilado que muestrea en 4 a 8 pasos en lugar de 20, unas cinco veces más rápido. El movimiento se mantiene cerca del modelo completo; el detalle más fino se suaviza un poco.",
-  "generation.video.turbo_on_hint": "Muestreo en {steps} pasos, unas cinco veces más rápido.",
+  "generation.video.turbo_on_hint": "Muestreo en {steps} pasos en lugar de {standard}.",
   "generation.video.turbo_off_hint": "Muestreo en {steps} pasos con calidad completa.",
   "generation.video.turbo_steps": "Pasos Turbo",
   "generation.video.turbo_steps_tip": "Cuántos pasos da el modelo destilado. 4 es el más rápido; de 6 a 8 recupera la mayor parte del detalle. Por encima de 8 no mejora nada.",

@@ -1145,7 +1145,7 @@ const zhTw: Record<string, string> = {
   "generation.video.turbo_install_button": "安裝 Turbo",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "蒸餾轉接器，用 4 到 8 步取代 20 步取樣，速度約快五倍。運動效果接近完整模型，最細微的細節會略為變柔。",
-  "generation.video.turbo_on_hint": "以 {steps} 步取樣，速度約快五倍。",
+  "generation.video.turbo_on_hint": "以 {steps} 步取樣，而非 {standard} 步。",
   "generation.video.turbo_off_hint": "以 {steps} 步進行完整品質取樣。",
   "generation.video.turbo_steps": "Turbo 步數",
   "generation.video.turbo_steps_tip": "蒸餾模型的取樣步數。4 最快，6 到 8 可還原大部分細節，超過 8 不再有提升。",
