@@ -2382,6 +2382,7 @@ const ko: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API 키",
   "settings.civitai.api_key_placeholder": "CivitAI API 키를 여기에 붙여넣기",
+  "settings.civitai.api_key_saved_placeholder": "키가 저장되어 있습니다. 바꾸려면 새 키를 붙여넣으세요.",
   "settings.civitai.api_key_desc": "모델 메타데이터 조회, 샘플 이미지 가져오기 및 다운로드에 사용됩니다. CivitAI가 비인증 접근을 제한한 이후 필수입니다.",
   "settings.civitai.api_key_link": "civitai.com/user/account 에서 키 발급",
   "settings.novelai.title": "NovelAI",

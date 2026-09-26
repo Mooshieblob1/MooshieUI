@@ -773,8 +773,10 @@ mod tests {
             "https://openrouter.ai/api/v1?key=secret",
             "https://openrouter.ai/api/v2",
         ] {
+            // A hosted provider's root is fixed, so a tampered base URL is
+            // ignored rather than trusted with the key.
             c.llm_external_base_url = url.into();
-            assert!(backend(&c).is_err());
+            assert_eq!(backend(&c).unwrap().destination, "https://openrouter.ai");
         }
         c.llm_external_base_url = "https://openrouter.ai/api/v1".into();
         assert!(backend(&c).is_ok());

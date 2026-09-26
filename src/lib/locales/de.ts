@@ -2402,6 +2402,7 @@ const de: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API-Schlüssel",
   "settings.civitai.api_key_placeholder": "CivitAI-API-Schlüssel hier einfügen",
+  "settings.civitai.api_key_saved_placeholder": "Ein Schlüssel ist gespeichert. Neuen Schlüssel einfügen, um ihn zu ersetzen.",
   "settings.civitai.api_key_desc": "Wird für Modell-Metadaten, Beispielbilder und Downloads verwendet. Seit CivitAI den unauthentifizierten Zugriff eingeschränkt hat erforderlich.",
   "settings.civitai.api_key_link": "Schlüssel unter civitai.com/user/account erstellen",
   "settings.novelai.title": "NovelAI",

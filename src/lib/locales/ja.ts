@@ -2407,6 +2407,7 @@ const ja: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "APIキー",
   "settings.civitai.api_key_placeholder": "CivitAI APIキーをここに貼り付け",
+  "settings.civitai.api_key_saved_placeholder": "キーは保存済みです。置き換えるには新しいキーを貼り付けてください。",
   "settings.civitai.api_key_desc": "モデルメタデータの参照、サンプル画像の取得、ダウンロードに使用します。CivitAIが未認証アクセスを制限したため必須です。",
   "settings.civitai.api_key_link": "civitai.com/user/account でキーを取得",
   "settings.novelai.title": "NovelAI",

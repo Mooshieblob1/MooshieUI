@@ -222,6 +222,8 @@ fn save_model_requests(db: &ModelRequestDatabase) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let data = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
-    std::fs::write(&path, data).map_err(|e| e.to_string())?;
+    // Atomic: a truncated file fails to parse on the next start, and
+    // `load_model_requests` would then drop every pending request.
+    config::write_private_file_atomic(&path, data.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }

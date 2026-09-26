@@ -2406,6 +2406,7 @@ const fr: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Clé API",
   "settings.civitai.api_key_placeholder": "Collez votre clé API CivitAI ici",
+  "settings.civitai.api_key_saved_placeholder": "Une clé est enregistrée. Collez-en une nouvelle pour la remplacer.",
   "settings.civitai.api_key_desc": "Utilisée pour les métadonnées de modèles, les images d'exemple et les téléchargements. Requise depuis que CivitAI a restreint l'accès non authentifié.",
   "settings.civitai.api_key_link": "Obtenir votre clé sur civitai.com/user/account",
   "settings.novelai.title": "NovelAI",

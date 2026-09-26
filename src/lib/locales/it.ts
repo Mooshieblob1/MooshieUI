@@ -2382,6 +2382,7 @@ const it: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Chiave API",
   "settings.civitai.api_key_placeholder": "Incolla qui la chiave API CivitAI",
+  "settings.civitai.api_key_saved_placeholder": "Una chiave è salvata. Incollane una nuova per sostituirla.",
   "settings.civitai.api_key_desc": "Usata per metadati modelli, immagini di esempio e download. Obbligatoria da quando CivitAI ha limitato l'accesso non autenticato.",
   "settings.civitai.api_key_link": "Ottieni la chiave su civitai.com/user/account",
   "settings.novelai.title": "NovelAI",

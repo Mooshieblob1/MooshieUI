@@ -2382,6 +2382,7 @@ const zhTw: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API 金鑰",
   "settings.civitai.api_key_placeholder": "在此貼上 CivitAI API 金鑰",
+  "settings.civitai.api_key_saved_placeholder": "已儲存金鑰。貼上新的金鑰即可取代。",
   "settings.civitai.api_key_desc": "用於模型中繼資料查詢、範例圖片取得與下載。CivitAI 限制未驗證存取後為必填。",
   "settings.civitai.api_key_link": "於 civitai.com/user/account 取得金鑰",
   "settings.novelai.title": "NovelAI",

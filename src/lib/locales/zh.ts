@@ -2423,6 +2423,7 @@ const zh: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API 密钥",
   "settings.civitai.api_key_placeholder": "在此粘贴 CivitAI API 密钥",
+  "settings.civitai.api_key_saved_placeholder": "已保存密钥。粘贴新的密钥即可替换。",
   "settings.civitai.api_key_desc": "用于模型元数据查询、示例图片获取和下载。CivitAI 限制未认证访问后必需。",
   "settings.civitai.api_key_link": "在 civitai.com/user/account 获取密钥",
   "settings.novelai.title": "NovelAI",

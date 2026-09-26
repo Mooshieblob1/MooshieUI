@@ -313,9 +313,9 @@ fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) 
 /// Blank the instance owner's NovelAI key out of a config payload and replace
 /// the "configured" flag with this account's own answer.
 ///
-/// Split out and pure so the redaction is unit-testable: `get_config` hands
-/// moderators `include_secrets = true`, which used to include the host's real
-/// NovelAI token.
+/// Split out and pure so the redaction is unit-testable. The redacted config
+/// already reports whether the *host* has a key; a named account has to be
+/// told about its own instead.
 fn scrub_nai_key_for_user(value: &mut serde_json::Value, has_key: bool) {
     if let Some(obj) = value.as_object_mut() {
         obj.insert("novelai_api_key".to_string(), serde_json::Value::Null);
@@ -327,7 +327,9 @@ fn scrub_nai_key_for_user(value: &mut serde_json::Value, has_key: bool) {
 }
 
 /// A moderator can edit shared settings, but cannot replace the owner's
-/// NovelAI credential through a full-config payload.
+/// NovelAI credential through a full-config payload, and the operator
+/// secrets `get_config` blanked for them come back blank without clearing
+/// the stored values.
 fn preserve_config_secrets_for_role(
     incoming: &mut config::AppConfig,
     current: &config::AppConfig,
@@ -335,6 +337,7 @@ fn preserve_config_secrets_for_role(
 ) {
     config::preserve_secrets(incoming, current);
     if role != UserRole::Admin {
+        config::preserve_redacted_secrets(incoming, current);
         incoming
             .novelai_api_key
             .clone_from(&current.novelai_api_key);
@@ -2440,13 +2443,14 @@ async fn dispatch_command(
         "get_config" => {
             let mut value = {
                 let config = state.config.read().await;
-                let include_secrets = matches!(caller_role, UserRole::Admin | UserRole::Moderator);
+                // Operator secrets are for the instance admin only; moderators
+                // get the same redacted view as every other account.
+                let include_secrets = caller_role == UserRole::Admin;
                 crate::config::config_to_client_json(&config, include_secrets)
                     .map_err(|e| e.to_string())?
             };
             // A named account uses its own NovelAI key, so it must be told
-            // about its own key and never about the host's -- including
-            // moderators, who take the include_secrets branch above.
+            // about its own key and never about the host's.
             if let Some(user) = username {
                 scrub_nai_key_for_user(&mut value, crate::user_secrets::has_nai_key(user));
             }
@@ -8312,5 +8316,71 @@ mod lan_hardening_tests {
         assert_eq!(user_gallery_subdir("D:x"), None);
         assert_eq!(user_gallery_subdir(""), None);
         assert_eq!(user_gallery_subdir("a\0b"), None);
+    }
+}
+
+#[cfg(test)]
+mod moderator_config_round_trip_tests {
+    use super::{preserve_config_secrets_for_role, UserRole};
+    use crate::config::{config_to_client_json, AppConfig};
+
+    fn owner_config() -> AppConfig {
+        AppConfig {
+            civitai_api_key: Some("civitai-owner".into()),
+            network_proxy: Some("http://u:proxy-pass@10.0.0.2:3128".into()),
+            pip_index_url: Some("https://u:pip-pass@pypi.internal/simple".into()),
+            webhook_url: Some("https://hooks.example/x?token=hook".into()),
+            novelai_api_key: Some("pst-owner".into()),
+            llm_external_api_key: "sk-owner".into(),
+            llm_oauth_refresh_token: "refresh-owner".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_moderator_autosave_of_the_redacted_view_keeps_every_owner_secret() {
+        // get_config serves a moderator the non-admin view ...
+        let current = owner_config();
+        let view = config_to_client_json(&current, false).unwrap();
+        for secret in [
+            "civitai-owner",
+            "proxy-pass",
+            "pip-pass",
+            "token=hook",
+            "sk-owner",
+        ] {
+            assert!(
+                !view.to_string().contains(secret),
+                "{secret} reached a moderator"
+            );
+        }
+        // ... and update_config gets that view back with one real edit.
+        let mut incoming: AppConfig = serde_json::from_value(view).unwrap();
+        incoming.default_steps = 42;
+        crate::config::normalize_config_fields(&mut incoming);
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Moderator);
+
+        assert_eq!(incoming.default_steps, 42);
+        assert_eq!(incoming.civitai_api_key, current.civitai_api_key);
+        assert_eq!(incoming.network_proxy, current.network_proxy);
+        assert_eq!(incoming.pip_index_url, current.pip_index_url);
+        assert_eq!(incoming.webhook_url, current.webhook_url);
+        assert_eq!(incoming.novelai_api_key, current.novelai_api_key);
+        assert_eq!(incoming.llm_external_api_key, current.llm_external_api_key);
+        assert_eq!(
+            incoming.llm_oauth_refresh_token,
+            current.llm_oauth_refresh_token
+        );
+    }
+
+    #[test]
+    fn an_admin_clearing_a_field_it_can_see_still_clears_it() {
+        let current = owner_config();
+        let mut incoming: AppConfig =
+            serde_json::from_value(config_to_client_json(&current, true).unwrap()).unwrap();
+        incoming.webhook_url = None;
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
+        assert_eq!(incoming.webhook_url, None);
+        assert_eq!(incoming.llm_external_api_key, current.llm_external_api_key);
     }
 }

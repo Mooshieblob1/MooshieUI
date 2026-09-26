@@ -147,15 +147,56 @@ pub fn wire_for(id: &str) -> Wire {
         .unwrap_or(Wire::OpenAiCompatible)
 }
 
-/// The API root to actually call: the configured base URL when the user set
-/// one, otherwise the provider's own root. `custom` has no root of its own, so
-/// an unset base stays empty and the caller reports it as a misconfiguration.
+/// The API root to actually call.
+///
+/// A hosted provider's root is part of what the provider *is*: its key was
+/// issued by that host and is only ever sent there, so a configured base URL
+/// is ignored for it. Nothing in the UI sets one (the field is shown only for
+/// `custom`), which leaves a stale or tampered value as the only way one gets
+/// there. `custom` and ids this build does not know have no root of their own
+/// and use the configured one; an unset base stays empty and the caller
+/// reports it as a misconfiguration.
 pub fn effective_base_url(id: &str, configured: &str) -> String {
-    let configured = configured.trim();
-    if !configured.is_empty() {
-        return configured.to_string();
+    match provider(id) {
+        Some(p) if !p.base_url.is_empty() => p.base_url.to_string(),
+        _ => configured.trim().to_string(),
     }
-    provider(id).map(|p| p.base_url).unwrap_or("").to_string()
+}
+
+/// Whether the user supplies this provider's API root. False for hosted
+/// providers, which pin theirs, and for companions, which do not use one.
+fn takes_user_base_url(id: &str) -> bool {
+    provider(id).is_none_or(|p| p.base_url.is_empty() && p.wire != Wire::Companion)
+}
+
+/// Whether two API roots send requests to the same place: scheme, host and
+/// port, with default ports normalised. Anything that does not parse as a
+/// URL only matches itself, so an unparseable change always counts as a new
+/// destination.
+fn same_origin(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    match (url::Url::parse(a), url::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            let (a, b) = (a.origin(), b.origin());
+            a.is_tuple() && a == b
+        }
+        _ => false,
+    }
+}
+
+/// Store a user-supplied API root. Moving it to another origin discards the
+/// stored key and any sign-in session, for the same reason [`select`] does on
+/// a provider switch: the key was entered for the old server, and the next
+/// request would otherwise hand it to the new one.
+fn apply_base_url(cfg: &mut AppConfig, base_url: &str) {
+    let next = base_url.trim().trim_end_matches('/').to_string();
+    if !same_origin(&cfg.llm_external_base_url, &next) {
+        cfg.llm_external_api_key = String::new();
+        clear_oauth_session(cfg);
+    }
+    cfg.llm_external_base_url = next;
 }
 
 /// What the settings UI needs to render the provider row.
@@ -503,14 +544,24 @@ pub async fn set_model(
 }
 
 /// Point a self-hosted (`custom`) provider at its server.
+///
+/// Refused for providers with a fixed root (the value would be ignored by
+/// [`effective_base_url`] anyway). Checked under the same write lock as the
+/// edit, so a concurrent provider switch cannot slip in between.
 pub async fn set_base_url(
     config: &RwLock<AppConfig>,
     base_url: &str,
 ) -> Result<LlmProviderState, AppError> {
-    mutate(config, |cfg| {
-        cfg.llm_external_base_url = base_url.trim().trim_end_matches('/').to_string();
-    })
-    .await
+    let mut cfg = config.write().await;
+    if !takes_user_base_url(&cfg.llm_provider) {
+        return Err(AppError::LlmError(format!(
+            "The {} provider uses a fixed API address; only Custom takes a base URL.",
+            cfg.llm_provider
+        )));
+    }
+    apply_base_url(&mut cfg, base_url);
+    crate::config::save_config(&cfg).map_err(AppError::Other)?;
+    Ok(state_of(&cfg))
 }
 
 /// Ask the current provider which models the stored key can actually use.
@@ -623,5 +674,108 @@ mod tests {
         // more usable than one already dead.
         assert!(needs_refresh(expires_at, expires_at - REFRESH_SKEW_SECS));
         assert!(needs_refresh(expires_at, expires_at + 1));
+    }
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::*;
+
+    fn custom_with_key(base: &str) -> AppConfig {
+        AppConfig {
+            llm_provider: "custom".into(),
+            llm_external_base_url: base.into(),
+            llm_external_api_key: "sk-user".into(),
+            llm_oauth_refresh_token: "refresh".into(),
+            llm_oauth_client_id: "client".into(),
+            llm_oauth_expires_at: 1_900_000_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hosted_providers_ignore_a_configured_base_url() {
+        for p in PROVIDERS.iter().filter(|p| !p.base_url.is_empty()) {
+            assert_eq!(
+                effective_base_url(p.id, "https://attacker.example/v1"),
+                p.base_url,
+                "{} must not follow a configured base URL",
+                p.id
+            );
+        }
+    }
+
+    #[test]
+    fn custom_and_unknown_providers_use_the_configured_base_url() {
+        assert_eq!(
+            effective_base_url("custom", " http://127.0.0.1:1234/v1 "),
+            "http://127.0.0.1:1234/v1"
+        );
+        assert_eq!(effective_base_url("custom", ""), "");
+        assert_eq!(
+            effective_base_url("from-a-newer-build", "http://10.0.0.5/v1"),
+            "http://10.0.0.5/v1"
+        );
+    }
+
+    #[test]
+    fn only_providers_without_a_root_take_one() {
+        assert!(takes_user_base_url("custom"));
+        assert!(takes_user_base_url("from-a-newer-build"));
+        for p in PROVIDERS.iter().filter(|p| p.id != "custom") {
+            assert!(!takes_user_base_url(p.id), "{} took a base URL", p.id);
+        }
+    }
+
+    #[test]
+    fn a_new_path_on_the_same_server_keeps_the_key() {
+        for next in [
+            "http://127.0.0.1:1234/v1/",
+            "http://127.0.0.1:1234/api/v1",
+            "HTTP://127.0.0.1:1234/v1",
+        ] {
+            let mut cfg = custom_with_key("http://127.0.0.1:1234/v1");
+            apply_base_url(&mut cfg, next);
+            assert_eq!(cfg.llm_external_api_key, "sk-user", "{next}");
+            assert_eq!(cfg.llm_oauth_refresh_token, "refresh", "{next}");
+        }
+        let mut cfg = custom_with_key("https://llm.example/v1");
+        apply_base_url(&mut cfg, "https://llm.example:443/v2");
+        assert_eq!(cfg.llm_external_api_key, "sk-user");
+    }
+
+    #[test]
+    fn a_new_server_discards_the_key_and_session() {
+        for next in [
+            "https://attacker.example/v1",
+            "http://127.0.0.1:9999/v1",
+            "https://127.0.0.1:1234/v1",
+            "not a url",
+            "",
+        ] {
+            let mut cfg = custom_with_key("http://127.0.0.1:1234/v1");
+            apply_base_url(&mut cfg, next);
+            assert!(cfg.llm_external_api_key.is_empty(), "{next} kept the key");
+            assert!(cfg.llm_oauth_refresh_token.is_empty(), "{next}");
+            assert!(cfg.llm_oauth_client_id.is_empty(), "{next}");
+            assert_eq!(cfg.llm_oauth_expires_at, 0, "{next}");
+            assert_eq!(cfg.llm_external_base_url, next.trim_end_matches('/'));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hosted_provider_refuses_a_base_url_and_keeps_its_key() {
+        let config = RwLock::new(AppConfig {
+            llm_provider: "openai".into(),
+            llm_external_base_url: "https://api.openai.com/v1".into(),
+            llm_external_api_key: "sk-openai".into(),
+            ..Default::default()
+        });
+        assert!(set_base_url(&config, "https://attacker.example/v1")
+            .await
+            .is_err());
+        let cfg = config.read().await;
+        assert_eq!(cfg.llm_external_base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.llm_external_api_key, "sk-openai");
     }
 }

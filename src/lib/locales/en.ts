@@ -2579,6 +2579,7 @@ const en: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API Key",
   "settings.civitai.api_key_placeholder": "Paste your CivitAI API key here",
+  "settings.civitai.api_key_saved_placeholder": "A key is saved. Paste a new one to replace it.",
   "settings.civitai.api_key_desc": "Used for model metadata lookups, sample image fetching, and downloads. Required since CivitAI restricted unauthenticated access.",
   "settings.civitai.api_key_link": "Get your key at civitai.com/user/account",
   "settings.novelai.title": "NovelAI",

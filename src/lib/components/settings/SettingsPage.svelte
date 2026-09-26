@@ -1198,8 +1198,10 @@
     ) {
       config.theme_profile_id = null;
     }
-    // Migrate CivitAI API key from ModelHub localStorage if not already in config
-    if (!config.civitai_api_key) {
+    // Migrate CivitAI API key from ModelHub localStorage if not already in config.
+    // A non-admin sees a stored key only as `civitai_api_key_configured`, and
+    // must not overwrite it with a stale local copy.
+    if (!config.civitai_api_key && !config.civitai_api_key_configured) {
       try {
         const lsKey = localStorage.getItem("mooshieui.civitai.apiKey.v1");
         if (lsKey) {
@@ -1470,9 +1472,10 @@
    * Mirror an LLM provider mutation back into the cached config.
    *
    * The provider commands write Rust config directly, so this snapshot goes
-   * stale the moment one runs and a later unrelated `autoSave()` would revert
-   * provider, base URL and model. (The API key needs no mirroring — Rust's
-   * `preserve_secrets` carries a stored key across any full-config save.)
+   * stale the moment one runs. Rust's `preserve_secrets` keeps the whole
+   * provider row (key, sign-in session, provider, base URL, model, xAI client)
+   * as the server has it on every full-config save, so this only keeps the
+   * local copy honest, and `enabled` is the one field autoSave() does carry.
    */
   function onProviderState(next: LlmProviderState) {
     if (!config) return;
@@ -4022,7 +4025,9 @@
                   }
                 }}
                 onchange={() => { autoSave(); }}
-                placeholder={locale.t('settings.civitai.api_key_placeholder')}
+                placeholder={config.civitai_api_key_configured && !config.civitai_api_key
+                  ? locale.t('settings.civitai.api_key_saved_placeholder')
+                  : locale.t('settings.civitai.api_key_placeholder')}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
               />
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
