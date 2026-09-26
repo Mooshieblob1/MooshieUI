@@ -253,6 +253,13 @@ export interface GenerationToParamsOptions {
    * without touching the user's setting.
    */
   seed?: string;
+  /**
+   * Build params for a job that is not part of the pause/resume flow (Refine,
+   * the regional inpaint chain): no pause step or resume stages are sent, the
+   * seed resolves from `seed`/the store rather than from the paused run, and
+   * style transfer and Anima TeaCache are not switched off on a pause's account.
+   */
+  outsidePausedRun?: boolean;
   overrides?: Partial<
     Pick<
       GenerationParams,
@@ -3487,7 +3494,9 @@ class GenerationStore {
     // stores the resolved (expanded) prompt so regenerating always reproduces.
     const hasPositiveRandom = hasRandomSyntax(inlinePositiveRaw);
     const hasNegativeRandom = hasRandomSyntax(inlineNegativeRaw);
-    const seedSource = this.resumeAppliesToMode && this.isPaused
+    // Whether this request pauses or continues the paused run.
+    const inPauseFlow = this.resumeAppliesToMode && !options.outsidePausedRun;
+    const seedSource = inPauseFlow && this.isPaused
       ? this.pausedStages[0].seed
       : options.seed ?? this.seed;
     const numericSeed = parseInt(seedSource, 10);
@@ -3873,10 +3882,10 @@ class GenerationStore {
       // Null for every local generation, so the backend's NovelAI branch is
       // never reachable from one.
       novelai: this.novelAiParams(novelAiCharacters.characters),
-      pause_at_step: this.resumeAppliesToMode && this.effectivePauseAtStep > 0
+      pause_at_step: inPauseFlow && this.effectivePauseAtStep > 0
         ? this.effectivePauseAtStep
         : null,
-      resume_stages: this.resumeAppliesToMode && this.isPaused
+      resume_stages: inPauseFlow && this.isPaused
         ? this.pausedStages.map(
             (stage): ResumeStage => ({
               params: stage.params,
