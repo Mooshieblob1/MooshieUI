@@ -183,9 +183,7 @@ async fn main() {
     }
 
     // Wait for shutdown signal
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for ctrl-c");
+    shutdown_signal().await;
     log::info!("Shutdown signal received, cleaning up...");
     comfyui_desktop_lib::media_tools::shutdown(&state).await;
     comfyui_desktop_lib::prompt_assistant::companion::shutdown().await;
@@ -200,6 +198,32 @@ async fn main() {
 
     server_handle.abort();
     log::info!("MooshieUI Server stopped.");
+}
+
+/// Resolve on Ctrl-C, or on SIGTERM where it exists. Docker and Kubernetes
+/// stop a container with SIGTERM (the entrypoint `exec`s this binary, so it
+/// is PID 1 and receives it); without this the shutdown cleanup below, which
+/// stops ComfyUI and saves the output owner map, never ran on a normal stop.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        result.expect("Failed to listen for ctrl-c");
+                    }
+                    _ = term.recv() => {}
+                }
+                return;
+            }
+            Err(e) => log::warn!("Could not listen for SIGTERM ({e}); only Ctrl-C stops cleanly"),
+        }
+    }
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for ctrl-c");
 }
 
 /// Placeholder admin passwords shipped in `docker-compose.yml` and
