@@ -8,7 +8,7 @@
 ### Security and privacy
 - **Browser and LAN mode hardening**: websites you visit can no longer send commands to a MooshieUI server running on your computer, and the server no longer serves files from outside its web folder. Automatic owner access now needs the app opened at `localhost` or an IP address on the same computer.
 - **Per-account privacy**: in LAN mode each account sees only its own generated images, exports, model requests and browser settings. API keys and other secrets are sent only to the admin.
-- **Safer roles**: moderators can install only MooshieUI's own node packs, and can no longer change paths, execution or network exposure settings, manage local LLM models or see host file paths.
+- **Safer roles**: moderators can install only MooshieUI's own node packs, and can no longer change the settings that decide what the host runs, which folders it uses or how the server is exposed. Moving the installation, changing the gallery folder and saving to arbitrary paths are admin-only. Regular accounts can no longer manage the local LLM, see host file paths or reconnect the shared ComfyUI connection.
 - **Sign-in**: changing a password signs out your other sessions, and repeated failed logins from one address are slowed down.
 - **Untrusted files**: malformed or oversized images, videos, NovelAI imports and archives are refused instead of freezing or crashing the app.
 - **Verified downloads**: model downloads are checked for size, hash and format before use, and truncated files from earlier interrupted downloads are detected and downloaded again. Node packs, tools and Docker images are pinned to exact versions.
