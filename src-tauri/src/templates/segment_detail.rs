@@ -16,7 +16,11 @@ pub fn append_segment_chain(
     let mut image = current_image;
 
     for (i, segment) in params.detail_segments.iter().enumerate() {
-        let encode_text = super::merge_regional_encode_text(&context, &segment.prompt);
+        // Core CLIPTextEncode would read a `<lora:...>` tag as literal text.
+        let encode_text = super::strip_lora_tags(&super::merge_regional_encode_text(
+            &context,
+            &segment.prompt,
+        ));
 
         let clip_id = result.next_id.to_string();
         result.workflow.insert(

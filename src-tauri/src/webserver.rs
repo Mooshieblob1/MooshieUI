@@ -3154,13 +3154,10 @@ async fn dispatch_command(
             crate::templates::upscale_standalone::rewrite_novelai_request(&mut params)?;
             crate::templates::validate_generation_params(&params)?;
             {
+                // Skipped for a remote ComfyUI, whose LoRAs live on that server.
                 let config = state.config.read().await;
-                crate::commands::api::validate_lora_files_for_generation(
-                    &config.comfyui_path,
-                    config.extra_model_paths.as_deref(),
-                    &params.loras,
-                )
-                .map_err(|e| e.to_string())?;
+                crate::commands::api::validate_generation_loras(&config, &params.loras)
+                    .map_err(|e| e.to_string())?;
             }
             // Mirrors the same check in the Tauri `generate` command: catches a
             // missing MiniMax H3 node before submission instead of surfacing

@@ -9,6 +9,18 @@ use crate::comfyui::types::GenerationParams;
 pub const SEEDVR2_UNET_FILE: &str = "seedvr2_3b_int8_convrot.safetensors";
 pub const SEEDVR2_VAE_FILE: &str = "seedvr2_ema_vae_fp16.safetensors";
 
+/// `ApplyTiledDiffusion.tile_overlap` for a tile size, both in pixels (the
+/// node divides each by the model's latent downscale ratio).
+///
+/// A fixed 256 px overlap equalled the smallest tile size the UI allows, and
+/// the node's stride `max(1, tile - overlap)` then collapsed to one latent
+/// pixel, which effectively never finishes. A quarter of the tile, capped at
+/// the old 256 and snapped down to the node's 16 px step, keeps the stride at
+/// three quarters of a tile or more for every size.
+fn tiled_diffusion_overlap(tile_size: u32) -> u32 {
+    (tile_size / 4).min(256) / 16 * 16
+}
+
 /// Appends the upscale node chain to an existing workflow.
 /// Returns the (node_id, output_index) of the final upscaled IMAGE.
 pub fn append_upscale_chain(
@@ -144,7 +156,7 @@ pub fn append_upscale_chain(
                     "method": "MultiDiffusion",
                     "tile_width": params.upscale_tile_size,
                     "tile_height": params.upscale_tile_size,
-                    "tile_overlap": 256
+                    "tile_overlap": tiled_diffusion_overlap(params.upscale_tile_size)
                 }
             }),
         );
@@ -503,6 +515,30 @@ mod tests {
             .values()
             .filter(|n| n["class_type"] == class_type)
             .collect()
+    }
+
+    #[test]
+    fn tiled_diffusion_overlap_leaves_a_real_stride_at_every_tile_size() {
+        for (tile, overlap) in [(256, 64), (512, 128), (768, 192), (1024, 256), (2048, 256)] {
+            let mut params = seedvr2_params();
+            params.upscale_method = "latent".to_string();
+            params.upscale_tiling = true;
+            params.upscale_tile_size = tile;
+            let mut result = base_result();
+            append_upscale_chain(&mut result, &params, 42);
+
+            let tiled = nodes_of_type(&result, "ApplyTiledDiffusion");
+            assert_eq!(tiled.len(), 1, "tile {tile}: missing ApplyTiledDiffusion");
+            assert_eq!(tiled[0]["inputs"]["tile_width"], tile);
+            assert_eq!(
+                tiled[0]["inputs"]["tile_overlap"], overlap,
+                "tile {tile}: overlap"
+            );
+            // The node works in latent units (pixels / 8 for SD-family VAEs)
+            // and strides by tile - overlap; one latent pixel means a hang.
+            let stride = tile / 8 - overlap / 8;
+            assert!(stride >= tile / 8 * 3 / 4, "tile {tile}: stride {stride}");
+        }
     }
 
     #[test]

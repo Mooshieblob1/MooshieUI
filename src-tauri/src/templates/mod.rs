@@ -1353,7 +1353,21 @@ pub fn insert_vae_decode(
     (decode_id, next_id + 1)
 }
 
-/// Positive prompt context shared by every regional CLIP encode (main prompt, schedule segments, LoRA tags).
+/// SDXL-architecture families: the UNet that area conditioning
+/// (`ConditioningSetAreaPercentage`) is wired for. Mirrors the frontend's
+/// `familyIsSdxlLike` (`src/lib/utils/modelFamily.ts`), which decides whether
+/// `positive_regions` are sent at all, so a region the UI accepted is never
+/// silently dropped here.
+pub fn is_sdxl_like_family(arch: &str) -> bool {
+    matches!(arch, "sdxl" | "illustrious" | "pony" | "mugen")
+}
+
+/// Positive prompt context for the `<segment:...>` detailer encodes (main
+/// prompt and schedule segments).
+///
+/// LoRA tags are deliberately not added: core `CLIPTextEncode` has no LoRA
+/// syntax and would encode `<lora:name:weight>` as literal prompt text. LoRAs
+/// reach the detailers through the loader chain's model and CLIP instead.
 pub fn build_regional_context_prompt(params: &GenerationParams) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -1373,28 +1387,14 @@ pub fn build_regional_context_prompt(params: &GenerationParams) -> String {
         parts.push(text.to_string());
     }
 
-    let mut combined = parts.join(", ");
-    for lora in &params.loras {
-        if lora.name.trim().is_empty() {
-            continue;
-        }
-        if prompt_contains_lora_tag(&combined, &lora.name) {
-            continue;
-        }
-        let strength = format_lora_tag_strength(lora.strength_clip);
-        let tag = format!("<lora:{}:{}>", lora.name.trim(), strength);
-        if combined.is_empty() {
-            combined = tag;
-        } else {
-            combined.push_str(", ");
-            combined.push_str(&tag);
-        }
-    }
-
-    combined
+    parts.join(", ")
 }
 
-/// Merge global context with a region's local prompt for area conditioning.
+/// Merge global context with a local prompt (a `<segment:...>` detailer prompt).
+///
+/// Not used for `positive_regions`: the frontend already merges each region
+/// with its own context (which leaves scheduled segments out on purpose), so
+/// merging again here would repeat the base prompt.
 pub fn merge_regional_encode_text(context: &str, region_text: &str) -> String {
     let context = context.trim();
     let local = region_text.trim();
@@ -1414,26 +1414,209 @@ pub fn merge_regional_encode_text(context: &str, region_text: &str) -> String {
     format!("{context}, {local}")
 }
 
-fn format_lora_tag_strength(strength: f64) -> String {
-    let s = strength.clamp(0.0, 2.0);
-    if (s - s.round()).abs() < f64::EPSILON {
-        format!("{}", s.round() as i32)
-    } else {
-        let formatted = format!("{s:.2}");
-        formatted
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
+/// Remove `<lora:name:weight>` tags from text bound for core `CLIPTextEncode`,
+/// which has no LoRA syntax and would encode them as literal prompt text. The
+/// frontend puts them into regional prompt context; the LoRAs themselves are
+/// applied by the loader chain.
+///
+/// Like the frontend's tag matcher, a `<` right after `:` is not a tag (the
+/// `:<` emoticon escape), and an unterminated tag is left alone. Commas left
+/// dangling by a removed tag are tidied; text without tags is returned as is.
+pub fn strip_lora_tags(text: &str) -> String {
+    const OPEN: &str = "<lora:";
+    // ASCII lowercasing keeps byte offsets identical to `text`.
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut copied_to = 0;
+    let mut search_from = 0;
+    let mut removed = false;
+    while let Some(offset) = lower[search_from..].find(OPEN) {
+        let start = search_from + offset;
+        if text[..start].ends_with(':') {
+            search_from = start + 1;
+            continue;
+        }
+        let Some(len) = text[start..].find('>') else {
+            break;
+        };
+        out.push_str(&text[copied_to..start]);
+        copied_to = start + len + 1;
+        search_from = copied_to;
+        removed = true;
+    }
+    if !removed {
+        return text.to_string();
+    }
+    out.push_str(&text[copied_to..]);
+    out.split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Helpers for tests that build a whole image workflow and inspect the graph.
+#[cfg(test)]
+pub(crate) mod graph_test_util {
+    use crate::comfyui::types::GenerationParams;
+    use serde_json::Value;
+
+    /// Minimal params for a full `build_workflow` run.
+    pub fn params(mode: &str, arch: &str) -> GenerationParams {
+        GenerationParams {
+            mode: mode.to_string(),
+            positive_prompt: "1girl, smiling".to_string(),
+            negative_prompt: "blurry".to_string(),
+            checkpoint: "model.safetensors".to_string(),
+            model_architecture: arch.to_string(),
+            sampler_name: "euler".to_string(),
+            scheduler: "normal".to_string(),
+            steps: 20,
+            cfg: 5.0,
+            width: 1024,
+            height: 1024,
+            batch_size: 1,
+            denoise: 1.0,
+            input_image: Some("input.png".to_string()),
+            mask_image: Some("mask.png".to_string()),
+            output_format: "png".to_string(),
+            ..GenerationParams::default()
+        }
+    }
+
+    pub fn build(params: &GenerationParams) -> Value {
+        super::build_workflow(params, 42, false)
+    }
+
+    /// `(id, node)` of every node of a class.
+    pub fn nodes<'a>(workflow: &'a Value, class_type: &str) -> Vec<(&'a str, &'a Value)> {
+        workflow
+            .as_object()
+            .expect("workflow is an object")
+            .iter()
+            .filter(|(_, node)| node["class_type"] == class_type)
+            .map(|(id, node)| (id.as_str(), node))
+            .collect()
+    }
+
+    /// The only node of a class.
+    pub fn single<'a>(workflow: &'a Value, class_type: &str) -> &'a Value {
+        let found = nodes(workflow, class_type);
+        assert_eq!(found.len(), 1, "expected exactly one {class_type}");
+        found[0].1
+    }
+
+    /// The node a `[id, output]` input links to.
+    pub fn linked<'a>(workflow: &'a Value, link: &Value) -> &'a Value {
+        let id = link[0].as_str().expect("input is a link");
+        &workflow[id]
     }
 }
 
-fn prompt_contains_lora_tag(prompt: &str, lora_name: &str) -> bool {
-    let name = lora_name.trim();
-    if name.is_empty() {
-        return false;
+#[cfg(test)]
+mod regional_prompt_tests {
+    use super::graph_test_util::{build, nodes, params};
+    use super::*;
+    use crate::comfyui::types::{PositiveRegion, PromptSegment};
+
+    fn region(text: &str) -> PositiveRegion {
+        PositiveRegion {
+            text: text.to_string(),
+            x: 0.0,
+            y: 0.0,
+            width: 0.5,
+            height: 1.0,
+            strength: 1.0,
+        }
     }
-    let needle = format!("<lora:{}", name.to_lowercase());
-    prompt.to_lowercase().contains(&needle)
+
+    fn encoded_texts(workflow: &serde_json::Value) -> Vec<String> {
+        nodes(workflow, "CLIPTextEncode")
+            .into_iter()
+            .map(|(_, node)| node["inputs"]["text"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_sdxl_like_family_the_frontend_sends_regions_for_gets_them() {
+        for arch in ["sdxl", "illustrious", "pony", "mugen"] {
+            let mut p = params("txt2img", arch);
+            p.positive_regions = vec![region("1girl, smiling, red hair")];
+            let workflow = build(&p);
+            assert_eq!(
+                nodes(&workflow, "ConditioningSetAreaPercentage").len(),
+                1,
+                "{arch}: region was dropped"
+            );
+        }
+        // Families without SDXL area conditioning still skip them.
+        let mut p = params("txt2img", "flux1d");
+        p.positive_regions = vec![region("1girl, red hair")];
+        assert!(nodes(&build(&p), "ConditioningSetAreaPercentage").is_empty());
+    }
+
+    #[test]
+    fn region_text_is_encoded_as_sent_without_lora_tags() {
+        let mut p = params("txt2img", "pony");
+        // The frontend merges the region with the base prompt and LoRA tags,
+        // and keeps scheduled segments out of it.
+        p.positive_segments = vec![PromptSegment {
+            text: "snowing".to_string(),
+            start: 0.5,
+            end: 1.0,
+        }];
+        p.loras = vec![crate::comfyui::types::LoraParam {
+            name: "style.safetensors".to_string(),
+            strength_model: 0.8,
+            strength_clip: 0.8,
+        }];
+        p.positive_regions = vec![region(
+            "1girl, smiling, <lora:style.safetensors:0.8>, red hair",
+        )];
+        let workflow = build(&p);
+
+        let area = nodes(&workflow, "ConditioningSetAreaPercentage")[0].1;
+        let encode = &workflow[area["inputs"]["conditioning"][0].as_str().unwrap()];
+        assert_eq!(encode["inputs"]["text"], "1girl, smiling, red hair");
+        for text in encoded_texts(&workflow) {
+            assert!(!text.contains("<lora:"), "LoRA tag reached CLIP: {text}");
+        }
+    }
+
+    #[test]
+    fn strip_lora_tags_keeps_everything_else() {
+        assert_eq!(
+            strip_lora_tags("a, <LoRA:x.safetensors:1>, b, <lora:y:0.5>"),
+            "a, b"
+        );
+        assert_eq!(strip_lora_tags("<lora:x:1>, a"), "a");
+        assert_eq!(strip_lora_tags("<lora:x:1>"), "");
+        // No tag: untouched, including spacing.
+        assert_eq!(strip_lora_tags("a,b ,  c"), "a,b ,  c");
+        // `:<` is the emoticon escape, and an unclosed tag is not a tag.
+        assert_eq!(strip_lora_tags("smile :<lora:x>"), "smile :<lora:x>");
+        assert_eq!(strip_lora_tags("a, <lora:x"), "a, <lora:x");
+    }
+
+    #[test]
+    fn segment_detail_context_has_no_lora_tags() {
+        let mut p = params("txt2img", "sdxl");
+        p.loras = vec![crate::comfyui::types::LoraParam {
+            name: "style.safetensors".to_string(),
+            strength_model: 1.0,
+            strength_clip: 1.0,
+        }];
+        p.detail_segments = vec![crate::comfyui::types::DetailSegment {
+            target: "face".to_string(),
+            prompt: "blue eyes <lora:eyes:0.6>".to_string(),
+            creativity: 0.4,
+            threshold: 0.5,
+        }];
+        let workflow = build(&p);
+        let detailer = nodes(&workflow, "MooshieSegmentDetailer")[0].1;
+        let encode = &workflow[detailer["inputs"]["positive"][0].as_str().unwrap()];
+        assert_eq!(encode["inputs"]["text"], "1girl, smiling, blue eyes");
+    }
 }
 
 /// Build a conditioning output that combines a base prompt with optional timestep-scheduled segments.

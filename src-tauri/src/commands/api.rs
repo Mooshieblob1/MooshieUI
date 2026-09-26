@@ -6276,6 +6276,70 @@ pub(crate) fn validate_lora_files_for_generation(
     Ok(())
 }
 
+/// Whether generation-time checks can look for model files on this machine.
+///
+/// Only the app-launched ComfyUI loads its models from the local
+/// `comfyui_path` / `extra_model_paths`. A remote server lists and loads its
+/// own files, which need not exist here at all, so a local lookup would reject
+/// every LoRA or model the server offers.
+pub(crate) fn generation_models_are_local(config: &crate::config::AppConfig) -> bool {
+    matches!(config.server_mode, crate::config::ServerMode::AutoLaunch)
+}
+
+/// [`validate_lora_files_for_generation`] against the configured install,
+/// skipped when the LoRAs live on a remote ComfyUI server.
+pub(crate) fn validate_generation_loras(
+    config: &crate::config::AppConfig,
+    loras: &[crate::comfyui::types::LoraParam],
+) -> Result<(), AppError> {
+    if !generation_models_are_local(config) {
+        return Ok(());
+    }
+    validate_lora_files_for_generation(
+        &config.comfyui_path,
+        config.extra_model_paths.as_deref(),
+        loras,
+    )
+}
+
+#[cfg(test)]
+mod generation_lora_validation_tests {
+    use super::*;
+    use crate::config::{AppConfig, ServerMode};
+
+    fn missing_lora() -> Vec<crate::comfyui::types::LoraParam> {
+        vec![crate::comfyui::types::LoraParam {
+            name: "only-on-the-server.safetensors".to_string(),
+            strength_model: 1.0,
+            strength_clip: 1.0,
+        }]
+    }
+
+    fn config(mode: ServerMode) -> AppConfig {
+        let dir = std::env::temp_dir().join("mooshie-lora-validation-test-empty");
+        AppConfig {
+            server_mode: mode,
+            comfyui_path: dir.to_string_lossy().to_string(),
+            extra_model_paths: None,
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn remote_server_loras_are_not_looked_up_locally() {
+        assert!(!generation_models_are_local(&config(ServerMode::Remote)));
+        assert!(validate_generation_loras(&config(ServerMode::Remote), &missing_lora()).is_ok());
+    }
+
+    #[test]
+    fn local_server_still_rejects_a_missing_lora() {
+        assert!(generation_models_are_local(&config(ServerMode::AutoLaunch)));
+        let err = validate_generation_loras(&config(ServerMode::AutoLaunch), &missing_lora())
+            .expect_err("a LoRA missing from the local install must be rejected");
+        assert!(err.to_string().contains("LoRA file not found"));
+    }
+}
+
 /// Fetch combined LoRA info: hash the file, look up on CivitAI, read ModelSpec.
 /// Returns structured info for the LoRA gallery panel.
 #[cfg(feature = "desktop")]
