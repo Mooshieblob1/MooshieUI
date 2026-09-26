@@ -141,8 +141,11 @@ fn appimage_env_overrides() -> Option<String> {
 /// `AssertionError: Torch not compiled with CUDA enabled` instead of falling
 /// back gracefully — so MooshieUI must pass `--cpu` explicitly when torch has
 /// no accelerator support.
-fn torch_has_accelerator(python_path: &str) -> bool {
-    let output = std_command_no_window(python_path)
+///
+/// Async (tokio process): the start paths await this while holding
+/// `comfyui_lifecycle`, and a cold `import torch` takes seconds.
+async fn torch_has_accelerator(python_path: &str) -> bool {
+    let output = tokio_command_no_window(python_path)
         .args([
             "-c",
             "import torch,sys\n\
@@ -151,16 +154,18 @@ fn torch_has_accelerator(python_path: &str) -> bool {
              a = a or (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available())\n\
              sys.exit(0 if a else 1)",
         ])
-        .output();
+        .output()
+        .await;
     matches!(output, Ok(o) if o.status.success())
 }
 
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
 /// Returns `true` if any installed GPU has compute capability >= 12.0.
-fn has_blackwell_gpu() -> bool {
-    let output = std_command_no_window("nvidia-smi")
+async fn has_blackwell_gpu() -> bool {
+    let output = tokio_command_no_window("nvidia-smi")
         .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
-        .output();
+        .output()
+        .await;
 
     match output {
         Ok(o) if o.status.success() => {
@@ -192,10 +197,11 @@ const H3_SCAN_DEPTH: u32 = 3;
 
 /// Largest total VRAM across installed NVIDIA GPUs, in bytes. `None` when
 /// nvidia-smi is absent or unreadable (AMD, Apple, headless CI).
-fn detect_max_vram_bytes() -> Option<u64> {
-    let output = std_command_no_window("nvidia-smi")
+async fn detect_max_vram_bytes() -> Option<u64> {
+    let output = tokio_command_no_window("nvidia-smi")
         .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
         .output()
+        .await
         .ok()?;
     if !output.status.success() {
         return None;
@@ -304,9 +310,12 @@ struct HighVramConflict {
 ///
 /// `None` whenever VRAM cannot be read or no H3 model is installed — this only
 /// ever drops the flag on evidence, never on a guess.
-fn h3_highvram_conflict(config: &AppConfig) -> Option<HighVramConflict> {
-    let vram_bytes = detect_max_vram_bytes()?;
-    let (model, model_bytes) = largest_h3_dit(config)?;
+fn h3_highvram_conflict(
+    vram_bytes: Option<u64>,
+    largest_dit: Option<(String, u64)>,
+) -> Option<HighVramConflict> {
+    let vram_bytes = vram_bytes?;
+    let (model, model_bytes) = largest_dit?;
     if (model_bytes as f64) > (vram_bytes as f64) * HIGHVRAM_HEADROOM_FRACTION {
         Some(HighVramConflict {
             model,
@@ -322,9 +331,23 @@ fn h3_highvram_conflict(config: &AppConfig) -> Option<HighVramConflict> {
 /// Self-heal in the same shape as the attention-backend fallback below: drop the
 /// flag and log why, rather than letting a config setting silently cost an hour
 /// per clip.
-fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
+///
+/// nvidia-smi runs as a tokio process and the model-folder walk on the
+/// blocking pool, since the start paths hold `comfyui_lifecycle` meanwhile.
+async fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    match h3_highvram_conflict(config) {
+    let vram_bytes = detect_max_vram_bytes().await;
+    let largest_dit = match vram_bytes {
+        Some(_) => {
+            let config = config.clone();
+            tokio::task::spawn_blocking(move || largest_h3_dit(&config))
+                .await
+                .ok()
+                .flatten()
+        }
+        None => None,
+    };
+    match h3_highvram_conflict(vram_bytes, largest_dit) {
         Some(conflict) => {
             log::warn!(
                 "vram_mode='high' but the installed MiniMax H3 model '{}' ({:.1} GB) fills \
@@ -1281,8 +1304,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // Checked before the VRAM-mode flag below because ComfyUI's argparser treats
     // --cpu and --lowvram/--novram/--highvram as mutually exclusive; passing both
     // exits with code 2 ("argument --cpu: not allowed with argument --lowvram").
-    let force_cpu =
-        !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path);
+    let force_cpu = !config.extra_args.iter().any(|a| a == "--cpu")
+        && !torch_has_accelerator(&python_path).await;
     if force_cpu {
         cmd.arg("--cpu");
         log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
@@ -1292,7 +1315,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     if !force_cpu && !config.extra_args.iter().any(|a| a == "--cpu") {
         match config.vram_mode.as_str() {
             "high" => {
-                apply_highvram_flag(&mut cmd, &config);
+                apply_highvram_flag(&mut cmd, &config).await;
             }
             "low" => {
                 cmd.arg("--lowvram");
@@ -1315,7 +1338,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae"
         )
     });
-    if !has_vae_flag && has_blackwell_gpu() {
+    if !has_vae_flag && has_blackwell_gpu().await {
         cmd.arg("--bf16-vae");
         log::info!("Auto-applied --bf16-vae for Blackwell GPU");
     }
@@ -1697,8 +1720,8 @@ pub async fn start_worker_process(
     // support (see torch_has_accelerator() above). Checked before the VRAM-mode
     // flag below because ComfyUI's argparser treats --cpu and
     // --lowvram/--novram/--highvram as mutually exclusive.
-    let force_cpu =
-        !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path);
+    let force_cpu = !config.extra_args.iter().any(|a| a == "--cpu")
+        && !torch_has_accelerator(&python_path).await;
     if force_cpu {
         cmd.arg("--cpu");
         log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
@@ -1712,7 +1735,7 @@ pub async fn start_worker_process(
             .unwrap_or(config.vram_mode.as_str());
         match vram_mode {
             "high" => {
-                apply_highvram_flag(&mut cmd, &config);
+                apply_highvram_flag(&mut cmd, &config).await;
             }
             "low" => {
                 cmd.arg("--lowvram");
@@ -1733,7 +1756,7 @@ pub async fn start_worker_process(
             "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae"
         )
     });
-    if !has_vae_flag && has_blackwell_gpu() {
+    if !has_vae_flag && has_blackwell_gpu().await {
         cmd.arg("--bf16-vae");
     }
 
@@ -2358,5 +2381,30 @@ mod extra_model_paths_tests {
         assert!(!content.contains("custom_nodes"));
         assert!(content.contains("base_path: \"/no/such/loras\""));
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod highvram_conflict_tests {
+    use super::h3_highvram_conflict;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn highvram_is_dropped_only_on_evidence() {
+        let big = || Some(("h3_nvfp4.safetensors".to_string(), 12 * GIB + GIB / 2));
+        let conflict = h3_highvram_conflict(Some(12 * GIB), big()).expect("DiT fills the card");
+        assert_eq!(conflict.model, "h3_nvfp4.safetensors");
+        assert_eq!(conflict.vram_bytes, 12 * GIB);
+        assert!(h3_highvram_conflict(Some(24 * GIB), big()).is_none());
+        // Unreadable VRAM or no H3 model installed: keep the flag.
+        assert!(h3_highvram_conflict(None, big()).is_none());
+        assert!(h3_highvram_conflict(Some(12 * GIB), None).is_none());
+    }
+
+    #[tokio::test]
+    async fn gpu_probes_fail_closed_without_the_tools() {
+        // A missing interpreter must read as "no accelerator", not hang or panic.
+        assert!(!super::torch_has_accelerator("/nonexistent/mooshieui/python").await);
     }
 }

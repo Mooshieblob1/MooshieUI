@@ -677,6 +677,14 @@ fn modified_ms(metadata: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// How many folder levels below an install dir the model scan descends.
+const MODEL_SCAN_MAX_DEPTH: usize = 16;
+
+/// Collect the managed model files under `root`, following symlinked files and
+/// folders (shared model libraries are commonly linked in, and ComfyUI follows
+/// the links too). A linked folder whose real path was already walked (a link
+/// back to an ancestor, or a second link to the same library) is skipped, so
+/// link loops end; the walk also stops [`MODEL_SCAN_MAX_DEPTH`] levels down.
 fn collect_model_files_from_dir(
     category: &str,
     dir: &ModelInstallDir,
@@ -684,14 +692,58 @@ fn collect_model_files_from_dir(
     current: &std::path::Path,
     files: &mut Vec<ManagedModelFile>,
 ) -> Result<(), AppError> {
+    let mut visited = std::collections::HashSet::new();
+    if let Ok(canonical) = std::fs::canonicalize(current) {
+        visited.insert(canonical);
+    }
+    collect_model_files_walk(category, dir, root, current, 0, &mut visited, files)
+}
+
+fn collect_model_files_walk(
+    category: &str,
+    dir: &ModelInstallDir,
+    root: &std::path::Path,
+    current: &std::path::Path,
+    depth: usize,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    files: &mut Vec<ManagedModelFile>,
+) -> Result<(), AppError> {
     for entry in std::fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
-        let metadata = entry.metadata()?;
-        if file_type.is_dir() {
-            collect_model_files_from_dir(category, dir, root, &path, files)?;
-        } else if file_type.is_file() && is_managed_model_file(&path) {
+        let metadata = if file_type.is_symlink() {
+            // Follow the link; a dangling one is skipped rather than failing the scan.
+            match std::fs::metadata(&path) {
+                Ok(target) => target,
+                Err(_) => continue,
+            }
+        } else {
+            entry.metadata()?
+        };
+        if metadata.is_dir() {
+            if depth + 1 >= MODEL_SCAN_MAX_DEPTH {
+                continue;
+            }
+            let canonical = std::fs::canonicalize(&path).ok();
+            if file_type.is_symlink() {
+                // Only links need the guard: real folders cannot form a cycle.
+                let Some(real) = canonical else {
+                    continue;
+                };
+                if !visited.insert(real) {
+                    continue;
+                }
+                // An unreadable linked library should not hide the rest.
+                let _ =
+                    collect_model_files_walk(category, dir, root, &path, depth + 1, visited, files);
+            } else {
+                if let Some(real) = canonical {
+                    visited.insert(real);
+                }
+                collect_model_files_walk(category, dir, root, &path, depth + 1, visited, files)?;
+            }
+        } else if metadata.is_file() && is_managed_model_file(&path) {
             let filename = relative_model_filename(root, &path);
             if !is_safe_relative_model_path(&filename) {
                 continue;
@@ -730,6 +782,55 @@ pub(crate) fn list_model_files_for_config(
             .then_with(|| a.directory_label.cmp(&b.directory_label))
     });
     Ok(files)
+}
+
+#[cfg(all(test, unix))]
+mod symlinked_model_scan_tests {
+    use super::{collect_model_files_from_dir, ModelInstallDir};
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn symlinked_models_are_listed_and_link_loops_end() {
+        let base =
+            std::env::temp_dir().join(format!("mooshieui-symlinked-models-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        let root = base.join("loras");
+        let library = base.join("library");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(library.join("styles")).unwrap();
+        std::fs::write(root.join("local.safetensors"), b"x").unwrap();
+        std::fs::write(library.join("top.safetensors"), b"x").unwrap();
+        std::fs::write(library.join("styles").join("ink.safetensors"), b"x").unwrap();
+        // A linked library folder, a linked file, a dangling link, and a link
+        // inside the library pointing back up at the install dir (a loop).
+        symlink(&library, root.join("shared")).unwrap();
+        symlink(
+            library.join("top.safetensors"),
+            root.join("linked.safetensors"),
+        )
+        .unwrap();
+        symlink(base.join("gone"), root.join("dangling.safetensors")).unwrap();
+        symlink(&root, library.join("styles").join("back_to_root")).unwrap();
+
+        let dir = ModelInstallDir {
+            path: root.to_string_lossy().to_string(),
+            label: "ComfyUI".into(),
+        };
+        let mut files = Vec::new();
+        collect_model_files_from_dir("loras", &dir, &root, &root, &mut files).unwrap();
+        let mut names: Vec<_> = files.iter().map(|f| f.filename.clone()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "linked.safetensors",
+                "local.safetensors",
+                "shared/styles/ink.safetensors",
+                "shared/top.safetensors",
+            ]
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
 }
 
 fn collect_model_folders_from_dir(
@@ -2081,7 +2182,7 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
     }
 
     // One query for the whole video table, not one per directory entry.
-    let meta = crate::gallery_index::video_meta();
+    let meta = crate::gallery_index::video_meta(&dir);
 
     let mut files: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(|entry| {
@@ -3668,32 +3769,37 @@ pub async fn find_model_by_hash(
     let needle = hash.to_uppercase();
     let is_autov2 = needle.len() == 10;
 
-    let entries = std::fs::read_dir(&models_dir)?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if !(name.ends_with(".safetensors") || name.ends_with(".ckpt")) {
-            continue;
-        }
-        if let Ok(h) = full_sha256(&path) {
-            let matches = if is_autov2 {
-                autov2_hash(&h) == needle
-            } else {
-                h == needle
-            };
-            if matches {
-                return Ok(Some(name));
+    // Hashing multi-GB checkpoints is blocking I/O; keep it off the async runtime.
+    tokio::task::spawn_blocking(move || {
+        let entries = std::fs::read_dir(&models_dir)?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if !(name.ends_with(".safetensors") || name.ends_with(".ckpt")) {
+                continue;
+            }
+            if let Ok(h) = full_sha256(&path) {
+                let matches = if is_autov2 {
+                    autov2_hash(&h) == needle
+                } else {
+                    h == needle
+                };
+                if matches {
+                    return Ok(Some(name));
+                }
             }
         }
-    }
-    Ok(None)
+        Ok::<_, AppError>(None)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))?
 }
 
 /// Compute the full SHA256 hash of a model file (uppercase hex, CivitAI-compatible).
@@ -3727,7 +3833,9 @@ pub async fn hash_model_file(
     if !path.is_file() {
         return Err(AppError::Other(format!("File not found: {}", filename)));
     }
-    let sha256 = full_sha256(&path)?;
+    let sha256 = tokio::task::spawn_blocking(move || full_sha256(&path))
+        .await
+        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
     let autov2 = autov2_hash(&sha256);
     Ok(ModelHashResult { sha256, autov2 })
 }
@@ -7577,9 +7685,12 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     // Presence flag for secret-bearing fields — never log the value itself.
     let cfgd = |s: &str| if s.is_empty() { "no" } else { "yes" };
 
+    // One snapshot of the config for the whole report: the read lock is not
+    // held across the model-folder walk or the Python subprocesses below.
+    let config = state.config.read().await.clone();
+
     // App config (sanitized — no secrets, just relevant settings)
     {
-        let config = state.config.read().await;
         let _ = writeln!(output, "=== App Configuration ===");
         let _ = writeln!(
             output,
@@ -7753,16 +7864,21 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
         }
         let _ = writeln!(output);
 
-        // Installed models inventory (names + sizes) — held under the same lock
-        // so it reflects the exact ComfyUI + extra-model paths reported above.
-        append_models_section(
-            &mut output,
-            &config.comfyui_path,
-            config.extra_model_paths.as_deref(),
-        );
-
-        // Custom nodes (top cause of ComfyUI breakage) — names + git rev.
-        append_custom_nodes_section(&mut output, &config.comfyui_path);
+        // Installed models inventory (names + sizes) from the same snapshot, so
+        // it reflects the exact ComfyUI + extra-model paths reported above, and
+        // custom nodes (top cause of ComfyUI breakage) — names + git rev. Both
+        // walk the disk, so they run on the blocking pool.
+        let comfyui_path = config.comfyui_path.clone();
+        let extra_model_paths = config.extra_model_paths.clone();
+        let walked = tokio::task::spawn_blocking(move || {
+            let mut section = String::new();
+            append_models_section(&mut section, &comfyui_path, extra_model_paths.as_deref());
+            append_custom_nodes_section(&mut section, &comfyui_path);
+            section
+        })
+        .await
+        .unwrap_or_else(|e| format!("(model and custom node scan failed: {})\n\n", e));
+        output.push_str(&walked);
     }
 
     // Relevant environment variables (GPU/ML tuning; allowlisted, no secrets)
@@ -7811,7 +7927,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     // so out-of-memory and thermal-throttle reports carry live state.
     let _ = writeln!(output, "=== GPU Info ===");
     let nvidia_smi_out = {
-        let mut cmd = std::process::Command::new("nvidia-smi");
+        let mut cmd = tokio_command_no_window("nvidia-smi");
         cmd.args([
             "--query-gpu=name,driver_version,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,compute_cap",
             "--format=csv,noheader",
@@ -7819,12 +7935,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
         // Force English / POSIX locale so diagnostics read the same regardless
         // of the user's system language.
         cmd.env("LC_ALL", "C").env("LANG", "C");
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-        cmd.output()
+        cmd.output().await
     };
     match nvidia_smi_out {
         Ok(o) if o.status.success() => {
@@ -7836,9 +7947,9 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     }
     let _ = writeln!(output);
 
-    // Python / ComfyUI version info
+    // Python / ComfyUI version info (tokio processes: a cold `import torch`
+    // takes seconds)
     {
-        let config = state.config.read().await;
         if !config.venv_path.is_empty() {
             let _ = writeln!(output, "=== Python Environment ===");
             let python_path = {
@@ -7850,33 +7961,20 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
                 }
             };
             if python_path.exists() {
-                #[cfg(target_os = "windows")]
-                let hide: u32 = 0x08000000; // CREATE_NO_WINDOW
-
-                let mut py_ver_cmd = std::process::Command::new(&python_path);
+                let mut py_ver_cmd = tokio_command_no_window(&python_path);
                 py_ver_cmd.args(["--version"]);
                 py_ver_cmd.env("LC_ALL", "C").env("LANG", "C");
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::process::CommandExt;
-                    py_ver_cmd.creation_flags(hide);
-                }
-                if let Ok(o) = py_ver_cmd.output() {
+                if let Ok(o) = py_ver_cmd.output().await {
                     let _ = write!(output, "Python: {}", String::from_utf8_lossy(&o.stdout));
                     if !o.stderr.is_empty() {
                         let _ = write!(output, "{}", String::from_utf8_lossy(&o.stderr));
                     }
                 }
                 // Get torch version
-                let mut torch_cmd = std::process::Command::new(&python_path);
+                let mut torch_cmd = tokio_command_no_window(&python_path);
                 torch_cmd.args(["-c", "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}') if torch.cuda.is_available() else None"]);
                 torch_cmd.env("LC_ALL", "C").env("LANG", "C");
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::process::CommandExt;
-                    torch_cmd.creation_flags(hide);
-                }
-                if let Ok(o) = torch_cmd.output() {
+                if let Ok(o) = torch_cmd.output().await {
                     if o.status.success() {
                         let _ = write!(output, "{}", String::from_utf8_lossy(&o.stdout));
                     }
@@ -7966,6 +8064,34 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     }
 
     output
+}
+
+#[cfg(all(test, any(feature = "desktop", feature = "server")))]
+mod diagnostic_log_tests {
+    #[tokio::test]
+    async fn report_lists_models_and_nodes_from_the_config_snapshot() {
+        let base =
+            std::env::temp_dir().join(format!("mooshieui-diagnostic-log-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::create_dir_all(base.join("models").join("loras")).unwrap();
+        std::fs::write(
+            base.join("models")
+                .join("loras")
+                .join("ink_style.safetensors"),
+            b"x",
+        )
+        .unwrap();
+        std::fs::create_dir_all(base.join("custom_nodes").join("some-node-pack")).unwrap();
+
+        let state = crate::state::AppState::new(crate::config::AppConfig {
+            comfyui_path: base.to_string_lossy().to_string(),
+            ..Default::default()
+        });
+        let report = super::build_diagnostic_log(&state, None).await;
+        assert!(report.contains("ink_style.safetensors"), "{report}");
+        assert!(report.contains("some-node-pack"), "{report}");
+        std::fs::remove_dir_all(&base).ok();
+    }
 }
 
 /// Detect the MIME type of image bytes from magic bytes.
@@ -8175,20 +8301,17 @@ pub struct GpuWorkerInfo {
     pub label: String,
 }
 
-/// Query live GPU stats from nvidia-smi.
-fn query_nvidia_smi_stats() -> Result<Vec<GpuStats>, AppError> {
-    let mut cmd = std::process::Command::new("nvidia-smi");
+/// Query live GPU stats from nvidia-smi (a tokio process: the GPU panel polls
+/// this, and a slow or wedged driver must not stall an async worker).
+async fn query_nvidia_smi_stats() -> Result<Vec<GpuStats>, AppError> {
+    let mut cmd = tokio_command_no_window("nvidia-smi");
     cmd.args([
         "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
         "--format=csv,noheader,nounits",
     ]);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
     let output = cmd
         .output()
+        .await
         .map_err(|e| AppError::Other(format!("nvidia-smi not found: {}", e)))?;
 
     if !output.status.success() {
@@ -8235,7 +8358,7 @@ pub async fn get_gpu_stats(state: State<'_, Arc<AppState>>) -> Result<Vec<GpuSta
 
 /// Shared implementation used by both Tauri command and REST handler.
 pub async fn get_gpu_stats_inner(state: &AppState) -> Result<Vec<GpuStats>, AppError> {
-    let mut gpus = query_nvidia_smi_stats()?;
+    let mut gpus = query_nvidia_smi_stats().await?;
 
     // Merge worker status info
     let statuses = state.gpu_manager.worker_statuses().await;
@@ -8297,15 +8420,13 @@ fn venv_python_bin(venv_path: &str) -> std::path::PathBuf {
 }
 
 /// Probe whether the CUDA compiler (`nvcc`) is available on PATH.
-fn nvcc_available() -> bool {
-    let mut cmd = std::process::Command::new("nvcc");
+async fn nvcc_available() -> bool {
+    let mut cmd = tokio_command_no_window("nvcc");
     cmd.arg("--version");
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd.output().map(|o| o.status.success()).unwrap_or(false)
+    cmd.output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Compute per-backend support from detected capabilities. Hard-block rules:
@@ -8375,7 +8496,7 @@ pub async fn check_attention_backend(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_compute_capability() -> Result<Option<f32>, AppError> {
-    Ok(detect_compute_capability())
+    Ok(detect_compute_capability().await)
 }
 
 /// Core of `check_attention_backend`, shared by the desktop Tauri command and the
@@ -8422,8 +8543,8 @@ pub async fn check_attention_backend_core(
         }
     }
 
-    let compute_capability = detect_compute_capability();
-    let nvcc = nvcc_available();
+    let compute_capability = detect_compute_capability().await;
+    let nvcc = nvcc_available().await;
     let support = compute_backend_support(compute_capability, nvcc, cfg!(target_os = "windows"));
 
     Ok(AttentionBackendStatus {
@@ -8437,15 +8558,11 @@ pub async fn check_attention_backend_core(
 }
 
 /// Detect the highest NVIDIA GPU compute capability (e.g. 8.6 for RTX 3080).
-fn detect_compute_capability() -> Option<f32> {
-    let mut cmd = std::process::Command::new("nvidia-smi");
+/// A tokio process: the gen page calls this on mount and after every generation.
+async fn detect_compute_capability() -> Option<f32> {
+    let mut cmd = tokio_command_no_window("nvidia-smi");
     cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    let output = cmd.output().ok()?;
+    let output = cmd.output().await.ok()?;
 
     if !output.status.success() {
         return None;
@@ -8459,8 +8576,8 @@ fn detect_compute_capability() -> Option<f32> {
 }
 
 /// Public accessor for browser-mode command dispatch.
-pub fn detect_compute_capability_pub() -> Option<f32> {
-    detect_compute_capability()
+pub async fn detect_compute_capability_pub() -> Option<f32> {
+    detect_compute_capability().await
 }
 
 /// Install (or uninstall) an attention backend package in the venv.
@@ -8515,8 +8632,11 @@ pub async fn install_attention_backend_core(
     // Preflight: reject hard-blocked backends before touching any packages, so a
     // doomed source build never even starts.
     if backend != "default" {
-        let support =
-            compute_backend_support(detect_compute_capability(), nvcc_available(), is_windows);
+        let support = compute_backend_support(
+            detect_compute_capability().await,
+            nvcc_available().await,
+            is_windows,
+        );
         if let Some(s) = support.iter().find(|s| s.backend == backend) {
             if !s.supported {
                 let reason = match s.reason.as_deref() {

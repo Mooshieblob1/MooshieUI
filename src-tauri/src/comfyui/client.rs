@@ -285,7 +285,19 @@ pub fn validate_downloaded_model_file(
     path: &std::path::Path,
     filename: &str,
 ) -> Result<(), AppError> {
-    validate_model_file_as(path, path, filename)
+    validate_model_file_as(path, path, filename).map(|_| ())
+}
+
+/// What a structural check could establish about a model file's length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelFileCompleteness {
+    /// The format records where its data ends and the file reaches that point
+    /// (safetensors, GGUF, zip-based torch checkpoints).
+    Verified,
+    /// The format has no cheap completeness marker (legacy pickle `.pth`,
+    /// `.onnx`, a GGUF with an unknown tensor type, ...). Only the bytes that
+    /// could be checked were, so a truncated file can still pass.
+    Unverified,
 }
 
 /// Validate the model bytes at `path` as the format implied by `named_as`'s
@@ -294,7 +306,7 @@ fn validate_model_file_as(
     path: &std::path::Path,
     named_as: &std::path::Path,
     filename: &str,
-) -> Result<(), AppError> {
+) -> Result<ModelFileCompleteness, AppError> {
     let size = std::fs::metadata(path)?.len();
     if size == 0 {
         return Err(AppError::Other(format!(
@@ -311,9 +323,401 @@ fn validate_model_file_as(
 
     if ext == "safetensors" || ext == "sft" {
         validate_safetensors_file(path, filename, size)?;
+        return Ok(ModelFileCompleteness::Verified);
+    }
+    if ext == "gguf" {
+        return validate_gguf_file(path, filename, size);
+    }
+    // torch.save has written zip archives since PyTorch 1.6, whatever the
+    // extension (.pt/.pth/.ckpt/.bin); their end record sits at the very end.
+    validate_zip_container(path, filename, size)
+}
+
+/// Check that a zip archive (a modern torch checkpoint) still ends with its
+/// end-of-central-directory record. A truncated archive loses that record,
+/// which is exactly what `torch.load` then chokes on. Files that are not zip
+/// archives (legacy pickle checkpoints, ONNX, ...) are passed as unverified.
+fn validate_zip_container(
+    path: &std::path::Path,
+    filename: &str,
+    file_size: u64,
+) -> Result<ModelFileCompleteness, AppError> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const LOCAL_HEADER: &[u8; 4] = b"PK\x03\x04";
+    const END_RECORD: &[u8; 4] = b"PK\x05\x06";
+    const END_RECORD_LEN: usize = 22;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut magic = [0u8; 4];
+    if file_size < 4 || file.read_exact(&mut magic).is_err() || &magic != LOCAL_HEADER {
+        return Ok(ModelFileCompleteness::Unverified);
     }
 
-    Ok(())
+    let incomplete = || {
+        AppError::Other(format!(
+            "'{}' is incomplete: its zip end record is missing, so the file was cut off",
+            filename
+        ))
+    };
+    if file_size < END_RECORD_LEN as u64 {
+        return Err(incomplete());
+    }
+    // The end record is 22 bytes plus a comment of at most 64 KiB.
+    let tail_len = file_size.min((END_RECORD_LEN + u16::MAX as usize) as u64);
+    let tail_start = file_size - tail_len;
+    file.seek(SeekFrom::Start(tail_start))?;
+    let mut tail = vec![0u8; tail_len as usize];
+    file.read_exact(&mut tail)?;
+
+    let found = (0..=tail.len() - END_RECORD_LEN).rev().any(|i| {
+        if &tail[i..i + 4] != END_RECORD {
+            return false;
+        }
+        let field = |at: usize| u32::from_le_bytes(tail[at..at + 4].try_into().unwrap());
+        let comment_len = u16::from_le_bytes([tail[i + 20], tail[i + 21]]) as usize;
+        if i + END_RECORD_LEN + comment_len != tail.len() {
+            return false;
+        }
+        let (cd_size, cd_offset) = (field(i + 12), field(i + 16));
+        // Zip64 archives park 0xFFFFFFFF here and keep the real values elsewhere.
+        cd_size == u32::MAX
+            || cd_offset == u32::MAX
+            || cd_offset as u64 + cd_size as u64 <= tail_start + i as u64
+    });
+    if found {
+        Ok(ModelFileCompleteness::Verified)
+    } else {
+        Err(incomplete())
+    }
+}
+
+/// `(block size in elements, bytes per block)` for a ggml tensor type, from
+/// gguf-py's `GGML_QUANT_SIZES`. `None` for types this build does not know,
+/// which only makes the GGUF check less complete, never wrong.
+fn ggml_type_block(ggml_type: u32) -> Option<(u64, u64)> {
+    Some(match ggml_type {
+        0 => (1, 4),      // F32
+        1 => (1, 2),      // F16
+        2 => (32, 18),    // Q4_0
+        3 => (32, 20),    // Q4_1
+        6 => (32, 22),    // Q5_0
+        7 => (32, 24),    // Q5_1
+        8 => (32, 34),    // Q8_0
+        9 => (32, 36),    // Q8_1
+        10 => (256, 84),  // Q2_K
+        11 => (256, 110), // Q3_K
+        12 => (256, 144), // Q4_K
+        13 => (256, 176), // Q5_K
+        14 => (256, 210), // Q6_K
+        15 => (256, 292), // Q8_K
+        16 => (256, 66),  // IQ2_XXS
+        17 => (256, 74),  // IQ2_XS
+        18 => (256, 98),  // IQ3_XXS
+        19 => (256, 50),  // IQ1_S
+        20 => (32, 18),   // IQ4_NL
+        21 => (256, 110), // IQ3_S
+        22 => (256, 82),  // IQ2_S
+        23 => (256, 136), // IQ4_XS
+        24 => (1, 1),     // I8
+        25 => (1, 2),     // I16
+        26 => (1, 4),     // I32
+        27 => (1, 8),     // I64
+        28 => (1, 8),     // F64
+        29 => (256, 56),  // IQ1_M
+        30 => (1, 2),     // BF16
+        34 => (256, 54),  // TQ1_0
+        35 => (256, 66),  // TQ2_0
+        39 => (32, 17),   // MXFP4
+        _ => return None,
+    })
+}
+
+/// Sequential reader over a GGUF header that refuses to step past the end of
+/// the file, so a cut-off header reads as incomplete instead of as garbage.
+struct GgufHeaderReader {
+    reader: std::io::BufReader<std::fs::File>,
+    pos: u64,
+    len: u64,
+}
+
+impl GgufHeaderReader {
+    fn take(&mut self, n: u64) -> Result<(), String> {
+        if self.len.saturating_sub(self.pos) < n {
+            return Err("the header runs past the end of the file".into());
+        }
+        self.pos += n;
+        Ok(())
+    }
+
+    fn bytes<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        use std::io::Read;
+        self.take(N as u64)?;
+        let mut buf = [0u8; N];
+        self.reader
+            .read_exact(&mut buf)
+            .map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        self.bytes::<4>().map(u32::from_le_bytes)
+    }
+
+    fn u64(&mut self) -> Result<u64, String> {
+        self.bytes::<8>().map(u64::from_le_bytes)
+    }
+
+    fn skip(&mut self, n: u64) -> Result<(), String> {
+        self.take(n)?;
+        let n = i64::try_from(n).map_err(|_| "implausible length in header".to_string())?;
+        self.reader.seek_relative(n).map_err(|e| e.to_string())
+    }
+
+    fn string(&mut self) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let len = self.u64()?;
+        if len > 1 << 20 {
+            return Err(format!("implausible string length {}", len));
+        }
+        self.take(len)?;
+        let mut buf = vec![0u8; len as usize];
+        self.reader
+            .read_exact(&mut buf)
+            .map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
+
+    fn skip_string(&mut self) -> Result<(), String> {
+        let len = self.u64()?;
+        self.skip(len)
+    }
+
+    /// Skip one metadata value of GGUF value type `ty`.
+    fn skip_value(&mut self, ty: u32, depth: u32) -> Result<(), String> {
+        match ty {
+            0 | 1 | 7 => self.skip(1), // u8, i8, bool
+            2 | 3 => self.skip(2),     // u16, i16
+            4..=6 => self.skip(4),     // u32, i32, f32
+            10..=12 => self.skip(8),   // u64, i64, f64
+            8 => self.skip_string(),
+            9 if depth < 4 => {
+                let elem = self.u32()?;
+                let count = self.u64()?;
+                match elem {
+                    0 | 1 | 7 => self.skip(count),
+                    2 | 3 => self.skip(count.saturating_mul(2)),
+                    4..=6 => self.skip(count.saturating_mul(4)),
+                    10..=12 => self.skip(count.saturating_mul(8)),
+                    _ => (0..count).try_for_each(|_| self.skip_value(elem, depth + 1)),
+                }
+            }
+            _ => Err(format!("unknown metadata value type {}", ty)),
+        }
+    }
+}
+
+/// Walk a GGUF header (metadata + tensor table) and check the file is long
+/// enough to hold every tensor it declares.
+fn validate_gguf_file(
+    path: &std::path::Path,
+    filename: &str,
+    file_size: u64,
+) -> Result<ModelFileCompleteness, AppError> {
+    let mut r = GgufHeaderReader {
+        reader: std::io::BufReader::new(std::fs::File::open(path)?),
+        pos: 0,
+        len: file_size,
+    };
+    let invalid = |why: String| {
+        AppError::Other(format!(
+            "'{}' is not a complete GGUF file: {}. Delete it and download it again.",
+            filename, why
+        ))
+    };
+
+    if r.bytes::<4>().map_err(&invalid)? != *b"GGUF" {
+        return Err(invalid(
+            "missing GGUF magic (the server may have saved an HTML/JSON error page)".into(),
+        ));
+    }
+    let version = r.u32().map_err(&invalid)?;
+    // v1 used 32-bit counts; nothing current writes it. Unknown future
+    // versions may change the layout. Neither can be walked safely.
+    if !(2..=3).contains(&version) {
+        return Ok(ModelFileCompleteness::Unverified);
+    }
+
+    let parsed = (|| -> Result<(u64, bool), String> {
+        let tensor_count = r.u64()?;
+        let kv_count = r.u64()?;
+        if tensor_count > 1 << 24 || kv_count > 1 << 24 {
+            return Err(format!(
+                "implausible header ({} tensors, {} metadata entries)",
+                tensor_count, kv_count
+            ));
+        }
+
+        let mut alignment: u64 = 32;
+        for _ in 0..kv_count {
+            let key = r.string()?;
+            let ty = r.u32()?;
+            if key == b"general.alignment" && ty == 4 {
+                alignment = u64::from(r.u32()?);
+            } else {
+                r.skip_value(ty, 0)?;
+            }
+        }
+        if alignment == 0 || !alignment.is_power_of_two() {
+            return Err(format!("invalid alignment {}", alignment));
+        }
+
+        let mut data_end: u64 = 0;
+        let mut all_sizes_known = true;
+        for _ in 0..tensor_count {
+            r.skip_string()?;
+            let n_dims = r.u32()?;
+            if n_dims > 8 {
+                return Err(format!("implausible tensor rank {}", n_dims));
+            }
+            let mut dims = Vec::with_capacity(n_dims as usize);
+            for _ in 0..n_dims {
+                dims.push(r.u64()?);
+            }
+            let ggml_type = r.u32()?;
+            let offset = r.u64()?;
+
+            let elements = dims.iter().try_fold(1u64, |acc, &d| acc.checked_mul(d));
+            let row = dims.first().copied().unwrap_or(1);
+            let bytes = match (ggml_type_block(ggml_type), elements) {
+                (Some((block, size)), Some(n)) if row % block == 0 => (n / block).checked_mul(size),
+                _ => None,
+            };
+            match bytes {
+                Some(bytes) => data_end = data_end.max(offset.saturating_add(bytes)),
+                None => {
+                    // Unknown type: the tensor still starts at `offset`.
+                    all_sizes_known = false;
+                    data_end = data_end.max(offset);
+                }
+            }
+        }
+
+        let data_start = r.pos.div_ceil(alignment).saturating_mul(alignment);
+        Ok((data_start.saturating_add(data_end), all_sizes_known))
+    })();
+
+    let (required, all_sizes_known) = parsed.map_err(invalid)?;
+    if required > file_size {
+        return Err(AppError::Other(format!(
+            "'{}' is incomplete: its tensors end at byte {} but the file is only {} bytes",
+            filename, required, file_size
+        )));
+    }
+    Ok(if all_sizes_known {
+        ModelFileCompleteness::Verified
+    } else {
+        ModelFileCompleteness::Unverified
+    })
+}
+
+/// Size the server reports for `url`, from a HEAD request. `None` whenever it
+/// cannot be told reliably (offline, no Content-Length, an error page, a
+/// transfer encoding), so callers only ever act on a real answer.
+async fn remote_content_length(http_client: &reqwest::Client, url: &str) -> Option<u64> {
+    let mut req = http_client.head(url);
+    if let Some(token) = huggingface_token_for_url(url) {
+        req = req.bearer_auth(token);
+    }
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(15), req.send())
+        .await
+        .ok()?
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let header = |name: reqwest::header::HeaderName| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_ascii_lowercase)
+    };
+    if header(reqwest::header::CONTENT_ENCODING).is_some_and(|enc| enc != "identity") {
+        return None;
+    }
+    let content_type = header(reqwest::header::CONTENT_TYPE).unwrap_or_default();
+    reject_non_model_download_content_type(url, &content_type).ok()?;
+    // Read the header itself: `Response::content_length()` is the (empty) body
+    // size for a HEAD response.
+    header(reqwest::header::CONTENT_LENGTH)?.trim().parse().ok()
+}
+
+/// Whether a model file already at a download's destination can be reused
+/// instead of downloading `url` again. An empty or structurally broken file,
+/// or one whose SHA-256 differs from `expected_sha256`, is deleted. A file whose
+/// format cannot prove its own length is compared with the server's
+/// Content-Length and re-downloaded (without deleting it first, so a failed
+/// download never loses it) when they differ.
+pub async fn reuse_existing_model_download(
+    http_client: &reqwest::Client,
+    url: &str,
+    dest: &std::path::Path,
+    filename: &str,
+    expected_sha256: Option<&str>,
+) -> Result<bool, AppError> {
+    let size = match tokio::fs::metadata(dest).await {
+        Ok(meta) if meta.is_file() => meta.len(),
+        _ => return Ok(false),
+    };
+    if size == 0 {
+        let _ = std::fs::remove_file(dest);
+        return Ok(false);
+    }
+
+    let (path, name) = (dest.to_path_buf(), filename.to_string());
+    let checked = tokio::task::spawn_blocking(move || validate_model_file_as(&path, &path, &name))
+        .await
+        .map_err(|e| AppError::Other(format!("Model check task failed: {}", e)))?;
+    let completeness = match checked {
+        Ok(completeness) => completeness,
+        Err(e) => {
+            log::warn!(
+                "Existing '{}' is unusable ({}); re-downloading",
+                filename,
+                e
+            );
+            let _ = std::fs::remove_file(dest);
+            return Ok(false);
+        }
+    };
+
+    if let Some(expected_hex) = expected_sha256 {
+        let path = dest.to_path_buf();
+        let computed = tokio::task::spawn_blocking(move || sha256_file(&path))
+            .await
+            .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
+        if computed == expected_hex.to_lowercase() {
+            return Ok(true);
+        }
+        let _ = std::fs::remove_file(dest);
+        return Ok(false);
+    }
+
+    if completeness == ModelFileCompleteness::Verified {
+        return Ok(true);
+    }
+    match remote_content_length(http_client, url).await {
+        Some(remote) if remote != size => {
+            log::warn!(
+                "Existing '{}' is {} bytes but the server reports {}; re-downloading",
+                filename,
+                size,
+                remote
+            );
+            Ok(false)
+        }
+        _ => Ok(true),
+    }
 }
 
 fn validate_safetensors_file(
@@ -576,6 +980,247 @@ mod partial_download_tests {
         .await
         .is_err());
         assert!(!part.exists() && !dest.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod existing_model_tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-existing-model-{}-{}",
+            std::process::id(),
+            name
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A stored-only zip with one entry, laid out the way `torch.save` writes.
+    fn zip_bytes(comment: &[u8]) -> Vec<u8> {
+        let name = b"archive/data.pkl";
+        let data = b"tensor bytes";
+        let mut out = Vec::new();
+        out.extend_from_slice(b"PK\x03\x04");
+        out.extend_from_slice(&[0u8; 22]);
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(data);
+        let cd_offset = out.len() as u32;
+        out.extend_from_slice(b"PK\x01\x02");
+        out.extend_from_slice(&[0u8; 24]);
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&[0u8; 16]);
+        out.extend_from_slice(name);
+        let cd_size = out.len() as u32 - cd_offset;
+        out.extend_from_slice(b"PK\x05\x06");
+        out.extend_from_slice(&[0, 0, 0, 0, 1, 0, 1, 0]);
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&(comment.len() as u16).to_le_bytes());
+        out.extend_from_slice(comment);
+        out
+    }
+
+    fn gguf_string(out: &mut Vec<u8>, s: &str) {
+        out.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    }
+
+    /// A GGUF v3 file with an F32 [4, 2] tensor and a Q8_0 [32] tensor after
+    /// it (32 + 34 data bytes), plus a string-array metadata entry to skip.
+    fn gguf_bytes(second_tensor_type: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"GGUF");
+        out.extend_from_slice(&3u32.to_le_bytes());
+        out.extend_from_slice(&2u64.to_le_bytes()); // tensors
+        out.extend_from_slice(&2u64.to_le_bytes()); // metadata entries
+        gguf_string(&mut out, "tokenizer.ggml.tokens");
+        out.extend_from_slice(&9u32.to_le_bytes()); // array
+        out.extend_from_slice(&8u32.to_le_bytes()); // of strings
+        out.extend_from_slice(&2u64.to_le_bytes());
+        gguf_string(&mut out, "a");
+        gguf_string(&mut out, "bc");
+        gguf_string(&mut out, "general.alignment");
+        out.extend_from_slice(&4u32.to_le_bytes());
+        out.extend_from_slice(&64u32.to_le_bytes());
+        for (name, dims, ty, offset) in [
+            ("w", vec![4u64, 2], 0u32, 0u64),
+            ("q", vec![32u64], second_tensor_type, 64),
+        ] {
+            gguf_string(&mut out, name);
+            out.extend_from_slice(&(dims.len() as u32).to_le_bytes());
+            for d in dims {
+                out.extend_from_slice(&d.to_le_bytes());
+            }
+            out.extend_from_slice(&ty.to_le_bytes());
+            out.extend_from_slice(&offset.to_le_bytes());
+        }
+        out.resize(out.len().div_ceil(64) * 64, 0);
+        out.extend_from_slice(&[1u8; 64]); // "w" (32 bytes) padded to 64
+        out.extend_from_slice(&[2u8; 34]); // "q": one Q8_0 block
+        out
+    }
+
+    fn check(
+        dir: &std::path::Path,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<ModelFileCompleteness, AppError> {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        validate_model_file_as(&path, &path, name)
+    }
+
+    #[test]
+    fn zip_checkpoints_must_keep_their_end_record() {
+        let dir = scratch_dir("zip");
+        let full = zip_bytes(b"");
+        assert_eq!(
+            check(&dir, "model.pth", &full).unwrap(),
+            ModelFileCompleteness::Verified
+        );
+        let commented = zip_bytes(b"saved by torch");
+        assert_eq!(
+            check(&dir, "model.ckpt", &commented).unwrap(),
+            ModelFileCompleteness::Verified
+        );
+        for cut in [1, 10, 22, full.len() / 2] {
+            let err = check(&dir, "model.pt", &full[..full.len() - cut]).unwrap_err();
+            assert!(err.to_string().contains("incomplete"), "cut {cut}: {err}");
+        }
+        // Legacy pickle checkpoints and ONNX have no end marker to look for.
+        assert_eq!(
+            check(&dir, "legacy.pth", b"\x80\x02legacy pickle").unwrap(),
+            ModelFileCompleteness::Unverified
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gguf_tensor_table_bounds_the_file_size() {
+        let dir = scratch_dir("gguf");
+        let full = gguf_bytes(8);
+        assert_eq!(
+            check(&dir, "unet.gguf", &full).unwrap(),
+            ModelFileCompleteness::Verified
+        );
+        // Cut inside the last tensor, inside the tensor table, and in the metadata.
+        for keep in [full.len() - 1, full.len() - 40, 60, 30] {
+            assert!(
+                check(&dir, "unet.gguf", &full[..keep]).is_err(),
+                "kept {keep}"
+            );
+        }
+        let err = check(&dir, "unet.gguf", b"<html>not found</html>").unwrap_err();
+        assert!(err.to_string().contains("GGUF"), "{err}");
+        // An unknown tensor type still bounds the file by its offset, but
+        // cannot prove the last tensor is whole.
+        let unknown = gguf_bytes(250);
+        assert_eq!(
+            check(&dir, "unet.gguf", &unknown).unwrap(),
+            ModelFileCompleteness::Unverified
+        );
+        assert!(check(&dir, "unet.gguf", &unknown[..unknown.len() - 35]).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Serve every connection one fixed HEAD response with `Content-Length: len`.
+    async fn head_server(len: u64) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = socket.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}/model.onnx")
+    }
+
+    #[tokio::test]
+    async fn existing_files_are_reused_only_when_complete() {
+        let dir = scratch_dir("reuse");
+        // Loopback only; keep any system proxy out of the way.
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let offline = "http://127.0.0.1:9/model";
+
+        // Self-verifying formats never need the network.
+        let gguf = dir.join("unet.gguf");
+        let full = gguf_bytes(8);
+        std::fs::write(&gguf, &full).unwrap();
+        assert!(
+            reuse_existing_model_download(&client, offline, &gguf, "unet.gguf", None)
+                .await
+                .unwrap()
+        );
+        std::fs::write(&gguf, &full[..full.len() - 5]).unwrap();
+        assert!(
+            !reuse_existing_model_download(&client, offline, &gguf, "unet.gguf", None)
+                .await
+                .unwrap()
+        );
+        assert!(!gguf.exists(), "a truncated file is removed");
+
+        // A hash mismatch is removed; a match is reused.
+        let ckpt = dir.join("model.ckpt");
+        std::fs::write(&ckpt, zip_bytes(b"")).unwrap();
+        let wrong = "0".repeat(64);
+        assert!(!reuse_existing_model_download(
+            &client,
+            offline,
+            &ckpt,
+            "model.ckpt",
+            Some(&wrong)
+        )
+        .await
+        .unwrap());
+        assert!(!ckpt.exists());
+        std::fs::write(&ckpt, zip_bytes(b"")).unwrap();
+        let right = sha256_file(&ckpt).unwrap();
+        assert!(
+            reuse_existing_model_download(&client, offline, &ckpt, "model.ckpt", Some(&right))
+                .await
+                .unwrap()
+        );
+
+        // No format check: compare with the server's size, trust it when unreachable.
+        let onnx = dir.join("model.onnx");
+        std::fs::write(&onnx, b"0123456789").unwrap();
+        let bigger = head_server(4096).await;
+        assert!(
+            !reuse_existing_model_download(&client, &bigger, &onnx, "model.onnx", None)
+                .await
+                .unwrap()
+        );
+        assert!(onnx.exists(), "kept until a complete copy replaces it");
+        let same = head_server(10).await;
+        assert!(
+            reuse_existing_model_download(&client, &same, &onnx, "model.onnx", None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            reuse_existing_model_download(&client, offline, &onnx, "model.onnx", None)
+                .await
+                .unwrap()
+        );
+
+        let missing = dir.join("missing.bin");
+        assert!(
+            !reuse_existing_model_download(&client, offline, &missing, "missing.bin", None)
+                .await
+                .unwrap()
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
@@ -899,30 +1544,13 @@ impl AppState {
         tokio::fs::create_dir_all(&models_dir).await?;
         let dest = models_dir.join(filename);
 
-        // Skip if the file already exists and is non-empty. If an expected hash is
-        // supplied, verify the cached file before trusting it — a tampered file
-        // is re-downloaded rather than silently accepted.
-        if dest.exists() {
-            let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-            if size > 0 {
-                let cached_is_valid = validate_downloaded_model_file(&dest, filename).is_ok();
-                if !cached_is_valid {
-                    let _ = std::fs::remove_file(&dest);
-                } else if let Some(expected_hex) = expected_sha256 {
-                    let dest_clone = dest.clone();
-                    let computed = tokio::task::spawn_blocking(move || sha256_file(&dest_clone))
-                        .await
-                        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
-                    if computed == expected_hex.to_lowercase() {
-                        return Ok(()); // Trusted cache hit.
-                    }
-                    // Hash mismatch — fall through to re-download.
-                } else {
-                    return Ok(()); // No verification requested.
-                }
-            }
-            // Zero-byte leftover or hash mismatch — remove before re-downloading.
-            let _ = std::fs::remove_file(&dest);
+        // Reuse a file already on disk only if it is complete (format check,
+        // or the server's length when the format cannot tell) and matches the
+        // expected hash when one is supplied; otherwise download it again.
+        if reuse_existing_model_download(&self.http_client, url, &dest, filename, expected_sha256)
+            .await?
+        {
+            return Ok(());
         }
 
         let mut req = self.http_client.get(url);

@@ -125,7 +125,9 @@ pub const RIFE_CKPT_FILENAME: &str = "rife49.pth";
 /// (styler00dollar/VSGAN-tensorrt-docker) now returns 404 for every checkpoint,
 /// which is why that table exists at all, so a single hardcoded URL is not
 /// survivable here either. Every mirror below serves a byte-identical
-/// 21,345,274-byte file.
+/// 21,345,274-byte file ([`RIFE_CKPT_SHA256`]), and each download is checked
+/// against that length and hash, so a mirror can go stale but never swap in a
+/// different (pickle, i.e. code-executing) checkpoint.
 pub const RIFE_CKPT_URLS: &[&str] = &[
     "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation/releases/download/models/rife49.pth",
     "https://huggingface.co/marduk191/rife/resolve/main/rife49.pth",
@@ -134,11 +136,16 @@ pub const RIFE_CKPT_URLS: &[&str] = &[
     "https://huggingface.co/hfmaster/models-moved/resolve/main/rife/rife49.pth",
 ];
 
-/// Smallest plausible size for the checkpoint. A mirror that has been replaced
-/// by an HTML error page or an LFS pointer still answers 200, so size is the
-/// cheap guard against renaming junk into place and failing cryptically at
-/// generation time instead.
-const RIFE_CKPT_MIN_BYTES: u64 = 16 * 1024 * 1024;
+/// Exact size of `rife49.pth`. A mirror that has been replaced by an HTML error
+/// page or an LFS pointer still answers 200, so size is the cheap first guard,
+/// and the download is aborted as soon as a mirror sends more than this.
+const RIFE_CKPT_BYTES: u64 = 21_345_274;
+
+/// SHA-256 of `rife49.pth`. The checkpoint is a torch pickle, which runs code on
+/// load, so the bytes are pinned rather than trusted to whichever mirror
+/// answered. Computed from the GitHub release asset and confirmed identical on
+/// all four Hugging Face mirrors in [`RIFE_CKPT_URLS`].
+const RIFE_CKPT_SHA256: &str = "e55fd00f3cc184e3c65961f4bb827a9da022e78eed36b055242c0ac30000d533";
 
 // MiniMax-H3 Turbo LoRA nodes, installed lazily from the video settings panel
 // for the same reason as RIFE. The adapter file itself is not downloaded here:
@@ -756,15 +763,25 @@ pub fn is_rife_installed(comfyui_path: &str) -> bool {
     rife_ckpt_has_checkpoint(comfyui_path)
 }
 
-/// Whether a plausible RIFE checkpoint sits on disk. Size-checked rather than
-/// merely present so a truncated file left by an older build cannot report the
-/// install as ready and then fail at generation time.
+/// Whether a RIFE checkpoint of the pinned size sits on disk. Size-checked
+/// rather than merely present so a truncated file left by an older build cannot
+/// report the install as ready and then fail at generation time. Cheap enough
+/// for status polling; [`install_rife`] also checks the hash.
 fn rife_ckpt_has_checkpoint(comfyui_path: &str) -> bool {
     rife_ckpt_dir(comfyui_path)
         .join(RIFE_CKPT_FILENAME)
         .metadata()
-        .map(|m| m.is_file() && m.len() >= RIFE_CKPT_MIN_BYTES)
+        .map(|m| m.is_file() && m.len() == RIFE_CKPT_BYTES)
         .unwrap_or(false)
+}
+
+/// Whether the file at `path` is exactly the pinned RIFE checkpoint.
+fn rife_ckpt_matches_pin(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    bytes.len() as u64 == RIFE_CKPT_BYTES
+        && format!("{:x}", Sha256::digest(&bytes)) == RIFE_CKPT_SHA256
 }
 
 /// Install the frame-interpolation pack that provides `RIFE VFI`.
@@ -948,11 +965,18 @@ pub async fn install_rife(
 
     let ckpt_dir = rife_ckpt_dir(comfyui_path);
     let ckpt_path = ckpt_dir.join(RIFE_CKPT_FILENAME);
-    if rife_ckpt_has_checkpoint(comfyui_path) {
+    let pinned = {
+        let path = ckpt_path.clone();
+        tokio::task::spawn_blocking(move || rife_ckpt_matches_pin(&path))
+            .await
+            .unwrap_or(false)
+    };
+    if pinned {
         on_progress("done", "RIFE frame interpolation is ready", true);
         return Ok(());
     }
-    // A short file is a leftover from a failed download, not an install.
+    // A short or foreign file (a failed download, or one an older build took
+    // from a mirror without a hash check) is not an install.
     let _ = std::fs::remove_file(&ckpt_path);
 
     std::fs::create_dir_all(&ckpt_dir).map_err(|e| {
@@ -1038,12 +1062,19 @@ async fn download_rife_checkpoint_from(
     }
 
     let total = response.content_length().unwrap_or(0);
+    if total > RIFE_CKPT_BYTES {
+        return Err(format!(
+            "server announced {} bytes, expected {}",
+            total, RIFE_CKPT_BYTES
+        ));
+    }
     let partial = dest.with_extension("part");
     let mut file = std::fs::File::create(&partial)
         .map_err(|e| format!("Failed to create '{}': {}", partial.display(), e))?;
 
     let mut downloaded: u64 = 0;
     let mut last_emit: u64 = 0;
+    let mut hasher = Sha256::new();
 
     loop {
         let chunk = match response.chunk().await {
@@ -1056,12 +1087,22 @@ async fn download_rife_checkpoint_from(
             }
         };
 
+        downloaded += chunk.len() as u64;
+        // Never stream more than the pinned size to disk.
+        if downloaded > RIFE_CKPT_BYTES {
+            drop(file);
+            let _ = std::fs::remove_file(&partial);
+            return Err(format!(
+                "served more than the expected {} bytes",
+                RIFE_CKPT_BYTES
+            ));
+        }
+        hasher.update(&chunk);
         if let Err(e) = file.write_all(&chunk) {
             drop(file);
             let _ = std::fs::remove_file(&partial);
             return Err(format!("Failed to write '{}': {}", partial.display(), e));
         }
-        downloaded += chunk.len() as u64;
 
         if downloaded - last_emit > 1024 * 1024 {
             last_emit = downloaded;
@@ -1085,13 +1126,9 @@ async fn download_rife_checkpoint_from(
         return Err(format!("Failed to flush '{}': {}", partial.display(), e));
     }
 
-    if downloaded < RIFE_CKPT_MIN_BYTES {
+    if let Err(e) = check_rife_ckpt(downloaded, &format!("{:x}", hasher.finalize())) {
         let _ = std::fs::remove_file(&partial);
-        return Err(format!(
-            "served only {} bytes, expected at least {} MB",
-            downloaded,
-            RIFE_CKPT_MIN_BYTES >> 20
-        ));
+        return Err(e);
     }
 
     std::fs::rename(&partial, dest).map_err(|e| {
@@ -1103,6 +1140,23 @@ async fn download_rife_checkpoint_from(
         )
     })?;
 
+    Ok(())
+}
+
+/// Accept a finished RIFE download only if it is exactly the pinned checkpoint.
+fn check_rife_ckpt(downloaded: u64, sha256_hex: &str) -> Result<(), String> {
+    if downloaded != RIFE_CKPT_BYTES {
+        return Err(format!(
+            "served {} bytes, expected {}",
+            downloaded, RIFE_CKPT_BYTES
+        ));
+    }
+    if sha256_hex != RIFE_CKPT_SHA256 {
+        return Err(format!(
+            "SHA-256 mismatch: expected {}, got {}",
+            RIFE_CKPT_SHA256, sha256_hex
+        ));
+    }
     Ok(())
 }
 
@@ -2239,5 +2293,159 @@ mod tests {
         assert!(!target.exists());
         assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod rife_pin_tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-rife-pin-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn only_the_pinned_checkpoint_is_accepted() {
+        assert!(check_rife_ckpt(RIFE_CKPT_BYTES, RIFE_CKPT_SHA256).is_ok());
+        assert!(check_rife_ckpt(RIFE_CKPT_BYTES - 1, RIFE_CKPT_SHA256).is_err());
+        let other = "0".repeat(64);
+        let err = check_rife_ckpt(RIFE_CKPT_BYTES, &other).unwrap_err();
+        assert!(err.contains("SHA-256"), "{err}");
+
+        let dir = scratch_dir("pin");
+        let path = dir.join(RIFE_CKPT_FILENAME);
+        std::fs::write(&path, b"not the checkpoint").unwrap();
+        assert!(!rife_ckpt_matches_pin(&path));
+        assert!(!rife_ckpt_matches_pin(&dir.join("missing.pth")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Serve one GET with `announced` as Content-Length (or none) and `body_len` bytes.
+    async fn serve_once(announced: Option<u64>, body_len: usize) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = socket.read(&mut buf).await;
+                let length = announced
+                    .map(|n| format!("Content-Length: {n}\r\n"))
+                    .unwrap_or_default();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n{length}Connection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&vec![7u8; body_len]).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        format!("http://{addr}/{RIFE_CKPT_FILENAME}")
+    }
+
+    #[tokio::test]
+    async fn oversized_mirrors_are_cut_off() {
+        let dir = scratch_dir("oversized");
+        let dest = dir.join(RIFE_CKPT_FILENAME);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let quiet = |_: &str, _: &str, _: bool| {};
+        let too_big = RIFE_CKPT_BYTES as usize + 1;
+
+        let announced = serve_once(Some(too_big as u64), 0).await;
+        let err = download_rife_checkpoint_from(&client, &announced, &dest, &quiet)
+            .await
+            .unwrap_err();
+        assert!(err.contains("announced"), "{err}");
+
+        let unannounced = serve_once(None, too_big).await;
+        let err = download_rife_checkpoint_from(&client, &unannounced, &dest, &quiet)
+            .await
+            .unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+
+        // Right size, wrong bytes.
+        let wrong = serve_once(Some(RIFE_CKPT_BYTES), RIFE_CKPT_BYTES as usize).await;
+        let err = download_rife_checkpoint_from(&client, &wrong, &dest, &quiet)
+            .await
+            .unwrap_err();
+        assert!(err.contains("SHA-256"), "{err}");
+
+        assert!(!dest.exists() && !dest.with_extension("part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod install_script_tests {
+    use super::ensure_mooshie_nodes;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    fn files_under(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files_under(root, &path, out);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                out.insert(rel, std::fs::read(&path).unwrap());
+            }
+        }
+    }
+
+    /// `comfyui-nodes/install.sh` (for external ComfyUI servers) must deploy
+    /// exactly what the app deploys, or those servers fail the required-node
+    /// check on connect.
+    #[test]
+    fn install_script_deploys_what_the_app_deploys() {
+        let base =
+            std::env::temp_dir().join(format!("mooshieui-install-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (app, script) = (base.join("app"), base.join("script"));
+        for comfy in [&app, &script] {
+            std::fs::create_dir_all(comfy.join("custom_nodes")).unwrap();
+            std::fs::write(comfy.join("nodes.py"), b"").unwrap();
+        }
+        // A stale package-style flux2vae copy both installers must remove.
+        std::fs::create_dir_all(script.join("custom_nodes/sdxl-flux2vae-comfyui-node")).unwrap();
+        std::fs::write(
+            script.join("custom_nodes/sdxl-flux2vae-comfyui-node/nodes.py"),
+            b"old",
+        )
+        .unwrap();
+
+        ensure_mooshie_nodes(app.to_str().unwrap()).unwrap();
+        let installer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../comfyui-nodes/install.sh");
+        let output = std::process::Command::new("bash")
+            .arg(&installer)
+            .arg(&script)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "install.sh failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let (mut expected, mut actual) = (BTreeMap::new(), BTreeMap::new());
+        let app_nodes = app.join("custom_nodes");
+        let script_nodes = script.join("custom_nodes");
+        files_under(&app_nodes, &app_nodes, &mut expected);
+        files_under(&script_nodes, &script_nodes, &mut actual);
+        assert_eq!(
+            expected.keys().collect::<Vec<_>>(),
+            actual.keys().collect::<Vec<_>>()
+        );
+        for (path, bytes) in &expected {
+            assert!(actual[path] == *bytes, "{} differs", path.display());
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

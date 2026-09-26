@@ -64,15 +64,24 @@ pub struct PromptQueue {
     /// Used to translate WebSocket events so the frontend sees consistent IDs.
     aliases: std::sync::RwLock<HashMap<String, String>>,
     /// Real ComfyUI prompt_ids whose completion/error arrived before `bind_alias`
-    /// was called (race condition in server mode). `bind_alias` checks this set
-    /// and immediately finishes the placeholder if the real_id is found here.
-    deferred_finishes: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// was called (race condition in server mode), with when each was parked.
+    /// `bind_alias` checks this map and immediately finishes the placeholder if
+    /// the real_id is found here. Bounded by [`DEFERRED_FINISH_TTL`] and
+    /// [`DEFERRED_FINISH_CAP`]: an id nothing ever binds must not stay forever.
+    deferred_finishes: std::sync::RwLock<HashMap<String, std::time::Instant>>,
     /// Placeholder/real prompt ids explicitly canceled while submission may
     /// still be racing. Submission tasks check this before binding aliases.
     cancelled: std::sync::RwLock<std::collections::HashSet<String>>,
     /// When each prompt_id was enqueued (for submission-timeout detection).
     inserted_at: std::sync::RwLock<HashMap<String, std::time::Instant>>,
 }
+
+/// How long a parked early finish waits for its `bind_alias`. The race it covers
+/// spans one `queue_prompt` round-trip, so anything older will never be bound.
+const DEFERRED_FINISH_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Most early finishes parked at once; the oldest is dropped beyond this.
+const DEFERRED_FINISH_CAP: usize = 1024;
 
 impl Default for PromptQueue {
     fn default() -> Self {
@@ -109,7 +118,7 @@ impl PromptQueue {
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
             aliases: std::sync::RwLock::new(HashMap::new()),
-            deferred_finishes: std::sync::RwLock::new(std::collections::HashSet::new()),
+            deferred_finishes: std::sync::RwLock::new(HashMap::new()),
             cancelled: std::sync::RwLock::new(std::collections::HashSet::new()),
             inserted_at: std::sync::RwLock::new(HashMap::new()),
         }
@@ -464,7 +473,12 @@ impl PromptQueue {
             .unwrap()
             .insert(comfyui_id.to_string(), username);
         // Check if completion/error arrived before this alias was bound.
-        let was_deferred = self.deferred_finishes.write().unwrap().remove(comfyui_id);
+        let was_deferred = self
+            .deferred_finishes
+            .write()
+            .unwrap()
+            .remove(comfyui_id)
+            .is_some();
         if was_deferred {
             self.worker_map.write().unwrap().remove(placeholder_id);
             self.queue
@@ -479,11 +493,34 @@ impl PromptQueue {
     /// Park a ComfyUI real prompt_id whose completion/error arrived before
     /// `bind_alias` was called. The next `bind_alias` call for this id will
     /// immediately finish the corresponding placeholder.
+    ///
+    /// Only ids this queue has never seen are parked. A known id (inserted
+    /// directly, as desktop does, or already bound as an alias) was finished
+    /// through its own record, typically by the desktop WebSocket task before
+    /// the cleanup reactor saw the same event, and no `bind_alias` will ever
+    /// consume it. Entries older than [`DEFERRED_FINISH_TTL`] are pruned here,
+    /// and the map never holds more than [`DEFERRED_FINISH_CAP`] ids.
     pub fn park_deferred_finish(&self, comfyui_id: &str) {
-        self.deferred_finishes
-            .write()
-            .unwrap()
-            .insert(comfyui_id.to_string());
+        // Each lock is taken and released on its own (see the lock discipline
+        // on `PromptQueue`).
+        if self.aliases.read().unwrap().contains_key(comfyui_id)
+            || self.owners.read().unwrap().contains_key(comfyui_id)
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let mut parked = self.deferred_finishes.write().unwrap();
+        parked.retain(|_, at| now.duration_since(*at) < DEFERRED_FINISH_TTL);
+        if parked.len() >= DEFERRED_FINISH_CAP {
+            let oldest = parked
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(id, _)| id.clone());
+            if let Some(oldest) = oldest {
+                parked.remove(&oldest);
+            }
+        }
+        parked.insert(comfyui_id.to_string(), now);
     }
 
     /// Resolve a prompt_id: if it's a ComfyUI real_id with a bound alias,
@@ -1398,5 +1435,64 @@ mod prompt_queue_lock_tests {
         }
         a.join().unwrap();
         b.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod deferred_finish_tests {
+    use super::{PromptQueue, DEFERRED_FINISH_CAP, DEFERRED_FINISH_TTL};
+
+    fn parked(pq: &PromptQueue) -> usize {
+        pq.deferred_finishes.read().unwrap().len()
+    }
+
+    #[test]
+    fn early_finish_for_an_unbound_id_finishes_its_placeholder() {
+        let pq = PromptQueue::new();
+        pq.insert("placeholder", Some("alice".into()));
+        pq.park_deferred_finish("real");
+        assert_eq!(parked(&pq), 1);
+        assert!(pq.bind_alias("placeholder", "real"));
+        assert_eq!(parked(&pq), 0);
+        assert_eq!(pq.len(), 0);
+    }
+
+    #[test]
+    fn ids_the_queue_already_finished_are_not_parked() {
+        let pq = PromptQueue::new();
+        // Desktop: the WebSocket task finishes a directly inserted id, then the
+        // cleanup reactor sees the same completion and finds nothing to finish.
+        pq.insert("desktop-id", None);
+        assert!(pq.finish("desktop-id").is_none());
+        pq.park_deferred_finish("desktop-id");
+        // Server: an id already bound as an alias was finished via its placeholder.
+        pq.insert("placeholder", None);
+        assert!(!pq.bind_alias("placeholder", "real"));
+        pq.finish("placeholder");
+        pq.park_deferred_finish("real");
+        assert_eq!(parked(&pq), 0);
+    }
+
+    #[test]
+    fn parked_ids_expire_and_stay_bounded() {
+        let pq = PromptQueue::new();
+        let stale = std::time::Instant::now()
+            .checked_sub(DEFERRED_FINISH_TTL + std::time::Duration::from_secs(1));
+        if let Some(stale) = stale {
+            pq.deferred_finishes
+                .write()
+                .unwrap()
+                .insert("stale".into(), stale);
+            pq.park_deferred_finish("fresh");
+            let map = pq.deferred_finishes.read().unwrap();
+            assert!(!map.contains_key("stale") && map.contains_key("fresh"));
+        }
+
+        for i in 0..DEFERRED_FINISH_CAP + 50 {
+            pq.park_deferred_finish(&format!("unbound-{i}"));
+        }
+        assert_eq!(parked(&pq), DEFERRED_FINISH_CAP);
+        let last = format!("unbound-{}", DEFERRED_FINISH_CAP + 49);
+        assert!(pq.deferred_finishes.read().unwrap().contains_key(&last));
     }
 }

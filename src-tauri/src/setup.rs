@@ -33,10 +33,24 @@ pub struct DownloadProgress {
 /// literal by doubling embedded single quotes (PowerShell's own escape
 /// convention). Needed because Windows usernames/folders can contain an
 /// apostrophe (e.g. `C:\Users\Cole's Computer\...`), which would otherwise
-/// terminate the quoted string early and corrupt the command.
-#[cfg(target_os = "windows")]
+/// terminate the quoted string early and corrupt the command. PowerShell also
+/// treats the typographic quotes U+2018, U+2019, U+201A and U+201B as single
+/// quotes (a name typed as "Cole’s" on a phone or in Word), so those are
+/// doubled too; doubling keeps the original character in the literal.
+///
+/// Quoting only protects the string: pass the result to `-LiteralPath`, since
+/// `-Path` would still read `[` and `]` in the path as wildcards.
+#[cfg(any(target_os = "windows", test))]
 fn ps_quote(path: &Path) -> String {
-    path.display().to_string().replace('\'', "''")
+    let raw = path.display().to_string();
+    let mut quoted = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(ch);
+        }
+        quoted.push(ch);
+    }
+    quoted
 }
 
 fn emit(app: &AppHandle, step: &str, msg: &str, pct: u32) {
@@ -644,10 +658,12 @@ async fn step_download_uv(
         let temp_dir = base.join("_uv_extract");
         download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
 
+        // Move-Item takes the found file through the pipeline as -LiteralPath,
+        // which also stops PowerShell globbing its -Destination.
         let ps_cmd = format!(
-            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-             Get-ChildItem -Path '{}' -Filter 'uv.exe' -Recurse | Select-Object -First 1 | Move-Item -Destination '{}\\uv.exe' -Force; \
-             Get-ChildItem -Path '{}' -Filter 'uvx.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 | Move-Item -Destination '{}\\uvx.exe' -Force",
+            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force; \
+             Get-ChildItem -LiteralPath '{}' -Filter 'uv.exe' -Recurse | Select-Object -First 1 | Move-Item -Destination '{}\\uv.exe' -Force; \
+             Get-ChildItem -LiteralPath '{}' -Filter 'uvx.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 | Move-Item -Destination '{}\\uvx.exe' -Force",
             ps_quote(&archive),
             ps_quote(&temp_dir),
             ps_quote(&temp_dir),
@@ -793,7 +809,7 @@ async fn step_download_comfyui(
     #[cfg(target_os = "windows")]
     {
         let ps = format!(
-            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
             ps_quote(&zip_path),
             ps_quote(base)
         );
@@ -3198,5 +3214,27 @@ mod tests {
         fs::write(root.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
         assert_eq!(venv_python_version(&root), None);
         fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(test)]
+mod ps_quote_tests {
+    use super::ps_quote;
+    use std::path::Path;
+
+    #[test]
+    fn every_powershell_single_quote_is_doubled() {
+        assert_eq!(ps_quote(Path::new("C:/Users/Ann/x")), "C:/Users/Ann/x");
+        assert_eq!(
+            ps_quote(Path::new("C:/Users/Cole's PC/x")),
+            "C:/Users/Cole''s PC/x"
+        );
+        // U+2018, U+2019, U+201A and U+201B also end a single-quoted literal.
+        assert_eq!(
+            ps_quote(Path::new("a\u{2018}b\u{2019}c\u{201A}d\u{201B}e")),
+            "a\u{2018}\u{2018}b\u{2019}\u{2019}c\u{201A}\u{201A}d\u{201B}\u{201B}e"
+        );
+        // Brackets are left to -LiteralPath, not escaped here.
+        assert_eq!(ps_quote(Path::new("C:/m[1]")), "C:/m[1]");
     }
 }

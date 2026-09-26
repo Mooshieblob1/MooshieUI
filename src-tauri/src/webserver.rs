@@ -2551,7 +2551,7 @@ async fn dispatch_command(
             serde_json::to_value(&status).map_err(|e| e.to_string())
         }
         "get_compute_capability" => {
-            let cc = crate::commands::api::detect_compute_capability_pub();
+            let cc = crate::commands::api::detect_compute_capability_pub().await;
             serde_json::to_value(cc).map_err(|e| e.to_string())
         }
         "install_attention_backend" => {
@@ -3099,7 +3099,7 @@ async fn dispatch_command(
                 return Ok(serde_json::json!([]));
             }
             // One query for the whole video table, not one per directory entry.
-            let meta = crate::gallery_index::video_meta();
+            let meta = crate::gallery_index::video_meta(&dir);
             let mut files: Vec<_> = std::fs::read_dir(&dir)
                 .map_err(|e| e.to_string())?
                 .filter_map(|entry| {
@@ -5230,34 +5230,18 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             let dest = models_dir.join(&filename);
 
-            // Skip if file exists and is valid
-            if dest.exists() {
-                let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-                if size > 0 {
-                    let cached_is_valid =
-                        crate::comfyui::client::validate_downloaded_model_file(&dest, &filename)
-                            .is_ok();
-                    if !cached_is_valid {
-                        let _ = std::fs::remove_file(&dest);
-                    } else if let Some(ref expected_hex) = expected_sha256 {
-                        let dest_clone = dest.clone();
-                        let expected = expected_hex.to_lowercase();
-                        let computed = tokio::task::spawn_blocking(move || {
-                            crate::comfyui::client::sha256_file(&dest_clone)
-                        })
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .map_err(|e| e.to_string())?;
-                        if computed == expected {
-                            return Ok(serde_json::json!(null));
-                        }
-                        let _ = std::fs::remove_file(&dest);
-                    } else {
-                        return Ok(serde_json::json!(null));
-                    }
-                } else {
-                    let _ = std::fs::remove_file(&dest);
-                }
+            // Skip if the file on disk is complete and matches the expected hash.
+            if crate::comfyui::client::reuse_existing_model_download(
+                &state.http_client,
+                &url,
+                &dest,
+                &filename,
+                expected_sha256.as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?
+            {
+                return Ok(serde_json::json!(null));
             }
 
             // Download with progress broadcast
