@@ -768,6 +768,7 @@ pub fn run() {
                 commands::music_link::shutdown(&state).await;
                 commands::music_audio_style::shutdown(&state).await;
             });
+            state.output_owners.flush();
             let keep_alive = {
                 let config = state.config.blocking_read();
                 config.keep_alive

@@ -191,6 +191,7 @@ async fn main() {
     comfyui_desktop_lib::prompt_assistant::companion::shutdown().await;
     comfyui_desktop_lib::commands::music_link::shutdown(&state).await;
     comfyui_desktop_lib::commands::music_audio_style::shutdown(&state).await;
+    state.output_owners.flush();
 
     // Use the same ownership checks and process-tree cleanup as desktop mode.
     if let Err(err) = process::stop_comfyui_process(&state).await {

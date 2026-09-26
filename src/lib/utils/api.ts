@@ -754,6 +754,11 @@ export async function copyGalleryImageToClipboard(
   return ipcInvoke("copy_gallery_image_to_clipboard", { filename, metadata, metadataMode });
 }
 
+/**
+ * Absolute host path of a gallery file, for desktop-only native actions. In
+ * browser mode the server refuses it to regular accounts; use the gallery URL
+ * or filename-based commands there instead.
+ */
 export async function getGalleryImagePath(filename: string): Promise<string> {
   return ipcInvoke("get_gallery_image_path", { filename });
 }

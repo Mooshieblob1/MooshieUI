@@ -90,6 +90,16 @@ async function fullImageUrl(filename: string): Promise<string> {
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
+/**
+ * Whether this browser-mode page was loaded from the machine running the
+ * server (a loopback host). Only such a client may use the server's native
+ * clipboard; the server refuses it to every other caller.
+ */
+function pageIsOnServerHost(): boolean {
+  const host = window.location.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host.startsWith("127.");
+}
+
 /** Convert a temp filename to a browser-loadable URL, including auth token in browser mode. */
 function tempImageUrl(filename: string, params?: Record<string, string>): string {
   const query = new URLSearchParams(params ?? {});
@@ -1594,13 +1604,23 @@ class GalleryStore {
               return;
             }
           }
-          try {
-            const path = await getGalleryImagePath(galleryFilename);
-            await copyImageToClipboard(path);
-            this.showToast(locale.t("gallery.toast.copied"), "success");
-            return;
-          } catch {
-            // Server-side clipboard unavailable — fall through to browser API
+          // The server only lets a client on its own machine use its
+          // clipboard, so a remote LAN client skips straight to the browser
+          // API instead of uploading the image just to be refused. The bytes
+          // come from the gallery URL: browser clients never get host paths.
+          if (pageIsOnServerHost()) {
+            try {
+              const resp = await fetch(await fullImageUrl(galleryFilename));
+              if (resp.ok) {
+                const bytes = Array.from(new Uint8Array(await resp.arrayBuffer()));
+                const ext = galleryFilename.slice(galleryFilename.lastIndexOf(".") + 1).toLowerCase();
+                await copyBytesToClipboard(bytes, ext);
+                this.showToast(locale.t("gallery.toast.copied"), "success");
+                return;
+              }
+            } catch {
+              // Server-side clipboard unavailable — fall through to browser API
+            }
           }
         }
         // Step 2: Try browser Clipboard API, with server-side fallback for insecure (HTTP) contexts.

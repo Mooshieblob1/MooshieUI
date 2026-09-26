@@ -506,6 +506,10 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "get_gallery_path",
     "get_install_path",
     "detect_model_directories",
+    // absolute host path of one gallery file; the browser UI never asks for
+    // it (its clipboard copy goes by gallery URL), so a regular account has
+    // no use for the host layout it reveals
+    "get_gallery_image_path",
     // the local LLM is one shared host process: downloading a model (multi-GB,
     // and it rewrites the configured model), deleting one, or unloading it
     // (killing every user's in-flight generation) is server management
@@ -692,6 +696,10 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
         return;
     }
 
+    // The reactor is what records output ownership, so the saved map is
+    // loaded before it starts.
+    start_output_owner_persistence(&state);
+
     let cleanup_state = state;
     let mut cleanup_rx = cleanup_state.event_tx.subscribe();
     spawn_background(Box::pin(async move {
@@ -788,6 +796,28 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
+        }
+    }));
+}
+
+/// Load the saved output-ownership map and keep saving it, at most every
+/// [`OUTPUT_OWNER_SAVE_INTERVAL`](crate::output_owners::OUTPUT_OWNER_SAVE_INTERVAL),
+/// so an account can still fetch its earlier outputs after a restart. The
+/// shutdown paths flush it once more.
+fn start_output_owner_persistence(state: &Arc<AppState>) {
+    let Some(path) = crate::output_owners::persist_path() else {
+        log::warn!("No app data directory; output ownership will not survive a restart");
+        return;
+    };
+    state.output_owners.enable_persistence(path);
+    let saver_state = state.clone();
+    spawn_background(Box::pin(async move {
+        let mut interval = tokio::time::interval(crate::output_owners::OUTPUT_OWNER_SAVE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let flush_state = saver_state.clone();
+            let _ = tokio::task::spawn_blocking(move || flush_state.output_owners.flush()).await;
         }
     }));
 }
@@ -7806,6 +7836,7 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     crate::prompt_assistant::companion::shutdown().await;
                     commands::music_link::shutdown(&state).await;
                     commands::music_audio_style::shutdown(&state).await;
+                    state.output_owners.flush();
                     std::process::exit(0);
                 }
             }
@@ -8599,6 +8630,45 @@ mod lan_access_scope_tests {
         state.prompt_queue.bind_alias("ph-bob", "real-bob");
         assert!(ensure_output_owned(&state, "b.png", "", Some("bob")).is_ok());
         assert!(ensure_output_owned(&state, "b.png", "", Some("carol")).is_err());
+    }
+
+    #[test]
+    fn output_ownership_survives_a_restart() {
+        let dir =
+            std::env::temp_dir().join(format!("mooshie-owners-restart-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(crate::output_owners::OUTPUT_OWNERS_FILE);
+
+        let state = AppState::new(crate::config::AppConfig::default());
+        state.output_owners.enable_persistence(path.clone());
+        state
+            .prompt_queue
+            .insert("ph-alice", Some("alice".to_string()));
+        state.prompt_queue.bind_alias("ph-alice", "real-alice");
+        record_output_owners(&state, "real-alice", &executed("real-alice", "a.png"));
+        state.output_owners.flush();
+
+        // The next process knows nothing about the prompt, only the saved map.
+        let restarted = AppState::new(crate::config::AppConfig::default());
+        restarted.output_owners.enable_persistence(path);
+        assert!(ensure_output_owned(&restarted, "a.png", "", Some("alice")).is_ok());
+        assert!(ensure_output_owned(&restarted, "a.png", "", Some("bob")).is_err());
+        assert!(ensure_output_owned(&restarted, "a.png", "", None).is_ok());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gallery_image_host_paths_are_staff_only() {
+        // A regular account must never learn where the gallery lives on the
+        // host; the localhost owner resolves to Admin and still gets it.
+        assert_eq!(
+            min_role_for_command("get_gallery_image_path"),
+            UserRole::Moderator
+        );
+        assert_eq!(
+            min_role_for_command("load_gallery_image_png"),
+            UserRole::User
+        );
     }
 }
 
