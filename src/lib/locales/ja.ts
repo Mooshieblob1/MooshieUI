@@ -1173,6 +1173,7 @@ const ja: Record<string, string> = {
   "generation.video.turbo_install_failed": "Turbo LoRA をインストールできませんでした: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "前のステップと出力がほとんど変わらないステップではモデルの順伝播をスキップし、キャッシュされた結果を再利用します。高速化されますが、動きがわずかに滑らかになるリスクがあります。Turbo と併用可能です。",
+  "generation.video.teacache_pdd_skipped": "PDDプリセットではTeaCacheをスキップします。各ステップが専用の出力ヘッドを使うため、結果を再利用すると誤った出力になります。",
   "generation.video.teacache_install_hint": "オンにすると TeaCache ノードをインストールし、ComfyUI を再起動します。",
   "generation.video.teacache_install_starting": "TeaCache ノードをインストールしています",
   "generation.video.teacache_install_verifying": "ノードの読み込みを確認しています",

@@ -36,7 +36,16 @@ pub fn acceleration(params: &GenerationParams) -> &str {
     }
 }
 
-pub fn lightx_preset(params: &GenerationParams) -> Option<(&'static str, u32, f64)> {
+/// Turbo presets that load a plain LoRA through `LoraLoaderModelOnly` and fix
+/// their own sampling: `(adapter filename, steps, video sigma shift)`. Every
+/// one samples with Euler on the `simple` schedule and an audio shift of 3.0.
+///
+/// The PDD (Parallel Decoding Distillation) adapters carry a bank of 32
+/// per-interval output heads that ComfyUI blends per step from the sampler's
+/// sigmas. Their grid was built on the released 12.0/3.0 shifts, and eight
+/// steps land exactly on its block boundaries, so both the step count and
+/// the shift are part of the adapter, not a preference.
+pub fn lora_preset(params: &GenerationParams) -> Option<(&'static str, u32, f64)> {
     if acceleration(params) != "turbo" {
         return None;
     }
@@ -56,12 +65,29 @@ pub fn lightx_preset(params: &GenerationParams) -> Option<(&'static str, u32, f6
             8,
             12.0,
         )),
+        "pdd_fl2va_8" => Some((
+            "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors",
+            8,
+            12.0,
+        )),
+        "pdd_ref2va_8" => Some((
+            "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors",
+            8,
+            12.0,
+        )),
         _ => None,
     }
 }
 
+/// True for the PDD presets. Their heads change every step, so anything that
+/// replays a previous step's model output (TeaCache) would apply the wrong
+/// interval's velocity.
+pub fn is_pdd_preset(params: &GenerationParams) -> bool {
+    lora_preset(params).is_some() && params.video_turbo_preset.starts_with("pdd_")
+}
+
 fn sampling_steps(params: &GenerationParams) -> u32 {
-    if let Some((_, steps, _)) = lightx_preset(params) {
+    if let Some((_, steps, _)) = lora_preset(params) {
         return steps;
     }
     match acceleration(params) {
@@ -74,7 +100,7 @@ fn sampling_steps(params: &GenerationParams) -> u32 {
 }
 
 fn sampler_name(params: &GenerationParams) -> &str {
-    if lightx_preset(params).is_some() {
+    if lora_preset(params).is_some() {
         return "euler";
     }
     match acceleration(params) {
@@ -212,7 +238,7 @@ pub(crate) fn video_metadata_params(
         put(
             "mooshie_video_turbo_lora",
             params.video_turbo_lora.clone().unwrap_or_else(|| {
-                lightx_preset(params)
+                lora_preset(params)
                     .map_or(crate::comfyui::nodes::H3_TURBO_LORA_FILENAME, |p| p.0)
                     .into()
             }),
@@ -300,7 +326,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         );
         next_id += 1;
         vdn_id
-    } else if let Some((filename, _, shift)) = lightx_preset(params) {
+    } else if let Some((filename, _, shift)) = lora_preset(params) {
         let lora_id = next_id.to_string();
         workflow.insert(lora_id.clone(), json!({"class_type": "LoraLoaderModelOnly", "inputs": {
             "model": [unet_id.as_str(), 0], "lora_name": params.video_turbo_lora.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(filename), "strength_model": 1.0
@@ -454,7 +480,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         inputs.insert("ref_image_size".to_string(), json!("match"));
         inputs.insert(
             "shift_video".to_string(),
-            json!(lightx_preset(params).map_or(12.0, |p| p.2)),
+            json!(lora_preset(params).map_or(12.0, |p| p.2)),
         );
         inputs.insert("shift_audio".to_string(), json!(3.0));
         inputs.insert("inpaint_audio".to_string(), json!(true));
@@ -650,7 +676,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     let sampler_select_id = next_id.to_string();
     workflow.insert(
         sampler_select_id.clone(),
-        if acceleration(params) == "turbo" && lightx_preset(params).is_none() {
+        if acceleration(params) == "turbo" && lora_preset(params).is_none() {
             json!({ "class_type": "MiniMaxH3TurboSampler", "inputs": {} })
         } else {
             json!({
@@ -668,26 +694,30 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     // threshold. Inserted after `steps` is known (needed for the "last N
     // steps" guard) and before the scheduler/guider fan `model_link` out to
     // both consumers, so both pick up the wrapped model transparently.
-    let model_link = if params.video_teacache_enabled && acceleration(params) != "vdn" {
-        let teacache_id = next_id.to_string();
-        workflow.insert(
-            teacache_id.clone(),
-            json!({
-                "class_type": "MiniMaxH3TeaCache",
-                "inputs": {
-                    "model": model_link,
-                    "rel_l1_thresh": 0.15,
-                    "start_step": 2,
-                    "end_step": -2,
-                    "total_steps": steps
-                }
-            }),
-        );
-        next_id += 1;
-        json!([teacache_id.as_str(), 0])
-    } else {
-        model_link
-    };
+    // PDD is excluded: TeaCache returns the previous step's final output, and
+    // with PDD that output came from a different block of heads.
+    let model_link =
+        if params.video_teacache_enabled && acceleration(params) != "vdn" && !is_pdd_preset(params)
+        {
+            let teacache_id = next_id.to_string();
+            workflow.insert(
+                teacache_id.clone(),
+                json!({
+                    "class_type": "MiniMaxH3TeaCache",
+                    "inputs": {
+                        "model": model_link,
+                        "rel_l1_thresh": 0.15,
+                        "start_step": 2,
+                        "end_step": -2,
+                        "total_steps": steps
+                    }
+                }),
+            );
+            next_id += 1;
+            json!([teacache_id.as_str(), 0])
+        } else {
+            model_link
+        };
 
     // Custom scheduler override (e.g. "beta" for the custom tier). Only active
     // when Turbo is off; fall back to the H3 preset "simple".
@@ -887,11 +917,13 @@ mod tests {
     }
 
     #[test]
-    fn lightx_presets_route_their_exact_steps_shift_and_adapter() {
+    fn lora_presets_route_their_exact_steps_shift_and_adapter() {
         for (preset, variant, steps, shift) in [
             ("lightx2v_fl2v_4", "fl2va", 4, 6.0),
             ("lightx2v_fl2v_8", "fl2va", 8, 6.0),
             ("lightx2v_ref2v_8", "ref2va", 8, 12.0),
+            ("pdd_fl2va_8", "fl2va", 8, 12.0),
+            ("pdd_ref2va_8", "ref2va", 8, 12.0),
         ] {
             let mut params = video_params(variant);
             params.video_acceleration = "turbo".into();
@@ -903,7 +935,7 @@ mod tests {
             let adapter = nodes_of_class(&workflow, "LoraLoaderModelOnly")[0];
             assert_eq!(
                 adapter["inputs"]["lora_name"],
-                lightx_preset(&params).unwrap().0
+                lora_preset(&params).unwrap().0
             );
             assert_eq!(adapter["inputs"]["strength_model"], 1.0);
             let shifted = nodes_of_class(&workflow, "MiniMaxH3SigmaShift")[0];
@@ -926,6 +958,66 @@ mod tests {
     }
 
     #[test]
+    fn pdd_presets_skip_teacache_and_keep_the_director_shift() {
+        for (preset, variant) in [("pdd_fl2va_8", "fl2va"), ("pdd_ref2va_8", "ref2va")] {
+            let mut params = video_params(variant);
+            params.video_acceleration = "turbo".into();
+            params.video_turbo_preset = preset.into();
+            params.video_teacache_enabled = true;
+            if variant == "ref2va" {
+                params.video_ref_images = vec!["ref.png".to_string()];
+            }
+            assert!(is_pdd_preset(&params));
+            let workflow = build(&params, 7, false);
+            // A cached output would carry the previous interval's heads.
+            assert!(nodes_of_class(&workflow, "MiniMaxH3TeaCache").is_empty());
+            assert_eq!(super::super::validate_generation_params(&params), Ok(()));
+        }
+
+        // TeaCache still stacks with the other LoRA presets.
+        let mut params = video_params("fl2va");
+        params.video_acceleration = "turbo".into();
+        params.video_turbo_preset = "lightx2v_fl2v_8".into();
+        params.video_teacache_enabled = true;
+        assert!(!is_pdd_preset(&params));
+        assert_eq!(
+            nodes_of_class(&build(&params, 7, false), "MiniMaxH3TeaCache").len(),
+            1
+        );
+
+        // A PDD id under Standard is inert: no adapter, no preset.
+        let mut params = video_params("fl2va");
+        params.video_turbo_preset = "pdd_fl2va_8".into();
+        assert!(!is_pdd_preset(&params));
+        assert!(lora_preset(&params).is_none());
+    }
+
+    #[test]
+    fn pdd_validation_rejects_the_other_variant() {
+        let err = |params: &GenerationParams| {
+            super::super::validate_generation_params(params).unwrap_err()
+        };
+        let mut params = video_params("fl2va");
+        params.video_acceleration = "turbo".into();
+        params.video_turbo_preset = "pdd_ref2va_8".into();
+        assert!(err(&params).contains("Turbo preset that matches"));
+
+        let mut params = video_params("ref2va");
+        params.video_ref_images = vec!["ref.png".to_string()];
+        params.video_acceleration = "turbo".into();
+        params.video_turbo_preset = "pdd_fl2va_8".into();
+        assert!(err(&params).contains("Turbo preset that matches"));
+
+        params.video_turbo_preset = "pdd_ref2va_8".into();
+        params.video_turbo_lora =
+            Some("MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors".into());
+        assert!(err(&params).contains("Turbo adapter does not match"));
+
+        params.video_turbo_lora = Some(format!("nested/{}", lora_preset(&params).unwrap().0));
+        assert_eq!(super::super::validate_generation_params(&params), Ok(()));
+    }
+
+    #[test]
     fn lightx_validation_rejects_wrong_variant_and_adapter() {
         let mut params = video_params("fl2va");
         params.video_acceleration = "turbo".into();
@@ -934,7 +1026,7 @@ mod tests {
         params.video_turbo_preset = "lightx2v_fl2v_4".into();
         params.video_turbo_lora = Some("wrong.safetensors".into());
         assert!(super::super::validate_generation_params(&params).is_err());
-        params.video_turbo_lora = Some(format!("nested/{}", lightx_preset(&params).unwrap().0));
+        params.video_turbo_lora = Some(format!("nested/{}", lora_preset(&params).unwrap().0));
         assert!(super::super::validate_generation_params(&params).is_ok());
     }
 

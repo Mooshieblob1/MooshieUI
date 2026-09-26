@@ -3,9 +3,10 @@
 MooshieUI pins ComfyUI to a release tag (`COMFYUI_REF` in
 [`src-tauri/src/comfyui_version.rs`](../../src-tauri/src/comfyui_version.rs)). Managed desktop installs and the
 in-app updater resolve that baseline through
-[`comfyui-source.json`](../../src-tauri/runtime/comfyui-source.json). While the
-baseline is `v0.35.0`, this selects the tested immutable YuE2 commit. The override
-expires when the compatibility bot advances the baseline to a newer release.
+[`comfyui-source.json`](../../src-tauri/runtime/comfyui-source.json). The file can
+select a tested immutable commit while a feature awaits a tagged release. Its
+current entry applied only while the baseline was `v0.35.0` (the YuE2 commit) and
+expired when the baseline moved to `v0.37.0`, which ships YuE2 natively.
 `python scripts/comfyui-compat/resolve_ref.py` prints the actual managed source.
 Bumping the pin is usually safe for the app
 itself, but ComfyUI's internal refactors can break MooshieUI's **bundled custom

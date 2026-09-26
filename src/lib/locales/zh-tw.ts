@@ -1158,6 +1158,7 @@ const zhTw: Record<string, string> = {
   "generation.video.turbo_install_failed": "無法安裝 Turbo LoRA: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "在輸出與前一步幾乎沒有變化的步驟中跳過模型的前向計算，改為重複使用快取的結果。速度更快，但有輕微的動作變得較不清晰的風險；可與 Turbo 疊加使用。",
+  "generation.video.teacache_pdd_skipped": "PDD 預設會略過 TeaCache。每一步使用各自的輸出頭，重複使用結果會導致錯誤。",
   "generation.video.teacache_install_hint": "開啟此選項會安裝 TeaCache 節點，然後重新啟動 ComfyUI。",
   "generation.video.teacache_install_starting": "正在安裝 TeaCache 節點",
   "generation.video.teacache_install_verifying": "正在驗證節點是否已載入",

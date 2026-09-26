@@ -103,6 +103,15 @@ const LIGHTX2V_REPO = "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/
 function lightxFile(filename: string, sha256: string): H3ModelFile {
   return { filename, url: `${LIGHTX2V_REPO}/${filename}`, category: "loras", sizeBytes: 1_956_193_000, sha256 };
 }
+/**
+ * Alibaba PAI's Parallel Decoding Distillation adapters, in Kijai's ComfyUI
+ * conversion. The pruned pair matches the pruned DiT every tier ships. Needs
+ * ComfyUI v0.35.0 or newer, where the stock LoRA loader learned PDD head banks.
+ */
+const KIJAI_H3_EXPERIMENTAL_REPO = "https://huggingface.co/Kijai/MiniMax-H3-experimental/resolve/e042fe480f58806578713532b8ae4e3d47d1bd63/loras";
+function pddFile(filename: string, sha256: string): H3ModelFile {
+  return { filename, url: `${KIJAI_H3_EXPERIMENTAL_REPO}/${filename}`, category: "loras", sizeBytes: 1_725_921_392, sha256 };
+}
 export const H3_TURBO_PRESETS: readonly H3TurboPreset[] = [
   { id: "larryvrh", label: "Larryvrh v4", videoShift: 12, file: H3_TURBO_LORA },
   { id: "lightx2v_fl2v_4", label: "LightX2V FL2V v1.2 · 4", variant: "fl2va", steps: 4, videoShift: 6,
@@ -111,13 +120,25 @@ export const H3_TURBO_PRESETS: readonly H3TurboPreset[] = [
     file: lightxFile("minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", "08cfe946033af7d27719b964b6e0a0e50c32138daabbd6ce4137e23df6bf9980") },
   { id: "lightx2v_ref2v_8", label: "LightX2V Ref2V v1.0 · 8", variant: "ref2va", steps: 8, videoShift: 12,
     file: lightxFile("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors", "6a56f41ab4229c9dd845b9501bbd475ee57e112d846cf2e819d534a1ae928c5a") },
+  { id: "pdd_fl2va_8", label: "PDD FL2VA · 8", variant: "fl2va", steps: 8, videoShift: 12,
+    file: pddFile("MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors", "e97b813a6f857b9dab310f31ec30a8334f63a3e7dcb5d07c0c91933d3447a897") },
+  { id: "pdd_ref2va_8", label: "PDD Ref2VA · 8", variant: "ref2va", steps: 8, videoShift: 12,
+    file: pddFile("MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors", "6f18e1c2eccb14b37322607730f26b16bf1169b56cd098ea006cffaec43d1e39") },
 ];
+
+/** PDD swaps output heads every step, which rules out replaying cached outputs. */
+export function isPddPreset(id: VideoTurboPreset): boolean {
+  return id.startsWith("pdd_");
+}
 
 /** Keep the chosen family while switching between native and reference tasks. */
 export function h3TurboPreset(id: unknown, variant: VideoVariant): H3TurboPreset {
   const preset = H3_TURBO_PRESETS.find(p => p.id === id) ?? H3_TURBO_PRESETS[0];
   if (!preset.variant || preset.variant === variant) return preset;
-  return H3_TURBO_PRESETS.find(p => p.id === (variant === "ref2va" ? "lightx2v_ref2v_8" : "lightx2v_fl2v_8"))!;
+  const counterpart: VideoTurboPreset = isPddPreset(preset.id)
+    ? (variant === "ref2va" ? "pdd_ref2va_8" : "pdd_fl2va_8")
+    : (variant === "ref2va" ? "lightx2v_ref2v_8" : "lightx2v_fl2v_8");
+  return H3_TURBO_PRESETS.find(p => p.id === counterpart)!;
 }
 
 export const H3_TIERS: readonly H3Tier[] = [

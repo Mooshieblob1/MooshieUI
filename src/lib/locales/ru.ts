@@ -1158,6 +1158,7 @@ const ru: Record<string, string> = {
   "generation.video.turbo_install_failed": "Не удалось установить Turbo LoRA: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "Пропускает прямой проход модели на шагах, где результат почти не изменился по сравнению с предыдущим, повторно используя кешированный результат. Быстрее, с небольшим риском более плавного движения; сочетается с Turbo.",
+  "generation.video.teacache_pdd_skipped": "TeaCache пропускается в пресетах PDD. Каждый шаг использует собственные выходные головы, поэтому повторно использованный результат был бы неверным.",
   "generation.video.teacache_install_hint": "При включении этой опции будут установлены узлы TeaCache, после чего ComfyUI перезапустится.",
   "generation.video.teacache_install_starting": "Установка узлов TeaCache",
   "generation.video.teacache_install_verifying": "Проверка загрузки узлов",

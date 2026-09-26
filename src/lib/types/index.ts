@@ -97,7 +97,13 @@ export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit"
  */
 export type VideoVariant = "fl2va" | "ref2va";
 export type VideoAcceleration = "standard" | "turbo";
-export type VideoTurboPreset = "larryvrh" | "lightx2v_fl2v_4" | "lightx2v_fl2v_8" | "lightx2v_ref2v_8";
+export type VideoTurboPreset =
+  | "larryvrh"
+  | "lightx2v_fl2v_4"
+  | "lightx2v_fl2v_8"
+  | "lightx2v_ref2v_8"
+  | "pdd_fl2va_8"
+  | "pdd_ref2va_8";
 export type VideoVdnPrecision = "bf16" | "int8";
 
 /**

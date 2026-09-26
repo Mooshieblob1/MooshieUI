@@ -1158,6 +1158,7 @@ const zh: Record<string, string> = {
   "generation.video.turbo_install_failed": "无法安装 Turbo LoRA: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "在输出与上一步几乎没有变化的步骤中跳过模型的前向计算，改为复用缓存的结果。速度更快，但有轻微的动作变柔和的风险；可与 Turbo 叠加使用。",
+  "generation.video.teacache_pdd_skipped": "PDD 预设会跳过 TeaCache。每一步使用各自的输出头，复用结果会导致错误。",
   "generation.video.teacache_install_hint": "开启此选项会安装 TeaCache 节点，然后重新启动 ComfyUI。",
   "generation.video.teacache_install_starting": "正在安装 TeaCache 节点",
   "generation.video.teacache_install_verifying": "正在验证节点是否已加载",

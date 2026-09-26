@@ -50,23 +50,22 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             match params.video_turbo_preset.as_str() {
                 "" | "larryvrh" => (),
                 "lightx2v_fl2v_4" | "lightx2v_fl2v_8" if params.video_variant == "fl2va" => (),
-                "lightx2v_ref2v_8" if params.video_variant == "ref2va" => (),
+                "pdd_fl2va_8" if params.video_variant == "fl2va" => (),
+                "lightx2v_ref2v_8" | "pdd_ref2va_8" if params.video_variant == "ref2va" => (),
                 _ => {
                     return Err(
                         "Choose a Turbo preset that matches the selected video variant.".into(),
                     )
                 }
             }
-            if let Some((filename, _, _)) = video::lightx_preset(params) {
+            if let Some((filename, _, _)) = video::lora_preset(params) {
                 if let Some(selected) = params
                     .video_turbo_lora
                     .as_deref()
                     .filter(|s| !s.trim().is_empty())
                 {
                     if selected.replace('\\', "/").rsplit('/').next() != Some(filename) {
-                        return Err(
-                            "The LightX2V adapter does not match its sampling preset.".into()
-                        );
+                        return Err("The Turbo adapter does not match its sampling preset.".into());
                     }
                 }
             }

@@ -27,8 +27,10 @@ defaults. This is approximate lyric review, separate from quality scoring.
 - Plain ComfyUI `v0.35.0` lacks YuE2. MooshieUI now installs the tested source
   `c75d8c966c29cb0392259af791f43373315b72db` automatically, labelled
   **v0.35.0 + YuE2**, using `src-tauri/runtime/comfyui-source.json`.
-  The baseline release remains `v0.35.0` for the compatibility bot; once a
-  newer release passes the gate and the baseline advances, the override expires.
+  The baseline release remained `v0.35.0` for the compatibility bot until a
+  newer release passed the gate. The baseline is now `v0.37.0`, which ships
+  YuE2 natively (added in `v0.36.0`), so the override has expired and installs
+  use the tag.
   Git install/update and the ZIP fallback resolve the same immutable source.
   Docker and the macOS setup script use the same source resolver by default.
 - Existing plain `0.35.0` installs are offered the feature update even though

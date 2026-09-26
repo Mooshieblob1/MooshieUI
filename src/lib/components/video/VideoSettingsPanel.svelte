@@ -49,6 +49,7 @@
     H3_TIERS,
     H3_TURBO_LORA,
     H3_TURBO_PRESETS,
+    isPddPreset,
     h3Stack,
     h3TierFiles,
     h3TierForDiffusionModel,
@@ -253,10 +254,10 @@
   );
 
   const turboPreset = $derived(generation.effectiveVideoTurboPreset);
-  const lightxSelected = $derived(turboPreset.id !== "larryvrh");
-  let lightxNodesReady = $state(false);
+  const loraPresetSelected = $derived(turboPreset.id !== "larryvrh");
+  let loraPresetNodesReady = $state(false);
   const turboLoraName = $derived(installedName(turboPreset.file));
-  $effect(() => { generation.videoLightxLora = lightxSelected ? turboLoraName : null; });
+  $effect(() => { generation.videoPresetLora = loraPresetSelected ? turboLoraName : null; });
   /** Whether a LoRA filename (any basename) is present in the LoRA list. */
   function loraInstalled(filename: string): boolean {
     const wanted = filename.toLowerCase();
@@ -271,8 +272,8 @@
    * the hard-coded standard file.
    */
   const turboReady = $derived(
-    (lightxSelected ? lightxNodesReady : turboInstalled === true) &&
-      (selectedTier === "custom" && !lightxSelected
+    (loraPresetSelected ? loraPresetNodesReady : turboInstalled === true) &&
+      (selectedTier === "custom" && !loraPresetSelected
         ? loraInstalled(generation.videoTurboLora)
         : turboLoraName !== null),
   );
@@ -428,11 +429,11 @@
     try {
       const ready = await Promise.all([TURBO_NODE_CLASS, "LoraLoaderModelOnly", "MiniMaxH3SigmaShift"].map(name => checkNodeAvailable(name)));
       turboInstalled = ready[0];
-      lightxNodesReady = ready[1] && ready[2];
+      loraPresetNodesReady = ready[1] && ready[2];
       // Disk presence alone never enables an unloaded or broken package.
     } catch {
       turboInstalled = null;
-      lightxNodesReady = false;
+      loraPresetNodesReady = false;
     }
   }
 
@@ -441,7 +442,7 @@
       void loadTurboState();
     } else {
       turboInstalled = false;
-      lightxNodesReady = false;
+      loraPresetNodesReady = false;
     }
   });
 
@@ -648,7 +649,7 @@
     turboInstalling = true;
     turboInstallError = null;
     const preset = turboPreset;
-    const needsPack = !lightxSelected && turboInstalled !== true;
+    const needsPack = !loraPresetSelected && turboInstalled !== true;
     try {
       if (needsPack) {
         turboInstallStep = "clone";
@@ -678,9 +679,9 @@
       }
 
       await loadTurboState();
-      const available = lightxSelected ? lightxNodesReady : turboInstalled;
+      const available = loraPresetSelected ? loraPresetNodesReady : turboInstalled;
       if (!available) throw new Error(locale.t("generation.video.turbo_install_not_loaded"));
-      if (!lightxSelected && (selectedTier !== "custom" || !loraInstalled(generation.videoTurboLora))) {
+      if (!loraPresetSelected && (selectedTier !== "custom" || !loraInstalled(generation.videoTurboLora))) {
         generation.videoTurboLora = installedName(H3_TURBO_LORA) ?? H3_TURBO_LORA.filename;
       }
       generation.videoTurboEnabled = true;
@@ -1565,7 +1566,7 @@
           <option value={preset.id}>{preset.label}</option>
         {/each}
       </select>
-      {#if lightxSelected}<p class="text-[11px] text-neutral-400">{locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift })}</p>{/if}
+      {#if loraPresetSelected}<p class="text-[11px] text-neutral-400">{locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift })}</p>{/if}
     {/if}
     <p class="text-[11px] text-neutral-500">
       {generation.videoTurboEnabled
@@ -1573,7 +1574,7 @@
         : locale.t("generation.video.turbo_off_hint", { steps: H3_DEFAULT_STEPS })}
     </p>
 
-    {#if generation.videoTurboEnabled && !lightxSelected}
+    {#if generation.videoTurboEnabled && !loraPresetSelected}
       <div use:scrollCapture>
         <label
           class="flex items-center justify-between text-[11px] text-neutral-500 mb-1"
@@ -1679,6 +1680,12 @@
         />
       </label>
     </div>
+
+    {#if generation.videoTeacacheEnabled && generation.videoTurboEnabled && isPddPreset(turboPreset.id)}
+      <p class="text-[11px] text-amber-300">
+        {locale.t("generation.video.teacache_pdd_skipped")}
+      </p>
+    {/if}
 
     {#if !teacacheReady && !teacacheInstalling && !generation.videoTeacacheEnabled}
       <p class="text-[11px] text-neutral-500">
@@ -1844,8 +1851,8 @@
           </label>
           <select
             id="custom-turbo-lora"
-            disabled={lightxSelected}
-            value={lightxSelected ? turboLoraName ?? turboPreset.file.filename : generation.videoTurboLora}
+            disabled={loraPresetSelected}
+            value={loraPresetSelected ? turboLoraName ?? turboPreset.file.filename : generation.videoTurboLora}
             onchange={(e) => {
               generation.videoTurboLora = (e.currentTarget as HTMLSelectElement).value;
               generation.saveSettings();
@@ -1865,7 +1872,7 @@
           </label>
           <select
             id="custom-sampler"
-            value={generation.videoTurboEnabled ? (lightxSelected ? "euler" : "__turbo__") : generation.videoSampler ?? ""}
+            value={generation.videoTurboEnabled ? (loraPresetSelected ? "euler" : "__turbo__") : generation.videoSampler ?? ""}
             disabled={fixedSampling}
             aria-describedby={generation.videoTurboEnabled ? "custom-turbo-sampling-hint" : undefined}
             onchange={(e) => {
@@ -1874,7 +1881,7 @@
             }}
             class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {#if generation.videoTurboEnabled && !lightxSelected}
+            {#if generation.videoTurboEnabled && !loraPresetSelected}
               <option value="__turbo__">{locale.t("generation.video.custom_sampler_turbo")}</option>
             {:else}
               <option value="">{locale.t("generation.video.custom_sampler_default")}</option>
@@ -1901,7 +1908,7 @@
             }}
             class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {#if generation.videoTurboEnabled && !lightxSelected}
+            {#if generation.videoTurboEnabled && !loraPresetSelected}
               <option value="simple">simple</option>
             {:else}
               <option value="">{locale.t("generation.video.custom_scheduler_default")}</option>
@@ -1913,7 +1920,7 @@
         </div>
         {#if generation.videoTurboEnabled}
           <p id="custom-turbo-sampling-hint" class="text-[11px] text-neutral-400">
-            {lightxSelected ? locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift }) : locale.t("generation.video.custom_turbo_sampling_hint")}
+            {loraPresetSelected ? locale.t("generation.video.lightx_hint", { steps: turboPreset.steps ?? 8, video: turboPreset.videoShift }) : locale.t("generation.video.custom_turbo_sampling_hint")}
           </p>
         {/if}
       </div>

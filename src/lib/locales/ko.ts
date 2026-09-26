@@ -1158,6 +1158,7 @@ const ko: Record<string, string> = {
   "generation.video.turbo_install_failed": "Turbo LoRA를 설치하지 못했습니다: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "이전 단계와 출력이 거의 변하지 않은 단계에서는 모델의 순전파를 건너뛰고 캐시된 결과를 재사용합니다. 더 빠르지만 움직임이 약간 부드러워질 위험이 있습니다. Turbo와 함께 사용할 수 있습니다.",
+  "generation.video.teacache_pdd_skipped": "PDD 프리셋에서는 TeaCache를 건너뜁니다. 각 단계가 고유한 출력 헤드를 사용하므로 결과를 재사용하면 잘못된 출력이 됩니다.",
   "generation.video.teacache_install_hint": "이 옵션을 켜면 TeaCache 노드를 설치한 후 ComfyUI를 다시 시작합니다.",
   "generation.video.teacache_install_starting": "TeaCache 노드 설치 중",
   "generation.video.teacache_install_verifying": "노드 로드 확인 중",

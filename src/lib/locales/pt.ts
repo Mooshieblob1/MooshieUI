@@ -1158,6 +1158,7 @@ const pt: Record<string, string> = {
   "generation.video.turbo_install_failed": "Não foi possível instalar o LoRA Turbo: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "Ignora a passagem direta do modelo nas etapas em que a saída mudou pouco em relação à anterior, reutilizando o resultado em cache. Mais rápido, com um pequeno risco de movimento mais suave; combina com o Turbo.",
+  "generation.video.teacache_pdd_skipped": "O TeaCache é ignorado nas predefinições PDD. Cada etapa usa as próprias cabeças de saída, então um resultado reutilizado estaria errado.",
   "generation.video.teacache_install_hint": "Ativar esta opção instala os nós do TeaCache e, em seguida, reinicia o ComfyUI.",
   "generation.video.teacache_install_starting": "Instalando os nós do TeaCache",
   "generation.video.teacache_install_verifying": "Verificando se os nós foram carregados",

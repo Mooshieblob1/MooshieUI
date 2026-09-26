@@ -1179,6 +1179,7 @@ const de: Record<string, string> = {
   "generation.video.turbo_install_failed": "Die Turbo-LoRA konnte nicht installiert werden: {error}",
   "generation.video.teacache": "TeaCache",
   "generation.video.teacache_tip": "Überspringt den Forward-Pass des Modells bei Schritten, deren Ausgabe sich kaum vom vorherigen unterscheidet, und verwendet stattdessen das zwischengespeicherte Ergebnis. Schneller, mit einem geringen Risiko weicherer Bewegung; kombinierbar mit Turbo.",
+  "generation.video.teacache_pdd_skipped": "TeaCache wird bei PDD-Voreinstellungen übersprungen. Jeder Schritt nutzt eigene Ausgabeköpfe, daher wäre ein wiederverwendetes Ergebnis falsch.",
   "generation.video.teacache_install_hint": "Wird diese Option aktiviert, werden die TeaCache-Knoten installiert und ComfyUI anschließend neu gestartet.",
   "generation.video.teacache_install_starting": "TeaCache-Knoten werden installiert",
   "generation.video.teacache_install_verifying": "Laden der Knoten wird überprüft",

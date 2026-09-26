@@ -940,7 +940,7 @@ class GenerationStore {
    *  lazy install has put the node pack and the adapter on disk. */
   videoAcceleration = $state<VideoAcceleration>("standard");
   videoTurboPreset = $state<VideoTurboPreset>("larryvrh");
-  videoLightxLora = $state<string | null>(null);
+  videoPresetLora = $state<string | null>(null);
   videoVdnPrecision = $state<VideoVdnPrecision>("bf16");
   videoSaveDraft = $state(false);
   videoDraftNodesReady = $state(false);
@@ -3857,7 +3857,7 @@ class GenerationStore {
       video_save_draft: this.videoSaveDraft,
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.effectiveVideoTurboPreset.steps ?? this.videoTurboSteps,
-      video_turbo_lora: this.videoTurboEnabled ? (this.effectiveVideoTurboPreset.id === "larryvrh" ? this.videoTurboLora : (this.videoLightxLora ?? this.effectiveVideoTurboPreset.file.filename)) : null,
+      video_turbo_lora: this.videoTurboEnabled ? (this.effectiveVideoTurboPreset.id === "larryvrh" ? this.videoTurboLora : (this.videoPresetLora ?? this.effectiveVideoTurboPreset.file.filename)) : null,
       video_teacache_enabled: this.videoTeacacheEnabled,
       video_model_tier: this.videoModelTier,
       video_sampler: this.videoSampler || null,
