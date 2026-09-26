@@ -15,7 +15,7 @@ npm run tauri build                 # production
 cargo check   # in src-tauri/
 ```
 
-No frontend tests (no vitest/jest). Rust has ~128 `#[test]` fns over pure logic: `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; any failure is a real regression.
+No frontend tests (no vitest/jest). Rust has ~920 tests (`#[test]` + `#[tokio::test]`) over pure logic: `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; any failure is a real regression.
 
 ## Dual-mode (non-negotiable)
 

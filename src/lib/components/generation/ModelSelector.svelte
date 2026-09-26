@@ -8,6 +8,7 @@
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
@@ -297,6 +298,12 @@
       },
     },
   ];
+
+  // Some LoRAs are trained for strengths well past 2, and negative strengths
+  // invert a LoRA (sliders, detail tweakers). ComfyUI's LoraLoader accepts
+  // -100..100, so this is a UI range only.
+  const LORA_STRENGTH_MIN = -10;
+  const LORA_STRENGTH_MAX = 10;
 
   let showArchitecturePicker = $state(false);
   let showModelInfo = $state(false);
@@ -1887,14 +1894,24 @@
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text={locale.t('generation.model.lora_strength_model_tip')} /></span>
-                <span class="text-neutral-300 tabular-nums">{locale.formatDecimal(lora.strength_model, 2)}</span>
+                <EditableValue
+                  value={lora.strength_model}
+                  min={LORA_STRENGTH_MIN}
+                  max={LORA_STRENGTH_MAX}
+                  step={0.01}
+                  decimals={2}
+                  onchange={(v) => {
+                    lora.strength_model = v;
+                    generation.saveSettings();
+                  }}
+                />
               </div>
               <input
                 type="range"
                 bind:value={lora.strength_model}
                 oninput={() => generation.saveSettings()}
-                min="0"
-                max="2"
+                min={LORA_STRENGTH_MIN}
+                max={LORA_STRENGTH_MAX}
                 step="0.05"
                 class="w-full accent-indigo-500"
               />
@@ -1902,14 +1919,24 @@
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text={locale.t('generation.model.lora_strength_clip_tip')} /></span>
-                <span class="text-neutral-300 tabular-nums">{locale.formatDecimal(lora.strength_clip, 2)}</span>
+                <EditableValue
+                  value={lora.strength_clip}
+                  min={LORA_STRENGTH_MIN}
+                  max={LORA_STRENGTH_MAX}
+                  step={0.01}
+                  decimals={2}
+                  onchange={(v) => {
+                    lora.strength_clip = v;
+                    generation.saveSettings();
+                  }}
+                />
               </div>
               <input
                 type="range"
                 bind:value={lora.strength_clip}
                 oninput={() => generation.saveSettings()}
-                min="0"
-                max="2"
+                min={LORA_STRENGTH_MIN}
+                max={LORA_STRENGTH_MAX}
                 step="0.05"
                 class="w-full accent-indigo-500"
               />
