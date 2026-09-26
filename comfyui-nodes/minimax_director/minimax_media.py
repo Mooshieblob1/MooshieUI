@@ -8,6 +8,10 @@ workspace folder, same drag-and-drop handling. Route paths are namespaced under
 
 The upload workspace stays `input/whatdreamscost` on purpose — assets dropped into
 either Director are then visible to both.
+
+Modified for MooshieUI, 2026: the compile-prompt preview no longer reports middle
+timeline images as ignored with refs off, because the Director now anchors them with
+MiniMaxH3AddGuide when ComfyUI provides it.
 """
 
 # Vendored into MooshieUI from ComfyUI-MiniMaxH3-Director v0.1.5 (GPL-3.0).
@@ -241,6 +245,7 @@ async def compile_prompt_endpoint(request):
     no matter how much is on the timeline.
     """
     from . import minimax_plan as plan
+    from .minimax_core import core
     try:
         data = await request.json()
         fps = float(data.get("frame_rate") or 24.0) or 24.0
@@ -269,9 +274,10 @@ async def compile_prompt_endpoint(request):
                             "looping — shorten the window." % p["actual_seconds"])
         if not p["ref_mode_on"]:
             middles = sum(1 for e in p["events"] if e["role"] == plan.ROLE_MIDDLE)
-            if middles:
-                warnings.append("%d image(s) in the middle are ignored — H3 only anchors the "
-                                "first and last frame. Switch to 'Refs ON (ref2va)'." % middles)
+            if middles and not hasattr(core(), "MiniMaxH3AddGuide"):
+                warnings.append("%d image(s) in the middle are ignored: this ComfyUI has no "
+                                "MiniMaxH3AddGuide. Update ComfyUI or switch to "
+                                "'Refs ON (ref2va)'." % middles)
         if p["ref_mode_on"] and len(p["ref_image_slots"]) >= plan.MAX_REF_IMAGES:
             warnings.append("Reference images are capped at %d." % plan.MAX_REF_IMAGES)
         warnings.extend(p.get("ref_warnings") or [])

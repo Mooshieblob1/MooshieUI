@@ -36,6 +36,12 @@ The first time you turn it on, the managed installation downloads `taeh3.safeten
 
 Graph and CPU tests cover the wiring, the taeh3 decode and the WebP encoding. The per-step cost on a GPU has not been measured yet.
 
+## Timeline stills in the middle of a clip
+
+With **Use timeline** on in the first/last-frame workflow, a shot whose still starts partway through the clip is pinned at that shot's start frame with ComfyUI's `MiniMaxH3AddGuide` (ComfyUI v0.34.0 or newer). Before, those stills were dropped. Stills at the start and end remain the first and last keyframes, and a clip segment contributes its first frame. The anchor lives in the latent only, so the prompt does not name it as a picture: the text encoder never sees it. In the reference workflow middle stills stay `<Picture>` references, and a retake ignores them as before. On an older ComfyUI they are skipped with a warning in the ComfyUI log.
+
+CPU tests cover the frame mapping and the conditioning with ComfyUI's own node. How closely H3 follows a mid-clip anchor has not been measured on a GPU.
+
 ## Concise motion prompts and Live2D
 
 The video prompt enhancer keeps simple single-shot descriptions concise, usually 60–120 words or fewer. It preserves the required H3 fields, reference labels, real endpoint duration and supplied dialogue. Complex requested scenes can still use longer descriptions; short reference prompts are not rejected for their word count.

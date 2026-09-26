@@ -70,6 +70,11 @@ NODE_FILE_MAP = [
     ("comfyui-nodes/nanosaur_support/model.py", "nanosaur_support/model.py"),
     ("comfyui-nodes/nanosaur_support/text_encoder.py", "nanosaur_support/text_encoder.py"),
     ("comfyui-nodes/nanosaur_support/vae.py", "nanosaur_support/vae.py"),
+] + [
+    # The vendored H3 Director package (REQUIRED_H3_DIRECTOR_NODE_CLASSES in nodes.rs).
+    (f"comfyui-nodes/minimax_director/{name}", f"minimax_director/{name}")
+    for name in ("__init__.py", "minimax_core.py", "minimax_plan.py", "minimax_media.py",
+                 "minimax_director.py", "minimax_retake.py", "LICENSE")
 ]
 
 # A stale package dir from a prior deploy shadows the flat flux2vae file; nodes.rs
@@ -301,6 +306,11 @@ def main() -> int:
     if not music_nodes:
         raise ValueError("Cannot read the music workflow's required nodes")
     required = list(dict.fromkeys(required + re.findall(r'"([^"]+)"', music_nodes.group(1))))
+    director_nodes = re.search(r'REQUIRED_H3_DIRECTOR_NODE_CLASSES:\s*&\[&str\]\s*=\s*&\[(.*?)\];',
+                               nodes_rs.read_text(encoding="utf-8"), re.S)
+    if not director_nodes:
+        raise ValueError("Cannot read REQUIRED_H3_DIRECTOR_NODE_CLASSES from nodes.rs")
+    required = list(dict.fromkeys(required + re.findall(r'"([^"]+)"', director_nodes.group(1))))
     if args.extra_required_file:
         extra = json.loads(args.extra_required_file.read_text(encoding="utf-8"))
         if not isinstance(extra, list) or not all(isinstance(name, str) for name in extra):
