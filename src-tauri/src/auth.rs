@@ -266,6 +266,13 @@ pub struct SessionEntry {
 }
 
 /// Auth state with persistent sessions.
+///
+/// Lock discipline: `db` may be held while taking `sessions`, never the other
+/// way round; `last_activity` is never held together with `db`. Argon2 work
+/// (hashing and verification) runs with no lock held, and callers on an async
+/// runtime should run the methods that do it (`login`, `create_account*`,
+/// `upgrade_password_encryption`, `change_password`, `reset_password`) on a
+/// blocking thread.
 pub struct AuthState {
     db: RwLock<AuthDatabase>,
     /// Active session tokens → session entry. Persisted to disk so tokens
@@ -408,6 +415,10 @@ impl AuthState {
             }
         }
 
+        // Computed now so the first unknown-username login is not slower than
+        // the rest (see `verify_login_password`).
+        let _ = dummy_password_hash();
+
         Self {
             db: RwLock::new(db),
             sessions: RwLock::new(sessions),
@@ -415,6 +426,45 @@ impl AuthState {
             login_attempts: RwLock::new(HashMap::new()),
             ip_login_attempts: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// The stored hash of an account, read under a short-lived lock so the
+    /// slow Argon2 check that follows runs with no lock held.
+    fn stored_password_hash(&self, username: &str) -> Option<String> {
+        let db = self.db.read().unwrap();
+        db.accounts
+            .iter()
+            .find(|a| a.username.eq_ignore_ascii_case(username))
+            .map(|a| a.password_hash.clone())
+    }
+
+    /// Replace an account's hash only if it still equals `expected`, so a
+    /// password changed while Argon2 ran unlocked is never overwritten.
+    /// Returns whether the new hash was stored (and persisted).
+    fn swap_password_hash(
+        &self,
+        username: &str,
+        expected: &str,
+        new_hash: String,
+        must_change_password: Option<bool>,
+    ) -> Result<bool, String> {
+        let mut db = self.db.write().unwrap();
+        let Some(account) = db
+            .accounts
+            .iter_mut()
+            .find(|a| a.username.eq_ignore_ascii_case(username))
+        else {
+            return Ok(false);
+        };
+        if account.password_hash != expected {
+            return Ok(false);
+        }
+        account.password_hash = new_hash;
+        if let Some(flag) = must_change_password {
+            account.must_change_password = flag;
+        }
+        save_auth_db(&db)?;
+        Ok(true)
     }
 
     /// Returns an error when the account is temporarily locked out.
@@ -557,28 +607,26 @@ impl AuthState {
     ) -> Result<bool, String> {
         self.check_login_allowed(username)?;
         let username = username.to_ascii_lowercase();
-        let mut db = self.db.write().unwrap();
-        let account = db
-            .accounts
-            .iter_mut()
-            .find(|a| a.username.eq_ignore_ascii_case(&username))
-            .ok_or_else(|| "Invalid username or password".to_string())?;
+        let stored = self.stored_password_hash(&username);
 
         // Verify the password before revealing anything about the stored hash
         // format, so this endpoint can't be used to probe account state.
-        if !verify_password(password, &account.password_hash) {
+        if !verify_login_password(password, stored.as_deref()) {
             return Err("Invalid username or password".to_string());
         }
+        let Some(stored) = stored else {
+            return Err("Invalid username or password".to_string());
+        };
 
-        if !is_legacy_sha256(&account.password_hash) {
-            drop(db);
+        if !is_legacy_sha256(&stored) {
             self.clear_login_attempts(&username);
             return Ok(false);
         }
 
-        account.password_hash = hash_password(password);
-        save_auth_db(&db)?;
-        drop(db);
+        let new_hash = hash_password(password);
+        if !self.swap_password_hash(&username, &stored, new_hash, None)? {
+            return Err("Password changed during the upgrade; try again".to_string());
+        }
         self.clear_login_attempts(&username);
         Ok(true)
     }
@@ -602,6 +650,9 @@ impl AuthState {
         temp: bool,
     ) -> Result<(), String> {
         let username = username.to_ascii_lowercase();
+        // Hashed before the lock: Argon2 is slow and every request that
+        // resolves a role reads this table.
+        let password_hash = hash_password(password);
         let mut db = self.db.write().unwrap();
         if db
             .accounts
@@ -617,7 +668,7 @@ impl AuthState {
         }
         db.accounts.push(Account {
             username: username.clone(),
-            password_hash: hash_password(password),
+            password_hash,
             must_change_password: temp,
             role: "user".to_string(),
             created_at: Utc::now().to_rfc3339(),
@@ -634,58 +685,76 @@ impl AuthState {
     pub fn login(&self, username: &str, password: &str) -> Result<(String, bool), String> {
         self.check_login_allowed(username)?;
         let username = username.to_ascii_lowercase();
-        let db = self.db.read().unwrap();
-        let account = db
-            .accounts
-            .iter()
-            .find(|a| a.username.eq_ignore_ascii_case(&username))
-            .ok_or("Invalid username or password")?;
+        // Snapshot under a short read lock; Argon2 below runs unlocked.
+        let (stored, must_change, grace_deadline) = {
+            let db = self.db.read().unwrap();
+            let account = db
+                .accounts
+                .iter()
+                .find(|a| a.username.eq_ignore_ascii_case(&username));
+            (
+                account.map(|a| a.password_hash.clone()),
+                account.is_some_and(|a| a.must_change_password),
+                db.legacy_password_grace_deadline.clone(),
+            )
+        };
 
-        if !verify_password(password, &account.password_hash) {
+        if !verify_login_password(password, stored.as_deref()) {
             return Err("Invalid username or password".to_string());
         }
+        let Some(stored) = stored else {
+            return Err("Invalid username or password".to_string());
+        };
 
-        let must_change = account.must_change_password;
-        let was_legacy = is_legacy_sha256(&account.password_hash);
+        let was_legacy = is_legacy_sha256(&stored);
         let grace_expired = was_legacy
-            && match db.legacy_password_grace_deadline.as_deref() {
+            && match grace_deadline.as_deref() {
                 Some(deadline) => chrono::DateTime::parse_from_rfc3339(deadline)
                     .map(|t| Utc::now() > t.with_timezone(&Utc))
                     .unwrap_or(false),
                 None => false,
             };
-        drop(db);
 
+        // Hashes this password may be stored under by the time the session is
+        // minted: the verified one, or its Argon2id upgrade below.
+        let mut verified_hashes = vec![stored.clone()];
         if was_legacy {
-            let mut db = self.db.write().unwrap();
-            if let Some(acc) = db
-                .accounts
-                .iter_mut()
-                .find(|a| a.username.eq_ignore_ascii_case(&username))
-            {
-                acc.password_hash = hash_password(password);
-                if let Err(e) = save_auth_db(&db) {
-                    log::error!(
-                        "Failed to persist Argon2id upgrade for '{}': {}",
-                        username,
-                        e
-                    );
-                } else if grace_expired {
-                    log::info!(
-                        "Auto-upgraded legacy password encryption for '{}' after grace period",
-                        username
-                    );
-                } else {
-                    log::info!(
-                        "Upgraded legacy password encryption for '{}' on login",
-                        username
-                    );
-                }
+            let new_hash = hash_password(password);
+            verified_hashes.push(new_hash.clone());
+            match self.swap_password_hash(&username, &stored, new_hash, None) {
+                Err(e) => log::error!(
+                    "Failed to persist Argon2id upgrade for '{}': {}",
+                    username,
+                    e
+                ),
+                // Changed concurrently: whatever replaced it is newer.
+                Ok(false) => {}
+                Ok(true) if grace_expired => log::info!(
+                    "Auto-upgraded legacy password encryption for '{}' after grace period",
+                    username
+                ),
+                Ok(true) => log::info!(
+                    "Upgraded legacy password encryption for '{}' on login",
+                    username
+                ),
             }
         }
 
         let token = generate_token();
         {
+            // Verification ran unlocked, so the password may have been changed
+            // (or reset) meanwhile, revoking the account's sessions. Re-check
+            // under `db` and keep it held while the session is inserted, so a
+            // concurrent change either refuses this login or revokes it.
+            let db = self.db.read().unwrap();
+            let unchanged = db
+                .accounts
+                .iter()
+                .find(|a| a.username.eq_ignore_ascii_case(&username))
+                .is_some_and(|a| verified_hashes.contains(&a.password_hash));
+            if !unchanged {
+                return Err("Invalid username or password".to_string());
+            }
             let mut sessions = self.sessions.write().unwrap();
             sessions.insert(
                 hash_session_token(&token),
@@ -852,29 +921,41 @@ impl AuthState {
     }
 
     /// Change a user's own password. Requires the current password for
-    /// verification. Clears the `must_change_password` flag.
+    /// verification. Clears the `must_change_password` flag and revokes every
+    /// other session of the account; `keep_token` (the session making the
+    /// change) stays signed in.
     pub fn change_password(
         &self,
         username: &str,
         current_password: &str,
         new_password: &str,
+        keep_token: Option<&str>,
     ) -> Result<(), String> {
         if new_password.len() < 4 {
             return Err("New password must be at least 4 characters".to_string());
         }
-        let mut db = self.db.write().unwrap();
-        let account = db
-            .accounts
-            .iter_mut()
-            .find(|a| a.username.eq_ignore_ascii_case(username))
+        let stored = self
+            .stored_password_hash(username)
             .ok_or("Account not found")?;
-
-        if !verify_password(current_password, &account.password_hash) {
+        if !verify_password(current_password, &stored) {
             return Err("Current password is incorrect".to_string());
         }
-        account.password_hash = hash_password(new_password);
-        account.must_change_password = false;
-        save_auth_db(&db)?;
+        let new_hash = hash_password(new_password);
+        if !self.swap_password_hash(username, &stored, new_hash, Some(false))? {
+            return Err("Password was changed by another session; try again".to_string());
+        }
+
+        let keep_key = keep_token.map(hash_session_token);
+        let mut sessions = self.sessions.write().unwrap();
+        let before = sessions.len();
+        sessions.retain(|key, entry| {
+            keep_session_after_password_change(key, entry, username, keep_key.as_deref())
+        });
+        if sessions.len() != before {
+            if let Err(e) = save_sessions(&sessions) {
+                log::error!("Failed to persist sessions after password change: {}", e);
+            }
+        }
         Ok(())
     }
 
@@ -884,6 +965,8 @@ impl AuthState {
         if temp_password.len() < 4 {
             return Err("Temporary password must be at least 4 characters".to_string());
         }
+        // Hashed before the lock (see `create_account_ex`).
+        let temp_hash = hash_password(temp_password);
         let mut db = self.db.write().unwrap();
         let account = db
             .accounts
@@ -891,7 +974,7 @@ impl AuthState {
             .find(|a| a.username.eq_ignore_ascii_case(username))
             .ok_or("Account not found")?;
 
-        account.password_hash = hash_password(temp_password);
+        account.password_hash = temp_hash;
         account.must_change_password = true;
         save_auth_db(&db)?;
         // Revoke existing sessions for this user so they must re-login
@@ -912,7 +995,10 @@ impl AuthState {
     /// Persist all accumulated `last_online` timestamps to the auth database.
     /// Call periodically and on shutdown to avoid losing online-status data.
     pub fn flush_last_online(&self) {
-        let activity = self.last_activity.read().unwrap();
+        // Snapshot and release `last_activity` before taking `db`: holding
+        // both, in the opposite order to other paths, can deadlock.
+        let activity: std::collections::HashSet<String> =
+            self.last_activity.read().unwrap().keys().cloned().collect();
         if activity.is_empty() {
             return;
         }
@@ -920,7 +1006,7 @@ impl AuthState {
         let mut db = self.db.write().unwrap();
         let mut changed = false;
         for account in &mut db.accounts {
-            if activity.contains_key(&account.username.to_ascii_lowercase()) {
+            if activity.contains(&account.username.to_ascii_lowercase()) {
                 let ts = now.to_rfc3339();
                 if account.last_online.as_deref() != Some(&ts) {
                     account.last_online = Some(ts);
@@ -939,14 +1025,20 @@ impl AuthState {
         &self,
         threshold: std::time::Duration,
     ) -> Vec<(String, String, bool, String, Option<String>, u64, bool)> {
+        // One lock at a time (see `flush_last_online`).
+        let online_users: std::collections::HashSet<String> = self
+            .last_activity
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, t)| t.elapsed() < threshold)
+            .map(|(name, _)| name.clone())
+            .collect();
         let db = self.db.read().unwrap();
-        let activity = self.last_activity.read().unwrap();
         db.accounts
             .iter()
             .map(|a| {
-                let online = activity
-                    .get(&a.username.to_ascii_lowercase())
-                    .is_some_and(|t| t.elapsed() < threshold);
+                let online = online_users.contains(&a.username.to_ascii_lowercase());
                 (
                     a.username.clone(),
                     a.role.clone(),
@@ -1002,6 +1094,43 @@ fn verify_password(password: &str, stored_hash: &str) -> bool {
             Err(_) => false,
         }
     }
+}
+
+/// A real Argon2id hash of a throwaway password. Unknown usernames are
+/// verified against it so a failed login costs the same Argon2 work whether
+/// or not the account exists, and response timing does not reveal it.
+fn dummy_password_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| hash_password("mooshieui-login-timing-equaliser"))
+}
+
+/// Login-path password check with uniform cost: an unknown account (`None`)
+/// and a legacy SHA-256 hash both also run one Argon2 verification, so the
+/// time taken does not tell which usernames exist or which still use the
+/// legacy format.
+fn verify_login_password(password: &str, stored_hash: Option<&str>) -> bool {
+    match stored_hash {
+        None => {
+            let _ = verify_password(password, dummy_password_hash());
+            false
+        }
+        Some(hash) if is_legacy_sha256(hash) => {
+            let _ = verify_password(password, dummy_password_hash());
+            verify_password(password, hash)
+        }
+        Some(hash) => verify_password(password, hash),
+    }
+}
+
+/// Whether a session survives its account's password change: sessions of
+/// other accounts do, and so does the one that made the change.
+fn keep_session_after_password_change(
+    session_key: &str,
+    entry: &SessionEntry,
+    username: &str,
+    keep_key: Option<&str>,
+) -> bool {
+    !entry.username.eq_ignore_ascii_case(username) || keep_key == Some(session_key)
 }
 
 fn generate_token() -> String {
@@ -1461,5 +1590,145 @@ mod login_limit_tests {
         ] {
             assert!(!is_valid_new_username(bad), "{bad:?} should be rejected");
         }
+    }
+}
+
+#[cfg(test)]
+mod auth_hardening_tests {
+    use super::*;
+
+    fn auth_with(accounts: Vec<Account>) -> AuthState {
+        AuthState {
+            db: RwLock::new(AuthDatabase {
+                accounts,
+                ..AuthDatabase::default()
+            }),
+            sessions: RwLock::new(HashMap::new()),
+            last_activity: RwLock::new(HashMap::new()),
+            login_attempts: RwLock::new(HashMap::new()),
+            ip_login_attempts: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn account(username: &str, password_hash: String) -> Account {
+        Account {
+            username: username.to_string(),
+            password_hash,
+            must_change_password: false,
+            role: "user".to_string(),
+            created_at: String::new(),
+            last_online: None,
+            storage_limit_bytes: DEFAULT_STORAGE_LIMIT,
+            can_use_modelhub: false,
+        }
+    }
+
+    fn legacy_hash(password: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    #[test]
+    fn unknown_accounts_never_verify() {
+        assert!(!verify_login_password("anything", None));
+        assert!(!verify_login_password("", None));
+        // The dummy hash is a real Argon2id PHC string, so the unknown-user
+        // path pays the same verification cost as a real account.
+        assert!(PasswordHash::new(dummy_password_hash()).is_ok());
+        assert!(!is_legacy_sha256(dummy_password_hash()));
+    }
+
+    #[test]
+    fn login_verification_accepts_argon2_and_legacy_hashes() {
+        let modern = hash_password("correct");
+        assert!(verify_login_password("correct", Some(&modern)));
+        assert!(!verify_login_password("wrong", Some(&modern)));
+
+        let legacy = legacy_hash("correct");
+        assert!(is_legacy_sha256(&legacy));
+        assert!(verify_login_password("correct", Some(&legacy)));
+        assert!(!verify_login_password("wrong", Some(&legacy)));
+    }
+
+    #[test]
+    fn login_rejects_unknown_users_and_wrong_passwords_alike() {
+        let auth = auth_with(vec![account("alice", hash_password("correct"))]);
+        assert_eq!(
+            auth.login("nobody", "correct").unwrap_err(),
+            "Invalid username or password"
+        );
+        assert_eq!(
+            auth.login("alice", "wrong").unwrap_err(),
+            "Invalid username or password"
+        );
+    }
+
+    #[test]
+    fn a_hash_changed_while_argon2_ran_is_not_overwritten() {
+        let auth = auth_with(vec![account("alice", "current-hash".to_string())]);
+        let swapped = auth
+            .swap_password_hash("alice", "stale-hash", "new-hash".to_string(), Some(false))
+            .unwrap();
+        assert!(!swapped);
+        assert_eq!(
+            auth.stored_password_hash("ALICE").as_deref(),
+            Some("current-hash")
+        );
+        assert!(!auth
+            .swap_password_hash("nobody", "x", "y".to_string(), None)
+            .unwrap());
+    }
+
+    #[test]
+    fn password_change_keeps_only_the_changing_session_of_that_account() {
+        let entry = |username: &str| SessionEntry {
+            username: username.to_string(),
+            created_at: String::new(),
+        };
+        let keep = hash_session_token("current-token");
+        // Another account's session is untouched.
+        assert!(keep_session_after_password_change(
+            "k1",
+            &entry("bob"),
+            "alice",
+            Some(&keep)
+        ));
+        // The session making the change survives.
+        assert!(keep_session_after_password_change(
+            &keep,
+            &entry("alice"),
+            "Alice",
+            Some(&keep)
+        ));
+        // Every other session of the account is revoked.
+        assert!(!keep_session_after_password_change(
+            "other",
+            &entry("alice"),
+            "alice",
+            Some(&keep)
+        ));
+        assert!(!keep_session_after_password_change(
+            &keep,
+            &entry("alice"),
+            "alice",
+            None
+        ));
+    }
+
+    #[test]
+    fn online_status_reads_activity_without_holding_the_account_table() {
+        let auth = auth_with(vec![account("alice", String::new())]);
+        auth.touch_activity("Alice");
+        // A writer parked on `db` must not stop the activity snapshot: the
+        // status list takes `last_activity` and `db` one at a time.
+        let db_guard = auth.db.read().unwrap();
+        let online: Vec<String> = auth.last_activity.read().unwrap().keys().cloned().collect();
+        drop(db_guard);
+        assert_eq!(online, ["alice"]);
+        let status = auth.list_users_status(Duration::from_secs(60));
+        assert_eq!(status.len(), 1);
+        assert!(status[0].2, "alice should be online");
+        assert!(!auth.list_users_status(Duration::ZERO)[0].2);
     }
 }

@@ -17,6 +17,7 @@ pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
 pub mod novelai;
+pub mod output_owners;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]

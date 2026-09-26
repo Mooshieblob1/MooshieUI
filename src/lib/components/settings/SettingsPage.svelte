@@ -1162,6 +1162,9 @@
       case "paths": return isAdmin;
       case "models":
       case "modelRequests":
+      // Installing, deleting and unloading the shared local LLM is server
+      // management (the backend refuses it to regular accounts).
+      case "prompt_assistant":
       case "civitai": return canManageServer;
       // NovelAI is per-account now: every user manages their own key.
       case "novelai": return true;
@@ -1412,7 +1415,8 @@
     // in the image), so only probe the installed version off-browser.
     if (!isBrowserMode) void refreshComfyuiVersion();
     loadInstallPath();
-    getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
+    // Host path, shown (and served) to the admin only.
+    if (isAdmin) getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
     void loadCacheCount();
     if (isBrowserMode) {
       loadLanAccounts();
@@ -3928,7 +3932,7 @@
         {/if}
 
         <!-- Prompt Assistant -->
-        {#if activeCategory === "prompt_assistant"}
+        {#if canManageServer && activeCategory === "prompt_assistant"}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">
             <span class="flex items-center gap-2">

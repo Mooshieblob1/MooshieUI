@@ -26,7 +26,7 @@ fn is_huggingface_url(url: &str) -> bool {
         .is_some_and(|host| host == "huggingface.co" || host.ends_with(".huggingface.co"))
 }
 
-fn is_civitai_url(url: &str) -> bool {
+pub(crate) fn is_civitai_url(url: &str) -> bool {
     reqwest::Url::parse(url)
         .ok()
         .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))
@@ -120,7 +120,25 @@ pub fn huggingface_token_for_url(url: &str) -> Option<String> {
         })
 }
 
+/// A URL safe to show in an error or log line: no query string, fragment or
+/// userinfo. The Model Hub appends the CivitAI key as `?token=`, and signed
+/// CDN links carry credentials in the query, so those parts never leave here.
+pub fn redact_url_for_display(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(mut parsed) => {
+            parsed.set_query(None);
+            parsed.set_fragment(None);
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.to_string()
+        }
+        Err(_) => url.split(['?', '#']).next().unwrap_or_default().to_string(),
+    }
+}
+
 pub fn download_status_error_message(url: &str, status: reqwest::StatusCode) -> String {
+    let shown = redact_url_for_display(url);
+    let url = shown.as_str();
     if is_huggingface_url(url) && matches!(status.as_u16(), 401 | 403) {
         format!(
             "Failed to download {url}: HTTP {status}. This Hugging Face file requires access; set HF_TOKEN, HUGGINGFACE_HUB_TOKEN, or HUGGINGFACE_TOKEN, or install the file manually."
@@ -255,7 +273,7 @@ pub fn reject_non_model_download_content_type(
             message: format!(
                 "The URL returned '{}' instead of model bytes for {}. This usually means the download requires authentication, a direct file URL, or a different token.",
                 content_type,
-                url
+                redact_url_for_display(url)
             ),
         });
     }
@@ -911,7 +929,8 @@ impl AppState {
         if let Some(token) = huggingface_token_for_url(url) {
             req = req.bearer_auth(token);
         }
-        let resp = req.send().await?;
+        // reqwest errors quote the full URL, which may carry `?token=`.
+        let resp = req.send().await.map_err(reqwest::Error::without_url)?;
         if !resp.status().is_success() {
             let status = resp.status();
             return Err(AppError::ApiError {
@@ -975,7 +994,7 @@ impl AppState {
                         },
                     )
                     .ok();
-                    return Err(e.into());
+                    return Err(e.without_url().into());
                 }
                 Err(_) => {
                     drop(file);
@@ -1275,6 +1294,56 @@ mod view_request_tests {
                 AppError::Other(msg) => assert!(msg.contains("(truncated)")),
                 other => panic!("unexpected error: {other:?}"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod download_error_redaction_tests {
+    use super::{
+        download_status_error_message, redact_url_for_display,
+        reject_non_model_download_content_type,
+    };
+    use crate::error::AppError;
+
+    const KEYED: &str =
+        "https://user:pw@civitai.com/api/download/models/42?type=Model&token=SECRETKEY#x";
+
+    #[test]
+    fn urls_lose_query_fragment_and_userinfo() {
+        assert_eq!(
+            redact_url_for_display(KEYED),
+            "https://civitai.com/api/download/models/42"
+        );
+        assert_eq!(
+            redact_url_for_display("not a url?token=SECRETKEY"),
+            "not a url"
+        );
+        assert_eq!(
+            redact_url_for_display("https://huggingface.co/a/b/resolve/main/c.safetensors"),
+            "https://huggingface.co/a/b/resolve/main/c.safetensors"
+        );
+    }
+
+    #[test]
+    fn download_errors_never_quote_the_token() {
+        for status in [401u16, 404, 500] {
+            let msg = download_status_error_message(
+                KEYED,
+                reqwest::StatusCode::from_u16(status).unwrap(),
+            );
+            assert!(!msg.contains("SECRETKEY"), "{msg}");
+            assert!(msg.contains("civitai.com/api/download/models/42"), "{msg}");
+        }
+        // The CivitAI-specific hint still applies after redaction.
+        let msg = download_status_error_message(KEYED, reqwest::StatusCode::UNAUTHORIZED);
+        assert!(msg.contains("CivitAI rejected this download"), "{msg}");
+
+        match reject_non_model_download_content_type(KEYED, "text/html") {
+            Err(AppError::ApiError { message, .. }) => {
+                assert!(!message.contains("SECRETKEY"), "{message}")
+            }
+            other => panic!("unexpected result: {other:?}"),
         }
     }
 }

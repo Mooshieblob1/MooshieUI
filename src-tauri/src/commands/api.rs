@@ -427,6 +427,12 @@ pub(crate) fn is_safe_relative_model_path(value: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
+/// Whether a sidecar thumbnail may be written for `path`: an existing regular
+/// file with a model extension.
+fn is_model_sidecar_target(path: &std::path::Path) -> bool {
+    path.is_file() && is_managed_model_file(path)
+}
+
 fn is_managed_model_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -1141,6 +1147,44 @@ pub async fn cdn_proxy_fetch_bytes(
     Ok(STANDARD.encode(&bytes))
 }
 
+/// The animadex.net URL for a proxied characters-API request, or `None` when
+/// the request would reach anything outside `/api/characters/`.
+///
+/// `path` may carry its own `?query` (the desktop command gets the whole
+/// remainder of the URL); `query` is appended after it. A prefix check on the
+/// raw string is not enough: the URL parser resolves `..`/`.` segments (also
+/// percent-encoded, and `\` counts as `/`), so `api/characters/../../x` would
+/// become `/x`. Such paths are refused outright, and the parsed URL's path is
+/// checked again as the final word.
+pub(crate) fn animadex_proxy_url(path: &str, query: Option<&str>) -> Option<reqwest::Url> {
+    let clean = path.trim_start_matches('/');
+    let (path_part, inline_query) = match clean.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (clean, None),
+    };
+    let lower = path_part.to_ascii_lowercase();
+    if !path_part.starts_with("api/characters/")
+        || path_part.contains(['\\', '#'])
+        || ["%2e", "%2f", "%5c"].iter().any(|enc| lower.contains(enc))
+        || path_part.split('/').any(|seg| seg == "." || seg == "..")
+    {
+        return None;
+    }
+    let mut url = reqwest::Url::parse(&format!("https://animadex.net/{path_part}")).ok()?;
+    let combined: Vec<&str> = [inline_query, query]
+        .into_iter()
+        .flatten()
+        .filter(|q| !q.is_empty())
+        .collect();
+    if !combined.is_empty() {
+        url.set_query(Some(&combined.join("&")));
+    }
+    (url.scheme() == "https"
+        && url.host_str() == Some("animadex.net")
+        && url.path().starts_with("/api/characters/"))
+    .then_some(url)
+}
+
 /// Proxy a GET request to animadex.net (characters API only). Used by the Tauri
 /// desktop app for JSON fetches that would otherwise be blocked by CORS.
 /// Only paths under `api/characters/` are allowed — not an open proxy.
@@ -1151,15 +1195,12 @@ pub async fn animadex_proxy_fetch(
     path: String,
 ) -> Result<String, AppError> {
     let clean = path.trim_start_matches('/');
-    if !clean.starts_with("api/characters/") {
-        return Err(AppError::Other(
-            "animadex proxy: path must start with api/characters/".into(),
-        ));
-    }
-    let url = format!("https://animadex.net/{}", clean);
+    let url = animadex_proxy_url(clean, None).ok_or_else(|| {
+        AppError::Other("animadex proxy: path must stay under api/characters/".into())
+    })?;
     let resp = state
         .http_client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| AppError::Other(format!("Animadex fetch failed: {}", e)))?;
@@ -3107,6 +3148,10 @@ pub async fn is_custom_node_installed(
     state: State<'_, Arc<AppState>>,
     node_name: String,
 ) -> Result<bool, AppError> {
+    // One plain directory name, so this cannot probe paths outside custom_nodes.
+    if !is_safe_path_component(&node_name) {
+        return Err(AppError::Other("Invalid custom node name".into()));
+    }
     let config = state.config.read().await;
     let target_dir = std::path::Path::new(&config.comfyui_path)
         .join("custom_nodes")
@@ -3687,7 +3732,16 @@ pub async fn hash_model_file(
     Ok(ModelHashResult { sha256, autov2 })
 }
 
+/// A CivitAI model-version hash: AutoV1/AutoV2/CRC32/Blake3/SHA256 are all hex,
+/// 8 to 64 characters. It is placed in the URL path, so nothing else passes.
+pub(crate) fn is_valid_civitai_hash(hash: &str) -> bool {
+    (8..=64).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<Value, AppError> {
+    if !is_valid_civitai_hash(hash) {
+        return Err(AppError::Other("Invalid model hash".into()));
+    }
     let api_key = state.config.read().await.civitai_api_key.clone();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let mut req = state
@@ -3920,20 +3974,6 @@ pub(crate) async fn save_model_sidecar_thumbnail_inner(
     gallery_filename: Option<&str>,
     gallery_dir: Option<&std::path::Path>,
 ) -> Result<(), AppError> {
-    let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
-        if let Some(dir) = gallery_dir {
-            load_gallery_image_png_from_dir(dir, gf).await?
-        } else {
-            load_gallery_image_png_inner(gf.to_string()).await?
-        }
-    } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
-        fetch_civitai_image_bytes(state, url).await?
-    } else {
-        return Err(AppError::Other(
-            "Provide image_url or gallery_filename".into(),
-        ));
-    };
-
     let (comfyui_path, extra_model_paths) = {
         let config = state.config.read().await;
         if config.comfyui_path.is_empty() {
@@ -3952,6 +3992,26 @@ pub(crate) async fn save_model_sidecar_thumbnail_inner(
         filename,
     )
     .ok_or_else(|| AppError::Other(format!("Model file not found: {}", filename)))?;
+    // The sidecar is `{stem}.png` beside the target, so the target has to be a
+    // real model file: otherwise `filename=foo.png` would overwrite foo.png
+    // itself, and any other file in the model folders could get a sibling.
+    if !is_model_sidecar_target(&path) {
+        return Err(AppError::Other(format!("Not a model file: {}", filename)));
+    }
+
+    let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
+        if let Some(dir) = gallery_dir {
+            load_gallery_image_png_from_dir(dir, gf).await?
+        } else {
+            load_gallery_image_png_inner(gf.to_string()).await?
+        }
+    } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
+        fetch_civitai_image_bytes(state, url).await?
+    } else {
+        return Err(AppError::Other(
+            "Provide image_url or gallery_filename".into(),
+        ));
+    };
 
     let model_dir = path
         .parent()
@@ -4798,6 +4858,10 @@ async fn lookup_civitai_base_model_by_hash(
     state: &Arc<AppState>,
     hash: &str,
 ) -> Result<Option<String>, AppError> {
+    // A malformed hash (e.g. from foreign metadata) cannot match anything.
+    if !is_valid_civitai_hash(hash) {
+        return Ok(None);
+    }
     let data = match civitai_lookup_hash_value(state, hash).await {
         Ok(data) => data,
         Err(AppError::Other(message)) if message == "Model not found on CivitAI" => {
@@ -4811,6 +4875,27 @@ async fn lookup_civitai_base_model_by_hash(
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(str::to_string))
+}
+
+/// The CivitAI key for a server-side CivitAI call: the one the client sent,
+/// else the instance's configured key. Browser clients below admin never get
+/// the configured key from `get_config`, so without this fallback their Model
+/// Hub calls would run unauthenticated. The key itself never goes back to them.
+pub(crate) fn effective_civitai_key(
+    client_key: Option<String>,
+    configured: Option<String>,
+) -> Option<String> {
+    let usable = |key: &String| !key.trim().is_empty();
+    client_key.filter(usable).or(configured.filter(usable))
+}
+
+/// [`effective_civitai_key`] against the current config.
+pub(crate) async fn civitai_key_with_fallback(
+    state: &AppState,
+    client_key: Option<String>,
+) -> Option<String> {
+    let configured = state.config.read().await.civitai_api_key.clone();
+    effective_civitai_key(client_key, configured)
 }
 
 /// Search CivitAI models. Shared by the Tauri command and the LAN web server route.
@@ -4873,7 +4958,7 @@ pub async fn civitai_search_models_internal(
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
 
-    if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
+    if let Some(key) = civitai_key_with_fallback(state, params.api_key).await {
         req = req.bearer_auth(key);
     }
 
@@ -4920,7 +5005,7 @@ pub async fn civitai_get_model_internal(
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
 
-    if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
+    if let Some(key) = civitai_key_with_fallback(state, api_key).await {
         req = req.bearer_auth(key);
     }
 
@@ -4959,6 +5044,7 @@ pub async fn civitai_list_architectures(
     state: State<'_, Arc<AppState>>,
     api_key: Option<String>,
 ) -> Result<Vec<String>, AppError> {
+    let api_key = civitai_key_with_fallback(&state, api_key).await;
     let mut architectures = BTreeSet::<String>::new();
 
     // Add common architectures first to guarantee they're present
@@ -7836,11 +7922,79 @@ pub async fn fetch_cached_image(
     // Cache miss — fetch through the backend so auth headers are applied.
     let bytes = fetch_civitai_image_bytes(state.inner().as_ref(), &url).await?;
 
-    // Persist to disk cache (best-effort; ignore write errors).
-    let _ = std::fs::write(&cache_path, &bytes);
+    // Persist to disk cache (best-effort; ignore write errors), then trim the
+    // cache off the request path so it cannot grow without bound.
+    if std::fs::write(&cache_path, &bytes).is_ok() {
+        tauri::async_runtime::spawn_blocking(move || {
+            prune_image_cache(&cache_dir, CACHE_TTL_SECS);
+        });
+    }
 
     let mime = detect_image_mime(&bytes);
     Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+}
+
+/// Most files the desktop CivitAI image cache (`image_cache/`) keeps.
+#[cfg(feature = "desktop")]
+const IMAGE_CACHE_MAX_ENTRIES: usize = 2000;
+/// Most bytes the desktop CivitAI image cache keeps.
+#[cfg(feature = "desktop")]
+const IMAGE_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Which cache entries to delete, given `(key, size_bytes, age_secs)` for each:
+/// every entry at or past the TTL, then the oldest remaining ones until both
+/// the entry-count and total-size limits hold.
+#[cfg(any(feature = "desktop", test))]
+fn image_cache_evictions<K>(
+    mut entries: Vec<(K, u64, u64)>,
+    max_entries: usize,
+    max_bytes: u64,
+    ttl_secs: u64,
+) -> Vec<K> {
+    // Oldest first.
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.2));
+    let mut total: u64 = entries.iter().map(|entry| entry.1).sum();
+    let mut remaining = entries.len();
+    let mut evict = Vec::new();
+    for (key, size, age) in entries {
+        if age >= ttl_secs || remaining > max_entries || total > max_bytes {
+            total = total.saturating_sub(size);
+            remaining -= 1;
+            evict.push(key);
+        }
+    }
+    evict
+}
+
+/// Delete expired and excess files from the image cache directory.
+#[cfg(feature = "desktop")]
+fn prune_image_cache(cache_dir: &std::path::Path, ttl_secs: u64) {
+    let Ok(read_dir) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    let entries: Vec<(std::path::PathBuf, u64, u64)> = read_dir
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            let age = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map_or(0, |e| e.as_secs());
+            Some((entry.path(), meta.len(), age))
+        })
+        .collect();
+    for path in image_cache_evictions(
+        entries,
+        IMAGE_CACHE_MAX_ENTRIES,
+        IMAGE_CACHE_MAX_BYTES,
+        ttl_secs,
+    ) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Read an image from the native clipboard and return PNG bytes.
@@ -8981,4 +9135,115 @@ pub async fn get_logs(source: String, lines: Option<usize>) -> Result<Vec<String
         _ => Vec::new(),
     };
     Ok(out)
+}
+
+#[cfg(test)]
+mod lan_command_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn animadex_proxy_stays_under_the_characters_api() {
+        let ok = animadex_proxy_url("api/characters/search?q=miku&page=2", None).unwrap();
+        assert_eq!(
+            ok.as_str(),
+            "https://animadex.net/api/characters/search?q=miku&page=2"
+        );
+        let with_query = animadex_proxy_url("/api/characters/facets", Some("lang=en")).unwrap();
+        assert_eq!(
+            with_query.as_str(),
+            "https://animadex.net/api/characters/facets?lang=en"
+        );
+        for bad in [
+            "api/characters/../../x",
+            "api/characters/../admin",
+            "api/characters/./../../x",
+            "api/characters/%2e%2e/%2E%2E/x",
+            "api/characters/.%2e/x",
+            "api/characters/..%2fx",
+            "api/characters\\..\\..\\x",
+            "api/characters/x#frag",
+            "api/other/",
+            "api/characters",
+            "//evil.example/api/characters/",
+        ] {
+            assert!(animadex_proxy_url(bad, None).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn civitai_hashes_must_be_short_hex() {
+        for ok in [
+            "abcdef12",
+            "ABCDEF1234",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(is_valid_civitai_hash(ok), "{ok}");
+        }
+        let too_long = "a".repeat(65);
+        for bad in [
+            "",
+            "abc1234",
+            "abcdefgh",
+            "abcdef12/../../models",
+            "abcdef12?x=1",
+            too_long.as_str(),
+        ] {
+            assert!(!is_valid_civitai_hash(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn civitai_key_falls_back_to_the_configured_one() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(effective_civitai_key(s("client"), s("host")), s("client"));
+        assert_eq!(effective_civitai_key(None, s("host")), s("host"));
+        assert_eq!(effective_civitai_key(s("  "), s("host")), s("host"));
+        assert_eq!(effective_civitai_key(None, s(" ")), None);
+        assert_eq!(effective_civitai_key(None, None), None);
+    }
+
+    #[test]
+    fn image_cache_evicts_expired_then_oldest_entries() {
+        let ttl = 100;
+        // (key, size, age)
+        let entries = vec![
+            ("expired", 1, 150),
+            ("old", 10, 90),
+            ("mid", 10, 50),
+            ("new", 10, 1),
+        ];
+        let mut evicted = image_cache_evictions(entries.clone(), 10, 1_000, ttl);
+        evicted.sort();
+        assert_eq!(evicted, ["expired"]);
+
+        let mut evicted = image_cache_evictions(entries.clone(), 2, 1_000, ttl);
+        evicted.sort();
+        assert_eq!(evicted, ["expired", "old"]);
+
+        let mut evicted = image_cache_evictions(entries, 10, 15, ttl);
+        evicted.sort();
+        assert_eq!(evicted, ["expired", "mid", "old"]);
+
+        assert!(image_cache_evictions(Vec::<(&str, u64, u64)>::new(), 1, 1, ttl).is_empty());
+    }
+
+    #[test]
+    fn sidecar_thumbnails_only_target_existing_model_files() {
+        let dir = std::env::temp_dir().join(format!("mooshie-sidecar-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("model.safetensors");
+        let image = dir.join("foo.png");
+        let text = dir.join("notes.txt");
+        for path in [&model, &image, &text] {
+            std::fs::write(path, b"x").unwrap();
+        }
+        std::fs::create_dir_all(dir.join("folder.safetensors")).unwrap();
+
+        assert!(is_model_sidecar_target(&model));
+        assert!(!is_model_sidecar_target(&image));
+        assert!(!is_model_sidecar_target(&text));
+        assert!(!is_model_sidecar_target(&dir.join("folder.safetensors")));
+        assert!(!is_model_sidecar_target(&dir.join("missing.ckpt")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

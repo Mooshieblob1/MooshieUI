@@ -407,6 +407,21 @@ fn resolve_username_with_query_token(
     None
 }
 
+/// Whether a download URL already carries a `token` query parameter.
+fn url_has_token_param(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|u| u.query_pairs().any(|(k, _)| k == "token"))
+}
+
+/// A query string with any `token` parameter (the session token `<img>`-style
+/// callers pass) removed, for forwarding to an external host.
+fn query_without_token(query: &str) -> String {
+    query
+        .split('&')
+        .filter(|p| !p.is_empty() && *p != "token" && !p.starts_with("token="))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// Authentication gate for the read-only external proxies (cdn/animadex).
 /// These serve `<img>`-style requests that cannot set an Authorization header,
 /// so a `?token=` query param is also accepted. Localhost / non-LAN callers are
@@ -487,6 +502,18 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "create_model_folder",
     "civitai_bulk_scan",
     "civitai_bulk_scan_cancel",
+    // absolute host paths; only the admin/moderator settings UI shows them
+    "get_gallery_path",
+    "get_install_path",
+    "detect_model_directories",
+    // the local LLM is one shared host process: downloading a model (multi-GB,
+    // and it rewrites the configured model), deleting one, or unloading it
+    // (killing every user's in-flight generation) is server management
+    "download_llm_model",
+    "delete_llm_model",
+    "unload_llm",
+    // writes `{stem}.png` next to a shared model file, which every account sees
+    "save_model_sidecar_thumbnail",
 ];
 
 /// Commands only an admin may run. Each one reads or writes an arbitrary host
@@ -678,6 +705,13 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                         .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
 
                     match evt.event.as_str() {
+                        "comfyui:executed" => {
+                            if let Some(raw_pid) =
+                                evt.payload.get("prompt_id").and_then(|v| v.as_str())
+                            {
+                                record_output_owners(&cleanup_state, raw_pid, &evt.payload);
+                            }
+                        }
                         "comfyui:executing" => {
                             if evt.payload.get("node").is_some_and(|n| n.is_null()) {
                                 if let Some(pid) = prompt_id {
@@ -756,6 +790,48 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
             }
         }
     }));
+}
+
+/// Remember which prompt (and account) produced the output files listed in a
+/// ComfyUI `executed` event, for [`ensure_output_owned`].
+fn record_output_owners(state: &AppState, raw_prompt_id: &str, payload: &serde_json::Value) {
+    let files = crate::output_owners::executed_output_files(payload);
+    if files.is_empty() {
+        return;
+    }
+    let resolved = state.prompt_queue.resolve_alias(raw_prompt_id);
+    let owner = state
+        .prompt_queue
+        .owner_of(&resolved)
+        .or_else(|| state.prompt_queue.owner_of(raw_prompt_id));
+    for (subfolder, filename) in files {
+        state
+            .output_owners
+            .record(&subfolder, &filename, raw_prompt_id, owner.clone());
+    }
+}
+
+/// Refuse a named account an output file its own prompts did not produce.
+/// `username` is `None` for the admin (localhost owner or admin account).
+fn ensure_output_owned(
+    state: &AppState,
+    filename: &str,
+    subfolder: &str,
+    username: Option<&str>,
+) -> Result<(), String> {
+    let record = state.output_owners.lookup(subfolder, filename);
+    let caller = username.map(str::to_string);
+    let allowed = crate::output_owners::caller_may_read(record.as_ref(), username, |pid| {
+        state.prompt_queue.is_owned_by(pid, &caller)
+            || state
+                .prompt_queue
+                .is_owned_by(&state.prompt_queue.resolve_alias(pid), &caller)
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err("Output does not belong to the current user".to_string())
+    }
 }
 
 /// Spawn the stuck-worker watchdog.  Every 60s, checks for workers that have
@@ -1560,10 +1636,12 @@ async fn sse_handler(
     // Auth check — SSE uses query param since EventSource can't set headers
     let mut hdrs = headers.clone();
     if let Some(token) = query.get("token") {
-        hdrs.insert(
-            "authorization",
-            format!("Bearer {}", token).parse().unwrap(),
-        );
+        // A token with bytes a header cannot carry can never be a real session
+        // token, so it is skipped (the request stays anonymous) instead of
+        // panicking the handler.
+        if let Ok(value) = axum::http::HeaderValue::from_str(&format!("Bearer {token}")) {
+            hdrs.insert(axum::http::header::AUTHORIZATION, value);
+        }
     }
     let role = resolve_role(&state, &hdrs, &remote);
     if role == UserRole::Anonymous {
@@ -2249,16 +2327,13 @@ async fn animadex_proxy_handler(
     if !proxy_request_authed(&state, &headers, &remote, uri.query().unwrap_or("")) {
         return unauthorized_response("Authentication required");
     }
-    let clean = path.trim_start_matches('/');
-    if !clean.starts_with("api/characters/") {
+    // The session token rides in `?token=` for `<img>`-style callers; it must
+    // not be forwarded to the third-party host.
+    let query = uri.query().map(query_without_token);
+    let Some(target_url) = commands::api::animadex_proxy_url(&path, query.as_deref()) else {
         return StatusCode::BAD_REQUEST.into_response();
-    }
-    let mut target_url = format!("https://animadex.net/{}", clean);
-    if let Some(query) = uri.query() {
-        target_url.push('?');
-        target_url.push_str(query);
-    }
-    match state.app.http_client.get(&target_url).send().await {
+    };
+    match state.app.http_client.get(target_url).send().await {
         Ok(resp) => {
             let status = resp.status();
             let content_type = resp
@@ -2299,9 +2374,11 @@ async fn cdn_proxy_handler(
         return unauthorized_response("Authentication required");
     }
     let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
-    if let Some(query) = uri.query() {
-        target_url.push('?');
-        target_url.push_str(query);
+    if let Some(query) = uri.query().map(query_without_token) {
+        if !query.is_empty() {
+            target_url.push('?');
+            target_url.push_str(&query);
+        }
     }
     match state.app.http_client.get(&target_url).send().await {
         Ok(resp) => {
@@ -3153,6 +3230,7 @@ async fn dispatch_command(
                 .ok_or("Missing filename")?
                 .to_string();
             let subfolder = args["subfolder"].as_str().unwrap_or("").to_string();
+            ensure_output_owned(&state, &filename, &subfolder, username)?;
             let result = state
                 .get_output_image_bytes(&filename, &subfolder)
                 .await
@@ -3689,6 +3767,7 @@ async fn dispatch_command(
                 .get("metadataMode")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            ensure_output_owned(&state, &filename, &subfolder, username)?;
             let bytes = state
                 .get_output_image_bytes(&filename, &subfolder)
                 .await
@@ -4468,6 +4547,7 @@ async fn dispatch_command(
                 .get("apiKey")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let api_key = commands::api::civitai_key_with_fallback(&state, api_key).await;
             // Return the hardcoded common architectures (matching the Tauri command)
             let mut architectures: Vec<String> = vec![
                 "SD 1.4",
@@ -4552,6 +4632,9 @@ async fn dispatch_command(
         }
         "civitai_lookup_hash" => {
             let hash = args["hash"].as_str().ok_or("Missing hash")?.to_string();
+            if !commands::api::is_valid_civitai_hash(&hash) {
+                return Err("Invalid model hash".to_string());
+            }
             let api_key = state.config.read().await.civitai_api_key.clone();
             let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
             let mut req = state.http_client.get(&url);
@@ -4825,6 +4908,11 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing nodeName")?
                 .to_string();
+            // One plain directory name: otherwise this is an existence oracle
+            // for any path on the host.
+            if !commands::api::is_safe_path_component(&node_name) {
+                return Err("Invalid custom node name".to_string());
+            }
             let config = state.config.read().await;
             let target_dir = std::path::Path::new(&config.comfyui_path)
                 .join("custom_nodes")
@@ -5180,8 +5268,16 @@ async fn dispatch_command(
                 .header("User-Agent", "MooshieUI/1.3.0");
             if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
                 req = req.bearer_auth(token);
+            } else if crate::comfyui::client::is_civitai_url(&url) && !url_has_token_param(&url) {
+                // Browser clients below admin no longer hold the instance's
+                // CivitAI key to append as `?token=`, so the server adds it.
+                // reqwest drops the header if CivitAI redirects to another host.
+                if let Some(key) = commands::api::civitai_key_with_fallback(&state, None).await {
+                    req = req.bearer_auth(key);
+                }
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            // reqwest errors quote the full URL, which may carry `?token=`.
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 return Err(crate::comfyui::client::download_status_error_message(
@@ -5234,7 +5330,7 @@ async fn dispatch_command(
                         drop(file);
                         let _ = std::fs::remove_file(&part);
                         progress_event(&event_tx, &filename, downloaded, total, true);
-                        return Err(e.to_string());
+                        return Err(e.without_url().to_string());
                     }
                 };
                 use std::io::Write;
@@ -6390,6 +6486,20 @@ struct AuthRequest {
     password: String,
 }
 
+/// Run an `AuthState` call that hashes or verifies a password (Argon2) on a
+/// blocking thread, so a burst of logins cannot stall the async workers that
+/// serve every other request.
+async fn run_auth_blocking<T, F>(auth: &Arc<AuthState>, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AuthState) -> Result<T, String> + Send + 'static,
+{
+    let auth = Arc::clone(auth);
+    tokio::task::spawn_blocking(move || f(&auth))
+        .await
+        .unwrap_or_else(|e| Err(format!("Authentication task failed: {e}")))
+}
+
 /// POST /internal-api/_auth/logout — invalidate the current session token.
 async fn auth_logout_handler(
     AxumState(state): AxumState<SharedState>,
@@ -6420,7 +6530,9 @@ async fn auth_login_handler(
         )
             .into_response();
     }
-    match state.auth.login(&req.username, &req.password) {
+    let (username, password) = (req.username.clone(), req.password.clone());
+    let login = run_auth_blocking(&state.auth, move |auth| auth.login(&username, &password)).await;
+    match login {
         Ok((token, must_change)) => {
             // The per-address count is left to decay on its own: clearing it
             // here would let a client with one valid account reset its budget.
@@ -6471,10 +6583,18 @@ async fn auth_register_handler(
         )
             .into_response();
     }
-    match state.auth.create_account(&req.username, &req.password) {
+    let (username, password) = (req.username.clone(), req.password.clone());
+    let created = run_auth_blocking(&state.auth, move |auth| {
+        auth.create_account(&username, &password)
+    })
+    .await;
+    match created {
         Ok(()) => {
             // Auto-login after registration
-            match state.auth.login(&req.username, &req.password) {
+            let (username, password) = (req.username.clone(), req.password.clone());
+            let login =
+                run_auth_blocking(&state.auth, move |auth| auth.login(&username, &password)).await;
+            match login {
                 Ok((token, _)) => {
                     (StatusCode::OK, Json(serde_json::json!({ "token": token }))).into_response()
                 }
@@ -6725,12 +6845,23 @@ async fn auth_upgrade_password_encryption_handler(
             .into_response();
     }
 
-    match state.auth.upgrade_password_encryption(&username, &password) {
+    let upgraded = {
+        let (username, password) = (username.clone(), password.clone());
+        run_auth_blocking(&state.auth, move |auth| {
+            auth.upgrade_password_encryption(&username, &password)
+        })
+        .await
+    };
+    match upgraded {
         Ok(true) => {
             if authenticated {
                 return (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response();
             }
-            match state.auth.login(&username, &password) {
+            let login = {
+                let (username, password) = (username.clone(), password.clone());
+                run_auth_blocking(&state.auth, move |auth| auth.login(&username, &password)).await
+            };
+            match login {
                 Ok((token, must_change)) => (
                     StatusCode::OK,
                     Json(serde_json::json!({
@@ -6790,7 +6921,7 @@ async fn auth_change_password_handler(
     };
 
     let current = match req.get("current_password").and_then(|v| v.as_str()) {
-        Some(p) => p,
+        Some(p) => p.to_string(),
         None => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -6800,7 +6931,7 @@ async fn auth_change_password_handler(
         }
     };
     let new_pass = match req.get("new_password").and_then(|v| v.as_str()) {
-        Some(p) => p,
+        Some(p) => p.to_string(),
         None => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -6810,7 +6941,12 @@ async fn auth_change_password_handler(
         }
     };
 
-    match state.auth.change_password(&username, current, new_pass) {
+    // Every other session of the account is signed out; this one stays.
+    let changed = run_auth_blocking(&state.auth, move |auth| {
+        auth.change_password(&username, &current, &new_pass, token.as_deref())
+    })
+    .await;
+    match changed {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -6864,7 +7000,12 @@ async fn auth_reset_password_handler(
         }
     };
 
-    match state.auth.reset_password(username, temp_pass) {
+    let (username, temp_pass) = (username.to_string(), temp_pass.to_string());
+    let reset = run_auth_blocking(&state.auth, move |auth| {
+        auth.reset_password(&username, &temp_pass)
+    })
+    .await;
+    match reset {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -7695,7 +7836,20 @@ async fn model_requests_list_handler(
         _ => None,
     });
 
-    let requests = state.app.model_requests.get_requests(status_filter);
+    // Staff triage every account's requests; a regular user sees only their
+    // own, since the list carries other requesters' usernames and picks.
+    let viewer = if matches!(role, UserRole::Admin | UserRole::Moderator) {
+        None
+    } else {
+        resolve_username(&state, &headers, &remote)
+    };
+    if role == UserRole::User && viewer.is_none() {
+        return forbidden_response("Authentication required.");
+    }
+    let requests = state
+        .app
+        .model_requests
+        .visible_requests(status_filter, viewer.as_deref());
     (
         StatusCode::OK,
         Json(serde_json::json!({ "requests": requests })),
@@ -7772,7 +7926,7 @@ async fn model_requests_add_handler(
             .into_response();
     }
 
-    let request = state.app.model_requests.add_request(
+    let request = match state.app.model_requests.add_request(
         &username,
         model_id,
         &model_name,
@@ -7782,7 +7936,16 @@ async fn model_requests_add_handler(
         &file_url,
         file_size_kb,
         &category,
-    );
+    ) {
+        Ok(request) => request,
+        Err(e) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response();
+        }
+    };
 
     // Notify mods/admins about the new request. A "global" notification would
     // leak the request (and requester's username) to every user, so target each
@@ -8334,6 +8497,107 @@ mod lan_hardening_tests {
         assert_eq!(user_gallery_subdir("D:x"), None);
         assert_eq!(user_gallery_subdir(""), None);
         assert_eq!(user_gallery_subdir("a\0b"), None);
+    }
+}
+
+#[cfg(test)]
+mod lan_access_scope_tests {
+    use super::{
+        ensure_output_owned, min_role_for_command, query_without_token, record_output_owners,
+        url_has_token_param, UserRole,
+    };
+    use crate::state::AppState;
+
+    #[test]
+    fn host_paths_and_shared_llm_or_model_writes_need_a_moderator() {
+        for command in [
+            "get_gallery_path",
+            "get_install_path",
+            "detect_model_directories",
+            "download_llm_model",
+            "delete_llm_model",
+            "unload_llm",
+            "save_model_sidecar_thumbnail",
+        ] {
+            assert_eq!(
+                min_role_for_command(command),
+                UserRole::Moderator,
+                "{command}"
+            );
+        }
+        // Using the assistant stays open to every account.
+        assert_eq!(min_role_for_command("enhance_prompt"), UserRole::User);
+        assert_eq!(min_role_for_command("llm_status"), UserRole::User);
+    }
+
+    #[test]
+    fn proxied_queries_drop_the_session_token() {
+        assert_eq!(
+            query_without_token("q=miku&token=abc&page=2"),
+            "q=miku&page=2"
+        );
+        assert_eq!(query_without_token("token=abc"), "");
+        assert_eq!(query_without_token("token"), "");
+        assert_eq!(
+            query_without_token("tokens=1&x=token=2"),
+            "tokens=1&x=token=2"
+        );
+    }
+
+    #[test]
+    fn token_param_detection() {
+        assert!(url_has_token_param(
+            "https://civitai.com/api/download/models/1?type=Model&token=k"
+        ));
+        assert!(!url_has_token_param(
+            "https://civitai.com/api/download/models/1?type=Model"
+        ));
+        assert!(!url_has_token_param("not a url"));
+    }
+
+    fn executed(prompt_id: &str, filename: &str) -> serde_json::Value {
+        serde_json::json!({
+            "prompt_id": prompt_id,
+            "node": "9",
+            "output": {"images": [{"filename": filename, "subfolder": "", "type": "output"}]}
+        })
+    }
+
+    #[test]
+    fn outputs_are_readable_only_by_their_owner_or_the_admin() {
+        let state = AppState::new(crate::config::AppConfig::default());
+        state
+            .prompt_queue
+            .insert("ph-alice", Some("alice".to_string()));
+        state.prompt_queue.bind_alias("ph-alice", "real-alice");
+        record_output_owners(&state, "real-alice", &executed("real-alice", "a.png"));
+
+        assert!(ensure_output_owned(&state, "a.png", "", Some("alice")).is_ok());
+        assert!(ensure_output_owned(&state, "a.png", "", Some("bob")).is_err());
+        assert!(ensure_output_owned(&state, "a.png", "", None).is_ok());
+        // Never observed: only the admin may fetch it.
+        assert!(
+            ensure_output_owned(&state, "mooshie_video_00001_.mp4", "", Some("alice")).is_err()
+        );
+        assert!(ensure_output_owned(&state, "mooshie_video_00001_.mp4", "", None).is_ok());
+
+        // Admin-owned outputs stay hidden from named accounts.
+        state.prompt_queue.insert("ph-admin", None);
+        record_output_owners(&state, "ph-admin", &executed("ph-admin", "admin.png"));
+        assert!(ensure_output_owned(&state, "admin.png", "", Some("alice")).is_err());
+        assert!(ensure_output_owned(&state, "admin.png", "", None).is_ok());
+    }
+
+    #[test]
+    fn output_ownership_bound_after_the_event_is_honoured() {
+        let state = AppState::new(crate::config::AppConfig::default());
+        // `executed` observed before the placeholder was bound to the real id.
+        record_output_owners(&state, "real-bob", &executed("real-bob", "b.png"));
+        assert!(ensure_output_owned(&state, "b.png", "", Some("bob")).is_err());
+        state.prompt_queue.insert("ph-bob", Some("bob".to_string()));
+        state.prompt_queue.bind_alias("ph-bob", "real-bob");
+        assert!(ensure_output_owned(&state, "b.png", "", Some("bob")).is_ok());
+        assert!(ensure_output_owned(&state, "b.png", "", Some("carol")).is_err());
     }
 }
 

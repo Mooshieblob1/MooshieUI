@@ -767,6 +767,9 @@ pub struct AppState {
     /// Updated by the WebSocket bridge on every `comfyui:preview` event.
     /// Sent to clients that reconnect mid-generation via the SSE initial burst.
     pub last_preview_by_prompt: std::sync::RwLock<HashMap<String, String>>,
+    /// Which prompt/account produced each ComfyUI output file, so the browser
+    /// output proxy can refuse other accounts' files.
+    pub output_owners: crate::output_owners::OutputOwners,
     /// Model request queue for non-mod users.
     pub model_requests: ModelRequestState,
     /// Notification system for global and per-user notifications.
@@ -836,6 +839,7 @@ impl AppState {
             comfyui_lifecycle: Mutex::new(()),
             output_image_cache: std::sync::RwLock::new(HashMap::new()),
             last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
+            output_owners: crate::output_owners::OutputOwners::new(),
             model_requests: ModelRequestState::new(),
             notifications: NotificationState::new(),
             download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
