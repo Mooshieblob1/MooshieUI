@@ -43,6 +43,9 @@ pub struct HeldPrompt {
 
 /// Tracks which user submitted which prompt for per-user event isolation.
 /// Uses std::sync::RwLock for fast, non-async reads in SSE stream filters.
+/// Lock discipline: methods take one of these locks at a time where possible
+/// (snapshot, drop, then take the next). When two must be held together the
+/// order is `queue` before `held`, and `queue` before `owners`/`music_prompts`.
 pub struct PromptQueue {
     /// prompt_id → username (None = admin/local)
     owners: std::sync::RwLock<HashMap<String, Option<String>>>,
@@ -75,6 +78,25 @@ impl Default for PromptQueue {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A prompt id plus its placeholder/real-id aliases, resolved against an
+/// already-locked (or snapshotted) alias map.
+fn related_ids_in(aliases: &HashMap<String, String>, prompt_id: &str) -> Vec<String> {
+    let placeholder = aliases
+        .get(prompt_id)
+        .cloned()
+        .unwrap_or_else(|| prompt_id.to_string());
+    let mut ids = vec![placeholder.clone()];
+    if prompt_id != placeholder {
+        ids.push(prompt_id.to_string());
+    }
+    for (real_id, alias_placeholder) in aliases.iter() {
+        if alias_placeholder == &placeholder && !ids.iter().any(|id| id == real_id) {
+            ids.push(real_id.clone());
+        }
+    }
+    ids
 }
 
 impl PromptQueue {
@@ -264,14 +286,16 @@ impl PromptQueue {
         }
 
         let id_set: HashSet<String> = prompt_ids.iter().cloned().collect();
+        // Snapshot the aliases before locking `held` so this never holds two
+        // PromptQueue locks at once.
+        let aliases = self.aliases.read().unwrap().clone();
         let mut held = self.held.lock().unwrap();
         let mut kept: Vec<HeldPrompt> = Vec::with_capacity(held.len());
         let mut taken: Vec<HeldPrompt> = Vec::new();
 
         for hp in held.drain(..) {
             let is_match = id_set.contains(&hp.placeholder_id)
-                || self
-                    .related_ids(&hp.placeholder_id)
+                || related_ids_in(&aliases, &hp.placeholder_id)
                     .iter()
                     .any(|id| id_set.contains(id));
 
@@ -288,29 +312,16 @@ impl PromptQueue {
 
     /// Return a prompt id plus its placeholder/real-id aliases.
     pub fn related_ids(&self, prompt_id: &str) -> Vec<String> {
-        let aliases = self.aliases.read().unwrap();
-        let placeholder = aliases
-            .get(prompt_id)
-            .cloned()
-            .unwrap_or_else(|| prompt_id.to_string());
-        let mut ids = vec![placeholder.clone()];
-        if prompt_id != placeholder {
-            ids.push(prompt_id.to_string());
-        }
-        for (real_id, alias_placeholder) in aliases.iter() {
-            if alias_placeholder == &placeholder && !ids.iter().any(|id| id == real_id) {
-                ids.push(real_id.clone());
-            }
-        }
-        ids
+        related_ids_in(&self.aliases.read().unwrap(), prompt_id)
     }
 
     /// Whether a placeholder/real prompt id was explicitly canceled.
     pub fn is_cancelled(&self, prompt_id: &str) -> bool {
+        // Resolve the ids first: the aliases guard is dropped before
+        // `cancelled` is locked (`cleanup_alias` takes them in the other order).
+        let ids = self.related_ids(prompt_id);
         let cancelled = self.cancelled.read().unwrap();
-        self.related_ids(prompt_id)
-            .iter()
-            .any(|id| cancelled.contains(id))
+        ids.iter().any(|id| cancelled.contains(id))
     }
 
     /// Record which worker is handling a prompt.
@@ -395,17 +406,26 @@ impl PromptQueue {
     /// Count how many prompts from a given user are currently active (submitted to ComfyUI).
     /// These are prompts that are in the queue (tracking) but NOT in the held list.
     pub fn active_count_for_user(&self, username: &Option<String>) -> usize {
-        let queue = self.queue.read().unwrap();
-        let held = self.held.lock().unwrap();
-        let held_usernames: Vec<_> = held.iter().map(|h| &h.username).collect();
-
-        // Count queued prompts for this user that are NOT held
-        // (i.e. they have been submitted to ComfyUI)
-        queue
+        // Each count is taken under its own lock (queue first, then held);
+        // the two guards are never held together.
+        let queued = self
+            .queue
+            .read()
+            .unwrap()
             .iter()
             .filter(|(_, owner)| owner == username)
-            .count()
-            .saturating_sub(held_usernames.iter().filter(|u| ***u == *username).count())
+            .count();
+        let held = self
+            .held
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.username == *username)
+            .count();
+
+        // Queued prompts for this user that are NOT held
+        // (i.e. they have been submitted to ComfyUI)
+        queued.saturating_sub(held)
     }
 
     /// Take the next held prompt that should be submitted (round-robin fair).
@@ -479,8 +499,11 @@ impl PromptQueue {
 
     /// Clean up alias entries for a finished prompt.
     pub fn cleanup_alias(&self, placeholder_id: &str) {
-        let mut aliases = self.aliases.write().unwrap();
-        aliases.retain(|_, v| v != placeholder_id);
+        // The aliases guard is released before `cancelled` is locked.
+        self.aliases
+            .write()
+            .unwrap()
+            .retain(|_, v| v != placeholder_id);
         self.cancelled.write().unwrap().remove(placeholder_id);
     }
 
@@ -496,8 +519,10 @@ impl PromptQueue {
         new_user_position: usize,
         username: &Option<String>,
     ) -> bool {
-        let mut held = self.held.lock().unwrap();
+        // Lock order: `queue` before `held`, the same order every other
+        // PromptQueue path uses, so the two cannot deadlock.
         let mut queue = self.queue.write().unwrap();
+        let mut held = self.held.lock().unwrap();
 
         // Locate this prompt in the held list.
         let held_pos = match held.iter().position(|hp| hp.placeholder_id == prompt_id) {
@@ -1251,5 +1276,123 @@ impl AppState {
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod prompt_queue_lock_tests {
+    use super::{related_ids_in, HeldPrompt, PromptQueue};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn held(placeholder: &str, user: Option<&str>) -> HeldPrompt {
+        HeldPrompt {
+            workflow: serde_json::Value::Null,
+            username: user.map(str::to_string),
+            placeholder_id: placeholder.to_string(),
+            submitted: Arc::new(tokio::sync::Notify::new()),
+            result: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    #[test]
+    fn related_ids_resolve_both_directions() {
+        let mut aliases = HashMap::new();
+        aliases.insert("real-1".to_string(), "gen-1".to_string());
+        aliases.insert("real-2".to_string(), "gen-1".to_string());
+        let mut from_real = related_ids_in(&aliases, "real-1");
+        from_real.sort();
+        assert_eq!(from_real, vec!["gen-1", "real-1", "real-2"]);
+        let mut from_placeholder = related_ids_in(&aliases, "gen-1");
+        from_placeholder.sort();
+        assert_eq!(from_placeholder, vec!["gen-1", "real-1", "real-2"]);
+        assert_eq!(related_ids_in(&aliases, "other"), vec!["other"]);
+    }
+
+    #[test]
+    fn cancellation_is_seen_through_aliases_and_cleared_by_cleanup() {
+        let pq = PromptQueue::new();
+        pq.insert("gen-1", None);
+        pq.bind_alias("gen-1", "real-1");
+        pq.cancel_and_remove("real-1");
+        assert!(pq.is_cancelled("gen-1"));
+        pq.cleanup_alias("gen-1");
+        assert!(!pq.is_cancelled("gen-1"));
+    }
+
+    #[test]
+    fn active_count_excludes_held_prompts() {
+        let pq = PromptQueue::new();
+        let alice = Some("alice".to_string());
+        pq.insert("gen-1", alice.clone());
+        pq.insert("gen-2", alice.clone());
+        pq.insert("gen-3", None);
+        pq.held.lock().unwrap().push(held("gen-2", Some("alice")));
+        assert_eq!(pq.active_count_for_user(&alice), 1);
+        assert_eq!(pq.active_count_for_user(&None), 1);
+    }
+
+    #[test]
+    fn take_held_matches_real_id_aliases() {
+        let pq = PromptQueue::new();
+        pq.held.lock().unwrap().push(held("gen-1", None));
+        pq.held.lock().unwrap().push(held("gen-2", None));
+        pq.bind_alias("gen-1", "real-1");
+        let taken = pq.take_held_related_to(&["real-1".to_string()]);
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].placeholder_id, "gen-1");
+        assert_eq!(pq.held.lock().unwrap().len(), 1);
+    }
+
+    /// Hammer the formerly inverted pairs (`is_cancelled` vs `cleanup_alias`,
+    /// `active_count_for_user` vs `reorder_held_prompt`) from two threads. With
+    /// the old lock order this could deadlock; the test fails on a timeout
+    /// instead of hanging.
+    #[test]
+    fn concurrent_paths_do_not_deadlock() {
+        let pq = Arc::new(PromptQueue::new());
+        let user = Some("u".to_string());
+        for i in 0..4 {
+            let id = format!("gen-{i}");
+            pq.insert(&id, user.clone());
+            pq.held.lock().unwrap().push(held(&id, Some("u")));
+        }
+        pq.bind_alias("gen-0", "real-0");
+        pq.cancel_and_remove("real-0");
+
+        const ROUNDS: usize = 200_000;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let a = {
+            let pq = Arc::clone(&pq);
+            let user = user.clone();
+            let tx = tx.clone();
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..ROUNDS {
+                    let _ = pq.is_cancelled("gen-0");
+                    let _ = pq.active_count_for_user(&user);
+                }
+                tx.send(()).unwrap();
+            })
+        };
+        let b = {
+            let pq = Arc::clone(&pq);
+            std::thread::spawn(move || {
+                start.wait();
+                for i in 0..ROUNDS {
+                    pq.cleanup_alias("gen-0");
+                    pq.reorder_held_prompt("gen-1", i % 3, &user);
+                }
+                tx.send(()).unwrap();
+            })
+        };
+        for _ in 0..2 {
+            rx.recv_timeout(std::time::Duration::from_secs(30))
+                .expect("PromptQueue lock-order deadlock");
+        }
+        a.join().unwrap();
+        b.join().unwrap();
     }
 }

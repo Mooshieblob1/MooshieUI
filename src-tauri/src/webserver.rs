@@ -2512,6 +2512,19 @@ async fn dispatch_command(
                     .app_mode_active
                     .store(true, std::sync::atomic::Ordering::SeqCst);
 
+                // Step 2b: Drop the WebSocket tasks browser mode started. They
+                // are headless (SSE broadcast only), and a live task makes the
+                // desktop connect (start_comfyui after the reload) return early,
+                // so the app window would never receive generation events.
+                crate::comfyui::websocket::disconnect_websocket(&state)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                for worker in &state.gpu_manager.workers {
+                    if let Some(h) = worker.ws_handle.lock().await.take() {
+                        h.abort();
+                    }
+                }
+
                 // Step 3: Show the existing hidden Tauri window.
                 let handle_guard = state.app_handle.lock().await;
                 if let Some(ref app_handle) = *handle_guard {
@@ -5183,9 +5196,13 @@ async fn dispatch_command(
                 .to_lowercase();
             crate::comfyui::client::reject_non_model_download_content_type(&url, &content_type)
                 .map_err(|e| e.to_string())?;
-            let total = resp.content_length().unwrap_or(0);
+            // Stream into `<dest>.part` and rename only once verified, so an
+            // interrupted download never leaves a truncated file at `dest`.
+            let part = crate::comfyui::client::partial_download_path(&dest);
+            let expected_len = resp.content_length();
+            let total = expected_len.unwrap_or(0);
             let mut downloaded: u64 = 0;
-            let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+            let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
             let mut last_emit: u64 = 0;
 
             let progress_event =
@@ -5208,19 +5225,30 @@ async fn dispatch_command(
             state.clear_download_cancel(&filename);
             progress_event(&event_tx, &filename, 0, total, false);
             let mut resp = resp;
-            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            loop {
+                let chunk = match resp.chunk().await {
+                    Ok(Some(chunk)) => chunk,
+                    Ok(None) => break,
+                    Err(e) => {
+                        // Connection dropped mid-stream: never leave the partial file.
+                        drop(file);
+                        let _ = std::fs::remove_file(&part);
+                        progress_event(&event_tx, &filename, downloaded, total, true);
+                        return Err(e.to_string());
+                    }
+                };
                 use std::io::Write;
                 // Abort cleanly if the user cancelled this download (#399).
                 if state.is_download_cancelled(&filename) {
                     drop(file);
-                    let _ = std::fs::remove_file(&dest);
+                    let _ = std::fs::remove_file(&part);
                     state.clear_download_cancel(&filename);
                     progress_event(&event_tx, &filename, downloaded, total, true);
                     return Err(format!("Download cancelled: {}", filename));
                 }
                 if let Err(e) = file.write_all(&chunk) {
                     drop(file);
-                    let _ = std::fs::remove_file(&dest);
+                    let _ = std::fs::remove_file(&part);
                     return Err(e.to_string());
                 }
                 downloaded += chunk.len() as u64;
@@ -5229,32 +5257,20 @@ async fn dispatch_command(
                     progress_event(&event_tx, &filename, downloaded, total, false);
                 }
             }
+            drop(file);
             progress_event(&event_tx, &filename, downloaded, total, true);
 
-            // Verify SHA256 if provided
-            if let Some(ref expected_hex) = expected_sha256 {
-                let dest_clone = dest.clone();
-                let expected = expected_hex.to_lowercase();
-                let computed = tokio::task::spawn_blocking(move || {
-                    crate::comfyui::client::sha256_file(&dest_clone)
-                })
-                .await
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())?;
-                if computed != expected {
-                    let _ = std::fs::remove_file(&dest);
-                    return Err(format!(
-                        "SHA256 mismatch: expected {}, got {}",
-                        expected, computed
-                    ));
-                }
-            }
-            crate::comfyui::client::validate_downloaded_model_file(&dest, &filename).map_err(
-                |e| {
-                    let _ = std::fs::remove_file(&dest);
-                    e.to_string()
-                },
-            )?;
+            // Length, SHA256 (if provided) and format checks, then rename into place.
+            crate::comfyui::client::finalize_partial_download(
+                &part,
+                &dest,
+                &filename,
+                downloaded,
+                expected_len,
+                expected_sha256.as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
             Ok(serde_json::json!(null))
         }

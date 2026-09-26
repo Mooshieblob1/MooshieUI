@@ -7691,7 +7691,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
 
     // ComfyUI stderr log
     let _ = writeln!(output, "=== ComfyUI Log ===");
-    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+    let log_path = crate::comfyui::process::comfyui_stderr_log_path(None).unwrap_or_default();
     let _ = writeln!(output, "(Source: {})", log_path.display());
     // This file is truncated only when MooshieUI spawns ComfyUI itself. When it
     // attached to an already-running server instead, the contents can be from a

@@ -267,6 +267,16 @@ pub fn validate_downloaded_model_file(
     path: &std::path::Path,
     filename: &str,
 ) -> Result<(), AppError> {
+    validate_model_file_as(path, path, filename)
+}
+
+/// Validate the model bytes at `path` as the format implied by `named_as`'s
+/// extension. Lets a `.part` download be checked before it gets its real name.
+fn validate_model_file_as(
+    path: &std::path::Path,
+    named_as: &std::path::Path,
+    filename: &str,
+) -> Result<(), AppError> {
     let size = std::fs::metadata(path)?.len();
     if size == 0 {
         return Err(AppError::Other(format!(
@@ -275,7 +285,7 @@ pub fn validate_downloaded_model_file(
         )));
     }
 
-    let ext = path
+    let ext = named_as
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase())
@@ -379,6 +389,177 @@ pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
         hasher.update(&buf[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Path a model download streams into before it is verified and renamed over
+/// its final name. An interrupted download can only leave this `.part` file
+/// behind, never a truncated file that a later run would take as a cache hit.
+pub fn partial_download_path(dest: &std::path::Path) -> std::path::PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    dest.with_file_name(name)
+}
+
+/// Reject a download whose byte count differs from the server's Content-Length.
+pub fn check_download_length(
+    filename: &str,
+    downloaded: u64,
+    expected: Option<u64>,
+) -> Result<(), AppError> {
+    match expected {
+        Some(expected) if expected != downloaded => Err(AppError::Other(format!(
+            "Download of '{}' is incomplete: received {} of {} bytes",
+            filename, downloaded, expected
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Verify a fully streamed `.part` download and move it to `dest`: the size
+/// must match Content-Length (when the server sent one), the SHA-256 must match
+/// `expected_sha256` (when given) and the bytes must pass the model format check
+/// for `dest`'s extension. The `.part` file is removed on any failure, so `dest`
+/// only ever holds a complete, verified file.
+pub async fn finalize_partial_download(
+    part: &std::path::Path,
+    dest: &std::path::Path,
+    filename: &str,
+    downloaded: u64,
+    expected_len: Option<u64>,
+    expected_sha256: Option<&str>,
+) -> Result<(), AppError> {
+    let result = async {
+        check_download_length(filename, downloaded, expected_len)?;
+        if let Some(expected_hex) = expected_sha256 {
+            let part_clone = part.to_path_buf();
+            let computed = tokio::task::spawn_blocking(move || sha256_file(&part_clone))
+                .await
+                .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
+            if computed != expected_hex.to_lowercase() {
+                return Err(AppError::Other(format!(
+                    "SHA256 mismatch for '{}': expected {}, got {}",
+                    filename,
+                    expected_hex.to_lowercase(),
+                    computed
+                )));
+            }
+        }
+        validate_model_file_as(part, dest, filename)?;
+        std::fs::rename(part, dest)?;
+        Ok(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = std::fs::remove_file(part);
+    }
+    result
+}
+
+#[cfg(test)]
+mod partial_download_tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-partial-download-{}-{}",
+            std::process::id(),
+            name
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn part_path_appends_suffix_to_the_full_name() {
+        let dest = std::path::Path::new("/models/loras/foo.v2.gguf");
+        assert_eq!(
+            partial_download_path(dest),
+            std::path::Path::new("/models/loras/foo.v2.gguf.part")
+        );
+    }
+
+    #[test]
+    fn length_check_only_rejects_a_mismatch() {
+        assert!(check_download_length("m.gguf", 10, Some(10)).is_ok());
+        assert!(check_download_length("m.gguf", 10, None).is_ok());
+        assert!(check_download_length("m.gguf", 7, Some(10)).is_err());
+        assert!(check_download_length("m.gguf", 12, Some(10)).is_err());
+    }
+
+    #[tokio::test]
+    async fn truncated_download_never_reaches_the_final_name() {
+        let dir = scratch_dir("truncated");
+        let dest = dir.join("model.gguf");
+        let part = partial_download_path(&dest);
+        std::fs::write(&part, b"trunc").unwrap();
+        let err = finalize_partial_download(&part, &dest, "model.gguf", 5, Some(1024), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("incomplete"), "{err}");
+        assert!(!part.exists());
+        assert!(!dest.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn hash_mismatch_is_discarded_and_match_is_renamed() {
+        let dir = scratch_dir("hash");
+        let dest = dir.join("model.ckpt");
+        let part = partial_download_path(&dest);
+        let body = b"model bytes";
+        std::fs::write(&part, body).unwrap();
+        let wrong = "0".repeat(64);
+        assert!(finalize_partial_download(
+            &part,
+            &dest,
+            "model.ckpt",
+            body.len() as u64,
+            Some(body.len() as u64),
+            Some(&wrong),
+        )
+        .await
+        .is_err());
+        assert!(!part.exists() && !dest.exists());
+
+        std::fs::write(&part, body).unwrap();
+        let right = sha256_file(&part).unwrap().to_uppercase();
+        finalize_partial_download(
+            &part,
+            &dest,
+            "model.ckpt",
+            body.len() as u64,
+            Some(body.len() as u64),
+            Some(&right),
+        )
+        .await
+        .unwrap();
+        assert!(!part.exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn part_file_is_validated_as_its_final_format() {
+        let dir = scratch_dir("format");
+        let dest = dir.join("lora.safetensors");
+        let part = partial_download_path(&dest);
+        // An HTML error page is not a safetensors file, even under `.part`.
+        let body = b"<html>rate limited</html>";
+        std::fs::write(&part, body).unwrap();
+        assert!(finalize_partial_download(
+            &part,
+            &dest,
+            "lora.safetensors",
+            body.len() as u64,
+            None,
+            None,
+        )
+        .await
+        .is_err());
+        assert!(!part.exists() && !dest.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 impl AppState {
@@ -749,9 +930,13 @@ impl AppState {
             .to_lowercase();
         reject_non_model_download_content_type(url, &content_type)?;
 
-        let total = resp.content_length().unwrap_or(0);
+        // Stream into `<dest>.part`; it is renamed over `dest` only after the
+        // size/hash/format checks pass, and deleted on every failure path.
+        let part = partial_download_path(&dest);
+        let expected_len = resp.content_length();
+        let total = expected_len.unwrap_or(0);
         let mut downloaded: u64 = 0;
-        let mut file = std::fs::File::create(&dest)?;
+        let mut file = std::fs::File::create(&part)?;
         let mut last_emit: u64 = 0;
 
         app.emit(
@@ -775,10 +960,26 @@ impl AppState {
         let mut resp = resp;
         loop {
             let chunk = match tokio::time::timeout(STALL_TIMEOUT, resp.chunk()).await {
-                Ok(result) => result?,
+                Ok(Ok(chunk)) => chunk,
+                Ok(Err(e)) => {
+                    // Connection dropped mid-stream: never leave the partial file.
+                    drop(file);
+                    let _ = std::fs::remove_file(&part);
+                    app.emit(
+                        "download:progress",
+                        crate::setup::DownloadProgress {
+                            filename: filename.to_string(),
+                            downloaded,
+                            total,
+                            done: true,
+                        },
+                    )
+                    .ok();
+                    return Err(e.into());
+                }
                 Err(_) => {
                     drop(file);
-                    let _ = std::fs::remove_file(&dest);
+                    let _ = std::fs::remove_file(&part);
                     app.emit(
                         "download:progress",
                         crate::setup::DownloadProgress {
@@ -803,7 +1004,7 @@ impl AppState {
             // Abort cleanly if the user cancelled this download (#399).
             if self.is_download_cancelled(filename) {
                 drop(file);
-                let _ = std::fs::remove_file(&dest);
+                let _ = std::fs::remove_file(&part);
                 self.clear_download_cancel(filename);
                 app.emit(
                     "download:progress",
@@ -819,7 +1020,7 @@ impl AppState {
             }
             if let Err(e) = file.write_all(&chunk) {
                 drop(file);
-                let _ = std::fs::remove_file(&dest);
+                let _ = std::fs::remove_file(&part);
                 return Err(e.into());
             }
             downloaded += chunk.len() as u64;
@@ -838,6 +1039,7 @@ impl AppState {
                 .ok();
             }
         }
+        drop(file);
 
         app.emit(
             "download:progress",
@@ -850,26 +1052,16 @@ impl AppState {
         )
         .ok();
 
-        // Verify the downloaded file matches the expected SHA256 if supplied.
-        if let Some(expected_hex) = expected_sha256 {
-            let dest_clone = dest.clone();
-            let computed = tokio::task::spawn_blocking(move || sha256_file(&dest_clone))
-                .await
-                .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
-            if computed != expected_hex.to_lowercase() {
-                let _ = std::fs::remove_file(&dest);
-                return Err(AppError::Other(format!(
-                    "SHA256 mismatch for '{}': expected {}, got {}",
-                    filename,
-                    expected_hex.to_lowercase(),
-                    computed
-                )));
-            }
-        }
-
-        validate_downloaded_model_file(&dest, filename)?;
-
-        Ok(())
+        // Length, SHA256 (if supplied) and format checks, then rename into place.
+        finalize_partial_download(
+            &part,
+            &dest,
+            filename,
+            downloaded,
+            expected_len,
+            expected_sha256,
+        )
+        .await
     }
 
     /// Resolve the real filename a URL would download to, without downloading the
