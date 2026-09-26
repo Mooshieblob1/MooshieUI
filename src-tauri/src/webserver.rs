@@ -6145,6 +6145,25 @@ async fn dispatch_command(
         "install_h3_upscaler" => commands::video_drafts::install_upscaler(&state)
             .await
             .map_err(|e| e.to_string()),
+        "retake_video_draft" => {
+            let filename = args["filename"].as_str().ok_or("Missing filename")?;
+            let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
+            let frame = |key: &str| -> Result<u32, String> {
+                u32::try_from(args[key].as_u64().ok_or(format!("Missing {key}"))?)
+                    .map_err(|_| format!("Invalid {key}"))
+            };
+            commands::video_drafts::retake_draft(
+                &state,
+                &dir,
+                filename,
+                frame("startFrame")?,
+                frame("endFrame")?,
+                frame("steps")?,
+                username.map(str::to_string),
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
         "get_video_draft_status" | "delete_video_draft" | "refine_video_draft" => {
             let filename = args["filename"].as_str().ok_or("Missing filename")?;
             let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
