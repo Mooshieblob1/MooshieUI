@@ -135,6 +135,14 @@ pub struct AppConfig {
     pub ui_server_port: u16,
     /// Enable LAN access (bind to 0.0.0.0 instead of 127.0.0.1). Only effective in browser mode.
     pub lan_enabled: bool,
+    /// Treat requests from this computer (at `localhost` or an IP address) as
+    /// the admin without signing in. Turn this off when a reverse proxy on the
+    /// same computer rewrites `Host` to the upstream address and adds no
+    /// forwarding headers, so every request must sign in. Applied through
+    /// [`local_trust_enabled`], which the `MOOSHIEUI_TRUST_LOCALHOST`
+    /// environment variable can also switch off.
+    #[serde(default = "default_true")]
+    pub trust_localhost: bool,
     /// Shut the backend (and ComfyUI with it) down when the browser tab stops
     /// sending heartbeats. Only armed in single-user browser mode. Turn this
     /// off when the machine sleeps or the browser freezes background tabs and
@@ -303,6 +311,7 @@ impl Default for AppConfig {
             browser_mode: false,
             ui_server_port: 3200,
             lan_enabled: false,
+            trust_localhost: true,
             browser_auto_shutdown: true,
             attention_backend: "default".to_string(),
             gpu_workers: vec![],
@@ -772,6 +781,24 @@ pub fn write_private_file_atomic(path: &std::path::Path, bytes: &[u8]) -> std::i
     Ok(())
 }
 
+/// Whether implicit local admin is on: the `trust_localhost` setting, unless
+/// `MOOSHIEUI_TRUST_LOCALHOST` is `false`, `0`, `no` or `off`. The variable can
+/// only turn trust off, so a headless deployment configured through its
+/// environment cannot be overridden from the settings UI.
+pub fn local_trust_enabled(configured: bool) -> bool {
+    configured
+        && !env_disables_local_trust(std::env::var("MOOSHIEUI_TRUST_LOCALHOST").ok().as_deref())
+}
+
+fn env_disables_local_trust(value: Option<&str>) -> bool {
+    value.is_some_and(|v| {
+        matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    })
+}
+
 /// Save config to disk.
 ///
 /// `config.json` holds every operator secret in plaintext, so it is written
@@ -797,6 +824,34 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
         return Err(e.to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod local_trust_env_tests {
+    use super::env_disables_local_trust;
+
+    #[test]
+    fn only_explicit_false_values_disable_local_trust() {
+        for off in ["false", "FALSE", " 0 ", "no", "Off"] {
+            assert!(env_disables_local_trust(Some(off)), "{off}");
+        }
+        for on in [
+            None,
+            Some(""),
+            Some("true"),
+            Some("1"),
+            Some("yes"),
+            Some("maybe"),
+        ] {
+            assert!(!env_disables_local_trust(on), "{on:?}");
+        }
+    }
+
+    #[test]
+    fn older_configs_keep_trusting_localhost() {
+        let cfg: super::AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(cfg.trust_localhost);
+    }
 }
 
 #[cfg(test)]

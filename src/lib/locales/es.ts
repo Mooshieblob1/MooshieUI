@@ -2831,6 +2831,8 @@ const es: Record<string, string> = {
   "settings.lan.enable_desc": "Permite que otros dispositivos de tu red accedan a la interfaz. Requiere autenticación cuando está activado.",
   "settings.browser_shutdown.enable": "Apagar al cerrar la pestaña",
   "settings.browser_shutdown.enable_desc": "Detener MooshieUI y ComfyUI cuando la pestaña del navegador deje de responder durante dos minutos. Desactívalo si tu equipo se suspende o tu navegador congela las pestañas en segundo plano.",
+  "settings.trust_localhost.enable": "Iniciar sesión automáticamente en este equipo",
+  "settings.trust_localhost.enable_desc": "Al abrir MooshieUI en este equipo mediante localhost o una dirección IP, eres administrador sin iniciar sesión. Desactívalo si un proxy inverso en este equipo reenvía a MooshieUI solicitudes de otras personas; entonces todos, incluido tú, inician sesión con una cuenta. Permanece activado hasta que exista una cuenta de administrador.",
   "settings.lan.warning": "Advertencia: activar el acceso LAN expone la interfaz en tu red local. Añade al menos una cuenta para exigir autenticación.",
   "settings.lan.access_at": "Accede desde otros dispositivos en:",
   "settings.lan.accounts": "Cuentas",

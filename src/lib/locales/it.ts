@@ -2767,6 +2767,8 @@ const it: Record<string, string> = {
   "settings.lan.enable_desc": "Consente ad altri dispositivi della rete di accedere all'interfaccia. Richiede autenticazione se abilitato.",
   "settings.browser_shutdown.enable": "Arresta alla chiusura della scheda",
   "settings.browser_shutdown.enable_desc": "Arresta MooshieUI e ComfyUI quando la scheda del browser smette di rispondere per due minuti. Disattiva questa opzione se il computer va in sospensione o il browser congela le schede in background.",
+  "settings.trust_localhost.enable": "Accesso automatico su questo computer",
+  "settings.trust_localhost.enable_desc": "Aprendo MooshieUI su questo computer tramite localhost o un indirizzo IP diventi amministratore senza accedere. Disattiva questa opzione se un reverse proxy su questo computer inoltra a MooshieUI le richieste di altre persone; in quel caso tutti, te compreso, accedono con un account. Resta attiva finché non esiste un account amministratore.",
   "settings.lan.warning": "Attenzione: abilitare l'accesso LAN espone l'interfaccia sulla rete locale. Aggiungi almeno un account per richiedere l'autenticazione.",
   "settings.lan.access_at": "Accedi da altri dispositivi su:",
   "settings.lan.accounts": "Account",

@@ -637,6 +637,15 @@ impl AuthState {
         !db.accounts.is_empty()
     }
 
+    /// Whether any account has the admin role, so turning off implicit local
+    /// admin still leaves someone who can sign in and administer the server.
+    pub fn has_admin_account(&self) -> bool {
+        let db = self.db.read().unwrap();
+        db.accounts
+            .iter()
+            .any(|a| a.role.eq_ignore_ascii_case("admin"))
+    }
+
     /// Create a new account. Returns error if username already exists.
     pub fn create_account(&self, username: &str, password: &str) -> Result<(), String> {
         self.create_account_ex(username, password, false)

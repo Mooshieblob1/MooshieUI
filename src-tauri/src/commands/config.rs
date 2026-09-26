@@ -45,6 +45,10 @@ pub async fn update_config(
     let mut current = state.config.write().await;
     preserve_secrets(&mut config, &current);
     save_config(&config).map_err(AppError::Other)?;
+    state.trust_localhost.store(
+        crate::config::local_trust_enabled(config.trust_localhost),
+        std::sync::atomic::Ordering::SeqCst,
+    );
     *current = config;
     Ok(())
 }
