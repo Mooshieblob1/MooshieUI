@@ -432,6 +432,7 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
     let model_id = resolve_model_id(params, nai);
     let model = models::find(&model_id)
         .ok_or_else(|| AppError::Other(format!("Unknown NovelAI model: {model_id}")))?;
+    let (width, height) = request_dimensions(params.width, params.height)?;
 
     // Weight syntax is rewritten here rather than in `payload.rs` so that
     // module stays a pure description of NovelAI's request shape, and so the
@@ -445,8 +446,8 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
         // NovelAI rejects any dimension that is not a multiple of 64. The UI
         // already snaps, so this is the backstop for a preset or a restored
         // gallery setting that predates that.
-        width: snap_dimension(params.width),
-        height: snap_dimension(params.height),
+        width,
+        height,
         steps: params.steps,
         cfg: params.cfg,
         seed: params.seed,
@@ -558,8 +559,30 @@ const DIMENSION_STEP: u32 = 64;
 
 /// Round a pixel dimension onto NovelAI's grid, never below one full step.
 fn snap_dimension(px: u32) -> u32 {
-    let snapped = ((px + DIMENSION_STEP / 2) / DIMENSION_STEP) * DIMENSION_STEP;
+    let snapped = (px.saturating_add(DIMENSION_STEP / 2) / DIMENSION_STEP) * DIMENSION_STEP;
     snapped.max(DIMENSION_STEP)
+}
+
+/// The longest side a request may have. This is a memory bound, not
+/// NovelAI's own size policy (NovelAI still rejects sizes it does not
+/// serve): at 4096x4096 the upload resize allocates at most 64 MiB, and it
+/// stays above every size the dimension controls offer.
+const MAX_REQUEST_SIDE: u32 = 4096;
+
+/// Snap a request's size onto NovelAI's grid, refusing sizes too large to handle.
+///
+/// Checked before any Anlas are spent and before an uploaded source is
+/// resized to the canvas: that resize allocates the full target bitmap, so an
+/// unchecked 200000x200000 request would try to allocate about 160 GB.
+fn request_dimensions(width: u32, height: u32) -> Result<(u32, u32), AppError> {
+    let (snapped_w, snapped_h) = (snap_dimension(width), snap_dimension(height));
+    if snapped_w > MAX_REQUEST_SIDE || snapped_h > MAX_REQUEST_SIDE {
+        return Err(AppError::Other(format!(
+            "NovelAI requests are limited to {MAX_REQUEST_SIDE}px on a side; \
+             {width}x{height} is too large."
+        )));
+    }
+    Ok((snapped_w, snapped_h))
 }
 
 /// Whether an image field holds a ComfyUI upload name rather than image data.
@@ -625,8 +648,7 @@ async fn resolve_upload_images(
     state: &Arc<AppState>,
     params: &GenerationParams,
 ) -> Result<Option<GenerationParams>, AppError> {
-    let width = snap_dimension(params.width);
-    let height = snap_dimension(params.height);
+    let (width, height) = request_dimensions(params.width, params.height)?;
     let mut resolved: Option<GenerationParams> = None;
     let fields = [
         ("image", false, params.input_image.as_deref()),
@@ -1455,5 +1477,44 @@ mod tests {
         assert_eq!(a, 0);
         assert_eq!(b, 1);
         assert_ne!(a, b);
+    }
+
+    fn generate_params(width: u32, height: u32) -> GenerationParams {
+        let mut params = upscale_params(width, height, None);
+        params.novelai.as_mut().unwrap().action = "generate".into();
+        params
+    }
+
+    #[test]
+    fn a_request_inside_novelais_canvas_is_snapped_and_accepted() {
+        assert_eq!(request_dimensions(832, 1216).unwrap(), (832, 1216));
+        assert_eq!(request_dimensions(1080, 0).unwrap(), (1088, 64));
+        // Large canvases both ways round, a long thin strip, and the
+        // largest square the dimension controls offer.
+        assert_eq!(request_dimensions(1536, 2048).unwrap(), (1536, 2048));
+        assert_eq!(request_dimensions(2048, 1536).unwrap(), (2048, 1536));
+        assert_eq!(request_dimensions(4096, 768).unwrap(), (4096, 768));
+        assert_eq!(request_dimensions(2048, 2048).unwrap(), (2048, 2048));
+        assert!(preflight(&generate_params(832, 1216)).is_ok());
+    }
+
+    #[test]
+    fn an_oversized_request_is_refused_before_anything_is_allocated() {
+        for (w, h) in [
+            (200_000, 200_000),
+            (4160, 64),
+            (64, 4160),
+            (u32::MAX, u32::MAX),
+            (u32::MAX, 64),
+        ] {
+            let err = request_dimensions(w, h).expect_err("over the ceiling");
+            assert!(err.to_string().contains(&format!("{w}x{h}")), "{err}");
+            assert!(preflight(&generate_params(w, h)).is_err(), "{w}x{h}");
+        }
+    }
+
+    #[test]
+    fn snapping_never_overflows() {
+        assert_eq!(snap_dimension(u32::MAX), u32::MAX / 64 * 64);
     }
 }

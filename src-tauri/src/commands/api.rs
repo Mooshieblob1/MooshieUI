@@ -1468,6 +1468,101 @@ fn render_output_filename_base(
     sanitize_filename_component(&format!("{}__{}__{}", prompt_id, mode, base))
 }
 
+/// Write a new gallery file named `{stem}.{ext}`, or the first free
+/// `{stem}_{n}.{ext}` when that is taken, and return its name and path.
+///
+/// The output template can render one name for distinct images:
+/// `{model}_{seed}` repeats across a batch, and `{date}`/`{time}` are whole
+/// seconds. Never overwrite, with the same `_N` suffix the video path uses.
+/// Each name is claimed with `create_new`, so two saves racing for the same
+/// one cannot both get it.
+pub(crate) fn write_new_gallery_file(
+    dir: &std::path::Path,
+    stem: &str,
+    ext: &str,
+    bytes: &[u8],
+) -> std::io::Result<(String, std::path::PathBuf)> {
+    use std::io::Write as _;
+    let mut n: u64 = 0;
+    loop {
+        let filename = if n == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}_{n}.{ext}")
+        };
+        let path = dir.join(&filename);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(err) = file.write_all(bytes) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(err);
+                }
+                return Ok((filename, path));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+#[cfg(test)]
+mod gallery_name_tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-gallery-name-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp gallery dir");
+        dir
+    }
+
+    #[test]
+    fn a_repeated_name_gets_a_suffix_instead_of_overwriting() {
+        let dir = temp_dir("repeat");
+        let mut names = Vec::new();
+        for bytes in [b"one".as_slice(), b"two", b"three"] {
+            let (name, path) =
+                write_new_gallery_file(&dir, "model_42", "png", bytes).expect("write");
+            assert_eq!(fs::read(&path).expect("read back"), bytes);
+            names.push(name);
+        }
+        assert_eq!(names, ["model_42.png", "model_42_1.png", "model_42_2.png"]);
+        // Every earlier image is still there, untouched.
+        assert_eq!(fs::read(dir.join("model_42.png")).unwrap(), b"one");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_free_name_is_used_as_rendered() {
+        let dir = temp_dir("free");
+        fs::write(dir.join("shot.png"), b"old").unwrap();
+        // Another extension is another file, so no suffix is needed.
+        let (name, _) = write_new_gallery_file(&dir, "shot", "jxl", b"new").unwrap();
+        assert_eq!(name, "shot.jxl");
+        assert_eq!(fs::read(dir.join("shot.png")).unwrap(), b"old");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_missing_directory_is_an_error_not_a_loop() {
+        let parent = temp_dir("missing");
+        assert!(write_new_gallery_file(&parent.join("gone"), "x", "png", b"x").is_err());
+        fs::remove_dir_all(&parent).ok();
+    }
+}
+
 pub fn save_to_gallery_inner(
     bytes: &[u8],
     filename: &str,
@@ -1509,8 +1604,6 @@ pub fn save_to_gallery_inner(
         base,
         metadata,
     );
-    let gallery_filename = format!("{}.{}", rendered_base, ext);
-    let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
@@ -1597,7 +1690,7 @@ pub fn save_to_gallery_inner(
         bytes.to_vec()
     };
 
-    std::fs::write(&path, &final_bytes)?;
+    let (gallery_filename, path) = write_new_gallery_file(&dir, &rendered_base, ext, &final_bytes)?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }

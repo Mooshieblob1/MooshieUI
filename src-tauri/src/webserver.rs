@@ -7108,8 +7108,6 @@ fn save_to_gallery_in_dir(
         crate::metadata::ImageFormat::WebP => "webp",
         _ => "png",
     };
-    let gallery_filename = format!("{}.{}", rendered_base, ext);
-    let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
@@ -7156,7 +7154,10 @@ fn save_to_gallery_in_dir(
         bytes.to_vec()
     };
 
-    std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
+    // Never overwrite: the template can render one name for distinct images.
+    let (gallery_filename, path) =
+        commands::api::write_new_gallery_file(dir, &rendered_base, ext, &final_bytes)
+            .map_err(|e| e.to_string())?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
