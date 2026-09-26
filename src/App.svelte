@@ -2893,7 +2893,8 @@
             let blob: Blob;
             if (isTauri) {
               const rawBytes = await readTempImage(data.temp_filename);
-              const mime = data.format === "png" ? "image/png" : "image/jpeg";
+              // "webp" is the H3 live preview's animated clip; an <img> plays it.
+              const mime = data.format === "png" || data.format === "webp" ? `image/${data.format}` : "image/jpeg";
               blob = new Blob([new Uint8Array(rawBytes)], { type: mime });
             } else {
               // SSE/browser path: fetch image from temp endpoint

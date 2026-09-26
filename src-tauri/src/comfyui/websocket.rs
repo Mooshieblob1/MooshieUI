@@ -66,6 +66,17 @@ impl ProcessedOutputImage {
 /// tags there is no header of ours to read the size from. IHDR is the first
 /// chunk by spec and its width and height are the first two fields, so this is
 /// a fixed-offset read once the signature checks out.
+/// `(format, extension)` for a PREVIEW_IMAGE frame's image-type code. ComfyUI
+/// sends 1 for JPEG and 2 for PNG; MooshieUI's H3 live preview node sends 3
+/// for an animated WebP. Unknown codes keep ComfyUI's JPEG default.
+fn preview_image_format(code: u32) -> (&'static str, &'static str) {
+    match code {
+        2 => ("png", "png"),
+        3 => ("webp", "webp"),
+        _ => ("jpeg", "jpg"),
+    }
+}
+
 fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
     if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
@@ -770,8 +781,7 @@ pub async fn connect_websocket(
                                 }
                                 let format_type =
                                     u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                                let format = if format_type == 2 { "png" } else { "jpeg" };
-                                let ext = if format_type == 2 { "png" } else { "jpg" };
+                                let (format, ext) = preview_image_format(format_type);
                                 let image_data = &data[8..];
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
@@ -1115,8 +1125,7 @@ pub async fn connect_websocket_headless(
                                 }
                                 let format_type =
                                     u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                                let format = if format_type == 2 { "png" } else { "jpeg" };
-                                let ext = if format_type == 2 { "png" } else { "jpg" };
+                                let (format, ext) = preview_image_format(format_type);
                                 let image_data = &data[8..];
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
@@ -1399,8 +1408,7 @@ async fn connect_websocket_for_worker_inner(
                                 }
                                 let format_type =
                                     u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                                let format = if format_type == 2 { "png" } else { "jpeg" };
-                                let ext = if format_type == 2 { "png" } else { "jpg" };
+                                let (format, ext) = preview_image_format(format_type);
                                 let image_data = &data[8..];
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
@@ -1494,7 +1502,15 @@ async fn connect_websocket_for_worker_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::png_dimensions;
+    use super::{png_dimensions, preview_image_format};
+
+    #[test]
+    fn preview_image_format_maps_comfyui_codes_and_animated_webp() {
+        assert_eq!(preview_image_format(1), ("jpeg", "jpg"));
+        assert_eq!(preview_image_format(2), ("png", "png"));
+        assert_eq!(preview_image_format(3), ("webp", "webp"));
+        assert_eq!(preview_image_format(99), ("jpeg", "jpg"));
+    }
 
     /// A PNG header only: signature, the IHDR length and tag, then the size.
     /// Nothing here decodes the image, so the pixel data is beside the point.

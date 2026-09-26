@@ -261,6 +261,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieH3LoadDraft",
     "MooshieH3UpscaleDraft",
     "MooshieH3RestoreAudio",
+    "MooshieH3LivePreview",
     "MooshieLoadVideoPath",
     "MooshieFaceDetailer",
     "MooshieFaceDetect",
@@ -355,6 +356,10 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         (
             "h3_upscaler.py",
             include_str!("../../../comfyui-nodes/h3_upscaler.py"),
+        ),
+        (
+            "h3_preview.py",
+            include_str!("../../../comfyui-nodes/h3_preview.py"),
         ),
         (
             "h3_upscaler.LICENSE",
@@ -1497,6 +1502,22 @@ pub async fn verify_required_h3_nodes_for_generation(
                     "The selected video method requires {class} on the connected ComfyUI server."
                 ));
             }
+        }
+        // VAELoader validates its combo, so a missing taeh3 would otherwise fail
+        // as a bare "value not in list" after queueing.
+        if params.video_live_preview
+            && !info["VAELoader"]["input"]["required"]["vae_name"][0]
+                .as_array()
+                .is_some_and(|names| {
+                    names.iter().any(|n| {
+                        n.as_str() == Some(crate::templates::video::H3_PREVIEW_TAE_FILENAME)
+                    })
+                })
+        {
+            return Err(format!(
+                "Live preview needs {} in models/vae_approx on the connected ComfyUI server.",
+                crate::templates::video::H3_PREVIEW_TAE_FILENAME
+            ));
         }
         // PDD head banks (ComfyUI #15908) load through the stock LoRA loader, so
         // an older server accepts the file and renders noise instead of failing.

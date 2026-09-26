@@ -19,7 +19,7 @@ const NVFP4_REPO = "https://huggingface.co/lilcheaty/MiniMax-H3-NVFP4/resolve/ma
 const TURBO_REPO = "https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/resolve/main";
 
 /** ComfyUI model directories, matching `category_subdirs()` in `commands/api.rs`. */
-export type H3ModelCategory = "diffusion_models" | "text_encoders" | "vae" | "loras";
+export type H3ModelCategory = "diffusion_models" | "text_encoders" | "vae" | "loras" | "vae_approx";
 
 export interface H3ModelFile {
   /** Name on disk inside the category directory. */
@@ -76,6 +76,18 @@ export const H3_AUDIO_VAE: H3ModelFile = {
   url: `${COMFY_ORG}/vae/minimax_h3_audio_vae_fp32.safetensors`,
   category: "vae",
   sizeBytes: 605_254_808,
+};
+
+/**
+ * madebyollin's tiny H3 autoencoder, decoded every step for animated live
+ * previews. ComfyUI's VAELoader lists it only under this exact filename.
+ */
+export const H3_PREVIEW_TAE: H3ModelFile = {
+  filename: "taeh3.safetensors",
+  url: "https://raw.githubusercontent.com/madebyollin/taehv/62f7591f59dfbb4c3c02b7a621d180a9eeaba26c/safetensors/taeh3.safetensors",
+  category: "vae_approx",
+  sizeBytes: 22_709_752,
+  sha256: "4fd022bfcab08772fe0536b17ea1a3bbb5625be11e397868d1c5d891863d4c13",
 };
 
 /**

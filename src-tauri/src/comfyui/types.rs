@@ -304,6 +304,10 @@ pub struct GenerationParams {
     /// pack.
     #[serde(default)]
     pub video_teacache_enabled: bool,
+    /// Animated live previews during H3 sampling, decoded with the taeh3 tiny
+    /// autoencoder by `MooshieH3LivePreview`. Needs `models/vae_approx/taeh3.safetensors`.
+    #[serde(default)]
+    pub video_live_preview: bool,
     #[serde(default)]
     pub video_diffusion_model: Option<String>,
     #[serde(default)]
