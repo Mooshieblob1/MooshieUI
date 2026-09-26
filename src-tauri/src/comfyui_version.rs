@@ -27,7 +27,7 @@ pub fn update_is_incomplete(comfyui_dir: &Path) -> bool {
 /// `comfyui_source_ref()`, which can select a tested immutable commit while a
 /// feature awaits a tagged release. The compatibility bot advances this tag
 /// only after bundled-node and native music checks pass.
-pub const COMFYUI_REF: &str = "v0.35.0";
+pub const COMFYUI_REF: &str = "v0.37.0";
 
 #[derive(serde::Deserialize)]
 struct SourceOverride {

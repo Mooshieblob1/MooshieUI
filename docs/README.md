@@ -14,7 +14,7 @@ Documentation for the current implementation, with music and connection updates 
 | [YuE2 integration](research/yue2-integration.md) | Native ComfyUI music support, model setup, and validation limits |
 | [Music studio guide](MUSIC.md) | Covers, reviewed scores, checked edits, MIDI, versions, comparisons and project exports |
 | [Prompt Assistant account sign-in](PROMPT-ASSISTANT-SIGN-IN.md) | ChatGPT and Gemini sign-in, automatic setup, account limits and audio support |
-| [Video generation methods](VIDEO.md) | Standard, Larryvrh/LightX2V Turbo, BF16/INT8 VDN and retained 2× drafts |
+| [Video generation methods](VIDEO.md) | Standard, Larryvrh/LightX2V/PDD Turbo, BF16/INT8 VDN and retained 2× drafts |
 
 The wiki also covers [music and playlists](https://github.com/Mooshieblob1/MooshieUI/wiki/Music-Generation), [video](https://github.com/Mooshieblob1/MooshieUI/wiki/Video-Generation), [pause and continue](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics#pause-and-continue-a-generation), [Style Creator](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide#style-creator), [Image Edit](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Edit-Mode), and [hosted accounts](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User).
 

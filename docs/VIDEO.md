@@ -9,6 +9,8 @@ MiniMax H3 video generation offers **Standard** and **Turbo** under **Generation
 | Turbo: LightX2V FL2V v1.2 | 4 steps, Euler/simple; video/audio shifts 6/3 | Curated FL2V adapter, native ComfyUI nodes |
 | Turbo: LightX2V FL2V v1.0 | 8 steps, Euler/simple; video/audio shifts 6/3 | Curated FL2V adapter, native ComfyUI nodes |
 | Turbo: LightX2V Ref2V v1.0 | 8 steps, Euler/simple; video/audio shifts 12/3 | Curated reference adapter, native ComfyUI nodes |
+| Turbo: PDD FL2VA | 8 steps, Euler/simple; video/audio shifts 12/3 | Alibaba PAI adapter, native ComfyUI nodes, ComfyUI v0.35.0 or newer |
+| Turbo: PDD Ref2VA | 8 steps, Euler/simple; video/audio shifts 12/3 | Alibaba PAI reference adapter, native ComfyUI nodes, ComfyUI v0.35.0 or newer |
 
 Older saved Turbo settings migrate to the Turbo option. Switching methods preserves the Turbo step count and custom sampler/scheduler choices. Saved VDN selections migrate to Standard, even if an older Turbo flag is present. VDN is no longer selectable.
 
@@ -17,6 +19,14 @@ Older saved Turbo settings migrate to the Turbo option. Switching methods preser
 Select **Turbo**, then choose a **Turbo preset**. Only presets for the current first/last-frame or reference variant appear. Switching variants maps a LightX2V preset to its matching eight-step preset; Larryvrh remains available for both. Each LightX2V download is about 1.96 GB, revision-pinned and SHA-256 checked. Its step count, Euler sampler, simple schedule and sigma shifts are fixed together. A custom Larryvrh adapter remains a separate saved setting.
 
 LightX2V uses `LoraLoaderModelOnly` and `MiniMaxH3SigmaShift` from ComfyUI, including when the Director timeline drives generation. Install the adapter in `models/loras/` on the connected server; the built-in installer handles managed local installations. The publisher's current settings are in the [FL2V four-step](https://huggingface.co/lightx2v/Minimax-h3-Turbo/discussions/52), [FL2V eight-step](https://huggingface.co/lightx2v/Minimax-h3-Turbo/discussions/48), and [Ref2V eight-step](https://huggingface.co/lightx2v/Minimax-h3-Turbo/discussions/51) release notes.
+
+## PDD presets
+
+PDD (Parallel Decoding Distillation) adapters from [Alibaba PAI](https://huggingface.co/alibaba-pai/MiniMax-H3-Acc-LoRAs) replace the model's output layer with 32 per-interval heads. ComfyUI blends the heads each step spans, using the sampler's sigma schedule. The grid was built on the released 12/3 shifts, and eight Euler steps on the simple schedule land exactly on its block boundaries. The step count, sampler, schedule, shifts and full adapter strength are therefore fixed together. In the [ComfyUI pull request](https://github.com/comfyanonymous/ComfyUI/pull/15908) that added support, testers found eight PDD steps slightly behind 20 Standard steps.
+
+The presets use the pruned conversions from [Kijai's repository](https://huggingface.co/Kijai/MiniMax-H3-experimental/tree/e042fe480f58806578713532b8ae4e3d47d1bd63/loras), which match the pruned DiT in every tier. Each download is about 1.73 GB, revision-pinned and SHA-256 checked. Switching variants maps a PDD preset to its PDD counterpart. The adapters load through `LoraLoaderModelOnly` and `MiniMaxH3SigmaShift`, including when the Director timeline drives generation. They need ComfyUI v0.35.0 or newer on the connected server; generation stops with a message on older servers instead of rendering noise.
+
+TeaCache is skipped while a PDD preset is active, because it reuses the previous step's output and that output came from different heads. The TeaCache setting is kept and applies again with other methods. Upstream testing covered the pruned int8, fp8 and NVFP4 checkpoints. MooshieUI graph tests cover the wiring, not visual quality.
 
 ## Concise motion prompts and Live2D
 

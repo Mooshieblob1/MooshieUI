@@ -1485,7 +1485,7 @@ pub async fn verify_required_h3_nodes_for_generation(
         }
         let required = match crate::templates::video::acceleration(params) {
             "vdn" => vec!["ApplyVDNH3"],
-            "turbo" if crate::templates::video::lightx_preset(params).is_some() => {
+            "turbo" if crate::templates::video::lora_preset(params).is_some() => {
                 vec!["LoraLoaderModelOnly", "MiniMaxH3SigmaShift"]
             }
             "turbo" => vec!["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
@@ -1497,6 +1497,20 @@ pub async fn verify_required_h3_nodes_for_generation(
                     "The selected video method requires {class} on the connected ComfyUI server."
                 ));
             }
+        }
+        // PDD head banks (ComfyUI #15908) load through the stock LoRA loader, so
+        // an older server accepts the file and renders noise instead of failing.
+        // They shipped in v0.35.0 alongside the optional ref2va `vae` input
+        // (#16065), which /object_info does expose, so that stands in for a
+        // version check.
+        if crate::templates::video::is_pdd_preset(params)
+            && info["MiniMaxH3ReferenceToVideo"]["input"]["optional"]
+                .get("vae")
+                .is_none()
+        {
+            return Err(
+                "PDD presets need ComfyUI v0.35.0 or newer on the connected server.".into(),
+            );
         }
         if crate::templates::video::acceleration(params) == "vdn"
             && !info["ApplyVDNH3"]["input"]["required"]["vdn_checkpoint"][0]
