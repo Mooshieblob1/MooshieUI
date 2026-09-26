@@ -959,6 +959,9 @@ class GenerationStore {
    *  input delta stays under threshold. Only ever true once the lazy install
    *  has put the node pack on disk. */
   videoTeacacheEnabled = $state(false);
+  /** Animated live previews while H3 samples, decoded with taeh3. Only ever
+   *  true once the 23 MB taeh3 file is in models/vae_approx. */
+  videoLivePreview = $state(false);
   /** Active H3 tier id, including "custom" for user-supplied model files. */
   videoModelTier = $state("int8");
   /** Turbo LoRA filename inside `models/loras/`. Defaults to the recommended
@@ -2755,6 +2758,8 @@ class GenerationStore {
         this.videoSaveDraft = saved.videoSaveDraft === true;
         if (saved.videoTeacacheEnabled !== undefined)
           this.videoTeacacheEnabled = saved.videoTeacacheEnabled;
+        if (saved.videoLivePreview !== undefined)
+          this.videoLivePreview = saved.videoLivePreview;
         if (saved.videoTurboSteps !== undefined)
           this.videoTurboSteps = Math.min(
             H3_TURBO_MAX_STEPS,
@@ -3062,6 +3067,7 @@ class GenerationStore {
       videoTurboEnabled: this.videoTurboEnabled,
         videoTurboSteps: this.videoTurboSteps,
         videoTeacacheEnabled: this.videoTeacacheEnabled,
+        videoLivePreview: this.videoLivePreview,
         videoModelTier: this.videoModelTier,
         videoTurboLora: this.videoTurboLora,
         videoSampler: this.videoSampler,
@@ -3227,6 +3233,7 @@ class GenerationStore {
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
       videoTeacacheEnabled: this.videoTeacacheEnabled,
+      videoLivePreview: this.videoLivePreview,
       videoModelTier: this.videoModelTier,
       videoTurboLora: this.videoTurboLora,
       videoSampler: this.videoSampler,
@@ -3859,6 +3866,7 @@ class GenerationStore {
       video_turbo_steps: this.effectiveVideoTurboPreset.steps ?? this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? (this.effectiveVideoTurboPreset.id === "larryvrh" ? this.videoTurboLora : (this.videoPresetLora ?? this.effectiveVideoTurboPreset.file.filename)) : null,
       video_teacache_enabled: this.videoTeacacheEnabled,
+      video_live_preview: this.videoLivePreview,
       video_model_tier: this.videoModelTier,
       video_sampler: this.videoSampler || null,
       video_scheduler: this.videoScheduler || null,

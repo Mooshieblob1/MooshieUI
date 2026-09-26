@@ -489,6 +489,8 @@ export interface GenerationParams {
   video_turbo_lora?: string | null;
   /** MiniMax-H3 TeaCache: reuses the previous step's model output when little changed. */
   video_teacache_enabled?: boolean;
+  /** Animated taeh3 live previews during H3 sampling. */
+  video_live_preview?: boolean;
   /** Active H3 tier id, including "custom" for user-supplied model files. */
   video_model_tier?: string;
   /** Custom sampler name for KSamplerSelect; null/absent means preset default (res_multistep). */

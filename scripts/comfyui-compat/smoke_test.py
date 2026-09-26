@@ -58,6 +58,7 @@ NODE_FILE_MAP = [
     ("src-tauri/src/comfyui/mooshie_nodes.py", "mooshie-nodes/__init__.py"),
     ("comfyui-nodes/h3_drafts.py", "mooshie-nodes/h3_drafts.py"),
     ("comfyui-nodes/h3_upscaler.py", "mooshie-nodes/h3_upscaler.py"),
+    ("comfyui-nodes/h3_preview.py", "mooshie-nodes/h3_preview.py"),
     ("comfyui-nodes/h3_upscaler.LICENSE", "mooshie-nodes/h3_upscaler.LICENSE"),
     ("comfyui-nodes/nodes_tiled_diffusion.py", "nodes_tiled_diffusion.py"),
     ("comfyui-nodes/nodes_guidance.py", "nodes_guidance.py"),
