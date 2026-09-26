@@ -1,4 +1,4 @@
-import { ipcStore } from "../utils/ipc.js";
+import { ipcStore, userScopedKey } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { compileTimeline, isTimelineActive } from "../utils/timelineProvider.js";
 import {
@@ -1846,7 +1846,7 @@ class GenerationStore {
 
   private loadPromptHistory() {
     try {
-      const raw = localStorage.getItem(PROMPT_HISTORY_KEY);
+      const raw = localStorage.getItem(userScopedKey(PROMPT_HISTORY_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as PromptHistoryEntry[];
       if (!Array.isArray(parsed)) return;
@@ -1860,7 +1860,7 @@ class GenerationStore {
 
   private savePromptHistory() {
     try {
-      localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(this.promptHistory.slice(0, MAX_PROMPT_HISTORY)));
+      localStorage.setItem(userScopedKey(PROMPT_HISTORY_KEY), JSON.stringify(this.promptHistory.slice(0, MAX_PROMPT_HISTORY)));
       triggerSync();
     } catch (e) {
       console.error("Failed to save prompt history:", e);
@@ -3272,7 +3272,7 @@ class GenerationStore {
       const valid = entries
         .filter((e) => !!e?.id)
         .slice(0, MAX_PROMPT_HISTORY) as PromptHistoryEntry[];
-      localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(valid));
+      localStorage.setItem(userScopedKey(PROMPT_HISTORY_KEY), JSON.stringify(valid));
       this.promptHistory = valid;
     } catch (e) {
       console.error("generation: applyPromptHistory failed", e);

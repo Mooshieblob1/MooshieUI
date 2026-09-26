@@ -4,7 +4,8 @@
  * Persists a user's favourited artist slugs along with user-created
  * categories (name + colour) and the mapping between them.
  *
- * Storage: localStorage under `mooshieui.artist-gallery.favourites.v1`.
+ * Storage: localStorage under `mooshieui.artist-gallery.favourites.v1` (per LAN
+ * account, see `userScopedKey`).
  * Import/export: JSON blob with the same shape as the persisted payload,
  * wrapped in a small envelope for forward-compatibility.
  */
@@ -14,6 +15,7 @@ export const EXPORT_KIND = "mooshieui.artist-gallery.favourites";
 export const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 import { locale } from "../stores/locale.svelte.js";
 
 export interface FavouriteCategory {
@@ -79,7 +81,7 @@ class ArtistFavouritesStore {
 
   private loadSettings() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<PersistedState>;
       this.hydrate(parsed);
@@ -119,7 +121,7 @@ class ArtistFavouritesStore {
         favourites: Object.values(this.favourites),
         categories: this.categories,
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(payload));
       triggerSync();
     } catch (e) {
       console.error("artist-gallery favourites: save failed", e);
@@ -360,7 +362,7 @@ class ArtistFavouritesStore {
           favourites: Object.values(this.favourites),
           categories: this.categories,
         };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(payload));
       }
     } catch (e) {
       console.error("artist-gallery favourites: applyServerPrefs failed", e);

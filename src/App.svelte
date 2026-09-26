@@ -753,6 +753,20 @@
     }
   }
 
+  /**
+   * Finish a sign-in with a page reload rather than starting the app in place.
+   * The stores read their per-account storage (`userScopedKey`) once, when
+   * first imported, which was before this login, so continuing in place would
+   * show the previous occupant of this browser's prompt history, presets and
+   * notes, and then save them into the new account. The token survives the
+   * reload in whichever storage "Remember me" picked.
+   */
+  function reloadForSignedInAccount() {
+    mustChangePassword = false;
+    authRequired = false; // loading spinner until the reload lands
+    window.location.reload();
+  }
+
   async function handleLogin() {
     loginBusy = true;
     loginError = null;
@@ -783,12 +797,7 @@
         return;
       }
 
-      authRequired = false;
-      // Now continue the normal startup flow
-      // LAN users skip setup check — setup is only for the host.
-      // If the host hasn't finished setup yet, the server wouldn't be working anyway.
-      setupComplete = true;
-      await initApp();
+      reloadForSignedInAccount();
     } catch (e) {
       loginError = String(e);
     } finally {
@@ -822,14 +831,10 @@
         return;
       }
       // Password changed — proceed normally
-      mustChangePassword = false;
-      authRequired = false;
       loginPass = "";
       newPass1 = "";
       newPass2 = "";
-      // LAN users skip setup check — setup is only for the host.
-      setupComplete = true;
-      await initApp();
+      reloadForSignedInAccount();
     } catch (e) {
       changePassError = String(e);
     } finally {

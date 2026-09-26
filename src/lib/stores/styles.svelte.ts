@@ -6,7 +6,7 @@
  * contribute tags to the generated prompt WITHOUT appearing in the prompt
  * textbox — they are injected downstream in `generation.toParams()`.
  *
- * Storage: localStorage under `mooshieui.styles.v1`.
+ * Storage: localStorage under `mooshieui.styles.v1` (per LAN account, see `userScopedKey`).
  * Import/export: plain `.txt` files — filename (minus extension) becomes
  * the style name. Each non-blank, non-comment line is one artist in
  * `tag[:weight]` form (weight defaults to 1.0). `# ...` lines and blank
@@ -19,6 +19,7 @@ const EXPORT_VERSION = 1;
 
 import { stripArtistSigil } from "../utils/artistTag.js";
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 
 /** Max dimension (px) for thumbnails stored with the style. Keeps localStorage / exports small. */
@@ -204,7 +205,7 @@ class StylesStore {
 
   private loadSettings() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<PersistedState>;
         if (parsed && Array.isArray(parsed.styles)) {
@@ -215,7 +216,7 @@ class StylesStore {
       console.error("styles: load failed", e);
     }
     try {
-      const raw = localStorage.getItem(ACTIVE_KEY);
+      const raw = localStorage.getItem(userScopedKey(ACTIVE_KEY));
       if (raw) {
         const parsed = JSON.parse(raw) as string[];
         if (Array.isArray(parsed)) {
@@ -231,7 +232,7 @@ class StylesStore {
   private saveSettings() {
     try {
       const payload: PersistedState = { version: EXPORT_VERSION, styles: this.styles };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(payload));
       triggerSync();
     } catch (e) {
       console.error("styles: save failed", e);
@@ -240,7 +241,7 @@ class StylesStore {
 
   private saveActive() {
     try {
-      localStorage.setItem(ACTIVE_KEY, JSON.stringify(this.activeIds));
+      localStorage.setItem(userScopedKey(ACTIVE_KEY), JSON.stringify(this.activeIds));
       triggerSync();
     } catch (e) {
       console.error("styles: save active failed", e);
@@ -549,12 +550,12 @@ class StylesStore {
       if (Array.isArray(data?.styles)) {
         const sanitized = data.styles.map(sanitizeStyle).filter(Boolean) as ArtistStyle[];
         this.styles = sanitized;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: EXPORT_VERSION, styles: sanitized }));
+        localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify({ version: EXPORT_VERSION, styles: sanitized }));
       }
       if (Array.isArray(data?.activeIds)) {
         const ids = new Set(this.styles.map((s) => s.id));
         this.activeIds = data.activeIds.filter((id: any) => typeof id === "string" && ids.has(id));
-        localStorage.setItem(ACTIVE_KEY, JSON.stringify(this.activeIds));
+        localStorage.setItem(userScopedKey(ACTIVE_KEY), JSON.stringify(this.activeIds));
       }
     } catch (e) {
       console.error("styles: applyServerPrefs failed", e);

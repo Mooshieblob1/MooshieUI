@@ -1,4 +1,5 @@
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 
 const NOTES_KEY = "mooshieui.notes.v1";
 
@@ -12,7 +13,7 @@ class NotesStore {
 
   loadSettings() {
     try {
-      const raw = localStorage.getItem(NOTES_KEY);
+      const raw = localStorage.getItem(userScopedKey(NOTES_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (typeof parsed?.text === "string") {
@@ -44,7 +45,7 @@ class NotesStore {
 
   saveSettings() {
     try {
-      localStorage.setItem(NOTES_KEY, JSON.stringify({ text: this.text }));
+      localStorage.setItem(userScopedKey(NOTES_KEY), JSON.stringify({ text: this.text }));
       triggerSync();
     } catch (e) {
       console.error("Failed to save notes:", e);
@@ -59,7 +60,7 @@ class NotesStore {
     try {
       if (typeof data?.text === "string") {
         this.text = data.text;
-        localStorage.setItem(NOTES_KEY, JSON.stringify({ text: this.text }));
+        localStorage.setItem(userScopedKey(NOTES_KEY), JSON.stringify({ text: this.text }));
       }
     } catch (e) {
       console.error("Failed to apply server prefs (notes):", e);
