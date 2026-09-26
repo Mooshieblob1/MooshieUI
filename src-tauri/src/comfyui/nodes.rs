@@ -260,6 +260,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieH3SaveDraft",
     "MooshieH3LoadDraft",
     "MooshieH3UpscaleDraft",
+    "MooshieH3RetakeMask",
     "MooshieH3RestoreAudio",
     "MooshieH3LivePreview",
     "MooshieLoadVideoPath",

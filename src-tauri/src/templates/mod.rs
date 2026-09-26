@@ -15,6 +15,7 @@ pub mod upscale_standalone;
 pub mod video;
 pub mod video_interpolate;
 pub mod video_refine;
+pub mod video_retake;
 
 use serde_json::{json, Value};
 
