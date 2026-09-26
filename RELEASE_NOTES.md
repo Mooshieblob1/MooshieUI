@@ -4,6 +4,7 @@
 - **Live preview**: turn on **Live preview** in the video settings to watch a rough animated preview of the whole clip while H3 samples. The first time, it downloads the 23 MB taeh3 autoencoder into `models/vae_approx` with no restart. On a remote ComfyUI server, put the file there yourself.
 - **PDD 8-step Turbo presets**: **PDD FL2VA · 8** and **PDD Ref2VA · 8** use Alibaba PAI's Parallel Decoding Distillation adapters for 8-step first/last-frame and reference video. The adapters are pinned and SHA-256 checked. TeaCache is skipped with these presets, and ComfyUI servers older than v0.35.0 get a clear message.
 - **ComfyUI v0.37.0**: managed installs now use ComfyUI v0.37.0, which includes YuE2 natively.
+- **Timeline stills mid-clip**: with **Use timeline** on in the first/last-frame workflow, a shot whose still starts partway through the clip is now pinned at that frame instead of dropped. This needs ComfyUI v0.34.0 or newer; how closely H3 follows a mid-clip anchor has not yet been measured on a GPU.
 
 ### Security and privacy
 - **Browser and LAN mode hardening**: websites you visit can no longer send commands to a MooshieUI server running on your computer, and the server no longer serves files from outside its web folder. Automatic owner access now needs the app opened at `localhost` or an IP address on the same computer.
@@ -14,6 +15,7 @@
 - **Verified downloads**: model downloads are checked for size, hash and format before use, and truncated files from earlier interrupted downloads are detected and downloaded again. Node packs, tools and Docker images are pinned to exact versions.
 
 ### Fixes
+- **LoRA strength**: model and CLIP strength sliders now span -10 to 10, and you can click the value to type an exact number. Fixes #710.
 - **Generation**: remote-mode LoRA and model lookups, Flux Redux and IP-Adapter weights, img2img and inpaint batch size, upscale tile overlap, Face Fix and segment detail conditioning and regional prompts all work correctly, and seeds up to 2^64 are accepted. Refine works while a run is paused, and Refine and regional inpaint no longer fail with style transfer on.
 - **Video**: RIFE interpolation keeps the correct frame rate, and Anima TeaCache resets between runs.
 - **Gallery and files**: saving an image twice creates a `_1` copy instead of overwriting it, Move Installation keeps the default gallery, and the gallery index follows gallery moves.
