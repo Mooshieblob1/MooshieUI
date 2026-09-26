@@ -2767,6 +2767,8 @@ const zhTw: Record<string, string> = {
   "settings.lan.enable_desc": "允許網路上的其他裝置存取介面。啟用後需要驗證。",
   "settings.browser_shutdown.enable": "分頁關閉時結束",
   "settings.browser_shutdown.enable_desc": "當瀏覽器分頁兩分鐘沒有回應時，停止 MooshieUI 與 ComfyUI。如果電腦會進入睡眠，或瀏覽器會凍結背景分頁，請關閉此選項。",
+  "settings.trust_localhost.enable": "在這台電腦上自動登入",
+  "settings.trust_localhost.enable_desc": "在這台電腦上透過 localhost 或 IP 位址開啟 MooshieUI 時，不需登入即為管理員。如果這台電腦上的反向代理會把其他人的請求轉送給 MooshieUI，請關閉此選項，屆時包括你在內的所有人都需以帳號登入。在建立管理員帳號之前會保持開啟。",
   "settings.lan.warning": "警告：啟用區域網路存取會在本地網路暴露介面。請至少新增一個帳戶以要求驗證。",
   "settings.lan.access_at": "其他裝置存取位址：",
   "settings.lan.accounts": "帳戶",

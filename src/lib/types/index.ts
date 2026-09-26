@@ -653,6 +653,8 @@ export interface AppConfig {
   browser_mode: boolean;
   ui_server_port: number;
   lan_enabled: boolean;
+  /** Requests from this computer are the admin without signing in (browser mode). */
+  trust_localhost: boolean;
   /** Shut the backend down when the browser tab stops sending heartbeats (browser mode). */
   browser_auto_shutdown: boolean;
   attention_backend: string;
