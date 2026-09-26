@@ -386,10 +386,7 @@ impl GpuManager {
         workflow: serde_json::Value,
         client_id: &str,
     ) -> Result<(u32, crate::comfyui::types::PromptResponse), AppError> {
-        let body = serde_json::json!({
-            "prompt": workflow,
-            "client_id": client_id,
-        });
+        let body = crate::comfyui::client::prompt_request_body(workflow, client_id);
 
         let url = format!("{}/prompt", worker.base_url());
         let resp = self
@@ -434,10 +431,7 @@ impl GpuManager {
             *status = WorkerStatus::Running;
         }
 
-        let body = serde_json::json!({
-            "prompt": workflow,
-            "client_id": client_id,
-        });
+        let body = crate::comfyui::client::prompt_request_body(workflow, client_id);
 
         let url = format!("{}/prompt", worker.base_url());
         let resp = self

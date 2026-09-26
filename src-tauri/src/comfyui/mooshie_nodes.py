@@ -1414,7 +1414,11 @@ from .h3_drafts import NODE_CLASS_MAPPINGS as H3_DRAFT_NODES, register_routes as
 NODE_CLASS_MAPPINGS.update(H3_DRAFT_NODES)
 register_h3_draft_routes()
 
+from .h3_preview import NODE_CLASS_MAPPINGS as H3_PREVIEW_NODES
+NODE_CLASS_MAPPINGS.update(H3_PREVIEW_NODES)
+
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "MooshieH3LivePreview": "Mooshie H3 Live Preview (taeh3)",
     "MooshieYuE2Plan": "Mooshie YuE2 Score and Status",
     "MooshieYuE2Music": "Mooshie YuE2 Music and Status",
     "MooshieMusicLoadAudio": "Mooshie Temporary Cover Audio",

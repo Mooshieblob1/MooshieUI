@@ -9,6 +9,7 @@
     checkNodeAvailable,
     detectLlmHardware,
     downloadModel,
+    getModels,
     getComputeCapability,
     getConfig,
     installH3Teacache,
@@ -47,6 +48,7 @@
     H3_CUSTOM_TIER_LABEL_KEY,
     H3_DEFAULT_TIER,
     H3_TIERS,
+    H3_PREVIEW_TAE,
     H3_TURBO_LORA,
     H3_TURBO_PRESETS,
     isPddPreset,
@@ -695,6 +697,64 @@
       generation.videoAccelerationInstalling = false;
       turboInstallStep = "";
       turboInstallMessage = "";
+    }
+  }
+
+  /**
+   * Live preview needs taeh3 in models/vae_approx on the connected server.
+   * ComfyUI lists that folder directly, so a deleted or moved file re-arms the
+   * installer. The file is picked up without a restart.
+   */
+  let previewTaeInstalled = $state<boolean | null>(null);
+  let previewInstalling = $state(false);
+  let previewError = $state<string | null>(null);
+
+  async function loadPreviewTaeState() {
+    try {
+      const wanted = H3_PREVIEW_TAE.filename.toLowerCase();
+      previewTaeInstalled = (await getModels(H3_PREVIEW_TAE.category)).some(
+        (entry) => (entry.replace(/\\/g, "/").split("/").pop() ?? entry).toLowerCase() === wanted,
+      );
+    } catch {
+      previewTaeInstalled = null;
+    }
+  }
+
+  $effect(() => {
+    if (connection.connected) void loadPreviewTaeState();
+    else previewTaeInstalled = null;
+  });
+
+  /** Same contract as TeaCache: the store flag only turns on once usable. */
+  function toggleLivePreview(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    previewError = null;
+    if (!input.checked) {
+      generation.videoLivePreview = false;
+      generation.saveSettings();
+    } else if (previewTaeInstalled) {
+      generation.videoLivePreview = true;
+      generation.saveSettings();
+    } else if (canInstallLocally) {
+      void installPreviewTae();
+    }
+    input.checked = generation.videoLivePreview;
+  }
+
+  async function installPreviewTae() {
+    // Shares the download rows with the stack and Turbo installers.
+    if (previewInstalling || accelerationBusy || downloadingStack || downloadingFile || progress.isGenerating) return;
+    previewInstalling = true;
+    try {
+      await runDownloads([H3_PREVIEW_TAE]);
+      await loadPreviewTaeState();
+      if (!previewTaeInstalled) throw new Error(locale.t("generation.video.live_preview_not_listed"));
+      generation.videoLivePreview = true;
+      generation.saveSettings();
+    } catch (e) {
+      previewError = String(e);
+    } finally {
+      previewInstalling = false;
     }
   }
 
@@ -1724,6 +1784,47 @@
     {#if teacacheInstallError}
       <p class="text-[11px] text-red-400">
         {locale.t("generation.video.teacache_install_failed", { error: teacacheInstallError })}
+      </p>
+    {/if}
+  </div>
+
+  <!-- Live preview -->
+  <div class="space-y-2">
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="video-live-preview"
+        checked={generation.videoLivePreview}
+        disabled={previewInstalling || (!previewTaeInstalled && !canInstallLocally)}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
+        onchange={toggleLivePreview}
+      />
+      <label for="video-live-preview" class="text-xs text-neutral-400">
+        {locale.t("generation.video.live_preview")}<InfoTip
+          text={locale.t("generation.video.live_preview_tip")}
+        />
+      </label>
+    </div>
+
+    {#if previewInstalling}
+      {#if dlOrder.length > 0}
+        {@render downloadRows()}
+      {/if}
+    {:else if previewTaeInstalled === false && !generation.videoLivePreview}
+      <p class="text-[11px] text-neutral-500">
+        {canInstallLocally
+          ? locale.t("generation.video.live_preview_install_hint")
+          : locale.t("generation.video.live_preview_remote_hint", { file: H3_PREVIEW_TAE.filename })}
+      </p>
+    {:else if previewTaeInstalled === false && generation.videoLivePreview}
+      <p class="text-[11px] text-amber-300">
+        {locale.t("generation.video.live_preview_remote_hint", { file: H3_PREVIEW_TAE.filename })}
+      </p>
+    {/if}
+
+    {#if previewError}
+      <p class="text-[11px] text-red-400">
+        {locale.t("generation.video.live_preview_failed", { error: previewError })}
       </p>
     {/if}
   </div>

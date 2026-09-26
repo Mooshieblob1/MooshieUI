@@ -488,10 +488,7 @@ impl AppState {
         workflow: Value,
         client_id: &str,
     ) -> Result<PromptResponse, AppError> {
-        let body = serde_json::json!({
-            "prompt": workflow,
-            "client_id": client_id,
-        });
+        let body = prompt_request_body(workflow, client_id);
         let val = self.api_post("/prompt", &body).await?;
         let resp: PromptResponse = serde_json::from_value(val)?;
         Ok(resp)
@@ -935,9 +932,44 @@ impl AppState {
     }
 }
 
+/// Body for ComfyUI's `POST /prompt`. A workflow carrying its own live preview
+/// node turns off ComfyUI's default previewer for that prompt only, so its
+/// single-frame JPEGs do not interleave with the animated preview.
+pub fn prompt_request_body(workflow: Value, client_id: &str) -> Value {
+    let has_live_preview = workflow.as_object().is_some_and(|nodes| {
+        nodes
+            .values()
+            .any(|node| node["class_type"] == "MooshieH3LivePreview")
+    });
+    let mut body = serde_json::json!({
+        "prompt": workflow,
+        "client_id": client_id,
+    });
+    if has_live_preview {
+        body["extra_data"] = serde_json::json!({ "preview_method": "none" });
+    }
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_body_turns_off_default_previews_only_for_live_preview_workflows() {
+        let plain = serde_json::json!({ "1": { "class_type": "KSampler", "inputs": {} } });
+        let body = prompt_request_body(plain.clone(), "app");
+        assert_eq!(body["prompt"], plain);
+        assert_eq!(body["client_id"], "app");
+        assert!(body.get("extra_data").is_none());
+
+        let preview = serde_json::json!({
+            "1": { "class_type": "KSampler", "inputs": {} },
+            "2": { "class_type": "MooshieH3LivePreview", "inputs": {} }
+        });
+        let body = prompt_request_body(preview, "app");
+        assert_eq!(body["extra_data"]["preview_method"], "none");
+    }
 
     #[test]
     fn proxy_rejection_415_always_matches() {

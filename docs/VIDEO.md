@@ -28,6 +28,14 @@ The presets use the pruned conversions from [Kijai's repository](https://hugging
 
 TeaCache is skipped while a PDD preset is active, because it reuses the previous step's output and that output came from different heads. The TeaCache setting is kept and applies again with other methods. Upstream testing covered the pruned int8, fp8 and NVFP4 checkpoints. MooshieUI graph tests cover the wiring, not visual quality.
 
+## Live preview
+
+Turn on **Live preview** below TeaCache to watch a rough animated preview of the whole clip while it samples. ComfyUI's own video previewer decodes only the first latent frame, which in first/last-frame mode is the start image you supplied. The `MooshieH3LivePreview` node instead decodes each step's denoised estimate with [madebyollin's taeh3](https://github.com/madebyollin/taehv/tree/62f7591f59dfbb4c3c02b7a621d180a9eeaba26c) tiny autoencoder and sends it as an animated WebP. Previews are capped at 384 px on the long side, 12 fps and 72 frames, and play for the clip's real length.
+
+The first time you turn it on, the managed installation downloads `taeh3.safetensors` (about 23 MB, revision-pinned and SHA-256 checked) into `models/vae_approx/`. No restart is needed. Remote servers need the same file in the same folder. Decoding runs on the sampling thread, and a step is skipped while the previous preview is still encoding, so a slow encode never holds up sampling. The final step is never previewed because the finished clip replaces it. Previews work with every generation method and with the Director timeline; they do not change the output.
+
+Graph and CPU tests cover the wiring, the taeh3 decode and the WebP encoding. The per-step cost on a GPU has not been measured yet.
+
 ## Concise motion prompts and Live2D
 
 The video prompt enhancer keeps simple single-shot descriptions concise, usually 60–120 words or fewer. It preserves the required H3 fields, reference labels, real endpoint duration and supplied dialogue. Complex requested scenes can still use longer descriptions; short reference prompts are not rejected for their word count.
