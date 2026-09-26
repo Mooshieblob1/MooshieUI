@@ -7,6 +7,9 @@
 #     upstream pack if a user also installs it through ComfyUI Manager.
 #   * The js/ timeline editor is not vendored. MooshieUI never renders the ComfyUI
 #     graph canvas; it builds timeline_data itself and passes it as a widget value.
+#   * Middle timeline images are anchored at their shot's start frame with ComfyUI's
+#     MiniMaxH3AddGuide (v0.34.0+) in the fl2va/t2va path, instead of being dropped.
+#     See anchor_middle_frames().
 """MiniMax H3 Director — a WYSIWYG timeline front-end for MiniMax H3.
 
 The timeline editor (js/minimax_director.js) is a modified version of the LTX Director
@@ -21,9 +24,10 @@ conditions completely differently from LTX 2.3:
   into that storyboard form — the model's own native mechanism for timed control,
   and exactly what the official H3 templates do.
 
-* Keyframes: H3's PackedLayout only accepts anchors at frame 0 and frame_count-1, so
-  timeline images resolve to first_frame / last_frame. Images in the middle become
-  <Picture i> references instead (ref2va), the closest thing H3 offers.
+* Keyframes: timeline images at the edges resolve to first_frame / last_frame. With
+  refs off, images in the middle are pinned at their shot's start frame through
+  MiniMaxH3AddGuide (latent-only guides, so the prompt does not name them as
+  pictures). With refs on they become <Picture i> references (ref2va).
 
 * Audio: H3 generates native stereo audio jointly with the video, so there is no audio
   latent to inpaint. Imported audio becomes an <Audio j> reference for voice/music
@@ -59,6 +63,49 @@ DEFAULT_W, DEFAULT_H = 1344, 768
 # --------------------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------------------
+
+def guide_frame_index(rel_start_f, fps, length):
+    """A timeline frame as a generated pixel frame at 24 fps, strictly inside the clip.
+
+    Frame 0 and the last frame belong to the first/last keyframes, so a middle image
+    never lands on them even after rounding or snapping to the 17k+5 grid.
+    """
+    index = int(round(float(rel_start_f) * MODEL_FPS / float(fps or MODEL_FPS)))
+    return max(1, min(int(length) - 2, index))
+
+
+def anchor_middle_frames(mm, conditioning, latent, vae, events, fps, length, fit):
+    """Pin each middle timeline image at its shot's start frame with MiniMaxH3AddGuide.
+
+    Returns (conditioning, anchored frame indices). Two images landing on the same
+    frame keep the earlier one. A ComfyUI without AddGuide keeps the old behaviour:
+    the images are dropped with a warning rather than failing the generation.
+    """
+    middles = [e for e in events
+               if e.get("role") == plan.ROLE_MIDDLE and e.get("tensor") is not None]
+    if not middles:
+        return conditioning, []
+    add_guide = getattr(mm, "MiniMaxH3AddGuide", None)
+    if add_guide is None:
+        log.warning("[MiniMaxDirector] %d timeline image(s) sit in the middle of the window "
+                    "and this ComfyUI has no MiniMaxH3AddGuide, so they were ignored. Update "
+                    "ComfyUI to v0.34.0 or newer to anchor them, or switch to reference mode "
+                    "to use them as <Picture i> references.", len(middles))
+        return conditioning, []
+    anchored = []
+    for ev in sorted(middles, key=lambda e: e["rel_start_f"]):
+        index = guide_frame_index(ev["rel_start_f"], fps, length)
+        if index in anchored:
+            log.info("[MiniMaxDirector] Two timeline images land on frame %d; kept the first.",
+                     index)
+            continue
+        # A clip segment contributes its first frame, as it does as a reference.
+        conditioning = _unpack(add_guide.execute(
+            positive=conditioning, latent=latent, frame_idx=index,
+            vae=vae, image=fit(ev["tensor"][:1])))[0]
+        anchored.append(index)
+    return conditioning, anchored
+
 
 def _unpack(out):
     """Normalise an io.NodeOutput / tuple / list into a plain tuple."""
@@ -540,12 +587,6 @@ class MiniMaxH3Director(io.ComfyNode):
                 ref_audios=ref_audios or None,
             )
         else:
-            middles = [e for e in p["events"] if e["role"] == plan.ROLE_MIDDLE]
-            if middles:
-                log.warning("[MiniMaxDirector] %d timeline image(s) sit in the middle of the "
-                            "window. H3 only anchors keyframes at the first and last frame, so "
-                            "they were ignored — switch the toolbar to 'Refs ON (ref2va)' to "
-                            "use them as <Picture i> references.", len(middles))
             out = mm.MiniMaxH3ImageToVideo.execute(
                 clip=clip, vae=vae, prompt=prompt,
                 width=width, height=height, length=length,
@@ -553,6 +594,17 @@ class MiniMaxH3Director(io.ComfyNode):
             )
 
         conditioning, latent = _unpack(out)[:2]
+
+        # A retake anchors on the base video's own frames and replaces the window with
+        # one shot, so its timeline images are not keyframes of the new clip.
+        if not p["ref_mode_on"] and not retake:
+            conditioning, anchored = anchor_middle_frames(
+                mm, conditioning, latent, vae, p["events"], fps, length, fit)
+            if anchored:
+                log.info("[MiniMaxDirector] Anchored %d middle timeline image(s) at frame(s) %s.",
+                         len(anchored), ", ".join(str(i) for i in anchored))
+                if p["mode"] == "t2va":
+                    p["mode"] = "fl2va"
 
         chosen_model = pick_model(model, model_ref2va, p["ref_mode_on"])
         patched_model = _unpack(mm.MiniMaxH3SigmaShift.execute(
