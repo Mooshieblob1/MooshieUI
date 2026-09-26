@@ -24,7 +24,7 @@
 
 ### Changes for self-hosters
 - **Docker and Kubernetes**: the image now runs as user 10001. Existing `/data` volumes and `./models` folders from older images need a one-time `chown -R 10001:10001`; the container explains this and exits if they are not writable. A placeholder admin password now stops the container.
-- **Tunnels and reverse proxies** on the same computer now need a login, and opening the server by machine name no longer grants admin automatically. The proxy must pass the original host name: one that rewrites it to `127.0.0.1`, as nginx does by default, makes its visitors look local, so add `proxy_set_header Host $host;`.
+- **Tunnels and reverse proxies** on the same computer now need a login, and opening the server by machine name no longer grants admin automatically. Requests relayed with a forwarding header such as `X-Forwarded-For` are never treated as local. A proxy that rewrites the host name to `127.0.0.1` without adding one, as a bare nginx `proxy_pass` does, still looks local: add `proxy_set_header X-Forwarded-For $remote_addr;`, or turn off the new **Sign in automatically on this computer** setting in App Mode (`MOOSHIEUI_TRUST_LOCALHOST=false` on the headless server). It stays on until an admin account exists.
 - **Usernames**: new LAN accounts use letters, numbers, `_` and `-`, up to 32 characters.
 - **Custom LLM servers**: changing a custom server's host asks for its key again.
 - **Pinned versions**: node packs, uv, SageAttention wheels and Docker base images no longer update on their own. SageAttention installs only for supported CUDA and PyTorch builds.
