@@ -15,3 +15,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+# `oneshot` for driving the router in tests; already in the tree through axum.
+tower = { version = "0.5", features = ["util"] }

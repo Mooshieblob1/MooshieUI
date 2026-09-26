@@ -2388,6 +2388,7 @@ const it: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Chiave API",
   "settings.civitai.api_key_placeholder": "Incolla qui la chiave API CivitAI",
+  "settings.civitai.api_key_saved_placeholder": "Una chiave è salvata. Incollane una nuova per sostituirla.",
   "settings.civitai.api_key_desc": "Usata per metadati modelli, immagini di esempio e download. Obbligatoria da quando CivitAI ha limitato l'accesso non autenticato.",
   "settings.civitai.api_key_link": "Ottieni la chiave su civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
@@ -3235,6 +3236,7 @@ const it: Record<string, string> = {
   "settings.lan.temp_password_min": "La password temporanea deve contenere almeno 4 caratteri.",
   "settings.lan.reset_failed": "Reimpostazione password non riuscita.",
   "settings.lan.account_validation": "Nome utente obbligatorio, la password deve contenere almeno 4 caratteri.",
+  "settings.lan.username_invalid": "I nomi utente possono contenere solo lettere A-Z, numeri, - e _ (massimo {max} caratteri).",
   "settings.lan.time.never": "Mai",
   "settings.lan.time.unknown": "Sconosciuto",
   "settings.lan.time.weeks_ago": "{weeks} sett. fa",
@@ -3685,6 +3687,15 @@ const it: Record<string, string> = {
   "errors.report.opening": "Apertura in corso...",
 
   "errors.report.copied_hint": "Diagnostica copiata negli appunti. Incollala nel corpo della segnalazione.",
+  "errors.report.intro_service": "Il tuo report viene inviato al servizio di segnalazione di MooshieUI, che lo pubblica come issue pubblica su GitHub. Chiunque può leggerlo.",
+  "errors.report.include_log": "Includi il log di diagnostica",
+  "errors.report.include_log_hint": "Il log contiene la versione dell'app, il sistema operativo, il nome del computer, i percorsi delle cartelle, i modelli installati e i log recenti dell'app. Controllalo prima di inviarlo.",
+  "errors.report.preview_log": "Mostra cosa verrà inviato",
+  "errors.report.hide_log": "Nascondi log",
+  "errors.report.loading_log": "Raccolta della diagnostica...",
+  "errors.report.submit_service": "Invia report",
+  "errors.report.sending": "Invio in corso...",
+  "errors.report.sent": "Report inviato. Grazie per aiutarci a migliorare MooshieUI.",
 
   "generation.video.role_fl2va": "Modello primo/ultimo fotogramma",
 

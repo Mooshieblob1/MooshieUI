@@ -3,15 +3,35 @@ use std::time::Duration;
 
 use tauri::State;
 
-use crate::config::{normalize_config_fields, preserve_secrets, save_config, AppConfig};
+use crate::config::{
+    config_to_client_json, normalize_config_fields, preserve_secrets, save_config, AppConfig,
+};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::webserver;
 
+/// The config as the desktop owner's UI sees it: everything, minus the
+/// external-LLM credential. The settings page reads the key-free
+/// `get_llm_provider` projection for that, and a copy cached here would only
+/// be sent back, stale, by the next autosave.
 #[tauri::command]
-pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<AppConfig, AppError> {
+pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<serde_json::Value, AppError> {
     let config = state.config.read().await;
-    Ok(config.clone())
+    Ok(config_to_client_json(&config, true)?)
+}
+
+/// Apply `edit` to the live config and save it before releasing the write
+/// lock. Saving a snapshot after dropping the lock lets a concurrent
+/// `update_config` land in between and then be overwritten on disk by the
+/// older snapshot. Same lock scope as `update_config` itself.
+async fn edit_and_save<R>(
+    state: &AppState,
+    edit: impl FnOnce(&mut AppConfig) -> R,
+) -> Result<R, AppError> {
+    let mut cfg = state.config.write().await;
+    let out = edit(&mut cfg);
+    save_config(&cfg).map_err(AppError::Other)?;
+    Ok(out)
 }
 
 #[tauri::command]
@@ -56,14 +76,8 @@ pub async fn set_gallery_path(
     let trimmed = path.trim().to_string();
 
     let resolved = if trimmed.is_empty() {
-        // Reset to default. Snapshot under the guard, then write to disk after
-        // dropping it so the blocking save doesn't hold the config write lock.
-        let cfg = {
-            let mut cfg = state.config.write().await;
-            cfg.gallery_path = None;
-            cfg.clone()
-        };
-        save_config(&cfg).map_err(AppError::Other)?;
+        // Reset to default.
+        edit_and_save(&state, |cfg| cfg.gallery_path = None).await?;
         let dir = crate::config::app_data_dir()
             .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
             .join("gallery");
@@ -80,12 +94,7 @@ pub async fn set_gallery_path(
             .map_err(|e| AppError::Other(format!("Directory is not writable: {}", e)))?;
         let _ = std::fs::remove_file(&test_file);
 
-        let cfg = {
-            let mut cfg = state.config.write().await;
-            cfg.gallery_path = Some(trimmed.clone());
-            cfg.clone()
-        };
-        save_config(&cfg).map_err(AppError::Other)?;
+        edit_and_save(&state, |cfg| cfg.gallery_path = Some(trimmed.clone())).await?;
         trimmed
     };
 
@@ -101,14 +110,12 @@ pub async fn switch_to_browser_mode(
 ) -> Result<(), AppError> {
     log::info!("switch_to_browser_mode: called");
 
-    // Save browser_mode = true. Snapshot under the guard, then write to disk
-    // after dropping it so the blocking save doesn't hold the config lock.
-    let (mut port, lan_enabled, cfg_snapshot) = {
-        let mut cfg = state.config.write().await;
+    // Save browser_mode = true.
+    let (mut port, lan_enabled) = edit_and_save(&state, |cfg| {
         cfg.browser_mode = true;
-        (cfg.ui_server_port, cfg.lan_enabled, cfg.clone())
-    };
-    save_config(&cfg_snapshot).map_err(AppError::Other)?;
+        (cfg.ui_server_port, cfg.lan_enabled)
+    })
+    .await?;
     log::info!(
         "switch_to_browser_mode: config saved, port={}, lan={}",
         port,
@@ -141,12 +148,7 @@ pub async fn switch_to_browser_mode(
         let (actual_port, _handle) =
             webserver::start_server(state_for_server, port, lan_enabled).await;
         if actual_port != port {
-            let cfg = {
-                let mut cfg = state.config.write().await;
-                cfg.ui_server_port = actual_port;
-                cfg.clone()
-            };
-            save_config(&cfg).map_err(AppError::Other)?;
+            edit_and_save(&state, |cfg| cfg.ui_server_port = actual_port).await?;
             log::info!(
                 "switch_to_browser_mode: persisted fallback ui_server_port={}",
                 actual_port
@@ -175,14 +177,7 @@ pub async fn switch_to_browser_mode(
         Ok(_) => log::info!("switch_to_browser_mode: open::that succeeded"),
         Err(e) => {
             log::error!("switch_to_browser_mode: open::that failed: {}", e);
-            {
-                let cfg = {
-                    let mut cfg = state.config.write().await;
-                    cfg.browser_mode = false;
-                    cfg.clone()
-                };
-                save_config(&cfg).map_err(AppError::Other)?;
-            }
+            edit_and_save(&state, |cfg| cfg.browser_mode = false).await?;
             state
                 .app_mode_active
                 .store(true, std::sync::atomic::Ordering::SeqCst);

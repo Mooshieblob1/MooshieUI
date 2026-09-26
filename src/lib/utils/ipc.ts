@@ -76,6 +76,18 @@ export function getAuthUser(): string | null {
   return authStorage().getItem(AUTH_USER_KEY);
 }
 
+/**
+ * localStorage key for per-account content (prompt history, presets, notes...).
+ * In browser mode with a signed-in LAN account the key is suffixed with that
+ * account, so accounts sharing one browser never read each other's data. The
+ * desktop app and the local owner (no login) keep the plain key, so their
+ * existing data needs no migration.
+ */
+export function userScopedKey(key: string): string {
+  const user = isBrowserMode ? getAuthUser() : null;
+  return user ? `${key}::user:${user}` : key;
+}
+
 /** Returns true if the user previously selected "Remember me". */
 export function wasRememberMe(): boolean {
   return localStorage.getItem(AUTH_REMEMBER_KEY) === "1";

@@ -2387,6 +2387,7 @@ const pt: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Chave de API",
   "settings.civitai.api_key_placeholder": "Cole sua chave de API CivitAI aqui",
+  "settings.civitai.api_key_saved_placeholder": "Uma chave está salva. Cole uma nova para substituí-la.",
   "settings.civitai.api_key_desc": "Usada para metadados de modelos, imagens de amostra e downloads. Obrigatória desde que o CivitAI restringiu o acesso não autenticado.",
   "settings.civitai.api_key_link": "Obtenha sua chave em civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
@@ -3236,6 +3237,7 @@ const pt: Record<string, string> = {
   "settings.lan.temp_password_min": "A senha temporária deve ter pelo menos 4 caracteres.",
   "settings.lan.reset_failed": "Falha ao redefinir a senha.",
   "settings.lan.account_validation": "Nome de usuário obrigatório; a senha deve ter pelo menos 4 caracteres.",
+  "settings.lan.username_invalid": "Nomes de usuário só podem conter letras A-Z, números, - e _ (até {max} caracteres).",
   "settings.lan.time.never": "Nunca",
   "settings.lan.time.unknown": "Desconhecido",
   "settings.lan.time.weeks_ago": "há {weeks} sem.",
@@ -3686,6 +3688,15 @@ const pt: Record<string, string> = {
   "errors.report.opening": "Abrindo...",
 
   "errors.report.copied_hint": "Diagnóstico copiado para a área de transferência. Cole-o no corpo da issue.",
+  "errors.report.intro_service": "Seu relatório é enviado ao serviço de relatórios do MooshieUI, que o publica como uma issue pública no GitHub. Qualquer pessoa pode lê-lo.",
+  "errors.report.include_log": "Incluir log de diagnóstico",
+  "errors.report.include_log_hint": "O log contém a versão do aplicativo, o sistema operacional, o nome do computador, caminhos de pastas, modelos instalados e logs recentes do aplicativo. Confira antes de enviar.",
+  "errors.report.preview_log": "Mostrar o que será enviado",
+  "errors.report.hide_log": "Ocultar log",
+  "errors.report.loading_log": "Coletando diagnósticos...",
+  "errors.report.submit_service": "Enviar relatório",
+  "errors.report.sending": "Enviando...",
+  "errors.report.sent": "Relatório enviado. Obrigado por ajudar a melhorar o MooshieUI.",
 
   "generation.video.role_fl2va": "Modelo de primeiro/último quadro",
 

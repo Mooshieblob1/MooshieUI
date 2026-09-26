@@ -334,60 +334,83 @@ impl Default for AppConfig {
     }
 }
 
-/// Serialize config for a browser-mode client. Secrets are included only for admins/moderators.
+/// The operator's optional credential-bearing fields, by client-facing name.
+///
+/// A CivitAI key is a bearer credential outright, and the three URLs routinely
+/// carry one: a proxy as `http://user:pass@host`, a private package index or a
+/// webhook with a token in its userinfo or query. Only the instance admin sees
+/// them; every other client gets `null` plus a `{name}_configured` flag.
+/// [`operator_secrets`] must list the same fields in the same order.
+fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<String>); 4] {
+    [
+        ("civitai_api_key", &mut config.civitai_api_key),
+        ("webhook_url", &mut config.webhook_url),
+        ("network_proxy", &mut config.network_proxy),
+        ("pip_index_url", &mut config.pip_index_url),
+    ]
+}
+
+/// Read-only twin of [`operator_secrets_mut`], same fields in the same order.
+fn operator_secrets(config: &AppConfig) -> [&Option<String>; 4] {
+    [
+        &config.civitai_api_key,
+        &config.webhook_url,
+        &config.network_proxy,
+        &config.pip_index_url,
+    ]
+}
+
+fn is_set(value: &Option<String>) -> bool {
+    value.as_deref().is_some_and(|v| !v.trim().is_empty())
+}
+
+/// Serialize config for a client.
+///
+/// `include_secrets` is for the instance admin only (the desktop owner, or a
+/// browser client resolved to `UserRole::Admin`). Everyone else, moderators
+/// included, gets the operator's credential fields blanked: a moderator can
+/// already edit shared settings, but that is no reason to hand them the
+/// owner's CivitAI or NovelAI key, or a proxy URL with a password in it.
+///
+/// The external-LLM credential never leaves Rust for any role, admin included.
+/// The settings UI reads the key-free `LlmProviderState` projection instead,
+/// and `preserve_secrets` keeps the stored credential across every full-config
+/// save, so nothing ever needs the value on the client.
 pub fn config_to_client_json(
     config: &AppConfig,
     include_secrets: bool,
 ) -> Result<serde_json::Value, serde_json::Error> {
-    let mut value = serde_json::to_value(config)?;
+    let mut redacted = config.clone();
+    // The refresh token is strictly more dangerous than the access token it
+    // mints: it survives the access token's expiry and can be redeemed
+    // indefinitely until the user revokes it. The client id is this install's
+    // private registration and is only ever used alongside it.
+    redacted.llm_external_api_key.clear();
+    redacted.llm_oauth_refresh_token.clear();
+    redacted.llm_oauth_client_id.clear();
+
+    let mut configured_flags: Vec<(&'static str, bool)> = Vec::new();
     if !include_secrets {
-        if let Some(obj) = value.as_object_mut() {
-            let configured = obj
-                .get("civitai_api_key")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.is_empty());
-            obj.insert("civitai_api_key".to_string(), serde_json::Value::Null);
-            obj.insert(
-                "civitai_api_key_configured".to_string(),
-                serde_json::json!(configured),
-            );
-            // The NovelAI key spends the user's money, so it is treated the
-            // same way: the client learns only whether one is set.
-            let novelai_configured = obj
-                .get("novelai_api_key")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.is_empty());
-            obj.insert("novelai_api_key".to_string(), serde_json::Value::Null);
-            obj.insert(
-                "novelai_api_key_configured".to_string(),
-                serde_json::json!(novelai_configured),
-            );
-            // The external-LLM key is a provider credential (Anthropic, OpenAI,
-            // xAI, OpenRouter, ...) and must never reach a non-admin client.
-            // Regular users cannot call `update_config`, so blanking it here
-            // costs them nothing.
-            let llm_configured = obj
-                .get("llm_external_api_key")
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| !s.is_empty());
-            obj.insert(
-                "llm_external_api_key".to_string(),
-                serde_json::Value::String(String::new()),
-            );
-            obj.insert(
-                "llm_external_api_key_configured".to_string(),
-                serde_json::json!(llm_configured),
-            );
-            // The refresh token is strictly more dangerous than the access
-            // token it mints: it survives the access token's expiry and can be
-            // redeemed indefinitely until the user revokes it. It has no
-            // `_configured` companion because nothing in the UI branches on it
-            // -- `llm_external_api_key_configured` already reports whether the
-            // provider row is authenticated.
-            obj.insert(
-                "llm_oauth_refresh_token".to_string(),
-                serde_json::Value::String(String::new()),
-            );
+        // The NovelAI key spends the owner's money, so the client learns only
+        // whether one is set.
+        configured_flags.push(("novelai_api_key", is_set(&redacted.novelai_api_key)));
+        redacted.novelai_api_key = None;
+        for (name, field) in operator_secrets_mut(&mut redacted) {
+            configured_flags.push((name, is_set(field)));
+            *field = None;
+        }
+    }
+
+    let mut value = serde_json::to_value(&redacted)?;
+    if let Some(obj) = value.as_object_mut() {
+        // Whether the provider row is authenticated; `LlmProviderState`
+        // reports the same thing as `api_key_configured`.
+        obj.insert(
+            "llm_external_api_key_configured".to_string(),
+            serde_json::json!(!config.llm_external_api_key.trim().is_empty()),
+        );
+        for (name, configured) in configured_flags {
+            obj.insert(format!("{name}_configured"), serde_json::json!(configured));
         }
     }
     Ok(value)
@@ -588,39 +611,52 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
     }
 }
 
+/// Keep the external-LLM provider row exactly as the server has it.
+///
+/// Every one of these fields is written only by a dedicated command
+/// (`set_llm_provider`, `set_llm_api_key`, `set_llm_model`, `set_llm_base_url`,
+/// `set_llm_xai_client`, the OAuth sign-in) or by the background token refresh,
+/// so whatever a full-config save carries for them is at best a stale echo of
+/// a page-load snapshot. Accepting it would write back a key the user has
+/// since cleared or replaced, an expired access token, or a refresh token the
+/// provider already rotated out. It would also let a full-config save pair the
+/// stored key with a different provider or base URL, sending it to a host
+/// `set_llm_base_url` would have made it forget the key for. The one field
+/// left to `update_config` is `llm_external_enabled`, which the settings page
+/// toggles through its autosave.
+fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
+    incoming.llm_provider.clone_from(&current.llm_provider);
+    incoming
+        .llm_external_base_url
+        .clone_from(&current.llm_external_base_url);
+    incoming
+        .llm_external_model
+        .clone_from(&current.llm_external_model);
+    incoming
+        .llm_external_api_key
+        .clone_from(&current.llm_external_api_key);
+    incoming
+        .llm_oauth_refresh_token
+        .clone_from(&current.llm_oauth_refresh_token);
+    incoming
+        .llm_oauth_client_id
+        .clone_from(&current.llm_oauth_client_id);
+    incoming.llm_oauth_expires_at = current.llm_oauth_expires_at;
+    incoming
+        .llm_xai_client_id
+        .clone_from(&current.llm_xai_client_id);
+    incoming.llm_xai_scope.clone_from(&current.llm_xai_scope);
+}
+
 /// Carry forward secrets a full-config save cannot legitimately have sent.
 ///
 /// `update_config` replaces the whole config, and its callers hold a snapshot
-/// taken at page load. The provider commands (`set_llm_api_key`, the OAuth
-/// flow) write `llm_external_api_key` straight into Rust config, so that
-/// snapshot goes stale immediately and a later unrelated save would write the
-/// old empty string back over a working key. `config_to_client_json` also
-/// blanks the key for non-admin browser clients, which is the same hazard from
-/// the other direction. An incoming empty key is therefore a stale echo, not an
-/// intent to clear: clearing goes through `set_llm_api_key("")`.
+/// taken at page load, which the provider commands and the token refresh make
+/// stale behind the frontend's back. The LLM provider row is therefore always
+/// kept as the server has it (see [`keep_llm_provider_row`]); changing it goes
+/// through its own commands, and signing out through `set_llm_api_key("")`.
 pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
-    if incoming.llm_external_api_key.trim().is_empty() {
-        incoming
-            .llm_external_api_key
-            .clone_from(&current.llm_external_api_key);
-    }
-    // The OAuth session is written entirely by the sign-in flow and the token
-    // refresh, both of which run behind the frontend's back, so a full-config
-    // save always carries a stale copy. Worse, the access token rotates on its
-    // own schedule: without this the first background refresh would be undone
-    // by the next unrelated autosave, silently signing the user out. Only the
-    // refresh token gates the carry-forward -- the client never sees it, so an
-    // empty one is proof the snapshot is stale rather than an intent to clear.
-    // Signing out goes through `set_llm_api_key("")`.
-    if incoming.llm_oauth_refresh_token.trim().is_empty() {
-        incoming
-            .llm_oauth_refresh_token
-            .clone_from(&current.llm_oauth_refresh_token);
-        incoming
-            .llm_oauth_client_id
-            .clone_from(&current.llm_oauth_client_id);
-        incoming.llm_oauth_expires_at = current.llm_oauth_expires_at;
-    }
+    keep_llm_provider_row(incoming, current);
     // Blanked for non-admin clients, so an absent or empty NovelAI key is a
     // stale echo rather than an intent to clear. Clearing goes through
     // `set_novelai_api_key("")`.
@@ -635,14 +671,118 @@ pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
     }
 }
 
+/// Undo the redaction [`config_to_client_json`] applied for a non-admin client.
+///
+/// Such a client only ever saw `null` for the operator's credential fields, so
+/// an empty one in its full-config save is that redaction coming back rather
+/// than an intent to clear the owner's value. A non-empty value is a
+/// deliberate, write-only replacement (the CivitAI section is open to
+/// moderators) and goes through.
+pub(crate) fn preserve_redacted_secrets(incoming: &mut AppConfig, current: &AppConfig) {
+    for ((_, field), stored) in operator_secrets_mut(incoming)
+        .into_iter()
+        .zip(operator_secrets(current))
+    {
+        if !is_set(field) {
+            field.clone_from(stored);
+        }
+    }
+}
+
+/// `OpenOptions` that create a file at mode 0600 on Unix, so a new file is
+/// never readable by other local users, not even between creation and a later
+/// `chmod`. Windows has no mode bits; the file inherits the directory's ACL.
+fn private_create_options() -> std::fs::OpenOptions {
+    #[allow(unused_mut)]
+    let mut opts = std::fs::OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts
+}
+
+/// A sibling temp path for `path`, unique per process and per call so two
+/// concurrent saves of the same file cannot collide.
+fn atomic_tmp_path(path: &std::path::Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "data.json".to_string());
+    path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ))
+}
+
+/// Replace `path` with `bytes` so that a crash or a full disk can never leave
+/// it truncated, and so that on Unix only its owner can read it.
+///
+/// Same approach as `user_secrets`: write a sibling temp file created at mode
+/// 0600, fsync it, then rename it over `path`. A same-directory rename is
+/// atomic on Unix and on Windows (Rust's `fs::rename` uses `MoveFileExW` with
+/// `MOVEFILE_REPLACE_EXISTING`), and it carries the 0600 mode across.
+///
+/// Two layouts cannot take a rename and fall back to the plain in-place write
+/// every save used before: a directory the process cannot create files in, and
+/// a target that is itself a mount point (a Kubernetes ConfigMap `subPath`, a
+/// Docker file bind mount), which `rename(2)` refuses with `EBUSY`. On a
+/// read-only mount that in-place write then fails with the same error kind it
+/// always did, so callers that tolerate a read-only config keep working.
+pub fn write_private_file_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::{ErrorKind, Write};
+
+    let tmp = atomic_tmp_path(path);
+    let mut file = match private_create_options()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+    {
+        Ok(file) => file,
+        Err(e)
+            if matches!(
+                e.kind(),
+                ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
+            ) =>
+        {
+            return std::fs::write(path, bytes);
+        }
+        Err(e) => return Err(e),
+    };
+    let staged = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    // A failed write (a full disk, say) must never fall back to writing in
+    // place: that would truncate the good copy this function exists to keep.
+    if let Err(e) = staged {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        if matches!(
+            e.kind(),
+            ErrorKind::ResourceBusy | ErrorKind::CrossesDevices
+        ) {
+            return std::fs::write(path, bytes);
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// Save config to disk.
+///
+/// `config.json` holds every operator secret in plaintext, so it is written
+/// atomically and owner-only (see [`write_private_file_atomic`]).
 pub fn save_config(config: &AppConfig) -> Result<(), String> {
     let mut config = config.clone();
     normalize_config_fields(&mut config);
     let dir = app_data_dir().ok_or("Failed to determine app data directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::write(dir.join("config.json"), json) {
+    if let Err(e) = write_private_file_atomic(&dir.join("config.json"), json.as_bytes()) {
         // On hosted deployments the config is a read-only mount (e.g. a Kubernetes
         // ConfigMap), so persistence cannot succeed. Downgrade those cases to a
         // warning instead of surfacing a hard error for every settings change;
@@ -657,4 +797,266 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
         return Err(e.to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod secret_handling_tests {
+    use super::*;
+
+    const CIVITAI: &str = "civitai-owner-key";
+    const WEBHOOK: &str = "https://hooks.example/abc?token=webhook-secret";
+    const PROXY: &str = "http://proxyuser:proxy-secret@10.0.0.2:3128";
+    const PIP: &str = "https://pipuser:pip-secret@pypi.internal/simple";
+    const NOVELAI: &str = "pst-owner-novelai";
+    const LLM_KEY: &str = "sk-owner-llm";
+    const REFRESH: &str = "refresh-owner-token";
+    const CLIENT_ID: &str = "client-owner-registration";
+
+    fn owner_config() -> AppConfig {
+        AppConfig {
+            civitai_api_key: Some(CIVITAI.into()),
+            webhook_url: Some(WEBHOOK.into()),
+            network_proxy: Some(PROXY.into()),
+            pip_index_url: Some(PIP.into()),
+            novelai_api_key: Some(NOVELAI.into()),
+            llm_provider: "nous".into(),
+            llm_external_base_url: "https://inference-api.nousresearch.com/v1".into(),
+            llm_external_model: "nousresearch/hermes-4-405b".into(),
+            llm_external_api_key: LLM_KEY.into(),
+            llm_oauth_refresh_token: REFRESH.into(),
+            llm_oauth_client_id: CLIENT_ID.into(),
+            llm_oauth_expires_at: 1_900_000_000,
+            llm_external_enabled: true,
+            ..Default::default()
+        }
+    }
+
+    /// What a client posts back after editing one unrelated field of the
+    /// config it was served.
+    fn echo(view: serde_json::Value) -> AppConfig {
+        let mut echoed: AppConfig = serde_json::from_value(view).expect("client view must parse");
+        echoed.server_port = 9191;
+        normalize_config_fields(&mut echoed);
+        echoed
+    }
+
+    #[test]
+    fn operator_secret_accessors_list_the_same_fields_in_order() {
+        let mut config = owner_config();
+        let names: Vec<&str> = operator_secrets_mut(&mut config)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let values: Vec<Option<String>> = operator_secrets(&config).into_iter().cloned().collect();
+        let json = serde_json::to_value(&config).unwrap();
+        for (name, value) in names.iter().zip(values) {
+            assert_eq!(json[name], serde_json::json!(value), "{name} out of order");
+        }
+    }
+
+    #[test]
+    fn a_non_admin_view_carries_no_secret_at_all() {
+        let view = config_to_client_json(&owner_config(), false).unwrap();
+        let text = view.to_string();
+        for secret in [
+            CIVITAI,
+            "webhook-secret",
+            "proxy-secret",
+            "pip-secret",
+            NOVELAI,
+            LLM_KEY,
+            REFRESH,
+            CLIENT_ID,
+        ] {
+            assert!(
+                !text.contains(secret),
+                "{secret} leaked to a non-admin client"
+            );
+        }
+        for name in [
+            "civitai_api_key",
+            "webhook_url",
+            "network_proxy",
+            "pip_index_url",
+            "novelai_api_key",
+        ] {
+            assert_eq!(view[name], serde_json::Value::Null, "{name}");
+            assert_eq!(view[format!("{name}_configured")], serde_json::json!(true));
+        }
+        assert_eq!(view["llm_external_api_key"], serde_json::json!(""));
+        assert_eq!(
+            view["llm_external_api_key_configured"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn unset_fields_are_reported_as_not_configured() {
+        let view = config_to_client_json(&AppConfig::default(), false).unwrap();
+        assert_eq!(view["civitai_api_key_configured"], serde_json::json!(false));
+        assert_eq!(view["network_proxy_configured"], serde_json::json!(false));
+        assert_eq!(
+            view["llm_external_api_key_configured"],
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn the_admin_view_keeps_operator_settings_but_never_the_llm_credential() {
+        let view = config_to_client_json(&owner_config(), true).unwrap();
+        assert_eq!(view["civitai_api_key"], serde_json::json!(CIVITAI));
+        assert_eq!(view["network_proxy"], serde_json::json!(PROXY));
+        assert_eq!(view["webhook_url"], serde_json::json!(WEBHOOK));
+        assert_eq!(view["pip_index_url"], serde_json::json!(PIP));
+        let text = view.to_string();
+        for secret in [LLM_KEY, REFRESH, CLIENT_ID] {
+            assert!(!text.contains(secret), "{secret} left Rust");
+        }
+        assert_eq!(
+            view["llm_external_api_key_configured"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn a_non_admin_round_trip_keeps_every_stored_secret() {
+        let current = owner_config();
+        let mut incoming = echo(config_to_client_json(&current, false).unwrap());
+        preserve_secrets(&mut incoming, &current);
+        preserve_redacted_secrets(&mut incoming, &current);
+
+        assert_eq!(incoming.server_port, 9191, "the real edit goes through");
+        assert_eq!(incoming.civitai_api_key, current.civitai_api_key);
+        assert_eq!(incoming.webhook_url, current.webhook_url);
+        assert_eq!(incoming.network_proxy, current.network_proxy);
+        assert_eq!(incoming.pip_index_url, current.pip_index_url);
+        assert_eq!(incoming.novelai_api_key, current.novelai_api_key);
+        assert_eq!(incoming.llm_external_api_key, LLM_KEY);
+        assert_eq!(incoming.llm_oauth_refresh_token, REFRESH);
+        assert_eq!(incoming.llm_oauth_client_id, CLIENT_ID);
+        assert_eq!(incoming.llm_oauth_expires_at, current.llm_oauth_expires_at);
+    }
+
+    #[test]
+    fn a_non_admin_can_still_replace_a_redacted_value() {
+        let current = owner_config();
+        let mut incoming = echo(config_to_client_json(&current, false).unwrap());
+        incoming.civitai_api_key = Some("moderator-new-key".into());
+        preserve_secrets(&mut incoming, &current);
+        preserve_redacted_secrets(&mut incoming, &current);
+        assert_eq!(
+            incoming.civitai_api_key.as_deref(),
+            Some("moderator-new-key")
+        );
+        assert_eq!(incoming.network_proxy, current.network_proxy);
+    }
+
+    #[test]
+    fn an_admin_round_trip_keeps_the_llm_credential_and_may_clear_its_own_fields() {
+        let current = owner_config();
+        let mut incoming = echo(config_to_client_json(&current, true).unwrap());
+        incoming.civitai_api_key = None;
+        incoming.network_proxy = None;
+        preserve_secrets(&mut incoming, &current);
+
+        assert_eq!(incoming.llm_external_api_key, LLM_KEY);
+        assert_eq!(incoming.llm_oauth_refresh_token, REFRESH);
+        assert_eq!(incoming.llm_oauth_client_id, CLIENT_ID);
+        // The admin saw these values, so an empty one is a real clear.
+        assert_eq!(incoming.civitai_api_key, None);
+        assert_eq!(incoming.network_proxy, None);
+    }
+
+    #[test]
+    fn a_stale_autosave_cannot_resurrect_a_rotated_llm_session() {
+        // The page loaded before a background refresh rotated both tokens.
+        let mut current = owner_config();
+        current.llm_external_api_key = "access-after-refresh".into();
+        current.llm_oauth_refresh_token = "refresh-after-rotation".into();
+        current.llm_oauth_expires_at = 1_950_000_000;
+        let mut incoming = owner_config();
+        incoming.llm_external_enabled = false;
+        preserve_secrets(&mut incoming, &current);
+
+        assert_eq!(incoming.llm_external_api_key, "access-after-refresh");
+        assert_eq!(incoming.llm_oauth_refresh_token, "refresh-after-rotation");
+        assert_eq!(incoming.llm_oauth_expires_at, 1_950_000_000);
+        // The one provider field the settings page does save.
+        assert!(!incoming.llm_external_enabled);
+    }
+
+    #[test]
+    fn a_stale_autosave_cannot_bring_back_a_cleared_or_switched_key() {
+        // Since page load the user switched to OpenAI, which discarded the
+        // Nous session, and has not pasted a key yet.
+        let current = AppConfig {
+            llm_provider: "openai".into(),
+            llm_external_base_url: "https://api.openai.com/v1".into(),
+            llm_external_model: "gpt-4o-mini".into(),
+            ..Default::default()
+        };
+        let mut incoming = owner_config();
+        preserve_secrets(&mut incoming, &current);
+
+        assert_eq!(incoming.llm_provider, "openai");
+        assert_eq!(incoming.llm_external_base_url, "https://api.openai.com/v1");
+        assert_eq!(incoming.llm_external_model, "gpt-4o-mini");
+        assert!(incoming.llm_external_api_key.is_empty());
+        assert!(incoming.llm_oauth_refresh_token.is_empty());
+        assert!(incoming.llm_oauth_client_id.is_empty());
+        assert_eq!(incoming.llm_oauth_expires_at, 0);
+    }
+
+    #[test]
+    fn a_full_config_save_cannot_point_the_stored_key_at_another_host() {
+        let current = AppConfig {
+            llm_provider: "custom".into(),
+            llm_external_base_url: "http://127.0.0.1:1234/v1".into(),
+            llm_external_api_key: LLM_KEY.into(),
+            ..Default::default()
+        };
+        let mut incoming = current.clone();
+        incoming.llm_external_base_url = "https://attacker.example/v1".into();
+        incoming.llm_provider = "openai".into();
+        preserve_secrets(&mut incoming, &current);
+        assert_eq!(incoming.llm_external_base_url, "http://127.0.0.1:1234/v1");
+        assert_eq!(incoming.llm_provider, "custom");
+        assert_eq!(incoming.llm_external_api_key, LLM_KEY);
+    }
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("mooshie-config-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_atomic_write_replaces_the_file_and_leaves_no_temp_behind() {
+        let dir = scratch_dir("atomic");
+        let path = dir.join("config.json");
+        write_private_file_atomic(&path, b"{\"first\":true}").unwrap();
+        write_private_file_atomic(&path, b"{\"second\":true}").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["config.json".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_atomic_write_is_owner_only_even_over_a_world_readable_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch_dir("mode");
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_file_atomic(&path, b"{\"secret\":1}").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

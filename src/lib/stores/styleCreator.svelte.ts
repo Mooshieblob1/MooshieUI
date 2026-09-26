@@ -16,6 +16,7 @@
  * The key set is persisted, and every saved style is blocked as well.
  */
 import { generation } from "./generation.svelte.js";
+import { userScopedKey } from "../utils/ipc.js";
 import { gallery } from "./gallery.svelte.js";
 import {
   bakedArtistWeight,
@@ -742,7 +743,7 @@ class StyleCreatorStore {
 
   private load(): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (!raw) return;
       const data = JSON.parse(raw);
       if (data.count !== undefined) this.count = clampCount(data.count);
@@ -773,7 +774,7 @@ class StyleCreatorStore {
   saveSettings(): void {
     try {
       localStorage.setItem(
-        STORAGE_KEY,
+        userScopedKey(STORAGE_KEY),
         JSON.stringify({
           count: this.count,
           favouritesOnly: this.favouritesOnly,

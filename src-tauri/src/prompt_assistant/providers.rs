@@ -147,15 +147,56 @@ pub fn wire_for(id: &str) -> Wire {
         .unwrap_or(Wire::OpenAiCompatible)
 }
 
-/// The API root to actually call: the configured base URL when the user set
-/// one, otherwise the provider's own root. `custom` has no root of its own, so
-/// an unset base stays empty and the caller reports it as a misconfiguration.
+/// The API root to actually call.
+///
+/// A hosted provider's root is part of what the provider *is*: its key was
+/// issued by that host and is only ever sent there, so a configured base URL
+/// is ignored for it. Nothing in the UI sets one (the field is shown only for
+/// `custom`), which leaves a stale or tampered value as the only way one gets
+/// there. `custom` and ids this build does not know have no root of their own
+/// and use the configured one; an unset base stays empty and the caller
+/// reports it as a misconfiguration.
 pub fn effective_base_url(id: &str, configured: &str) -> String {
-    let configured = configured.trim();
-    if !configured.is_empty() {
-        return configured.to_string();
+    match provider(id) {
+        Some(p) if !p.base_url.is_empty() => p.base_url.to_string(),
+        _ => configured.trim().to_string(),
     }
-    provider(id).map(|p| p.base_url).unwrap_or("").to_string()
+}
+
+/// Whether the user supplies this provider's API root. False for hosted
+/// providers, which pin theirs, and for companions, which do not use one.
+fn takes_user_base_url(id: &str) -> bool {
+    provider(id).is_none_or(|p| p.base_url.is_empty() && p.wire != Wire::Companion)
+}
+
+/// Whether two API roots send requests to the same place: scheme, host and
+/// port, with default ports normalised. Anything that does not parse as a
+/// URL only matches itself, so an unparseable change always counts as a new
+/// destination.
+fn same_origin(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    match (url::Url::parse(a), url::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            let (a, b) = (a.origin(), b.origin());
+            a.is_tuple() && a == b
+        }
+        _ => false,
+    }
+}
+
+/// Store a user-supplied API root. Moving it to another origin discards the
+/// stored key and any sign-in session, for the same reason [`select`] does on
+/// a provider switch: the key was entered for the old server, and the next
+/// request would otherwise hand it to the new one.
+fn apply_base_url(cfg: &mut AppConfig, base_url: &str) {
+    let next = base_url.trim().trim_end_matches('/').to_string();
+    if !same_origin(&cfg.llm_external_base_url, &next) {
+        cfg.llm_external_api_key = String::new();
+        clear_oauth_session(cfg);
+    }
+    cfg.llm_external_base_url = next;
 }
 
 /// What the settings UI needs to render the provider row.
@@ -387,28 +428,66 @@ fn needs_refresh(expires_at: i64, now: i64) -> bool {
 /// error beats masking it with a refresh error. The token is simply left alone
 /// for the next attempt to retry.
 pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppConfig>) {
-    let (provider_id, refresh_token, client_id, expires_at) = {
-        let cfg = config.read().await;
-        (
-            cfg.llm_provider.clone(),
-            cfg.llm_oauth_refresh_token.clone(),
-            cfg.llm_oauth_client_id.clone(),
-            cfg.llm_oauth_expires_at,
-        )
-    };
+    ensure_fresh_token_with(config, |provider_id, client_id, refresh_token| async move {
+        // Which issuer to go back to is a property of the provider, not of the
+        // stored session: both write the same three fields, and redeeming a
+        // Portal refresh token at xAI (or the reverse) would just burn it.
+        match provider_id.as_str() {
+            "nous" => Some(super::oauth::refresh_nous(client, &client_id, &refresh_token).await),
+            "xai-oauth" => {
+                Some(super::oauth::refresh_xai(client, &client_id, &refresh_token).await)
+            }
+            // Every other provider holds a key that does not expire, so there
+            // is nothing to refresh even if a stale session is still on disk.
+            _ => None,
+        }
+    })
+    .await
+}
+
+/// Serialises token refreshes. Without it, several requests that notice the
+/// same near-expiry token at once each redeem the same refresh token; a
+/// provider that rotates refresh tokens with reuse detection treats the second
+/// redemption as a replayed credential and revokes the whole session.
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Snapshot of the stored OAuth session fields a refresh depends on.
+async fn session_snapshot(config: &RwLock<AppConfig>) -> (String, String, String, i64) {
+    let cfg = config.read().await;
+    (
+        cfg.llm_provider.clone(),
+        cfg.llm_oauth_refresh_token.clone(),
+        cfg.llm_oauth_client_id.clone(),
+        cfg.llm_oauth_expires_at,
+    )
+}
+
+/// [`ensure_fresh_token`] with the network call supplied by the caller, so the
+/// single-flight behaviour can be tested without a provider. `refresh` gets
+/// the provider id, client id and refresh token, and answers `None` for a
+/// provider that has nothing to refresh.
+async fn ensure_fresh_token_with<F, Fut>(config: &RwLock<AppConfig>, refresh: F)
+where
+    F: FnOnce(String, String, String) -> Fut,
+    Fut: std::future::Future<Output = Option<Result<super::oauth::OauthSession, AppError>>>,
+{
+    // Fast path without the lock: the common case is a token with time left.
+    let (_, refresh_token, _, expires_at) = session_snapshot(config).await;
     if refresh_token.is_empty() || !needs_refresh(expires_at, chrono::Utc::now().timestamp()) {
         return;
     }
 
-    // Which issuer to go back to is a property of the provider, not of the
-    // stored session: both write the same three fields, and redeeming a Portal
-    // refresh token at xAI (or the reverse) would just burn it.
-    let attempt = match provider_id.as_str() {
-        "nous" => super::oauth::refresh_nous(client, &client_id, &refresh_token).await,
-        "xai-oauth" => super::oauth::refresh_xai(client, &client_id, &refresh_token).await,
-        // Every other provider holds a key that does not expire, so there is
-        // nothing to refresh even if a stale session is still on disk.
-        _ => return,
+    // Held across the network call. Re-read after acquiring it: whoever held
+    // it before us may already have minted a new token, in which case the one
+    // we saw above has been rotated away and must not be spent again.
+    let _single_flight = REFRESH_LOCK.lock().await;
+    let (provider_id, refresh_token, client_id, expires_at) = session_snapshot(config).await;
+    if refresh_token.is_empty() || !needs_refresh(expires_at, chrono::Utc::now().timestamp()) {
+        return;
+    }
+
+    let Some(attempt) = refresh(provider_id.clone(), client_id, refresh_token.clone()).await else {
+        return;
     };
     let refreshed = match attempt {
         Ok(s) => s,
@@ -418,10 +497,9 @@ pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppCon
         }
     };
 
-    // Re-check under the write lock: a concurrent request may have refreshed
-    // while we were on the wire, and clobbering its newer token with ours would
-    // waste a rotation. Providers that rotate the refresh token invalidate the
-    // old one, so the loser of that race must not write.
+    // Re-check under the write lock: a sign-out or a new sign-in may have
+    // replaced the session while we were on the wire, and writing our token
+    // over it would resurrect a credential the user got rid of.
     let mut cfg = config.write().await;
     if cfg.llm_oauth_refresh_token != refresh_token {
         return;
@@ -444,7 +522,16 @@ pub async fn ensure_fresh_token(client: &reqwest::Client, config: &RwLock<AppCon
 /// blocked polling: it is the whole point of the flow, and nothing else will
 /// show it. Both transports fire because a desktop instance can have LAN
 /// browser clients attached at the same time.
-pub async fn connect_xai_session(state: &Arc<AppState>) -> Result<LlmProviderState, AppError> {
+///
+/// The SSE copy is addressed to `requested_by` only (`None` is the instance
+/// owner's own connection): whoever approves the code first binds the
+/// instance's provider session to *their* xAI account, so it must never reach
+/// every LAN client that happens to be connected.
+pub async fn connect_xai_session(
+    state: &Arc<AppState>,
+    requested_by: Option<&str>,
+) -> Result<LlmProviderState, AppError> {
+    let target_user = requested_by.map(str::to_string);
     let (client_id, scope) = {
         let cfg = state.config.read().await;
         (cfg.llm_xai_client_id.clone(), cfg.llm_xai_scope.clone())
@@ -456,22 +543,39 @@ pub async fn connect_xai_session(state: &Arc<AppState>) -> Result<LlmProviderSta
     let emitter = Arc::clone(state);
 
     let session = super::oauth::connect_xai(&state.http_client, &client_id, &scope, move |auth| {
-        let payload = serde_json::json!({
-            "provider": "xai-oauth",
-            "user_code": auth.user_code,
-            "verification_uri": auth.verification_uri,
-            "verification_uri_complete": auth.best_uri(),
-        });
-        emitter.broadcast("llm:device_code", payload.clone());
+        let payload = device_code_payload(auth);
         #[cfg(feature = "desktop")]
         if let Some(app) = app.as_ref() {
             use tauri::Emitter;
-            let _ = app.emit("llm:device_code", payload);
+            let _ = app.emit("llm:device_code", payload.clone());
         }
+        emitter.broadcast(
+            "llm:device_code",
+            addressed_to(payload, target_user.as_deref()),
+        );
     })
     .await?;
 
     store_oauth_session(&state.config, "xai-oauth", session).await
+}
+
+/// What the settings UI shows while the device grant polls. `connect_xai` has
+/// already checked both URIs point at xAI over https.
+fn device_code_payload(auth: &super::oauth::DeviceAuth) -> serde_json::Value {
+    serde_json::json!({
+        "provider": "xai-oauth",
+        "user_code": auth.user_code,
+        "verification_uri": auth.verification_uri,
+        "verification_uri_complete": auth.best_uri(),
+    })
+}
+
+/// Mark an SSE payload for one account (`None` is the instance owner's own
+/// connection); the SSE handler drops it for everyone else and strips the
+/// marker before delivery.
+fn addressed_to(mut payload: serde_json::Value, user: Option<&str>) -> serde_json::Value {
+    payload["_target_user"] = serde_json::json!(user);
+    payload
 }
 
 /// Store the operator-supplied xAI OAuth client id and scope.
@@ -503,14 +607,24 @@ pub async fn set_model(
 }
 
 /// Point a self-hosted (`custom`) provider at its server.
+///
+/// Refused for providers with a fixed root (the value would be ignored by
+/// [`effective_base_url`] anyway). Checked under the same write lock as the
+/// edit, so a concurrent provider switch cannot slip in between.
 pub async fn set_base_url(
     config: &RwLock<AppConfig>,
     base_url: &str,
 ) -> Result<LlmProviderState, AppError> {
-    mutate(config, |cfg| {
-        cfg.llm_external_base_url = base_url.trim().trim_end_matches('/').to_string();
-    })
-    .await
+    let mut cfg = config.write().await;
+    if !takes_user_base_url(&cfg.llm_provider) {
+        return Err(AppError::LlmError(format!(
+            "The {} provider uses a fixed API address; only Custom takes a base URL.",
+            cfg.llm_provider
+        )));
+    }
+    apply_base_url(&mut cfg, base_url);
+    crate::config::save_config(&cfg).map_err(AppError::Other)?;
+    Ok(state_of(&cfg))
 }
 
 /// Ask the current provider which models the stored key can actually use.
@@ -623,5 +737,183 @@ mod tests {
         // more usable than one already dead.
         assert!(needs_refresh(expires_at, expires_at - REFRESH_SKEW_SECS));
         assert!(needs_refresh(expires_at, expires_at + 1));
+    }
+}
+
+#[cfg(test)]
+mod refresh_single_flight_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn expiring_session() -> AppConfig {
+        AppConfig {
+            llm_provider: "nous".into(),
+            llm_external_api_key: "old-access".into(),
+            llm_oauth_refresh_token: "refresh-1".into(),
+            llm_oauth_client_id: "client".into(),
+            // Already inside the skew window.
+            llm_oauth_expires_at: chrono::Utc::now().timestamp() + 10,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_redeem_a_refresh_token_once() {
+        let config = RwLock::new(expiring_session());
+        let calls = AtomicUsize::new(0);
+        let refresh = |_provider: String, _client: String, token: String| {
+            let calls = &calls;
+            async move {
+                assert_eq!(token, "refresh-1", "a rotated-away token was redeemed");
+                calls.fetch_add(1, Ordering::SeqCst);
+                // Stay on the "wire" long enough for the other callers to
+                // pile up behind the lock.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                Some(Ok(crate::prompt_assistant::oauth::OauthSession {
+                    access_token: "new-access".into(),
+                    refresh_token: "refresh-2".into(),
+                    client_id: "client".into(),
+                    expires_at: chrono::Utc::now().timestamp() + 3600,
+                }))
+            }
+        };
+        tokio::join!(
+            ensure_fresh_token_with(&config, refresh),
+            ensure_fresh_token_with(&config, refresh),
+            ensure_fresh_token_with(&config, refresh),
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let cfg = config.read().await;
+        assert_eq!(cfg.llm_external_api_key, "new-access");
+        assert_eq!(cfg.llm_oauth_refresh_token, "refresh-2");
+    }
+
+    #[tokio::test]
+    async fn a_fresh_token_is_never_sent_for_refresh() {
+        let mut fresh = expiring_session();
+        fresh.llm_oauth_expires_at = chrono::Utc::now().timestamp() + 3600;
+        let config = RwLock::new(fresh);
+        let calls = AtomicUsize::new(0);
+        ensure_fresh_token_with(&config, |_, _, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { None }
+        })
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_device_code_is_addressed_to_the_requesting_account_only() {
+        let payload = serde_json::json!({ "user_code": "ABCD-EFGH" });
+        assert_eq!(
+            addressed_to(payload.clone(), Some("mod"))["_target_user"],
+            "mod"
+        );
+        // The instance owner's own connection, never a broadcast.
+        let owner = addressed_to(payload, None);
+        assert!(owner.get("_target_user").is_some_and(|v| v.is_null()));
+    }
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::*;
+
+    fn custom_with_key(base: &str) -> AppConfig {
+        AppConfig {
+            llm_provider: "custom".into(),
+            llm_external_base_url: base.into(),
+            llm_external_api_key: "sk-user".into(),
+            llm_oauth_refresh_token: "refresh".into(),
+            llm_oauth_client_id: "client".into(),
+            llm_oauth_expires_at: 1_900_000_000,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hosted_providers_ignore_a_configured_base_url() {
+        for p in PROVIDERS.iter().filter(|p| !p.base_url.is_empty()) {
+            assert_eq!(
+                effective_base_url(p.id, "https://attacker.example/v1"),
+                p.base_url,
+                "{} must not follow a configured base URL",
+                p.id
+            );
+        }
+    }
+
+    #[test]
+    fn custom_and_unknown_providers_use_the_configured_base_url() {
+        assert_eq!(
+            effective_base_url("custom", " http://127.0.0.1:1234/v1 "),
+            "http://127.0.0.1:1234/v1"
+        );
+        assert_eq!(effective_base_url("custom", ""), "");
+        assert_eq!(
+            effective_base_url("from-a-newer-build", "http://10.0.0.5/v1"),
+            "http://10.0.0.5/v1"
+        );
+    }
+
+    #[test]
+    fn only_providers_without_a_root_take_one() {
+        assert!(takes_user_base_url("custom"));
+        assert!(takes_user_base_url("from-a-newer-build"));
+        for p in PROVIDERS.iter().filter(|p| p.id != "custom") {
+            assert!(!takes_user_base_url(p.id), "{} took a base URL", p.id);
+        }
+    }
+
+    #[test]
+    fn a_new_path_on_the_same_server_keeps_the_key() {
+        for next in [
+            "http://127.0.0.1:1234/v1/",
+            "http://127.0.0.1:1234/api/v1",
+            "HTTP://127.0.0.1:1234/v1",
+        ] {
+            let mut cfg = custom_with_key("http://127.0.0.1:1234/v1");
+            apply_base_url(&mut cfg, next);
+            assert_eq!(cfg.llm_external_api_key, "sk-user", "{next}");
+            assert_eq!(cfg.llm_oauth_refresh_token, "refresh", "{next}");
+        }
+        let mut cfg = custom_with_key("https://llm.example/v1");
+        apply_base_url(&mut cfg, "https://llm.example:443/v2");
+        assert_eq!(cfg.llm_external_api_key, "sk-user");
+    }
+
+    #[test]
+    fn a_new_server_discards_the_key_and_session() {
+        for next in [
+            "https://attacker.example/v1",
+            "http://127.0.0.1:9999/v1",
+            "https://127.0.0.1:1234/v1",
+            "not a url",
+            "",
+        ] {
+            let mut cfg = custom_with_key("http://127.0.0.1:1234/v1");
+            apply_base_url(&mut cfg, next);
+            assert!(cfg.llm_external_api_key.is_empty(), "{next} kept the key");
+            assert!(cfg.llm_oauth_refresh_token.is_empty(), "{next}");
+            assert!(cfg.llm_oauth_client_id.is_empty(), "{next}");
+            assert_eq!(cfg.llm_oauth_expires_at, 0, "{next}");
+            assert_eq!(cfg.llm_external_base_url, next.trim_end_matches('/'));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hosted_provider_refuses_a_base_url_and_keeps_its_key() {
+        let config = RwLock::new(AppConfig {
+            llm_provider: "openai".into(),
+            llm_external_base_url: "https://api.openai.com/v1".into(),
+            llm_external_api_key: "sk-openai".into(),
+            ..Default::default()
+        });
+        assert!(set_base_url(&config, "https://attacker.example/v1")
+            .await
+            .is_err());
+        let cfg = config.read().await;
+        assert_eq!(cfg.llm_external_base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.llm_external_api_key, "sk-openai");
     }
 }

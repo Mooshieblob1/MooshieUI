@@ -157,12 +157,12 @@ pub async fn set_novelai_api_key(
     let trimmed = api_key.trim().to_string();
     let configured = !trimmed.is_empty();
 
-    let snapshot = {
-        let mut config = state.config.write().await;
-        config.novelai_api_key = if configured { Some(trimmed) } else { None };
-        config.clone()
-    };
-    crate::config::save_config(&snapshot).map_err(AppError::Other)?;
+    // Saved while the write lock is still held: saving a snapshot after
+    // dropping it lets a concurrent `update_config` land in between and then
+    // be overwritten on disk by this older copy.
+    let mut config = state.config.write().await;
+    config.novelai_api_key = if configured { Some(trimmed) } else { None };
+    crate::config::save_config(&config).map_err(AppError::Other)?;
 
     Ok(configured)
 }

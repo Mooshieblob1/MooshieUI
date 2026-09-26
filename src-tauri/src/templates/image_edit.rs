@@ -25,9 +25,21 @@
 
 use serde_json::json;
 
-use super::{build_scheduled_conditioning, insert_vae_decode, load_model_nodes, WorkflowResult};
+use super::{
+    build_scheduled_conditioning, insert_vae_decode, load_model_nodes, strip_lora_tags,
+    WorkflowResult,
+};
 use crate::comfyui::nodes::ANIMA_EDIT_LORA_FILENAME;
 use crate::comfyui::types::GenerationParams;
+
+/// Families [`build`] has an edit graph for. `validate_generation_params`
+/// rejects Image Edit mode for any other.
+pub fn supports_family(arch: &str) -> bool {
+    matches!(
+        arch,
+        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "anima"
+    )
+}
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     match params.model_architecture.as_str() {
@@ -182,7 +194,7 @@ fn encode_qwen_conditioning(
     let node_id = next_id.to_string();
     let mut inputs = serde_json::Map::new();
     inputs.insert("clip".into(), json!([clip_source.0.clone(), clip_source.1]));
-    inputs.insert("prompt".into(), json!(prompt));
+    inputs.insert("prompt".into(), json!(strip_lora_tags(prompt)));
     inputs.insert("vae".into(), json!([vae_source.0.clone(), vae_source.1]));
 
     let class_type = if is_plus {
@@ -308,6 +320,23 @@ fn build_anima_restyler(params: &GenerationParams, seed: i64) -> WorkflowResult 
         &[],
     );
     next_id = nid;
+
+    // The refinement chains (upscale, face fix) reuse `positive_source` on the
+    // single-panel output, where the split-screen prefix would ask for a
+    // multi-view picture. They get the prompt as the user wrote it instead.
+    let refiner_positive = if params.edit_split_screen {
+        let (source, nid) = build_scheduled_conditioning(
+            &mut workflow,
+            next_id,
+            &clip_source,
+            &params.positive_prompt,
+            &[],
+        );
+        next_id = nid;
+        source
+    } else {
+        pos_source.clone()
+    };
 
     let image_name = reference_images(params)
         .first()
@@ -655,7 +684,9 @@ fn build_anima_restyler(params: &GenerationParams, seed: i64) -> WorkflowResult 
         image_output,
         model_source,
         clip_source,
-        positive_source: pos_source,
+        // Only the refinement chains read this; the sampler above takes the
+        // split-screen conditioning through `InpaintModelConditioning`.
+        positive_source: refiner_positive,
         negative_source: neg_source,
         vae_source,
         sampler_id,
@@ -1067,10 +1098,16 @@ mod tests {
         // The prompt hack that makes the model paint a second view; the tag
         // is doubled inside the weight group so long tag dumps can't dilute
         // it away.
-        let pos = &result.workflow[&result.positive_source.0];
+        let pos = &result.workflow[inpaints[0]["inputs"]["positive"][0].as_str().unwrap()];
         let text = pos["inputs"]["text"].as_str().unwrap();
         assert!(text.starts_with("(split screen, multiple views, split screen:1.2), "));
         assert!(text.contains("watercolor style"));
+
+        // Upscale and face fix refine the single-panel output, so they get
+        // the prompt without the split-screen hack.
+        let refiner_pos = &result.workflow[&result.positive_source.0];
+        assert_eq!(refiner_pos["class_type"], "CLIPTextEncode");
+        assert_eq!(refiner_pos["inputs"]["text"], json!(params.positive_prompt));
 
         // Output: crop the right half of the sampled composite, then scale it
         // back up to the requested output size.
@@ -1121,10 +1158,17 @@ mod tests {
         params.positive_prompt = "1girl, looking at viewer, solo, @asanagi".into();
         let result = build(&params, 42);
 
-        let pos = &result.workflow[&result.positive_source.0];
+        let inpaint = nodes_of_type(&result, "InpaintModelConditioning")[0];
+        let pos = &result.workflow[inpaint["inputs"]["positive"][0].as_str().unwrap()];
         let text = pos["inputs"]["text"].as_str().unwrap();
         assert!(!text.contains("solo"));
         assert!(text.contains("@asanagi"));
+        // The refiners work on one panel, where `solo` is right.
+        let refiner_pos = &result.workflow[&result.positive_source.0];
+        assert!(refiner_pos["inputs"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("solo"));
 
         // Non-split mode leaves the prompt alone.
         params.edit_split_screen = false;
@@ -1181,5 +1225,32 @@ mod tests {
                 None => break,
             }
         }
+    }
+
+    #[test]
+    fn split_screen_face_fix_and_upscale_skip_the_split_prompt() {
+        use crate::templates::graph_test_util::{build, linked, nodes, params, single};
+
+        let mut p = params("image_edit", "anima");
+        p.edit_reference_images = vec!["ref.png".to_string()];
+        p.edit_split_screen = true;
+        p.facefix_enabled = true;
+        p.upscale_enabled = true;
+        p.upscale_method = "latent".to_string();
+        p.upscale_scale = 1.5;
+        let workflow = build(&p);
+
+        let detailer = single(&workflow, "MooshieFaceDetailer");
+        let face_positive = linked(&workflow, &detailer["inputs"]["positive"]);
+        assert_eq!(face_positive["inputs"]["text"], "1girl, smiling");
+
+        let samplers = nodes(&workflow, "KSampler");
+        assert_eq!(samplers.len(), 2, "restyle and upscale");
+        let upscale_positive = samplers
+            .iter()
+            .map(|(_, sampler)| linked(&workflow, &sampler["inputs"]["positive"]))
+            .find(|positive| positive["class_type"] != "InpaintModelConditioning")
+            .expect("upscale sampler");
+        assert_eq!(upscale_positive["inputs"]["text"], "1girl, smiling");
     }
 }

@@ -304,9 +304,17 @@
       const uploadName = await resolvePreviewUploadName("refine");
       if (!uploadName) return;
 
-      const params = generation.toParams() as GenerationParams;
+      // A refine is a separate one-pass job. An armed pause or a paused
+      // txt2img run belongs to the text-to-image flow (the backend rejects
+      // resume stages outside it), so the params carry no pause or resume
+      // stages and the seed resolves normally instead of from the paused run.
+      // The preview carries no seed of its own to reuse.
+      const params = generation.toParams({ outsidePausedRun: true }) as GenerationParams;
       params.mode = "img2img";
       params.input_image = uploadName;
+      // Style transfer is txt2img-only (and rejects upscale), so it would fail
+      // validation on this img2img upscale pass.
+      params.style_transfer_enabled = false;
       // Force refine-only mode so we don't re-do the main img2img sampler —
       // the upscale chain alone is the refiner pass.
       params.refine_only = true;

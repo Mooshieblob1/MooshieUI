@@ -131,6 +131,27 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
+    // VAEEncode yields one latent per input image, so a batch has to be
+    // repeated explicitly or batch_size is silently ignored. RepeatLatentBatch
+    // carries the noise mask along with the samples.
+    let latent_source = if params.batch_size > 1 {
+        let repeat_id = next_id.to_string();
+        workflow.insert(
+            repeat_id.clone(),
+            json!({
+                "class_type": "RepeatLatentBatch",
+                "inputs": {
+                    "samples": [masked_latent_id, 0],
+                    "amount": params.batch_size
+                }
+            }),
+        );
+        next_id += 1;
+        repeat_id
+    } else {
+        masked_latent_id
+    };
+
     let sampler_name_lc = params.sampler_name.to_lowercase();
     let is_cfgpp_sampler = sampler_name_lc.contains("cfg_pp");
     let is_vpred_or_anima = is_vpred_model(params) || params.model_architecture == "anima";
@@ -164,7 +185,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "model": [sampler_model_source.0.clone(), sampler_model_source.1],
                 "positive": [pos_source.0.clone(), pos_source.1],
                 "negative": [neg_source.0.clone(), neg_source.1],
-                "latent_image": [masked_latent_id, 0],
+                "latent_image": [latent_source, 0],
                 "seed": seed,
                 "steps": params.steps,
                 "cfg": params.cfg,
@@ -200,5 +221,38 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         sampler_id,
         refiner_model_source: None,
         base_sources: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::templates::graph_test_util::{build, linked, nodes, params, single};
+
+    #[test]
+    fn batch_size_repeats_the_masked_latent() {
+        let mut p = params("inpainting", "sdxl");
+        p.batch_size = 4;
+        let workflow = build(&p);
+
+        let sampler = single(&workflow, "KSampler");
+        let repeat = linked(&workflow, &sampler["inputs"]["latent_image"]);
+        assert_eq!(repeat["class_type"], "RepeatLatentBatch");
+        assert_eq!(repeat["inputs"]["amount"], 4);
+        // Repeated after the noise mask is set, so every copy keeps it.
+        assert_eq!(
+            linked(&workflow, &repeat["inputs"]["samples"])["class_type"],
+            "SetLatentNoiseMask"
+        );
+    }
+
+    #[test]
+    fn single_image_feeds_the_masked_latent_directly() {
+        let workflow = build(&params("inpainting", "sdxl"));
+        let sampler = single(&workflow, "KSampler");
+        assert_eq!(
+            linked(&workflow, &sampler["inputs"]["latent_image"])["class_type"],
+            "SetLatentNoiseMask"
+        );
+        assert!(nodes(&workflow, "RepeatLatentBatch").is_empty());
     }
 }

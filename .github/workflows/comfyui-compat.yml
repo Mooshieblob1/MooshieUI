@@ -30,9 +30,11 @@ on:
         type: boolean
         default: false
 
+# Read-only by default: detect and the smoke tests run unpinned upstream
+# ComfyUI code and PyPI packages. Only `propose` (which pushes a branch and
+# opens a PR, and runs no upstream code) gets write scopes.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: comfyui-compat
@@ -52,6 +54,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Resolve current pin and candidate ref
         id: v
@@ -122,6 +126,8 @@ jobs:
     steps:
       - name: Checkout MooshieUI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Checkout ComfyUI @ candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,6 +135,7 @@ jobs:
           repository: comfyanonymous/ComfyUI
           ref: ${{ needs.detect.outputs.source_ref }}
           path: comfyui-target
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -197,12 +204,16 @@ jobs:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/macos-runtime/python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install managed runtime and check candidate ComfyUI
         env:
           COMFYUI_REF: ${{ needs.detect.outputs.source_ref }}
         run: |
           mkdir -p macos-runtime/bin
-          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          # Same pinned uv release and SHA-256 as UV_VERSION/UV_ASSETS in src-tauri/src/setup.rs.
+          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/download/0.12.19/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          echo "a9a8df1eedeb192f2e47e40e2faabfb387db4b850209118786d42f89dde3e0ba  macos-runtime/uv.tar.gz" | shasum -a 256 -c -
           tar -xzf macos-runtime/uv.tar.gz --strip-components=1 -C macos-runtime/bin
           python3 scripts/macos/setup_runtime.py --uv "$PWD/macos-runtime/bin/uv" --work-dir "$PWD/macos-runtime" --comfyui-ref "$COMFYUI_REF"
       - name: Upload Mac runtime evidence
@@ -223,6 +234,10 @@ jobs:
     # Only when the bundled nodes passed AND the candidate is strictly newer.
     if: needs.smoke-test.result == 'success' && needs.macos-smoke-test.result == 'success' && needs.detect.outputs.is_newer == 'true'
     runs-on: ubuntu-latest
+    # Pushes the bump branch (via the checkout's persisted token) and opens the PR.
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

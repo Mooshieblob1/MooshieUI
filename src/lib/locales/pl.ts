@@ -2534,6 +2534,7 @@ const pl: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Klucz API",
   "settings.civitai.api_key_placeholder": "Wklej tutaj swój klucz API CivitAI",
+  "settings.civitai.api_key_saved_placeholder": "Klucz jest zapisany. Wklej nowy, aby go zastąpić.",
   "settings.civitai.api_key_desc": "Używany do wyszukiwania metadanych modeli, pobierania przykładowych obrazów i pobierania. Wymagany, ponieważ CivitAI ograniczył nieuwierzytelniony dostęp.",
   "settings.civitai.api_key_link": "Pobierz swój klucz na civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
@@ -3302,6 +3303,7 @@ const pl: Record<string, string> = {
   "settings.lan.temp_password_min": "Tymczasowe hasło musi mieć co najmniej 4 znaki.",
   "settings.lan.reset_failed": "Nie powiodło się resetowanie hasła.",
   "settings.lan.account_validation": "Nazwa użytkownika jest wymagana, hasło musi mieć co najmniej 4 znaki.",
+  "settings.lan.username_invalid": "Nazwa użytkownika może zawierać tylko litery A-Z, cyfry, - i _ (maksymalnie {max} znaków).",
   "settings.lan.time.never": "Nigdy",
   "settings.lan.time.unknown": "Nieznany",
   "settings.lan.time.weeks_ago": "{weeks} tyg. temu",
@@ -3724,6 +3726,15 @@ const pl: Record<string, string> = {
   "errors.report.opening": "Otwieranie...",
 
   "errors.report.copied_hint": "Diagnostyka skopiowana do schowka. Wklej ją do treści zgłoszenia.",
+  "errors.report.intro_service": "Twój raport zostanie wysłany do usługi zgłoszeń MooshieUI, która opublikuje go jako publiczne zgłoszenie na GitHubie. Każdy może je przeczytać.",
+  "errors.report.include_log": "Dołącz dziennik diagnostyczny",
+  "errors.report.include_log_hint": "Dziennik zawiera wersję aplikacji, system operacyjny, nazwę komputera, ścieżki folderów, zainstalowane modele i najnowsze logi aplikacji. Sprawdź go przed wysłaniem.",
+  "errors.report.preview_log": "Pokaż, co zostanie wysłane",
+  "errors.report.hide_log": "Ukryj dziennik",
+  "errors.report.loading_log": "Zbieranie danych diagnostycznych...",
+  "errors.report.submit_service": "Wyślij raport",
+  "errors.report.sending": "Wysyłanie...",
+  "errors.report.sent": "Raport wysłany. Dziękujemy za pomoc w ulepszaniu MooshieUI.",
 
   "generation.video.role_fl2va": "Model pierwszej/ostatniej klatki",
 

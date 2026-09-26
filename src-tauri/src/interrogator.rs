@@ -860,9 +860,12 @@ async fn download_with_progress(
         )));
     }
 
-    let total = resp.content_length().unwrap_or(0);
+    let expected_len = resp.content_length();
+    let total = expected_len.unwrap_or(0);
     let mut downloaded: u64 = 0;
-    let mut file = std::fs::File::create(dest)?;
+    // Stream into `<dest>.part` (see `commit_partial_download`).
+    let part = crate::comfyui::client::partial_download_path(dest);
+    let mut file = std::fs::File::create(&part)?;
 
     app.emit(
         "interrogator:download_progress",
@@ -877,13 +880,25 @@ async fn download_with_progress(
 
     let mut last_emit: u64 = 0;
     let mut resp = resp;
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|e| AppError::InterrogatorError(format!("Download read error: {}", e)))?
-    {
+    loop {
+        let chunk = match resp.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(e) => {
+                drop(file);
+                let _ = std::fs::remove_file(&part);
+                return Err(AppError::InterrogatorError(format!(
+                    "Download read error: {}",
+                    e
+                )));
+            }
+        };
         use std::io::Write;
-        file.write_all(&chunk)?;
+        if let Err(e) = file.write_all(&chunk) {
+            drop(file);
+            let _ = std::fs::remove_file(&part);
+            return Err(e.into());
+        }
         downloaded += chunk.len() as u64;
 
         if downloaded - last_emit > 256 * 1024 || downloaded == total {
@@ -900,6 +915,7 @@ async fn download_with_progress(
             .ok();
         }
     }
+    drop(file);
 
     app.emit(
         "interrogator:download_progress",
@@ -912,7 +928,29 @@ async fn download_with_progress(
     )
     .ok();
 
-    Ok(())
+    commit_partial_download(&part, dest, downloaded, expected_len)
+}
+
+/// Move a finished `<dest>.part` download into place once its size matches
+/// the server's Content-Length (when one was sent); removes the `.part` file
+/// on failure. `is_model_downloaded_at` only checks that files exist, so an
+/// interrupted download must never be written under the final name.
+fn commit_partial_download(
+    part: &std::path::Path,
+    dest: &std::path::Path,
+    downloaded: u64,
+    expected_len: Option<u64>,
+) -> Result<(), AppError> {
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let result = crate::comfyui::client::check_download_length(&name, downloaded, expected_len)
+        .and_then(|()| std::fs::rename(part, dest).map_err(AppError::from));
+    if result.is_err() {
+        let _ = std::fs::remove_file(part);
+    }
+    result
 }
 
 /// Simple download without progress events (for browser mode headless usage).
@@ -935,12 +973,17 @@ async fn download_simple(
             resp.status()
         )));
     }
+    let expected_len = resp.content_length();
     let bytes = resp
         .bytes()
         .await
         .map_err(|e| AppError::InterrogatorError(format!("Download read error: {}", e)))?;
-    std::fs::write(dest, &bytes)?;
-    Ok(())
+    let part = crate::comfyui::client::partial_download_path(dest);
+    if let Err(e) = std::fs::write(&part, &bytes) {
+        let _ = std::fs::remove_file(&part);
+        return Err(e.into());
+    }
+    commit_partial_download(&part, dest, bytes.len() as u64, expected_len)
 }
 
 /// Returns (download_url, archive_filename) for the platform-specific ONNX Runtime.
@@ -1229,5 +1272,40 @@ mod tests {
             "expected refusal message, got: {err}"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn truncated_partial_download_is_discarded_not_installed() {
+        let dir = scratch_dir("partial-truncated");
+        std::fs::write(tags_path_in(&dir), "tag_id,name,category,count\n").unwrap();
+        let dest = model_path_in(&dir);
+        let part = crate::comfyui::client::partial_download_path(&dest);
+        std::fs::write(&part, b"half").unwrap();
+        // A leftover `.part` never makes the model count as downloaded.
+        assert!(!is_model_downloaded_at(&dir));
+
+        assert!(commit_partial_download(&part, &dest, 4, Some(8)).is_err());
+        assert!(!part.exists());
+        assert!(!dest.exists());
+        assert!(!is_model_downloaded_at(&dir));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn complete_partial_download_is_renamed_into_place() {
+        let dir = scratch_dir("partial-complete");
+        let dest = model_path_in(&dir);
+        let part = crate::comfyui::client::partial_download_path(&dest);
+        assert_eq!(part.file_name().unwrap(), "model.onnx.part");
+        std::fs::write(&part, b"12345678").unwrap();
+        commit_partial_download(&part, &dest, 8, Some(8)).unwrap();
+        assert!(!part.exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"12345678");
+        // No Content-Length: nothing to compare against, still committed.
+        std::fs::write(&part, b"abc").unwrap();
+        let tags = tags_path_in(&dir);
+        commit_partial_download(&part, &tags, 3, None).unwrap();
+        assert!(is_model_downloaded_at(&dir));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

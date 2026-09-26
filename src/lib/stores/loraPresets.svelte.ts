@@ -1,5 +1,6 @@
 import type { LoraEntry } from "../types/index.js";
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 
 const STORAGE_KEY = "mooshieui.loraPresets.v1";
@@ -75,7 +76,7 @@ class LoraPresetsStore {
 
   private loadSettings() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<PersistedState>;
       if (!Array.isArray(parsed.presets)) return;
@@ -88,7 +89,7 @@ class LoraPresetsStore {
   private saveSettings() {
     try {
       const payload: PersistedState = { version: EXPORT_VERSION, presets: this.presets };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(payload));
       triggerSync();
     } catch (e) {
       console.error("lora-presets: save failed", e);
@@ -182,7 +183,7 @@ class LoraPresetsStore {
       if (!Array.isArray(data?.presets)) return;
       const sanitized = data.presets.map(sanitizePreset).filter(Boolean) as LoraPreset[];
       this.presets = sanitized;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: EXPORT_VERSION, presets: sanitized }));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify({ version: EXPORT_VERSION, presets: sanitized }));
     } catch (e) {
       console.error("lora-presets: applyServerPrefs failed", e);
     }

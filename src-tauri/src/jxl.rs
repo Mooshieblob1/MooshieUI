@@ -24,12 +24,26 @@ fn ftyp_box() -> Vec<u8> {
 
 /// Build an ISO-BMFF box with the given 4-byte type and payload.
 fn make_box(typ: &[u8; 4], payload: &[u8]) -> Vec<u8> {
-    let size = 8 + payload.len();
-    let mut b = Vec::with_capacity(size);
-    b.extend_from_slice(&(size as u32).to_be_bytes());
-    b.extend_from_slice(typ);
-    b.extend_from_slice(payload);
+    let mut b = Vec::with_capacity(payload.len() + 16);
+    push_box(&mut b, typ, payload);
     b
+}
+
+/// Append one ISO-BMFF box to `out`. A payload too large for the 32-bit size
+/// field gets the 64-bit `largesize` form instead of a truncated header.
+fn push_box(out: &mut Vec<u8>, typ: &[u8; 4], payload: &[u8]) {
+    match u32::try_from(8 + payload.len()) {
+        Ok(size) => {
+            out.extend_from_slice(&size.to_be_bytes());
+            out.extend_from_slice(typ);
+        }
+        Err(_) => {
+            out.extend_from_slice(&1u32.to_be_bytes());
+            out.extend_from_slice(typ);
+            out.extend_from_slice(&(16 + payload.len() as u64).to_be_bytes());
+        }
+    }
+    out.extend_from_slice(payload);
 }
 
 /// True if the bytes appear to be a JXL container (ISO-BMFF), false for a
@@ -110,15 +124,29 @@ pub fn encode_rgba16_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>
     Ok(buf)
 }
 
+/// `(type, payload_range)` for each top-level box, in file order.
+type BoxList = Vec<([u8; 4], std::ops::Range<usize>)>;
+
 /// Iterate top-level ISO-BMFF boxes, yielding `(type, payload_range)` for each.
 /// Only valid for container input (with the JXL signature box).
-fn iter_boxes(bytes: &[u8]) -> Vec<([u8; 4], std::ops::Range<usize>)> {
+fn iter_boxes(bytes: &[u8]) -> BoxList {
+    walk_boxes(bytes).0
+}
+
+/// Walk the top-level boxes of a JXL container.
+///
+/// Returns the boxes that parsed plus whether the walk stopped at a malformed
+/// header. The file is untrusted (anything dropped on the window reaches
+/// here), so every size is checked before it becomes a range: a box smaller
+/// than its own header, or one claiming to run past the end, ends the walk
+/// instead of producing an inverted or out-of-bounds range.
+fn walk_boxes(bytes: &[u8]) -> (BoxList, bool) {
     let mut out = Vec::new();
     if !is_container(bytes) {
-        return out;
+        return (out, false);
     }
     let mut pos = JXL_SIGNATURE_BOX.len();
-    while pos + 8 <= bytes.len() {
+    while bytes.len() - pos >= 8 {
         let size = u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
             as usize;
         let typ = [
@@ -127,48 +155,35 @@ fn iter_boxes(bytes: &[u8]) -> Vec<([u8; 4], std::ops::Range<usize>)> {
             bytes[pos + 6],
             bytes[pos + 7],
         ];
-        let (payload_start, box_end) = if size == 0 {
-            // size=0 means box extends to end of file
-            (pos + 8, bytes.len())
-        } else if size == 1 {
+        // (header length, total box length); size=0 means the box extends to
+        // the end of the file.
+        let (header, len) = match size {
+            0 => (8, bytes.len() - pos),
             // size=1 means a 64-bit `largesize` follows the type field; the box
             // (including its 16-byte header) spans `largesize` bytes from `pos`.
-            if pos + 16 > bytes.len() {
-                break;
+            1 => {
+                let Some(large) = bytes.get(pos + 8..pos + 16) else {
+                    return (out, true);
+                };
+                let mut be = [0u8; 8];
+                be.copy_from_slice(large);
+                let Ok(large) = usize::try_from(u64::from_be_bytes(be)) else {
+                    return (out, true);
+                };
+                (16, large)
             }
-            let large = u64::from_be_bytes([
-                bytes[pos + 8],
-                bytes[pos + 9],
-                bytes[pos + 10],
-                bytes[pos + 11],
-                bytes[pos + 12],
-                bytes[pos + 13],
-                bytes[pos + 14],
-                bytes[pos + 15],
-            ]);
-            let Ok(large) = usize::try_from(large) else {
-                break;
-            };
-            let Some(box_end) = pos.checked_add(large) else {
-                break;
-            };
-            if large < 16 || box_end > bytes.len() {
-                break;
-            }
-            (pos + 16, box_end)
-        } else {
-            if pos + size > bytes.len() {
-                break;
-            }
-            (pos + 8, pos + size)
+            n => (8, n),
         };
-        out.push((typ, payload_start..box_end));
-        if box_end == bytes.len() {
-            break;
-        }
+        // A box must cover its own header (sizes 2..=7 used to yield an
+        // inverted payload range) and must not run past the end of the file.
+        let box_end = match pos.checked_add(len) {
+            Some(end) if len >= header && end <= bytes.len() => end,
+            _ => return (out, true),
+        };
+        out.push((typ, pos + header..box_end));
         pos = box_end;
     }
-    out
+    (out, false)
 }
 
 /// Read the first `xml ` (XMP) box from a JXL container, returning its UTF-8
@@ -208,7 +223,14 @@ pub fn wrap_with_xmp(jxl: &[u8], xmp: &str) -> Result<Vec<u8>, AppError> {
         ));
     }
 
-    let boxes = iter_boxes(jxl);
+    let (boxes, malformed) = walk_boxes(jxl);
+    if malformed {
+        // Rebuilding from the parsed prefix would silently drop every box
+        // after the bad header, the codestream included.
+        return Err(AppError::Other(
+            "wrap_with_xmp: JXL container has a malformed box".into(),
+        ));
+    }
     let mut out = Vec::with_capacity(jxl.len() + xmp.len() + 16);
     out.extend_from_slice(&JXL_SIGNATURE_BOX);
 
@@ -223,10 +245,7 @@ pub fn wrap_with_xmp(jxl: &[u8], xmp: &str) -> Result<Vec<u8>, AppError> {
             xml_inserted = true;
         }
         // Recreate the box with its original payload.
-        let size = 8 + (range.end - range.start);
-        out.extend_from_slice(&(size as u32).to_be_bytes());
-        out.extend_from_slice(typ);
-        out.extend_from_slice(&jxl[range.clone()]);
+        push_box(&mut out, typ, &jxl[range.clone()]);
     }
     if !xml_inserted {
         // No codestream box found (shouldn't happen for a valid file) —
@@ -474,6 +493,90 @@ mod tests {
         let (typ, range) = &boxes[0];
         assert_eq!(typ, b"xml ");
         assert_eq!(&bytes[range.clone()], payload);
+    }
+
+    /// The signature box followed by `boxes`, as raw bytes.
+    fn container(boxes: &[&[u8]]) -> Vec<u8> {
+        let mut out = JXL_SIGNATURE_BOX.to_vec();
+        for b in boxes {
+            out.extend_from_slice(b);
+        }
+        out
+    }
+
+    #[test]
+    fn a_box_smaller_than_its_header_is_malformed_not_a_panic() {
+        // Sizes 2..=7 used to produce the inverted range `pos+8..pos+size`,
+        // which panicked when sliced.
+        for size in 2u32..8 {
+            let mut bad = size.to_be_bytes().to_vec();
+            bad.extend_from_slice(b"xml ");
+            bad.extend_from_slice(b"payload!");
+            let bytes = container(&[&bad]);
+            assert!(read_xmp_box(&bytes).is_none(), "size {size}");
+            assert!(iter_boxes(&bytes).is_empty(), "size {size}");
+            assert!(wrap_with_xmp(&bytes, "{}").is_err(), "size {size}");
+        }
+    }
+
+    #[test]
+    fn boxes_claiming_to_run_past_the_end_are_malformed() {
+        let mut past = 400u32.to_be_bytes().to_vec();
+        past.extend_from_slice(b"xml short");
+        let bytes = container(&[&past]);
+        assert!(read_xmp_box(&bytes).is_none());
+        assert!(wrap_with_xmp(&bytes, "{}").is_err());
+
+        // A 64-bit size near u64::MAX must not wrap around to a small end.
+        let mut huge = 1u32.to_be_bytes().to_vec();
+        huge.extend_from_slice(b"xml ");
+        huge.extend_from_slice(&u64::MAX.to_be_bytes());
+        huge.extend_from_slice(b"data");
+        let bytes = container(&[&huge]);
+        assert!(read_xmp_box(&bytes).is_none());
+        assert!(wrap_with_xmp(&bytes, "{}").is_err());
+
+        // A 64-bit size smaller than the 16-byte header it sits in.
+        let mut tiny = 1u32.to_be_bytes().to_vec();
+        tiny.extend_from_slice(b"xml ");
+        tiny.extend_from_slice(&9u64.to_be_bytes());
+        let bytes = container(&[&tiny]);
+        assert!(iter_boxes(&bytes).is_empty());
+
+        // A truncated 64-bit size field.
+        let mut cut = 1u32.to_be_bytes().to_vec();
+        cut.extend_from_slice(b"xml ");
+        cut.extend_from_slice(&[0, 0, 0]);
+        assert!(iter_boxes(&container(&[&cut])).is_empty());
+    }
+
+    #[test]
+    fn a_malformed_box_after_good_ones_keeps_the_good_prefix_readable() {
+        let good = make_box(b"xml ", b"kept");
+        let mut bad = 3u32.to_be_bytes().to_vec();
+        bad.extend_from_slice(b"jxlc");
+        let bytes = container(&[&good, &bad]);
+        assert_eq!(read_xmp_box(&bytes).as_deref(), Some("kept"));
+        // Rewriting it would drop everything after the bad header.
+        assert!(wrap_with_xmp(&bytes, "new").is_err());
+    }
+
+    #[test]
+    fn a_zero_size_box_runs_to_the_end_and_a_short_tail_is_ignored() {
+        let mut to_end = 0u32.to_be_bytes().to_vec();
+        to_end.extend_from_slice(b"xml ");
+        to_end.extend_from_slice(b"tail");
+        assert_eq!(
+            read_xmp_box(&container(&[&to_end])).as_deref(),
+            Some("tail")
+        );
+
+        // Fewer than 8 trailing bytes cannot hold a header; they end the walk
+        // without marking the file malformed.
+        let good = make_box(b"xml ", b"ok");
+        let bytes = container(&[&good, b"\0\0\0"]);
+        assert_eq!(iter_boxes(&bytes).len(), 1);
+        assert!(!walk_boxes(&bytes).1);
     }
 
     #[test]

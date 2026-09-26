@@ -1,4 +1,5 @@
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 
 const ACCESSIBILITY_SETTINGS_KEY = "mooshieui.accessibility.v1";
 
@@ -14,7 +15,7 @@ class AccessibilityStore {
 
   loadSettings() {
     try {
-      const raw = localStorage.getItem(ACCESSIBILITY_SETTINGS_KEY);
+      const raw = localStorage.getItem(userScopedKey(ACCESSIBILITY_SETTINGS_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed.visionSimulatorMode) {
@@ -30,7 +31,7 @@ class AccessibilityStore {
 
   saveSettings() {
     try {
-      localStorage.setItem(ACCESSIBILITY_SETTINGS_KEY, JSON.stringify({
+      localStorage.setItem(userScopedKey(ACCESSIBILITY_SETTINGS_KEY), JSON.stringify({
         visionSimulatorMode: this.visionSimulatorMode,
         showInfoTips: this.showInfoTips
       }));

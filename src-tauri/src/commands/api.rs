@@ -427,6 +427,12 @@ pub(crate) fn is_safe_relative_model_path(value: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
+/// Whether a sidecar thumbnail may be written for `path`: an existing regular
+/// file with a model extension.
+fn is_model_sidecar_target(path: &std::path::Path) -> bool {
+    path.is_file() && is_managed_model_file(path)
+}
+
 fn is_managed_model_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -535,6 +541,69 @@ fn push_model_install_dir(
     }
 }
 
+/// Reject a model download destination that could land outside the model
+/// folders: `category` must be a single path component, `filename` a relative
+/// path of plain components, and an explicit `install_dir` one of the
+/// category's configured model folders. Model requests filed by LAN users
+/// carry all three, so an unchecked `../custom_nodes` category would write a
+/// file that ComfyUI later executes.
+pub(crate) fn validate_model_download_target(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+    install_dir: Option<&str>,
+) -> Result<(), AppError> {
+    if !is_safe_path_component(category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+    if !is_safe_relative_model_path(filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+    if let Some(dir) = install_dir {
+        let allowed = model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?;
+        if !allowed
+            .iter()
+            .any(|d| std::path::Path::new(&d.path) == std::path::Path::new(dir))
+        {
+            return Err(AppError::Other(
+                "Install folder is not one of this category's model folders".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod model_download_target_tests {
+    use super::validate_model_download_target;
+
+    #[test]
+    fn download_targets_stay_inside_model_folders() {
+        let ok = |cat: &str, file: &str| {
+            validate_model_download_target("/comfy", None, cat, file, None).is_ok()
+        };
+        assert!(ok("loras", "style.safetensors"));
+        assert!(ok("checkpoints", "sub/model.safetensors"));
+        assert!(!ok("../custom_nodes", "x.py"));
+        assert!(!ok("loras/../../custom_nodes", "x.py"));
+        assert!(!ok("/etc", "x"));
+        assert!(!ok("loras", "../../custom_nodes/x.py"));
+        assert!(!ok("loras", "/tmp/x.safetensors"));
+        assert!(!ok("", "x.safetensors"));
+    }
+
+    #[test]
+    fn install_dir_must_be_a_configured_model_folder() {
+        let check = |dir: &str| {
+            validate_model_download_target("/comfy", None, "loras", "a.safetensors", Some(dir))
+        };
+        assert!(check("/comfy/models/loras").is_ok());
+        assert!(check("/comfy/custom_nodes").is_err());
+        assert!(check("/tmp").is_err());
+    }
+}
+
 pub(crate) fn model_install_dirs_for_config(
     comfyui_path: &str,
     extra_model_paths: Option<&str>,
@@ -608,6 +677,14 @@ fn modified_ms(metadata: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// How many folder levels below an install dir the model scan descends.
+const MODEL_SCAN_MAX_DEPTH: usize = 16;
+
+/// Collect the managed model files under `root`, following symlinked files and
+/// folders (shared model libraries are commonly linked in, and ComfyUI follows
+/// the links too). A linked folder whose real path was already walked (a link
+/// back to an ancestor, or a second link to the same library) is skipped, so
+/// link loops end; the walk also stops [`MODEL_SCAN_MAX_DEPTH`] levels down.
 fn collect_model_files_from_dir(
     category: &str,
     dir: &ModelInstallDir,
@@ -615,14 +692,58 @@ fn collect_model_files_from_dir(
     current: &std::path::Path,
     files: &mut Vec<ManagedModelFile>,
 ) -> Result<(), AppError> {
+    let mut visited = std::collections::HashSet::new();
+    if let Ok(canonical) = std::fs::canonicalize(current) {
+        visited.insert(canonical);
+    }
+    collect_model_files_walk(category, dir, root, current, 0, &mut visited, files)
+}
+
+fn collect_model_files_walk(
+    category: &str,
+    dir: &ModelInstallDir,
+    root: &std::path::Path,
+    current: &std::path::Path,
+    depth: usize,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    files: &mut Vec<ManagedModelFile>,
+) -> Result<(), AppError> {
     for entry in std::fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
-        let metadata = entry.metadata()?;
-        if file_type.is_dir() {
-            collect_model_files_from_dir(category, dir, root, &path, files)?;
-        } else if file_type.is_file() && is_managed_model_file(&path) {
+        let metadata = if file_type.is_symlink() {
+            // Follow the link; a dangling one is skipped rather than failing the scan.
+            match std::fs::metadata(&path) {
+                Ok(target) => target,
+                Err(_) => continue,
+            }
+        } else {
+            entry.metadata()?
+        };
+        if metadata.is_dir() {
+            if depth + 1 >= MODEL_SCAN_MAX_DEPTH {
+                continue;
+            }
+            let canonical = std::fs::canonicalize(&path).ok();
+            if file_type.is_symlink() {
+                // Only links need the guard: real folders cannot form a cycle.
+                let Some(real) = canonical else {
+                    continue;
+                };
+                if !visited.insert(real) {
+                    continue;
+                }
+                // An unreadable linked library should not hide the rest.
+                let _ =
+                    collect_model_files_walk(category, dir, root, &path, depth + 1, visited, files);
+            } else {
+                if let Some(real) = canonical {
+                    visited.insert(real);
+                }
+                collect_model_files_walk(category, dir, root, &path, depth + 1, visited, files)?;
+            }
+        } else if metadata.is_file() && is_managed_model_file(&path) {
             let filename = relative_model_filename(root, &path);
             if !is_safe_relative_model_path(&filename) {
                 continue;
@@ -661,6 +782,55 @@ pub(crate) fn list_model_files_for_config(
             .then_with(|| a.directory_label.cmp(&b.directory_label))
     });
     Ok(files)
+}
+
+#[cfg(all(test, unix))]
+mod symlinked_model_scan_tests {
+    use super::{collect_model_files_from_dir, ModelInstallDir};
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn symlinked_models_are_listed_and_link_loops_end() {
+        let base =
+            std::env::temp_dir().join(format!("mooshieui-symlinked-models-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        let root = base.join("loras");
+        let library = base.join("library");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(library.join("styles")).unwrap();
+        std::fs::write(root.join("local.safetensors"), b"x").unwrap();
+        std::fs::write(library.join("top.safetensors"), b"x").unwrap();
+        std::fs::write(library.join("styles").join("ink.safetensors"), b"x").unwrap();
+        // A linked library folder, a linked file, a dangling link, and a link
+        // inside the library pointing back up at the install dir (a loop).
+        symlink(&library, root.join("shared")).unwrap();
+        symlink(
+            library.join("top.safetensors"),
+            root.join("linked.safetensors"),
+        )
+        .unwrap();
+        symlink(base.join("gone"), root.join("dangling.safetensors")).unwrap();
+        symlink(&root, library.join("styles").join("back_to_root")).unwrap();
+
+        let dir = ModelInstallDir {
+            path: root.to_string_lossy().to_string(),
+            label: "ComfyUI".into(),
+        };
+        let mut files = Vec::new();
+        collect_model_files_from_dir("loras", &dir, &root, &root, &mut files).unwrap();
+        let mut names: Vec<_> = files.iter().map(|f| f.filename.clone()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "linked.safetensors",
+                "local.safetensors",
+                "shared/styles/ink.safetensors",
+                "shared/top.safetensors",
+            ]
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
 }
 
 fn collect_model_folders_from_dir(
@@ -1078,6 +1248,44 @@ pub async fn cdn_proxy_fetch_bytes(
     Ok(STANDARD.encode(&bytes))
 }
 
+/// The animadex.net URL for a proxied characters-API request, or `None` when
+/// the request would reach anything outside `/api/characters/`.
+///
+/// `path` may carry its own `?query` (the desktop command gets the whole
+/// remainder of the URL); `query` is appended after it. A prefix check on the
+/// raw string is not enough: the URL parser resolves `..`/`.` segments (also
+/// percent-encoded, and `\` counts as `/`), so `api/characters/../../x` would
+/// become `/x`. Such paths are refused outright, and the parsed URL's path is
+/// checked again as the final word.
+pub(crate) fn animadex_proxy_url(path: &str, query: Option<&str>) -> Option<reqwest::Url> {
+    let clean = path.trim_start_matches('/');
+    let (path_part, inline_query) = match clean.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (clean, None),
+    };
+    let lower = path_part.to_ascii_lowercase();
+    if !path_part.starts_with("api/characters/")
+        || path_part.contains(['\\', '#'])
+        || ["%2e", "%2f", "%5c"].iter().any(|enc| lower.contains(enc))
+        || path_part.split('/').any(|seg| seg == "." || seg == "..")
+    {
+        return None;
+    }
+    let mut url = reqwest::Url::parse(&format!("https://animadex.net/{path_part}")).ok()?;
+    let combined: Vec<&str> = [inline_query, query]
+        .into_iter()
+        .flatten()
+        .filter(|q| !q.is_empty())
+        .collect();
+    if !combined.is_empty() {
+        url.set_query(Some(&combined.join("&")));
+    }
+    (url.scheme() == "https"
+        && url.host_str() == Some("animadex.net")
+        && url.path().starts_with("/api/characters/"))
+    .then_some(url)
+}
+
 /// Proxy a GET request to animadex.net (characters API only). Used by the Tauri
 /// desktop app for JSON fetches that would otherwise be blocked by CORS.
 /// Only paths under `api/characters/` are allowed — not an open proxy.
@@ -1088,15 +1296,12 @@ pub async fn animadex_proxy_fetch(
     path: String,
 ) -> Result<String, AppError> {
     let clean = path.trim_start_matches('/');
-    if !clean.starts_with("api/characters/") {
-        return Err(AppError::Other(
-            "animadex proxy: path must start with api/characters/".into(),
-        ));
-    }
-    let url = format!("https://animadex.net/{}", clean);
+    let url = animadex_proxy_url(clean, None).ok_or_else(|| {
+        AppError::Other("animadex proxy: path must stay under api/characters/".into())
+    })?;
     let resp = state
         .http_client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| AppError::Other(format!("Animadex fetch failed: {}", e)))?;
@@ -1124,6 +1329,16 @@ pub async fn download_model(
     install_dir: Option<String>,
     expected_sha256: Option<String>,
 ) -> Result<(), AppError> {
+    {
+        let cfg = state.config.read().await;
+        validate_model_download_target(
+            &cfg.comfyui_path,
+            cfg.extra_model_paths.as_deref(),
+            &category,
+            &filename,
+            install_dir.as_deref(),
+        )?;
+    }
     state
         .download_model_file(
             &app,
@@ -1395,6 +1610,101 @@ fn render_output_filename_base(
     sanitize_filename_component(&format!("{}__{}__{}", prompt_id, mode, base))
 }
 
+/// Write a new gallery file named `{stem}.{ext}`, or the first free
+/// `{stem}_{n}.{ext}` when that is taken, and return its name and path.
+///
+/// The output template can render one name for distinct images:
+/// `{model}_{seed}` repeats across a batch, and `{date}`/`{time}` are whole
+/// seconds. Never overwrite, with the same `_N` suffix the video path uses.
+/// Each name is claimed with `create_new`, so two saves racing for the same
+/// one cannot both get it.
+pub(crate) fn write_new_gallery_file(
+    dir: &std::path::Path,
+    stem: &str,
+    ext: &str,
+    bytes: &[u8],
+) -> std::io::Result<(String, std::path::PathBuf)> {
+    use std::io::Write as _;
+    let mut n: u64 = 0;
+    loop {
+        let filename = if n == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}_{n}.{ext}")
+        };
+        let path = dir.join(&filename);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(err) = file.write_all(bytes) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(err);
+                }
+                return Ok((filename, path));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+#[cfg(test)]
+mod gallery_name_tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-gallery-name-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp gallery dir");
+        dir
+    }
+
+    #[test]
+    fn a_repeated_name_gets_a_suffix_instead_of_overwriting() {
+        let dir = temp_dir("repeat");
+        let mut names = Vec::new();
+        for bytes in [b"one".as_slice(), b"two", b"three"] {
+            let (name, path) =
+                write_new_gallery_file(&dir, "model_42", "png", bytes).expect("write");
+            assert_eq!(fs::read(&path).expect("read back"), bytes);
+            names.push(name);
+        }
+        assert_eq!(names, ["model_42.png", "model_42_1.png", "model_42_2.png"]);
+        // Every earlier image is still there, untouched.
+        assert_eq!(fs::read(dir.join("model_42.png")).unwrap(), b"one");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_free_name_is_used_as_rendered() {
+        let dir = temp_dir("free");
+        fs::write(dir.join("shot.png"), b"old").unwrap();
+        // Another extension is another file, so no suffix is needed.
+        let (name, _) = write_new_gallery_file(&dir, "shot", "jxl", b"new").unwrap();
+        assert_eq!(name, "shot.jxl");
+        assert_eq!(fs::read(dir.join("shot.png")).unwrap(), b"old");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_missing_directory_is_an_error_not_a_loop() {
+        let parent = temp_dir("missing");
+        assert!(write_new_gallery_file(&parent.join("gone"), "x", "png", b"x").is_err());
+        fs::remove_dir_all(&parent).ok();
+    }
+}
+
 pub fn save_to_gallery_inner(
     bytes: &[u8],
     filename: &str,
@@ -1436,8 +1746,6 @@ pub fn save_to_gallery_inner(
         base,
         metadata,
     );
-    let gallery_filename = format!("{}.{}", rendered_base, ext);
-    let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
@@ -1524,7 +1832,7 @@ pub fn save_to_gallery_inner(
         bytes.to_vec()
     };
 
-    std::fs::write(&path, &final_bytes)?;
+    let (gallery_filename, path) = write_new_gallery_file(&dir, &rendered_base, ext, &final_bytes)?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
@@ -1651,8 +1959,10 @@ pub fn save_video_to_gallery(
 /// `save_video_to_gallery` logic, and returns the resulting gallery filename.
 /// Available in both the desktop and server builds; the desktop command is
 /// gated with `#[cfg(feature = "desktop")]`.
+#[allow(clippy::too_many_arguments)]
 pub async fn save_video_to_gallery_manual_inner(
     username: Option<&str>,
+    allowed_roots: &[std::path::PathBuf],
     video_path: String,
     prompt_id: String,
     fps: f64,
@@ -1661,6 +1971,14 @@ pub async fn save_video_to_gallery_manual_inner(
     height: u32,
 ) -> Result<String, AppError> {
     let path = std::path::PathBuf::from(&video_path);
+    // The path comes from the client, so it must be one `handle_video_output`
+    // could have announced; otherwise any caller could move an arbitrary .mp4
+    // on the host (another user's gallery, the owner's files) into their own.
+    if !is_path_under_any(&path, allowed_roots) {
+        return Err(AppError::Other(
+            "Only held-back ComfyUI video outputs can be saved to the gallery".into(),
+        ));
+    }
     if !path.is_file() {
         return Err(AppError::Other(format!(
             "Video not found at {}",
@@ -1697,6 +2015,7 @@ pub async fn save_video_to_gallery_manual_inner(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_video_to_gallery_manual(
+    state: State<'_, Arc<AppState>>,
     video_path: String,
     prompt_id: String,
     fps: f64,
@@ -1704,9 +2023,83 @@ pub async fn save_video_to_gallery_manual(
     width: u32,
     height: u32,
 ) -> Result<String, AppError> {
+    let roots = manual_save_video_roots(&*state.config.read().await);
     // Desktop: no owner — videos go to the root gallery directory.
-    save_video_to_gallery_manual_inner(None, video_path, prompt_id, fps, frame_count, width, height)
-        .await
+    save_video_to_gallery_manual_inner(
+        None,
+        &roots,
+        video_path,
+        prompt_id,
+        fps,
+        frame_count,
+        width,
+        height,
+    )
+    .await
+}
+
+/// Folders a clip held back by `manual_save_mode` can live in: ComfyUI's
+/// output directory, where `MooshieSaveVideo` writes, and the cache remote
+/// outputs are downloaded into (`video_drafts::fetch_output`).
+pub(crate) fn manual_save_video_roots(cfg: &crate::config::AppConfig) -> Vec<std::path::PathBuf> {
+    let mut roots = Vec::new();
+    if !cfg.comfyui_path.is_empty() {
+        roots.push(std::path::Path::new(&cfg.comfyui_path).join("output"));
+    }
+    let mut args = cfg.extra_args.iter();
+    while let Some(arg) = args.next() {
+        if let Some(dir) = arg.strip_prefix("--output-directory=") {
+            roots.push(std::path::PathBuf::from(dir));
+        } else if arg == "--output-directory" {
+            if let Some(dir) = args.next() {
+                roots.push(std::path::PathBuf::from(dir));
+            }
+        }
+    }
+    if let Some(data_dir) = crate::config::app_data_dir() {
+        roots.push(data_dir.join("video-output-cache"));
+    }
+    roots
+}
+
+/// Whether `path` resolves (symlinks and `..` included) to somewhere inside
+/// one of `roots`. Paths or roots that do not exist never match.
+fn is_path_under_any(path: &std::path::Path, roots: &[std::path::PathBuf]) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .any(|root| path.starts_with(root))
+}
+
+#[cfg(test)]
+mod manual_save_video_tests {
+    use super::is_path_under_any;
+
+    #[test]
+    fn only_paths_inside_the_roots_match() {
+        let base =
+            std::env::temp_dir().join(format!("mooshie-manual-save-{}", uuid::Uuid::new_v4()));
+        let output = base.join("output");
+        let outside = base.join("elsewhere");
+        std::fs::create_dir_all(&output).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(output.join("clip.mp4"), b"x").unwrap();
+        std::fs::write(outside.join("clip.mp4"), b"x").unwrap();
+        let roots = vec![output.clone()];
+
+        assert!(is_path_under_any(&output.join("clip.mp4"), &roots));
+        assert!(!is_path_under_any(&outside.join("clip.mp4"), &roots));
+        assert!(!is_path_under_any(
+            &output.join("../elsewhere/clip.mp4"),
+            &roots
+        ));
+        assert!(!is_path_under_any(&output.join("missing.mp4"), &roots));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -1789,7 +2182,7 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
     }
 
     // One query for the whole video table, not one per directory entry.
-    let meta = crate::gallery_index::video_meta();
+    let meta = crate::gallery_index::video_meta(&dir);
 
     let mut files: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(|entry| {
@@ -1965,8 +2358,27 @@ impl std::fmt::Display for GalleryPathResolveError {
     }
 }
 
+/// Whether `name` is exactly one plain path component that `Path::join` can
+/// never walk out of its base directory with, on any platform.
+///
+/// Rejects separators of either platform, `:` (a Windows drive-relative name
+/// like `D:x` replaces the whole base in `PathBuf::join`, and `name:stream`
+/// addresses an NTFS alternate data stream), NUL, and the `.` / `..` entries.
+/// The component check backs the character checks up, so a name only passes
+/// when the platform's own parser also sees one `Normal` component.
+pub(crate) fn is_single_safe_filename(name: &str) -> bool {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':', '\0']) {
+        return false;
+    }
+    let mut components = std::path::Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
+
 pub fn validate_gallery_filename(filename: &str) -> Result<(), GalleryPathResolveError> {
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(filename) {
         return Err(GalleryPathResolveError::InvalidFilename);
     }
     Ok(())
@@ -2101,6 +2513,57 @@ mod gallery_path_tests {
     }
 }
 
+#[cfg(test)]
+mod safe_filename_tests {
+    use super::{is_single_safe_filename, validate_gallery_filename};
+
+    #[test]
+    fn accepts_plain_basenames() {
+        for name in [
+            "image.png",
+            "MooshieUI_00001_.jxl",
+            "clip_poster.webp",
+            "a..b.png",
+            ".hidden",
+            "name with spaces.png",
+        ] {
+            assert!(is_single_safe_filename(name), "{name} should pass");
+            assert!(
+                validate_gallery_filename(name).is_ok(),
+                "{name} should pass"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_traversal_and_drive_relative_names() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../x.png",
+            "a/b.png",
+            "a\\b.png",
+            "/abs.png",
+            "\\abs.png",
+            "D:x.png",
+            "C:",
+            "C:\\Windows\\win.ini",
+            "file.png:stream",
+            "nul\0.png",
+        ] {
+            assert!(
+                !is_single_safe_filename(name),
+                "{name:?} should be rejected"
+            );
+            assert!(
+                validate_gallery_filename(name).is_err(),
+                "{name:?} should be rejected"
+            );
+        }
+    }
+}
+
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
 pub fn generate_thumbnail(
     gallery_dir: &std::path::Path,
@@ -2120,6 +2583,9 @@ pub fn generate_thumbnail(
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
     let img = decode_gallery_image(&bytes)?;
+    // `size` comes from the request URL, and `thumbnail` scales up as well
+    // as down: `size=100000` asked for a ~40 GB buffer. The UI uses 256-1024.
+    let max_size = max_size.clamp(16, 2048);
     let thumb = img.thumbnail(max_size, max_size);
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -2373,8 +2839,7 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
 
     #[cfg(target_os = "macos")]
     {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
+        use std::process::Command;
 
         // Write bytes to pasteboard using osascript + temp approach,
         // or pipe PNG data via pbcopy alternative. For reliability,
@@ -2385,16 +2850,27 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
             "image/webp" => "webp",
             _ => "png",
         };
-        let tmp_path = tmp_dir.join(format!("mooshie_clipboard.{}", ext));
+        // A unique name, so two copies at once cannot clobber each other's file.
+        let tmp_path = tmp_dir.join(format!(
+            "mooshie_clipboard-{}.{}",
+            uuid::Uuid::new_v4().simple(),
+            ext
+        ));
         std::fs::write(&tmp_path, image_bytes)
             .map_err(|e| AppError::Other(format!("Failed to write temp file: {}", e)))?;
 
-        let script = format!(
-            "set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)",
-            tmp_path.display()
-        );
+        // The path goes in as an argument to the run handler, never spliced
+        // into the script source, so a `"` in it cannot end the string literal.
         let status = Command::new("osascript")
-            .args(["-e", &script])
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)",
+                "-e",
+                "end run",
+            ])
+            .arg(&tmp_path)
             .status()
             .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
         let _ = std::fs::remove_file(&tmp_path);
@@ -2498,13 +2974,27 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
         use std::process::{Command, Stdio};
 
         // Use osascript to check if clipboard has an image and write it to temp
-        let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
-        let script = format!(
-            "set imgData to the clipboard as «class PNGf»\nset f to open for access POSIX file \"{}\" with write permission\nwrite imgData to f\nclose access f",
-            tmp_path.display()
-        );
+        let tmp_path = std::env::temp_dir().join(format!(
+            "mooshie_clipboard_read-{}.png",
+            uuid::Uuid::new_v4().simple()
+        ));
+        // Path passed as a run-handler argument, not spliced into the source.
         let status = Command::new("osascript")
-            .args(["-e", &script])
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "set imgData to the clipboard as «class PNGf»",
+                "-e",
+                "set f to open for access POSIX file (item 1 of argv) with write permission",
+                "-e",
+                "write imgData to f",
+                "-e",
+                "close access f",
+                "-e",
+                "end run",
+            ])
+            .arg(&tmp_path)
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .status()
@@ -2528,13 +3018,17 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
 
-        let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
-        let script = format!(
-            "$img = Get-Clipboard -Format Image; if ($img) {{ $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png) }} else {{ exit 1 }}",
-            tmp_path.display()
-        );
+        let tmp_path = std::env::temp_dir().join(format!(
+            "mooshie_clipboard_read-{}.png",
+            uuid::Uuid::new_v4().simple()
+        ));
+        // The path reaches PowerShell through the environment rather than
+        // the command text, so an apostrophe in the profile path (O'Brien)
+        // cannot end the quoted string.
+        let script = "$img = Get-Clipboard -Format Image; if ($img) { $img.Save($env:MOOSHIE_CLIPBOARD_PATH, [System.Drawing.Imaging.ImageFormat]::Png) } else { exit 1 }";
         let status = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
+            .args(["-NoProfile", "-Command", script])
+            .env("MOOSHIE_CLIPBOARD_PATH", &tmp_path)
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
@@ -2783,6 +3277,10 @@ pub async fn is_custom_node_installed(
     state: State<'_, Arc<AppState>>,
     node_name: String,
 ) -> Result<bool, AppError> {
+    // One plain directory name, so this cannot probe paths outside custom_nodes.
+    if !is_safe_path_component(&node_name) {
+        return Err(AppError::Other("Invalid custom node name".into()));
+    }
     let config = state.config.read().await;
     let target_dir = std::path::Path::new(&config.comfyui_path)
         .join("custom_nodes")
@@ -3299,32 +3797,37 @@ pub async fn find_model_by_hash(
     let needle = hash.to_uppercase();
     let is_autov2 = needle.len() == 10;
 
-    let entries = std::fs::read_dir(&models_dir)?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if !(name.ends_with(".safetensors") || name.ends_with(".ckpt")) {
-            continue;
-        }
-        if let Ok(h) = full_sha256(&path) {
-            let matches = if is_autov2 {
-                autov2_hash(&h) == needle
-            } else {
-                h == needle
-            };
-            if matches {
-                return Ok(Some(name));
+    // Hashing multi-GB checkpoints is blocking I/O; keep it off the async runtime.
+    tokio::task::spawn_blocking(move || {
+        let entries = std::fs::read_dir(&models_dir)?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if !(name.ends_with(".safetensors") || name.ends_with(".ckpt")) {
+                continue;
+            }
+            if let Ok(h) = full_sha256(&path) {
+                let matches = if is_autov2 {
+                    autov2_hash(&h) == needle
+                } else {
+                    h == needle
+                };
+                if matches {
+                    return Ok(Some(name));
+                }
             }
         }
-    }
-    Ok(None)
+        Ok::<_, AppError>(None)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))?
 }
 
 /// Compute the full SHA256 hash of a model file (uppercase hex, CivitAI-compatible).
@@ -3358,12 +3861,23 @@ pub async fn hash_model_file(
     if !path.is_file() {
         return Err(AppError::Other(format!("File not found: {}", filename)));
     }
-    let sha256 = full_sha256(&path)?;
+    let sha256 = tokio::task::spawn_blocking(move || full_sha256(&path))
+        .await
+        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
     let autov2 = autov2_hash(&sha256);
     Ok(ModelHashResult { sha256, autov2 })
 }
 
+/// A CivitAI model-version hash: AutoV1/AutoV2/CRC32/Blake3/SHA256 are all hex,
+/// 8 to 64 characters. It is placed in the URL path, so nothing else passes.
+pub(crate) fn is_valid_civitai_hash(hash: &str) -> bool {
+    (8..=64).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<Value, AppError> {
+    if !is_valid_civitai_hash(hash) {
+        return Err(AppError::Other("Invalid model hash".into()));
+    }
     let api_key = state.config.read().await.civitai_api_key.clone();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let mut req = state
@@ -3596,20 +4110,6 @@ pub(crate) async fn save_model_sidecar_thumbnail_inner(
     gallery_filename: Option<&str>,
     gallery_dir: Option<&std::path::Path>,
 ) -> Result<(), AppError> {
-    let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
-        if let Some(dir) = gallery_dir {
-            load_gallery_image_png_from_dir(dir, gf).await?
-        } else {
-            load_gallery_image_png_inner(gf.to_string()).await?
-        }
-    } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
-        fetch_civitai_image_bytes(state, url).await?
-    } else {
-        return Err(AppError::Other(
-            "Provide image_url or gallery_filename".into(),
-        ));
-    };
-
     let (comfyui_path, extra_model_paths) = {
         let config = state.config.read().await;
         if config.comfyui_path.is_empty() {
@@ -3628,6 +4128,26 @@ pub(crate) async fn save_model_sidecar_thumbnail_inner(
         filename,
     )
     .ok_or_else(|| AppError::Other(format!("Model file not found: {}", filename)))?;
+    // The sidecar is `{stem}.png` beside the target, so the target has to be a
+    // real model file: otherwise `filename=foo.png` would overwrite foo.png
+    // itself, and any other file in the model folders could get a sibling.
+    if !is_model_sidecar_target(&path) {
+        return Err(AppError::Other(format!("Not a model file: {}", filename)));
+    }
+
+    let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
+        if let Some(dir) = gallery_dir {
+            load_gallery_image_png_from_dir(dir, gf).await?
+        } else {
+            load_gallery_image_png_inner(gf.to_string()).await?
+        }
+    } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
+        fetch_civitai_image_bytes(state, url).await?
+    } else {
+        return Err(AppError::Other(
+            "Provide image_url or gallery_filename".into(),
+        ));
+    };
 
     let model_dir = path
         .parent()
@@ -4474,6 +4994,10 @@ async fn lookup_civitai_base_model_by_hash(
     state: &Arc<AppState>,
     hash: &str,
 ) -> Result<Option<String>, AppError> {
+    // A malformed hash (e.g. from foreign metadata) cannot match anything.
+    if !is_valid_civitai_hash(hash) {
+        return Ok(None);
+    }
     let data = match civitai_lookup_hash_value(state, hash).await {
         Ok(data) => data,
         Err(AppError::Other(message)) if message == "Model not found on CivitAI" => {
@@ -4487,6 +5011,27 @@ async fn lookup_civitai_base_model_by_hash(
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(str::to_string))
+}
+
+/// The CivitAI key for a server-side CivitAI call: the one the client sent,
+/// else the instance's configured key. Browser clients below admin never get
+/// the configured key from `get_config`, so without this fallback their Model
+/// Hub calls would run unauthenticated. The key itself never goes back to them.
+pub(crate) fn effective_civitai_key(
+    client_key: Option<String>,
+    configured: Option<String>,
+) -> Option<String> {
+    let usable = |key: &String| !key.trim().is_empty();
+    client_key.filter(usable).or(configured.filter(usable))
+}
+
+/// [`effective_civitai_key`] against the current config.
+pub(crate) async fn civitai_key_with_fallback(
+    state: &AppState,
+    client_key: Option<String>,
+) -> Option<String> {
+    let configured = state.config.read().await.civitai_api_key.clone();
+    effective_civitai_key(client_key, configured)
 }
 
 /// Search CivitAI models. Shared by the Tauri command and the LAN web server route.
@@ -4549,7 +5094,7 @@ pub async fn civitai_search_models_internal(
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
 
-    if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
+    if let Some(key) = civitai_key_with_fallback(state, params.api_key).await {
         req = req.bearer_auth(key);
     }
 
@@ -4596,7 +5141,7 @@ pub async fn civitai_get_model_internal(
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
 
-    if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
+    if let Some(key) = civitai_key_with_fallback(state, api_key).await {
         req = req.bearer_auth(key);
     }
 
@@ -4635,6 +5180,7 @@ pub async fn civitai_list_architectures(
     state: State<'_, Arc<AppState>>,
     api_key: Option<String>,
 ) -> Result<Vec<String>, AppError> {
+    let api_key = civitai_key_with_fallback(&state, api_key).await;
     let mut architectures = BTreeSet::<String>::new();
 
     // Add common architectures first to guarantee they're present
@@ -5952,6 +6498,70 @@ pub(crate) fn validate_lora_files_for_generation(
     Ok(())
 }
 
+/// Whether generation-time checks can look for model files on this machine.
+///
+/// Only the app-launched ComfyUI loads its models from the local
+/// `comfyui_path` / `extra_model_paths`. A remote server lists and loads its
+/// own files, which need not exist here at all, so a local lookup would reject
+/// every LoRA or model the server offers.
+pub(crate) fn generation_models_are_local(config: &crate::config::AppConfig) -> bool {
+    matches!(config.server_mode, crate::config::ServerMode::AutoLaunch)
+}
+
+/// [`validate_lora_files_for_generation`] against the configured install,
+/// skipped when the LoRAs live on a remote ComfyUI server.
+pub(crate) fn validate_generation_loras(
+    config: &crate::config::AppConfig,
+    loras: &[crate::comfyui::types::LoraParam],
+) -> Result<(), AppError> {
+    if !generation_models_are_local(config) {
+        return Ok(());
+    }
+    validate_lora_files_for_generation(
+        &config.comfyui_path,
+        config.extra_model_paths.as_deref(),
+        loras,
+    )
+}
+
+#[cfg(test)]
+mod generation_lora_validation_tests {
+    use super::*;
+    use crate::config::{AppConfig, ServerMode};
+
+    fn missing_lora() -> Vec<crate::comfyui::types::LoraParam> {
+        vec![crate::comfyui::types::LoraParam {
+            name: "only-on-the-server.safetensors".to_string(),
+            strength_model: 1.0,
+            strength_clip: 1.0,
+        }]
+    }
+
+    fn config(mode: ServerMode) -> AppConfig {
+        let dir = std::env::temp_dir().join("mooshie-lora-validation-test-empty");
+        AppConfig {
+            server_mode: mode,
+            comfyui_path: dir.to_string_lossy().to_string(),
+            extra_model_paths: None,
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn remote_server_loras_are_not_looked_up_locally() {
+        assert!(!generation_models_are_local(&config(ServerMode::Remote)));
+        assert!(validate_generation_loras(&config(ServerMode::Remote), &missing_lora()).is_ok());
+    }
+
+    #[test]
+    fn local_server_still_rejects_a_missing_lora() {
+        assert!(generation_models_are_local(&config(ServerMode::AutoLaunch)));
+        let err = validate_generation_loras(&config(ServerMode::AutoLaunch), &missing_lora())
+            .expect_err("a LoRA missing from the local install must be rejected");
+        assert!(err.to_string().contains("LoRA file not found"));
+    }
+}
+
 /// Fetch combined LoRA info: hash the file, look up on CivitAI, read ModelSpec.
 /// Returns structured info for the LoRA gallery panel.
 #[cfg(feature = "desktop")]
@@ -6501,6 +7111,7 @@ pub async fn import_image_directory(
 }
 
 /// Recursively collect all image files (PNG, JPG, WebP) from a directory.
+#[cfg(feature = "desktop")]
 fn collect_image_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, AppError> {
     let mut files = Vec::new();
     collect_image_files_recursive(dir, &mut files)?;
@@ -6513,16 +7124,51 @@ fn collect_image_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>,
     Ok(files)
 }
 
+/// How many directory levels below the chosen folder an import descends.
+/// Real photo libraries nest a handful of levels; this only has to stop a
+/// pathological tree.
+#[cfg(any(feature = "desktop", test))]
+const IMPORT_MAX_DEPTH: usize = 32;
+
+#[cfg(any(feature = "desktop", test))]
 fn collect_image_files_recursive(
     dir: &std::path::Path,
     files: &mut Vec<std::path::PathBuf>,
 ) -> Result<(), AppError> {
+    collect_image_files_at_depth(dir, files, 0)
+}
+
+/// Directory symlinks are never followed: `entry.file_type()` reports the link
+/// itself, so a loop (Wine's `dosdevices/z: -> /`, say) can neither recurse
+/// forever nor pull the whole filesystem into the gallery. A symlink to a
+/// single image file is still imported.
+#[cfg(any(feature = "desktop", test))]
+fn collect_image_files_at_depth(
+    dir: &std::path::Path,
+    files: &mut Vec<std::path::PathBuf>,
+    depth: usize,
+) -> Result<(), AppError> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
         let path = entry.path();
-        if path.is_dir() {
-            collect_image_files_recursive(&path, files)?;
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        if file_type.is_dir() {
+            if depth < IMPORT_MAX_DEPTH {
+                collect_image_files_at_depth(&path, files, depth + 1)?;
+            } else {
+                log::warn!(
+                    "Import: not descending past {} levels into {}",
+                    IMPORT_MAX_DEPTH,
+                    path.display()
+                );
+            }
+            continue;
+        }
+        let is_file = file_type.is_file() || (file_type.is_symlink() && path.is_file());
+        if !is_file {
+            continue;
+        }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_ascii_lowercase().as_str() {
                 "png" | "jpg" | "jpeg" | "webp" => files.push(path),
                 _ => {}
@@ -6530,6 +7176,83 @@ fn collect_image_files_recursive(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod import_walk_tests {
+    use super::{collect_image_files_recursive, IMPORT_MAX_DEPTH};
+    use std::path::PathBuf;
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mooshie-import-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn names(files: &[PathBuf]) -> Vec<String> {
+        let mut names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn collects_nested_images_only() {
+        let root = scratch();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        std::fs::write(root.join("top.PNG"), b"x").unwrap();
+        std::fs::write(root.join("a/mid.jpg"), b"x").unwrap();
+        std::fs::write(root.join("a/b/deep.webp"), b"x").unwrap();
+        std::fs::write(root.join("a/notes.txt"), b"x").unwrap();
+        // A directory named like an image is still a directory.
+        std::fs::create_dir(root.join("a/folder.png")).unwrap();
+
+        let mut files = Vec::new();
+        collect_image_files_recursive(&root, &mut files).unwrap();
+        assert_eq!(names(&files), ["deep.webp", "mid.jpg", "top.PNG"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_symlinks_are_not_followed() {
+        let root = scratch();
+        let outside = scratch();
+        std::fs::write(outside.join("elsewhere.png"), b"x").unwrap();
+        std::fs::write(root.join("here.png"), b"x").unwrap();
+        // A loop back to the root (Wine's `dosdevices/z: -> /` shape) and a
+        // link out to another tree: neither is walked.
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        // A link to a single image file is still an image.
+        std::os::unix::fs::symlink(outside.join("elsewhere.png"), root.join("linked.png")).unwrap();
+        // A dangling link is skipped rather than failing the import.
+        std::os::unix::fs::symlink(root.join("missing.png"), root.join("dangling.png")).unwrap();
+
+        let mut files = Vec::new();
+        collect_image_files_recursive(&root, &mut files).unwrap();
+        assert_eq!(names(&files), ["here.png", "linked.png"]);
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn descent_stops_at_the_depth_cap() {
+        let root = scratch();
+        let mut dir = root.clone();
+        for level in 0..=IMPORT_MAX_DEPTH + 1 {
+            dir = dir.join(format!("d{level}"));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join(format!("img{level}.png")), b"x").unwrap();
+        }
+        let mut files = Vec::new();
+        collect_image_files_recursive(&root, &mut files).unwrap();
+        // d0 sits at depth 1; the deepest walked directory is at the cap.
+        assert_eq!(files.len(), IMPORT_MAX_DEPTH);
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
 
 /// Export application logs and system information for troubleshooting. Collects:
@@ -6828,7 +7551,7 @@ fn append_env_section(output: &mut String) {
             found = true;
             // Proxy vars can embed credentials (user:pass@host); redact them.
             let shown = if var.ends_with("PROXY") {
-                redact_proxy_credentials(&val)
+                redact_url_secrets(&val)
             } else {
                 val
             };
@@ -6845,15 +7568,48 @@ fn append_env_section(output: &mut String) {
     let _ = writeln!(output);
 }
 
-/// Redact any `user:pass@` credentials from a proxy URL so the log never carries
-/// proxy secrets while still showing the host being used.
-#[cfg(any(feature = "desktop", feature = "server"))]
-fn redact_proxy_credentials(url: &str) -> String {
-    match (url.find("://"), url.find('@')) {
-        (Some(scheme_end), Some(at)) if at > scheme_end + 3 => {
-            format!("{}://***@{}", &url[..scheme_end], &url[at + 1..])
+/// Strip secret-shaped parts of a URL before it goes into the diagnostic log
+/// (which in-app error reports post publicly): `user:pass@` credentials and
+/// the query string, where API keys often ride. The host stays visible.
+/// Works without a scheme (`user:pass@proxy:3128`), and everything up to the
+/// last `@` counts as credentials, so a password containing `@` or `/` is
+/// never partly shown.
+pub(crate) fn redact_url_secrets(url: &str) -> String {
+    let (scheme, rest) = match url.find("://") {
+        Some(i) => url.split_at(i + 3),
+        None => ("", url),
+    };
+    let query_start = rest.find(['?', '#']).unwrap_or(rest.len());
+    let (before_query, query) = rest.split_at(query_start);
+    let before_query = match before_query.rfind('@') {
+        Some(at) => format!("***@{}", &before_query[at + 1..]),
+        None => before_query.to_string(),
+    };
+    let query = if query.is_empty() { "" } else { "?***" };
+    format!("{scheme}{before_query}{query}")
+}
+
+#[cfg(test)]
+mod redact_url_secrets_tests {
+    use super::redact_url_secrets;
+
+    #[test]
+    fn credentials_and_queries_never_reach_the_log() {
+        let cases = [
+            ("http://127.0.0.1:8188", "http://127.0.0.1:8188"),
+            ("http://user:secret@proxy:3128", "http://***@proxy:3128"),
+            ("user:secret@proxy:3128", "***@proxy:3128"),
+            ("http://u:p@ss@host/v1", "http://***@host/v1"),
+            ("http://u:pa/ss@host/v1", "http://***@host/v1"),
+            (
+                "https://api.example.com/v1?key=sk-123",
+                "https://api.example.com/v1?***",
+            ),
+            ("https://host/v1#token=abc", "https://host/v1?***"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(redact_url_secrets(input), expected, "{input}");
         }
-        _ => url.to_string(),
     }
 }
 
@@ -6957,9 +7713,12 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     // Presence flag for secret-bearing fields — never log the value itself.
     let cfgd = |s: &str| if s.is_empty() { "no" } else { "yes" };
 
+    // One snapshot of the config for the whole report: the read lock is not
+    // held across the model-folder walk or the Python subprocesses below.
+    let config = state.config.read().await.clone();
+
     // App config (sanitized — no secrets, just relevant settings)
     {
-        let config = state.config.read().await;
         let _ = writeln!(output, "=== App Configuration ===");
         let _ = writeln!(
             output,
@@ -6971,7 +7730,11 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
             }
         );
         let _ = writeln!(output, "Server mode: {:?}", config.server_mode);
-        let _ = writeln!(output, "Server URL: {}", config.server_url);
+        let _ = writeln!(
+            output,
+            "Server URL: {}",
+            redact_url_secrets(&config.server_url)
+        );
         let _ = writeln!(output, "Server port: {}", config.server_port);
         let _ = writeln!(output, "VRAM mode: {}", config.vram_mode);
         let _ = writeln!(output, "Attention backend: {}", config.attention_backend);
@@ -7106,9 +7869,9 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
                 output,
                 "Prompt assistant: external endpoint, base_url={}, model={}, api_key={}",
                 if config.llm_external_base_url.is_empty() {
-                    "(unset)"
+                    "(unset)".to_string()
                 } else {
-                    &config.llm_external_base_url
+                    redact_url_secrets(&config.llm_external_base_url)
                 },
                 if config.llm_external_model.is_empty() {
                     "(unset)"
@@ -7129,16 +7892,21 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
         }
         let _ = writeln!(output);
 
-        // Installed models inventory (names + sizes) — held under the same lock
-        // so it reflects the exact ComfyUI + extra-model paths reported above.
-        append_models_section(
-            &mut output,
-            &config.comfyui_path,
-            config.extra_model_paths.as_deref(),
-        );
-
-        // Custom nodes (top cause of ComfyUI breakage) — names + git rev.
-        append_custom_nodes_section(&mut output, &config.comfyui_path);
+        // Installed models inventory (names + sizes) from the same snapshot, so
+        // it reflects the exact ComfyUI + extra-model paths reported above, and
+        // custom nodes (top cause of ComfyUI breakage) — names + git rev. Both
+        // walk the disk, so they run on the blocking pool.
+        let comfyui_path = config.comfyui_path.clone();
+        let extra_model_paths = config.extra_model_paths.clone();
+        let walked = tokio::task::spawn_blocking(move || {
+            let mut section = String::new();
+            append_models_section(&mut section, &comfyui_path, extra_model_paths.as_deref());
+            append_custom_nodes_section(&mut section, &comfyui_path);
+            section
+        })
+        .await
+        .unwrap_or_else(|e| format!("(model and custom node scan failed: {})\n\n", e));
+        output.push_str(&walked);
     }
 
     // Relevant environment variables (GPU/ML tuning; allowlisted, no secrets)
@@ -7187,7 +7955,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     // so out-of-memory and thermal-throttle reports carry live state.
     let _ = writeln!(output, "=== GPU Info ===");
     let nvidia_smi_out = {
-        let mut cmd = std::process::Command::new("nvidia-smi");
+        let mut cmd = tokio_command_no_window("nvidia-smi");
         cmd.args([
             "--query-gpu=name,driver_version,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,compute_cap",
             "--format=csv,noheader",
@@ -7195,12 +7963,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
         // Force English / POSIX locale so diagnostics read the same regardless
         // of the user's system language.
         cmd.env("LC_ALL", "C").env("LANG", "C");
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-        cmd.output()
+        cmd.output().await
     };
     match nvidia_smi_out {
         Ok(o) if o.status.success() => {
@@ -7212,9 +7975,9 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     }
     let _ = writeln!(output);
 
-    // Python / ComfyUI version info
+    // Python / ComfyUI version info (tokio processes: a cold `import torch`
+    // takes seconds)
     {
-        let config = state.config.read().await;
         if !config.venv_path.is_empty() {
             let _ = writeln!(output, "=== Python Environment ===");
             let python_path = {
@@ -7226,33 +7989,20 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
                 }
             };
             if python_path.exists() {
-                #[cfg(target_os = "windows")]
-                let hide: u32 = 0x08000000; // CREATE_NO_WINDOW
-
-                let mut py_ver_cmd = std::process::Command::new(&python_path);
+                let mut py_ver_cmd = tokio_command_no_window(&python_path);
                 py_ver_cmd.args(["--version"]);
                 py_ver_cmd.env("LC_ALL", "C").env("LANG", "C");
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::process::CommandExt;
-                    py_ver_cmd.creation_flags(hide);
-                }
-                if let Ok(o) = py_ver_cmd.output() {
+                if let Ok(o) = py_ver_cmd.output().await {
                     let _ = write!(output, "Python: {}", String::from_utf8_lossy(&o.stdout));
                     if !o.stderr.is_empty() {
                         let _ = write!(output, "{}", String::from_utf8_lossy(&o.stderr));
                     }
                 }
                 // Get torch version
-                let mut torch_cmd = std::process::Command::new(&python_path);
+                let mut torch_cmd = tokio_command_no_window(&python_path);
                 torch_cmd.args(["-c", "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}') if torch.cuda.is_available() else None"]);
                 torch_cmd.env("LC_ALL", "C").env("LANG", "C");
-                #[cfg(target_os = "windows")]
-                {
-                    use std::os::windows::process::CommandExt;
-                    torch_cmd.creation_flags(hide);
-                }
-                if let Ok(o) = torch_cmd.output() {
+                if let Ok(o) = torch_cmd.output().await {
                     if o.status.success() {
                         let _ = write!(output, "{}", String::from_utf8_lossy(&o.stdout));
                     }
@@ -7266,7 +8016,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
 
     // ComfyUI stderr log
     let _ = writeln!(output, "=== ComfyUI Log ===");
-    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+    let log_path = crate::comfyui::process::comfyui_stderr_log_path(None).unwrap_or_default();
     let _ = writeln!(output, "(Source: {})", log_path.display());
     // This file is truncated only when MooshieUI spawns ComfyUI itself. When it
     // attached to an already-running server instead, the contents can be from a
@@ -7344,6 +8094,34 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     output
 }
 
+#[cfg(all(test, any(feature = "desktop", feature = "server")))]
+mod diagnostic_log_tests {
+    #[tokio::test]
+    async fn report_lists_models_and_nodes_from_the_config_snapshot() {
+        let base =
+            std::env::temp_dir().join(format!("mooshieui-diagnostic-log-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::create_dir_all(base.join("models").join("loras")).unwrap();
+        std::fs::write(
+            base.join("models")
+                .join("loras")
+                .join("ink_style.safetensors"),
+            b"x",
+        )
+        .unwrap();
+        std::fs::create_dir_all(base.join("custom_nodes").join("some-node-pack")).unwrap();
+
+        let state = crate::state::AppState::new(crate::config::AppConfig {
+            comfyui_path: base.to_string_lossy().to_string(),
+            ..Default::default()
+        });
+        let report = super::build_diagnostic_log(&state, None).await;
+        assert!(report.contains("ink_style.safetensors"), "{report}");
+        assert!(report.contains("some-node-pack"), "{report}");
+        std::fs::remove_dir_all(&base).ok();
+    }
+}
+
 /// Detect the MIME type of image bytes from magic bytes.
 pub(crate) fn detect_image_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG") {
@@ -7411,11 +8189,79 @@ pub async fn fetch_cached_image(
     // Cache miss — fetch through the backend so auth headers are applied.
     let bytes = fetch_civitai_image_bytes(state.inner().as_ref(), &url).await?;
 
-    // Persist to disk cache (best-effort; ignore write errors).
-    let _ = std::fs::write(&cache_path, &bytes);
+    // Persist to disk cache (best-effort; ignore write errors), then trim the
+    // cache off the request path so it cannot grow without bound.
+    if std::fs::write(&cache_path, &bytes).is_ok() {
+        tauri::async_runtime::spawn_blocking(move || {
+            prune_image_cache(&cache_dir, CACHE_TTL_SECS);
+        });
+    }
 
     let mime = detect_image_mime(&bytes);
     Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+}
+
+/// Most files the desktop CivitAI image cache (`image_cache/`) keeps.
+#[cfg(feature = "desktop")]
+const IMAGE_CACHE_MAX_ENTRIES: usize = 2000;
+/// Most bytes the desktop CivitAI image cache keeps.
+#[cfg(feature = "desktop")]
+const IMAGE_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Which cache entries to delete, given `(key, size_bytes, age_secs)` for each:
+/// every entry at or past the TTL, then the oldest remaining ones until both
+/// the entry-count and total-size limits hold.
+#[cfg(any(feature = "desktop", test))]
+fn image_cache_evictions<K>(
+    mut entries: Vec<(K, u64, u64)>,
+    max_entries: usize,
+    max_bytes: u64,
+    ttl_secs: u64,
+) -> Vec<K> {
+    // Oldest first.
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.2));
+    let mut total: u64 = entries.iter().map(|entry| entry.1).sum();
+    let mut remaining = entries.len();
+    let mut evict = Vec::new();
+    for (key, size, age) in entries {
+        if age >= ttl_secs || remaining > max_entries || total > max_bytes {
+            total = total.saturating_sub(size);
+            remaining -= 1;
+            evict.push(key);
+        }
+    }
+    evict
+}
+
+/// Delete expired and excess files from the image cache directory.
+#[cfg(feature = "desktop")]
+fn prune_image_cache(cache_dir: &std::path::Path, ttl_secs: u64) {
+    let Ok(read_dir) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    let entries: Vec<(std::path::PathBuf, u64, u64)> = read_dir
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            let age = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map_or(0, |e| e.as_secs());
+            Some((entry.path(), meta.len(), age))
+        })
+        .collect();
+    for path in image_cache_evictions(
+        entries,
+        IMAGE_CACHE_MAX_ENTRIES,
+        IMAGE_CACHE_MAX_BYTES,
+        ttl_secs,
+    ) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Read an image from the native clipboard and return PNG bytes.
@@ -7483,20 +8329,17 @@ pub struct GpuWorkerInfo {
     pub label: String,
 }
 
-/// Query live GPU stats from nvidia-smi.
-fn query_nvidia_smi_stats() -> Result<Vec<GpuStats>, AppError> {
-    let mut cmd = std::process::Command::new("nvidia-smi");
+/// Query live GPU stats from nvidia-smi (a tokio process: the GPU panel polls
+/// this, and a slow or wedged driver must not stall an async worker).
+async fn query_nvidia_smi_stats() -> Result<Vec<GpuStats>, AppError> {
+    let mut cmd = tokio_command_no_window("nvidia-smi");
     cmd.args([
         "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
         "--format=csv,noheader,nounits",
     ]);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
     let output = cmd
         .output()
+        .await
         .map_err(|e| AppError::Other(format!("nvidia-smi not found: {}", e)))?;
 
     if !output.status.success() {
@@ -7543,7 +8386,7 @@ pub async fn get_gpu_stats(state: State<'_, Arc<AppState>>) -> Result<Vec<GpuSta
 
 /// Shared implementation used by both Tauri command and REST handler.
 pub async fn get_gpu_stats_inner(state: &AppState) -> Result<Vec<GpuStats>, AppError> {
-    let mut gpus = query_nvidia_smi_stats()?;
+    let mut gpus = query_nvidia_smi_stats().await?;
 
     // Merge worker status info
     let statuses = state.gpu_manager.worker_statuses().await;
@@ -7605,15 +8448,13 @@ fn venv_python_bin(venv_path: &str) -> std::path::PathBuf {
 }
 
 /// Probe whether the CUDA compiler (`nvcc`) is available on PATH.
-fn nvcc_available() -> bool {
-    let mut cmd = std::process::Command::new("nvcc");
+async fn nvcc_available() -> bool {
+    let mut cmd = tokio_command_no_window("nvcc");
     cmd.arg("--version");
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd.output().map(|o| o.status.success()).unwrap_or(false)
+    cmd.output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Compute per-backend support from detected capabilities. Hard-block rules:
@@ -7683,7 +8524,7 @@ pub async fn check_attention_backend(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_compute_capability() -> Result<Option<f32>, AppError> {
-    Ok(detect_compute_capability())
+    Ok(detect_compute_capability().await)
 }
 
 /// Core of `check_attention_backend`, shared by the desktop Tauri command and the
@@ -7730,8 +8571,8 @@ pub async fn check_attention_backend_core(
         }
     }
 
-    let compute_capability = detect_compute_capability();
-    let nvcc = nvcc_available();
+    let compute_capability = detect_compute_capability().await;
+    let nvcc = nvcc_available().await;
     let support = compute_backend_support(compute_capability, nvcc, cfg!(target_os = "windows"));
 
     Ok(AttentionBackendStatus {
@@ -7745,15 +8586,11 @@ pub async fn check_attention_backend_core(
 }
 
 /// Detect the highest NVIDIA GPU compute capability (e.g. 8.6 for RTX 3080).
-fn detect_compute_capability() -> Option<f32> {
-    let mut cmd = std::process::Command::new("nvidia-smi");
+/// A tokio process: the gen page calls this on mount and after every generation.
+async fn detect_compute_capability() -> Option<f32> {
+    let mut cmd = tokio_command_no_window("nvidia-smi");
     cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    let output = cmd.output().ok()?;
+    let output = cmd.output().await.ok()?;
 
     if !output.status.success() {
         return None;
@@ -7767,8 +8604,8 @@ fn detect_compute_capability() -> Option<f32> {
 }
 
 /// Public accessor for browser-mode command dispatch.
-pub fn detect_compute_capability_pub() -> Option<f32> {
-    detect_compute_capability()
+pub async fn detect_compute_capability_pub() -> Option<f32> {
+    detect_compute_capability().await
 }
 
 /// Install (or uninstall) an attention backend package in the venv.
@@ -7823,8 +8660,11 @@ pub async fn install_attention_backend_core(
     // Preflight: reject hard-blocked backends before touching any packages, so a
     // doomed source build never even starts.
     if backend != "default" {
-        let support =
-            compute_backend_support(detect_compute_capability(), nvcc_available(), is_windows);
+        let support = compute_backend_support(
+            detect_compute_capability().await,
+            nvcc_available().await,
+            is_windows,
+        );
         if let Some(s) = support.iter().find(|s| s.backend == backend) {
             if !s.supported {
                 let reason = match s.reason.as_deref() {
@@ -8556,4 +9396,115 @@ pub async fn get_logs(source: String, lines: Option<usize>) -> Result<Vec<String
         _ => Vec::new(),
     };
     Ok(out)
+}
+
+#[cfg(test)]
+mod lan_command_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn animadex_proxy_stays_under_the_characters_api() {
+        let ok = animadex_proxy_url("api/characters/search?q=miku&page=2", None).unwrap();
+        assert_eq!(
+            ok.as_str(),
+            "https://animadex.net/api/characters/search?q=miku&page=2"
+        );
+        let with_query = animadex_proxy_url("/api/characters/facets", Some("lang=en")).unwrap();
+        assert_eq!(
+            with_query.as_str(),
+            "https://animadex.net/api/characters/facets?lang=en"
+        );
+        for bad in [
+            "api/characters/../../x",
+            "api/characters/../admin",
+            "api/characters/./../../x",
+            "api/characters/%2e%2e/%2E%2E/x",
+            "api/characters/.%2e/x",
+            "api/characters/..%2fx",
+            "api/characters\\..\\..\\x",
+            "api/characters/x#frag",
+            "api/other/",
+            "api/characters",
+            "//evil.example/api/characters/",
+        ] {
+            assert!(animadex_proxy_url(bad, None).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn civitai_hashes_must_be_short_hex() {
+        for ok in [
+            "abcdef12",
+            "ABCDEF1234",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(is_valid_civitai_hash(ok), "{ok}");
+        }
+        let too_long = "a".repeat(65);
+        for bad in [
+            "",
+            "abc1234",
+            "abcdefgh",
+            "abcdef12/../../models",
+            "abcdef12?x=1",
+            too_long.as_str(),
+        ] {
+            assert!(!is_valid_civitai_hash(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn civitai_key_falls_back_to_the_configured_one() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(effective_civitai_key(s("client"), s("host")), s("client"));
+        assert_eq!(effective_civitai_key(None, s("host")), s("host"));
+        assert_eq!(effective_civitai_key(s("  "), s("host")), s("host"));
+        assert_eq!(effective_civitai_key(None, s(" ")), None);
+        assert_eq!(effective_civitai_key(None, None), None);
+    }
+
+    #[test]
+    fn image_cache_evicts_expired_then_oldest_entries() {
+        let ttl = 100;
+        // (key, size, age)
+        let entries = vec![
+            ("expired", 1, 150),
+            ("old", 10, 90),
+            ("mid", 10, 50),
+            ("new", 10, 1),
+        ];
+        let mut evicted = image_cache_evictions(entries.clone(), 10, 1_000, ttl);
+        evicted.sort();
+        assert_eq!(evicted, ["expired"]);
+
+        let mut evicted = image_cache_evictions(entries.clone(), 2, 1_000, ttl);
+        evicted.sort();
+        assert_eq!(evicted, ["expired", "old"]);
+
+        let mut evicted = image_cache_evictions(entries, 10, 15, ttl);
+        evicted.sort();
+        assert_eq!(evicted, ["expired", "mid", "old"]);
+
+        assert!(image_cache_evictions(Vec::<(&str, u64, u64)>::new(), 1, 1, ttl).is_empty());
+    }
+
+    #[test]
+    fn sidecar_thumbnails_only_target_existing_model_files() {
+        let dir = std::env::temp_dir().join(format!("mooshie-sidecar-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("model.safetensors");
+        let image = dir.join("foo.png");
+        let text = dir.join("notes.txt");
+        for path in [&model, &image, &text] {
+            std::fs::write(path, b"x").unwrap();
+        }
+        std::fs::create_dir_all(dir.join("folder.safetensors")).unwrap();
+
+        assert!(is_model_sidecar_target(&model));
+        assert!(!is_model_sidecar_target(&image));
+        assert!(!is_model_sidecar_target(&text));
+        assert!(!is_model_sidecar_target(&dir.join("folder.safetensors")));
+        assert!(!is_model_sidecar_target(&dir.join("missing.ckpt")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

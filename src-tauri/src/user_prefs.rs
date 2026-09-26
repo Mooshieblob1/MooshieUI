@@ -82,8 +82,11 @@ pub async fn save(username: &str, prefs: &UserPrefs) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     let bytes = serde_json::to_vec_pretty(prefs).map_err(|e| e.to_string())?;
-    tokio::fs::write(&path, &bytes)
+    // Atomic, because `load` treats a file it cannot parse as "no prefs yet":
+    // a write cut short would silently wipe the user's history and presets.
+    tokio::task::spawn_blocking(move || config::write_private_file_atomic(&path, &bytes))
         .await
+        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     Ok(())
 }

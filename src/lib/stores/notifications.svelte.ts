@@ -1,4 +1,4 @@
-import { isBrowserMode, authHeaders } from "../utils/ipc.js";
+import { isBrowserMode, authHeaders, userScopedKey } from "../utils/ipc.js";
 
 const LOCAL_NOTIFICATIONS_KEY = "mooshie-local-notifications";
 const MAX_LOCAL_NOTIFICATIONS = 100;
@@ -29,7 +29,7 @@ type NotificationInput = {
 
 function loadLocalNotifications(): Notification[] {
   try {
-    const raw = globalThis.localStorage?.getItem(LOCAL_NOTIFICATIONS_KEY);
+    const raw = globalThis.localStorage?.getItem(userScopedKey(LOCAL_NOTIFICATIONS_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -53,7 +53,7 @@ function loadLocalNotifications(): Notification[] {
 
 function saveLocalNotifications(notifications: Notification[]) {
   try {
-    globalThis.localStorage?.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+    globalThis.localStorage?.setItem(userScopedKey(LOCAL_NOTIFICATIONS_KEY), JSON.stringify(notifications));
   } catch {
     // Non-critical
   }

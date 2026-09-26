@@ -155,8 +155,8 @@ pub async fn interrogate_gallery_image(
     state: State<'_, Arc<AppState>>,
     filename: String,
 ) -> Result<InterrogationResult, AppError> {
-    // Validate filename -- no path traversal
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    // One plain gallery filename: no separators, traversal, drive prefix or NUL.
+    if !crate::commands::api::is_single_safe_filename(&filename) {
         return Err(AppError::Other("Invalid filename".into()));
     }
 

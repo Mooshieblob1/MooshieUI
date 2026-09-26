@@ -54,8 +54,8 @@ pub fn save(data: &[u8], ext: &str) -> Option<String> {
 
 /// Read a temp image by filename (returns bytes).
 pub fn load(filename: &str) -> Option<Vec<u8>> {
-    // Reject path traversal
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    // Reject path traversal (including Windows drive-relative names)
+    if !crate::commands::api::is_single_safe_filename(filename) {
         return None;
     }
     let path = temp_dir().join(filename);
@@ -64,7 +64,7 @@ pub fn load(filename: &str) -> Option<Vec<u8>> {
 
 /// Delete a specific temp image (called after the browser has fetched it).
 pub fn remove(filename: &str) {
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !crate::commands::api::is_single_safe_filename(filename) {
         return;
     }
     let path = temp_dir().join(filename);

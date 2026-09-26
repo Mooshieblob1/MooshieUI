@@ -9,6 +9,8 @@ on:
       - 'package*.json'
       - 'scripts/macos/**'
       - 'scripts/comfyui-compat/**'
+      - 'scripts/*artifacts.py'
+      - '.github/tauri-no-updater-artifacts.json'
       - '.github/workflows/macos-native.yml'
   workflow_dispatch:
   workflow_call:
@@ -37,6 +39,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
@@ -51,15 +54,18 @@ jobs:
           workspaces: src-tauri
           key: macos-native
           cache-on-failure: true
+      # --ignore-scripts: no dependency lifecycle script runs in CI, as in
+      # release.yml and the Dockerfile (esbuild's platform binary comes from its
+      # optional dependency; fsevents' install script is not needed to build).
       - name: Frontend checks
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run build
           npm run check:i18n
           npx svelte-check --output machine > svelte-check.txt 2>&1 || true
           # Existing type debt is reported; PR Guardrails separately blocks new errors.
           tail -n 1 svelte-check.txt
-          python3 -m unittest discover -s scripts -p test_release_artifacts.py
+          python3 -m unittest discover -s scripts -p 'test_*artifacts.py'
       - name: Verify release version
         if: ${{ inputs.release }}
         env:
@@ -70,21 +76,23 @@ jobs:
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
           cargo clippy --manifest-path src-tauri/Cargo.toml --locked --release --target aarch64-apple-darwin --features tauri/custom-protocol
-      - name: Build candidate DMG
-        if: ${{ !inputs.release }}
-        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
-      - name: Build release DMG and signed updater
+      # Candidate and release builds are the same build: the updater signing key
+      # never enters this job (see release.yml, sign-updaters). createUpdaterArtifacts
+      # is off, so for a release the updater archive `tauri build` would have made
+      # is created in the next step and signed by release.yml afterwards.
+      - name: Build DMG
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config .github/tauri-no-updater-artifacts.json
+      - name: Create updater archive
         if: ${{ inputs.release }}
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+        run: python3 scripts/updater_artifacts.py macos-archive --bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle
       - name: Verify app and disk image
         run: python3 scripts/macos/verify_bundle.py --bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle --output-dir macos-reports
       - name: Install the native managed runtime and check nodes
         run: |
           mkdir -p macos-runtime/bin
-          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          # Same pinned uv release and SHA-256 as UV_VERSION/UV_ASSETS in src-tauri/src/setup.rs.
+          curl --fail --location --retry 3 https://github.com/astral-sh/uv/releases/download/0.12.19/uv-aarch64-apple-darwin.tar.gz -o macos-runtime/uv.tar.gz
+          echo "a9a8df1eedeb192f2e47e40e2faabfb387db4b850209118786d42f89dde3e0ba  macos-runtime/uv.tar.gz" | shasum -a 256 -c -
           tar -xzf macos-runtime/uv.tar.gz --strip-components=1 -C macos-runtime/bin
           python3 scripts/macos/setup_runtime.py --uv "$PWD/macos-runtime/bin/uv" --work-dir "$PWD/macos-runtime"
       - name: Upload candidate and evidence

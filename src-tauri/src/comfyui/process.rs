@@ -141,8 +141,11 @@ fn appimage_env_overrides() -> Option<String> {
 /// `AssertionError: Torch not compiled with CUDA enabled` instead of falling
 /// back gracefully — so MooshieUI must pass `--cpu` explicitly when torch has
 /// no accelerator support.
-fn torch_has_accelerator(python_path: &str) -> bool {
-    let output = std_command_no_window(python_path)
+///
+/// Async (tokio process): the start paths await this while holding
+/// `comfyui_lifecycle`, and a cold `import torch` takes seconds.
+async fn torch_has_accelerator(python_path: &str) -> bool {
+    let output = tokio_command_no_window(python_path)
         .args([
             "-c",
             "import torch,sys\n\
@@ -151,16 +154,18 @@ fn torch_has_accelerator(python_path: &str) -> bool {
              a = a or (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available())\n\
              sys.exit(0 if a else 1)",
         ])
-        .output();
+        .output()
+        .await;
     matches!(output, Ok(o) if o.status.success())
 }
 
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
 /// Returns `true` if any installed GPU has compute capability >= 12.0.
-fn has_blackwell_gpu() -> bool {
-    let output = std_command_no_window("nvidia-smi")
+async fn has_blackwell_gpu() -> bool {
+    let output = tokio_command_no_window("nvidia-smi")
         .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
-        .output();
+        .output()
+        .await;
 
     match output {
         Ok(o) if o.status.success() => {
@@ -192,10 +197,11 @@ const H3_SCAN_DEPTH: u32 = 3;
 
 /// Largest total VRAM across installed NVIDIA GPUs, in bytes. `None` when
 /// nvidia-smi is absent or unreadable (AMD, Apple, headless CI).
-fn detect_max_vram_bytes() -> Option<u64> {
-    let output = std_command_no_window("nvidia-smi")
+async fn detect_max_vram_bytes() -> Option<u64> {
+    let output = tokio_command_no_window("nvidia-smi")
         .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
         .output()
+        .await
         .ok()?;
     if !output.status.success() {
         return None;
@@ -304,9 +310,12 @@ struct HighVramConflict {
 ///
 /// `None` whenever VRAM cannot be read or no H3 model is installed — this only
 /// ever drops the flag on evidence, never on a guess.
-fn h3_highvram_conflict(config: &AppConfig) -> Option<HighVramConflict> {
-    let vram_bytes = detect_max_vram_bytes()?;
-    let (model, model_bytes) = largest_h3_dit(config)?;
+fn h3_highvram_conflict(
+    vram_bytes: Option<u64>,
+    largest_dit: Option<(String, u64)>,
+) -> Option<HighVramConflict> {
+    let vram_bytes = vram_bytes?;
+    let (model, model_bytes) = largest_dit?;
     if (model_bytes as f64) > (vram_bytes as f64) * HIGHVRAM_HEADROOM_FRACTION {
         Some(HighVramConflict {
             model,
@@ -322,9 +331,23 @@ fn h3_highvram_conflict(config: &AppConfig) -> Option<HighVramConflict> {
 /// Self-heal in the same shape as the attention-backend fallback below: drop the
 /// flag and log why, rather than letting a config setting silently cost an hour
 /// per clip.
-fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
+///
+/// nvidia-smi runs as a tokio process and the model-folder walk on the
+/// blocking pool, since the start paths hold `comfyui_lifecycle` meanwhile.
+async fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    match h3_highvram_conflict(config) {
+    let vram_bytes = detect_max_vram_bytes().await;
+    let largest_dit = match vram_bytes {
+        Some(_) => {
+            let config = config.clone();
+            tokio::task::spawn_blocking(move || largest_h3_dit(&config))
+                .await
+                .ok()
+                .flatten()
+        }
+        None => None,
+    };
+    match h3_highvram_conflict(vram_bytes, largest_dit) {
         Some(conflict) => {
             log::warn!(
                 "vram_mode='high' but the installed MiniMax H3 model '{}' ({:.1} GB) fills \
@@ -469,6 +492,254 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
     } else {
         // Unknown flat directory — default to loras (most common fringe case)
         "loras"
+    }
+}
+
+/// Build the YAML for ComfyUI's `--extra-model-paths-config` flag from the
+/// configured shared model directories (newline-separated). Returns the YAML
+/// and the number of directories, or `None` when no directory is configured.
+///
+/// Two modes per directory:
+/// 1. **Structured** — directory has recognizable model subdirectories
+///    (e.g. loras/, checkpoints/).  Each category scans named subdirs only.
+/// 2. **Flat** — directory contains .safetensors/.ckpt files directly with
+///    no recognizable subdirectories.  We infer the category from the
+///    directory name and add "." ONLY for that category, preventing cross-
+///    contamination that the old blanket "." caused (fixed in v0.3.4).
+fn build_extra_model_paths_yaml(model_dirs_str: &str) -> Option<(String, usize)> {
+    let dirs: Vec<&str> = model_dirs_str
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if dirs.is_empty() {
+        return None;
+    }
+    let mut yaml_content = String::new();
+    for (i, dir) in dirs.iter().enumerate() {
+        let dir_path = crate::commands::api::resolve_extra_model_root(std::path::Path::new(dir));
+        // Escape YAML values: quote paths that contain spaces, colons,
+        // backslashes, or other special characters.
+        let quoted_dir = format!(
+            "\"{}\"",
+            dir_path
+                .to_string_lossy()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+
+        // Check if this directory looks structured (has known model subdirs)
+        let is_structured = is_structured_model_dir(&dir_path);
+
+        if is_structured {
+            // Structured directory: scan named subdirectories per category
+            yaml_content.push_str(&format!(
+                concat!(
+                    "mooshieui_{idx}:\n",
+                    "  base_path: {dir}\n",
+                    "  checkpoints: |\n",
+                    "    checkpoints\n",
+                    "    Stable-diffusion\n",
+                    "    Stable-Diffusion\n",
+                    "    StableDiffusion\n",
+                    "    models/Stable-diffusion\n",
+                    "    Models/Stable-Diffusion\n",
+                    "    Models/StableDiffusion\n",
+                    "    dlbackend/comfyui/models/checkpoints\n",
+                    "  vae: |\n",
+                    "    vae\n",
+                    "    VAE\n",
+                    "    models/VAE\n",
+                    "    Models/VAE\n",
+                    "    dlbackend/comfyui/models/vae\n",
+                    "  loras: |\n",
+                    "    loras\n",
+                    "    lora\n",
+                    "    Lora\n",
+                    "    LoRA\n",
+                    "    LoRAs\n",
+                    "    LORA\n",
+                    "    Loras\n",
+                    "    LyCORIS\n",
+                    "    lycoris\n",
+                    "    models/Lora\n",
+                    "    models/loras\n",
+                    "    models/LyCORIS\n",
+                    "    Models/Lora\n",
+                    "    Models/loras\n",
+                    "    Models/LyCORIS\n",
+                    "    dlbackend/comfyui/models/loras\n",
+                    "  upscale_models: |\n",
+                    "    upscale_models\n",
+                    "    ESRGAN\n",
+                    "    models/ESRGAN\n",
+                    "    models/RealESRGAN\n",
+                    "    Models/ESRGAN\n",
+                    "    Models/RealESRGAN\n",
+                    "    dlbackend/comfyui/models/upscale_models\n",
+                    "  embeddings: |\n",
+                    "    embeddings\n",
+                    "    models/TextualInversion\n",
+                    "    Models/TextualInversion\n",
+                    "    dlbackend/comfyui/models/embeddings\n",
+                    "  controlnet: |\n",
+                    "    controlnet\n",
+                    "    ControlNet\n",
+                    "    models/ControlNet\n",
+                    "    Models/ControlNet\n",
+                    "    dlbackend/comfyui/models/controlnet\n",
+                    "  clip: |\n",
+                    "    clip\n",
+                    "    models/clip\n",
+                    "    Models/clip\n",
+                    "    dlbackend/comfyui/models/clip\n",
+                    "  unet: |\n",
+                    "    unet\n",
+                    "    models/unet\n",
+                    "    Models/unet\n",
+                    "    dlbackend/comfyui/models/unet\n",
+                    "  diffusion_models: |\n",
+                    "    diffusion_models\n",
+                    "    DiffusionModels\n",
+                    "    models/diffusion_models\n",
+                    "    models/DiffusionModels\n",
+                    "    Models/diffusion_models\n",
+                    "    Models/DiffusionModels\n",
+                    "    dlbackend/comfyui/models/diffusion_models\n",
+                    "  text_encoders: |\n",
+                    "    text_encoders\n",
+                    "    TextEncoders\n",
+                    "    models/text_encoders\n",
+                    "    models/TextEncoders\n",
+                    "    Models/text_encoders\n",
+                    "    Models/TextEncoders\n",
+                    "    dlbackend/comfyui/models/text_encoders\n",
+                    // Anima ControlNet-LLLite weights load through core's
+                    // ModelPatchLoader, which reads this folder (not controlnet).
+                    "  model_patches: |\n",
+                    "    model_patches\n",
+                    "    ModelPatches\n",
+                    "    models/model_patches\n",
+                    "    Models/model_patches\n",
+                    "    dlbackend/comfyui/models/model_patches\n",
+                ),
+                idx = i + 1,
+                dir = quoted_dir
+            ));
+        } else {
+            // Flat directory: infer category from directory name and only
+            // expose "." for that single category to avoid cross-contamination.
+            let category = classify_flat_model_dir(&dir_path);
+            log::info!(
+                "Flat model directory {:?} classified as {:?}",
+                dir,
+                category
+            );
+            yaml_content.push_str(&format!(
+                "mooshieui_{idx}:\n  base_path: {dir}\n  {cat}: \".\"\n",
+                idx = i + 1,
+                dir = quoted_dir,
+                cat = category,
+            ));
+        }
+    }
+    Some((yaml_content, dirs.len()))
+}
+
+/// Per-user directory for files MooshieUI generates for the ComfyUI processes
+/// it spawns (currently the extra-model-paths YAML).
+///
+/// This deliberately lives under the app data dir and not the shared system
+/// temp dir: a fixed `/tmp` name can be pre-created by another local user, and
+/// ComfyUI loads `custom_nodes:` entries from that YAML (code execution).
+fn comfyui_runtime_dir() -> Option<std::path::PathBuf> {
+    crate::config::app_data_dir().map(|d| d.join("comfyui-runtime"))
+}
+
+/// File name of the extra-model-paths YAML for one spawn. Each GPU worker gets
+/// its own file so concurrently starting workers never rewrite a config that
+/// another ComfyUI process is still reading.
+fn extra_model_paths_yaml_name(worker_id: Option<u32>) -> String {
+    match worker_id {
+        None => "extra_model_paths.yaml".to_string(),
+        Some(id) => format!("extra_model_paths-worker{id}.yaml"),
+    }
+}
+
+/// Regenerate the extra-model-paths YAML for one spawn from the current
+/// settings and return its path, or `None` when no shared model directory is
+/// configured (or the file could not be written). Every spawn path (single
+/// process and each GPU worker) calls this, so a stale file from an earlier
+/// launch is never reused: it is overwritten, or removed when nothing is set.
+fn write_extra_model_paths_config(
+    config: &AppConfig,
+    worker_id: Option<u32>,
+) -> Option<std::path::PathBuf> {
+    let Some(dir) = comfyui_runtime_dir() else {
+        if config
+            .extra_model_paths
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            log::warn!("No app data directory; skipping extra model paths");
+        }
+        return None;
+    };
+    write_extra_model_paths_config_in(&dir, config.extra_model_paths.as_deref(), worker_id)
+}
+
+fn write_extra_model_paths_config_in(
+    dir: &std::path::Path,
+    model_dirs: Option<&str>,
+    worker_id: Option<u32>,
+) -> Option<std::path::PathBuf> {
+    let yaml_path = dir.join(extra_model_paths_yaml_name(worker_id));
+    let Some((yaml_content, count)) = model_dirs.and_then(build_extra_model_paths_yaml) else {
+        // Nothing configured: drop any file left by an earlier launch.
+        let _ = std::fs::remove_file(&yaml_path);
+        return None;
+    };
+    if let Err(e) =
+        std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&yaml_path, &yaml_content))
+    {
+        log::warn!("Failed to write {}: {}", yaml_path.display(), e);
+        let _ = std::fs::remove_file(&yaml_path);
+        return None;
+    }
+    log::info!("Using {} extra model path(s)", count);
+    Some(yaml_path)
+}
+
+/// Where a spawned ComfyUI process writes its stderr: `None` for the
+/// single-process instance, `Some(id)` for a GPU worker. Lives under the
+/// per-user app data dir (not a fixed, shared temp path).
+pub fn comfyui_stderr_log_path(worker_id: Option<u32>) -> Option<std::path::PathBuf> {
+    crate::config::app_data_dir().map(|d| d.join("logs").join(stderr_log_name(worker_id)))
+}
+
+fn stderr_log_name(worker_id: Option<u32>) -> String {
+    match worker_id {
+        None => "comfyui-desktop-stderr.log".to_string(),
+        Some(id) => format!("comfyui-desktop-worker{id}-stderr.log"),
+    }
+}
+
+/// Create (truncate) the stderr log file for a spawn. `None` if the app data
+/// dir is unknown or the file cannot be created; stderr is then discarded.
+fn create_stderr_log(worker_id: Option<u32>) -> Option<(std::path::PathBuf, std::fs::File)> {
+    let path = comfyui_stderr_log_path(worker_id)?;
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log::warn!("Could not create log dir {}: {}", parent.display(), e);
+            return None;
+        }
+    }
+    match std::fs::File::create(&path) {
+        Ok(f) => Some((path, f)),
+        Err(e) => {
+            log::warn!("Could not create {}: {}", path.display(), e);
+            None
+        }
     }
 }
 
@@ -1033,8 +1304,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // Checked before the VRAM-mode flag below because ComfyUI's argparser treats
     // --cpu and --lowvram/--novram/--highvram as mutually exclusive; passing both
     // exits with code 2 ("argument --cpu: not allowed with argument --lowvram").
-    let force_cpu =
-        !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path);
+    let force_cpu = !config.extra_args.iter().any(|a| a == "--cpu")
+        && !torch_has_accelerator(&python_path).await;
     if force_cpu {
         cmd.arg("--cpu");
         log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
@@ -1044,7 +1315,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     if !force_cpu && !config.extra_args.iter().any(|a| a == "--cpu") {
         match config.vram_mode.as_str() {
             "high" => {
-                apply_highvram_flag(&mut cmd, &config);
+                apply_highvram_flag(&mut cmd, &config).await;
             }
             "low" => {
                 cmd.arg("--lowvram");
@@ -1067,165 +1338,15 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae"
         )
     });
-    if !has_vae_flag && has_blackwell_gpu() {
+    if !has_vae_flag && has_blackwell_gpu().await {
         cmd.arg("--bf16-vae");
         log::info!("Auto-applied --bf16-vae for Blackwell GPU");
     }
 
-    // Shared model directory support (newline-separated for multiple directories)
-    // Generates a YAML config for ComfyUI's --extra-model-paths-config flag.
-    //
-    // Two modes per directory:
-    // 1. **Structured** — directory has recognizable model subdirectories
-    //    (e.g. loras/, checkpoints/).  Each category scans named subdirs only.
-    // 2. **Flat** — directory contains .safetensors/.ckpt files directly with
-    //    no recognizable subdirectories.  We infer the category from the
-    //    directory name and add "." ONLY for that category, preventing cross-
-    //    contamination that the old blanket "." caused (fixed in v0.3.4).
-    if let Some(ref model_dirs_str) = config.extra_model_paths {
-        let dirs: Vec<&str> = model_dirs_str
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty())
-            .collect();
-        if !dirs.is_empty() {
-            let yaml_path = std::env::temp_dir().join("mooshieui_extra_model_paths.yaml");
-            let mut yaml_content = String::new();
-            for (i, dir) in dirs.iter().enumerate() {
-                let dir_path =
-                    crate::commands::api::resolve_extra_model_root(std::path::Path::new(dir));
-                // Escape YAML values: quote paths that contain spaces, colons,
-                // backslashes, or other special characters.
-                let quoted_dir = format!(
-                    "\"{}\"",
-                    dir_path
-                        .to_string_lossy()
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                );
-
-                // Check if this directory looks structured (has known model subdirs)
-                let is_structured = is_structured_model_dir(&dir_path);
-
-                if is_structured {
-                    // Structured directory: scan named subdirectories per category
-                    yaml_content.push_str(&format!(
-                        concat!(
-                            "mooshieui_{idx}:\n",
-                            "  base_path: {dir}\n",
-                            "  checkpoints: |\n",
-                            "    checkpoints\n",
-                            "    Stable-diffusion\n",
-                            "    Stable-Diffusion\n",
-                            "    StableDiffusion\n",
-                            "    models/Stable-diffusion\n",
-                            "    Models/Stable-Diffusion\n",
-                            "    Models/StableDiffusion\n",
-                            "    dlbackend/comfyui/models/checkpoints\n",
-                            "  vae: |\n",
-                            "    vae\n",
-                            "    VAE\n",
-                            "    models/VAE\n",
-                            "    Models/VAE\n",
-                            "    dlbackend/comfyui/models/vae\n",
-                            "  loras: |\n",
-                            "    loras\n",
-                            "    lora\n",
-                            "    Lora\n",
-                            "    LoRA\n",
-                            "    LoRAs\n",
-                            "    LORA\n",
-                            "    Loras\n",
-                            "    LyCORIS\n",
-                            "    lycoris\n",
-                            "    models/Lora\n",
-                            "    models/loras\n",
-                            "    models/LyCORIS\n",
-                            "    Models/Lora\n",
-                            "    Models/loras\n",
-                            "    Models/LyCORIS\n",
-                            "    dlbackend/comfyui/models/loras\n",
-                            "  upscale_models: |\n",
-                            "    upscale_models\n",
-                            "    ESRGAN\n",
-                            "    models/ESRGAN\n",
-                            "    models/RealESRGAN\n",
-                            "    Models/ESRGAN\n",
-                            "    Models/RealESRGAN\n",
-                            "    dlbackend/comfyui/models/upscale_models\n",
-                            "  embeddings: |\n",
-                            "    embeddings\n",
-                            "    models/TextualInversion\n",
-                            "    Models/TextualInversion\n",
-                            "    dlbackend/comfyui/models/embeddings\n",
-                            "  controlnet: |\n",
-                            "    controlnet\n",
-                            "    ControlNet\n",
-                            "    models/ControlNet\n",
-                            "    Models/ControlNet\n",
-                            "    dlbackend/comfyui/models/controlnet\n",
-                            "  clip: |\n",
-                            "    clip\n",
-                            "    models/clip\n",
-                            "    Models/clip\n",
-                            "    dlbackend/comfyui/models/clip\n",
-                            "  unet: |\n",
-                            "    unet\n",
-                            "    models/unet\n",
-                            "    Models/unet\n",
-                            "    dlbackend/comfyui/models/unet\n",
-                            "  diffusion_models: |\n",
-                            "    diffusion_models\n",
-                            "    DiffusionModels\n",
-                            "    models/diffusion_models\n",
-                            "    models/DiffusionModels\n",
-                            "    Models/diffusion_models\n",
-                            "    Models/DiffusionModels\n",
-                            "    dlbackend/comfyui/models/diffusion_models\n",
-                            "  text_encoders: |\n",
-                            "    text_encoders\n",
-                            "    TextEncoders\n",
-                            "    models/text_encoders\n",
-                            "    models/TextEncoders\n",
-                            "    Models/text_encoders\n",
-                            "    Models/TextEncoders\n",
-                            "    dlbackend/comfyui/models/text_encoders\n",
-                            // Anima ControlNet-LLLite weights load through core's
-                            // ModelPatchLoader, which reads this folder (not controlnet).
-                            "  model_patches: |\n",
-                            "    model_patches\n",
-                            "    ModelPatches\n",
-                            "    models/model_patches\n",
-                            "    Models/model_patches\n",
-                            "    dlbackend/comfyui/models/model_patches\n",
-                        ),
-                        idx = i + 1,
-                        dir = quoted_dir
-                    ));
-                } else {
-                    // Flat directory: infer category from directory name and only
-                    // expose "." for that single category to avoid cross-contamination.
-                    let category = classify_flat_model_dir(&dir_path);
-                    log::info!(
-                        "Flat model directory {:?} classified as {:?}",
-                        dir,
-                        category
-                    );
-                    yaml_content.push_str(&format!(
-                        "mooshieui_{idx}:\n  base_path: {dir}\n  {cat}: \".\"\n",
-                        idx = i + 1,
-                        dir = quoted_dir,
-                        cat = category,
-                    ));
-                }
-            }
-            if let Err(e) = std::fs::write(&yaml_path, &yaml_content) {
-                log::warn!("Failed to write extra_model_paths.yaml: {}", e);
-            } else {
-                cmd.arg("--extra-model-paths-config").arg(&yaml_path);
-                log::info!("Using {} extra model path(s)", dirs.len());
-            }
-        }
+    // Shared model directory support (newline-separated for multiple
+    // directories), regenerated from the current settings on every spawn.
+    if let Some(yaml_path) = write_extra_model_paths_config(&config, None) {
+        cmd.arg("--extra-model-paths-config").arg(&yaml_path);
     }
 
     for arg in &config.extra_args {
@@ -1288,10 +1409,11 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    // Log ComfyUI output to a temp file for debugging
-    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
-    let log_file = std::fs::File::create(&log_path).ok();
-    log::info!("ComfyUI log: {}", log_path.display());
+    // Log ComfyUI output to a per-user file for debugging
+    let log_file = create_stderr_log(None).map(|(log_path, f)| {
+        log::info!("ComfyUI log: {}", log_path.display());
+        f
+    });
 
     cmd.stdout(std::process::Stdio::null())
         .stderr(match log_file {
@@ -1419,7 +1541,7 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
 
 /// Read the last N lines from the ComfyUI stderr log file for diagnostics.
 pub fn read_comfyui_log_tail(lines: usize) -> Option<String> {
-    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+    let log_path = comfyui_stderr_log_path(None)?;
     let content = std::fs::read_to_string(&log_path).ok()?;
     let all_lines: Vec<&str> = content.lines().collect();
     let start = all_lines.len().saturating_sub(lines);
@@ -1598,8 +1720,8 @@ pub async fn start_worker_process(
     // support (see torch_has_accelerator() above). Checked before the VRAM-mode
     // flag below because ComfyUI's argparser treats --cpu and
     // --lowvram/--novram/--highvram as mutually exclusive.
-    let force_cpu =
-        !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path);
+    let force_cpu = !config.extra_args.iter().any(|a| a == "--cpu")
+        && !torch_has_accelerator(&python_path).await;
     if force_cpu {
         cmd.arg("--cpu");
         log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
@@ -1613,7 +1735,7 @@ pub async fn start_worker_process(
             .unwrap_or(config.vram_mode.as_str());
         match vram_mode {
             "high" => {
-                apply_highvram_flag(&mut cmd, &config);
+                apply_highvram_flag(&mut cmd, &config).await;
             }
             "low" => {
                 cmd.arg("--lowvram");
@@ -1634,14 +1756,14 @@ pub async fn start_worker_process(
             "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae"
         )
     });
-    if !has_vae_flag && has_blackwell_gpu() {
+    if !has_vae_flag && has_blackwell_gpu().await {
         cmd.arg("--bf16-vae");
     }
 
-    // Extra model paths (reuse the main YAML if the single-process path wrote it)
-    let main_yaml = std::env::temp_dir().join("mooshieui_extra_model_paths.yaml");
-    if main_yaml.exists() {
-        cmd.arg("--extra-model-paths-config").arg(&main_yaml);
+    // Extra model paths: written fresh for this worker from the current
+    // settings (worker mode never goes through the single-process spawn).
+    if let Some(yaml_path) = write_extra_model_paths_config(&config, Some(worker.id)) {
+        cmd.arg("--extra-model-paths-config").arg(&yaml_path);
     }
 
     for arg in &config.extra_args {
@@ -1693,10 +1815,10 @@ pub async fn start_worker_process(
         cmd.creation_flags(0x08000000);
     }
 
-    let log_path =
-        std::env::temp_dir().join(format!("comfyui-desktop-worker{}-stderr.log", worker.id));
-    let log_file = std::fs::File::create(&log_path).ok();
-    log::info!("Worker {} log: {}", worker.id, log_path.display());
+    let log_file = create_stderr_log(Some(worker.id)).map(|(log_path, f)| {
+        log::info!("Worker {} log: {}", worker.id, log_path.display());
+        f
+    });
 
     cmd.stdout(std::process::Stdio::null())
         .stderr(match log_file {
@@ -1790,13 +1912,13 @@ pub async fn wait_for_worker_ready(
                         *process = None;
                         let mut status = worker.status.write().await;
                         *status = WorkerStatus::Error;
-                        let log_path = std::env::temp_dir()
-                            .join(format!("comfyui-desktop-worker{}-stderr.log", worker.id));
-                        let log_excerpt = std::fs::read_to_string(&log_path).ok().map(|content| {
-                            let lines: Vec<&str> = content.lines().collect();
-                            let start = lines.len().saturating_sub(20);
-                            lines[start..].join("\n")
-                        });
+                        let log_excerpt = comfyui_stderr_log_path(Some(worker.id))
+                            .and_then(|log_path| std::fs::read_to_string(log_path).ok())
+                            .map(|content| {
+                                let lines: Vec<&str> = content.lines().collect();
+                                let start = lines.len().saturating_sub(20);
+                                lines[start..].join("\n")
+                            });
                         let msg = match log_excerpt {
                             Some(log) => format!(
                                 "Worker {} (GPU {}): process exited with {} — {}",
@@ -2191,5 +2313,98 @@ mod tests {
         assert_eq!(find("MIOPEN_CUSTOM_CACHE_DIR"), Some(base.join("miopen")));
         assert_eq!(find("SYCL_CACHE_DIR"), Some(base.join("sycl")));
         assert_eq!(find("NEO_CACHE_DIR"), Some(base.join("neo")));
+    }
+}
+
+#[cfg(test)]
+mod extra_model_paths_tests {
+    use super::{
+        build_extra_model_paths_yaml, extra_model_paths_yaml_name, stderr_log_name,
+        write_extra_model_paths_config_in,
+    };
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-extra-model-paths-{}-{}",
+            std::process::id(),
+            name
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn no_configured_dirs_yields_no_yaml() {
+        assert!(build_extra_model_paths_yaml("").is_none());
+        assert!(build_extra_model_paths_yaml(" \n\t\n").is_none());
+    }
+
+    #[test]
+    fn flat_dirs_expose_only_their_category_and_quote_paths() {
+        let (yaml, count) =
+            build_extra_model_paths_yaml("/no/such/My LoRAs\n\n/no/such/vae\"x").unwrap();
+        assert_eq!(count, 2);
+        assert!(yaml.contains("mooshieui_1:\n  base_path: \"/no/such/My LoRAs\"\n  loras: \".\"\n"));
+        assert!(yaml.contains("mooshieui_2:\n  base_path: \"/no/such/vae\\\"x\"\n  vae: \".\"\n"));
+        assert!(!yaml.contains("custom_nodes"));
+    }
+
+    #[test]
+    fn every_spawn_gets_its_own_file_names() {
+        assert_eq!(extra_model_paths_yaml_name(None), "extra_model_paths.yaml");
+        assert_eq!(
+            extra_model_paths_yaml_name(Some(2)),
+            "extra_model_paths-worker2.yaml"
+        );
+        assert_ne!(stderr_log_name(None), stderr_log_name(Some(0)));
+        assert_ne!(stderr_log_name(Some(0)), stderr_log_name(Some(1)));
+    }
+
+    /// A worker spawn must never pass along a config it did not just write:
+    /// a pre-existing file is replaced with the current settings, or removed
+    /// (and not passed to ComfyUI) when no directory is configured.
+    #[test]
+    fn a_planted_config_is_never_reused() {
+        let dir = scratch_dir("planted");
+        let planted = dir.join(extra_model_paths_yaml_name(Some(1)));
+        std::fs::write(&planted, "evil:\n  custom_nodes: /tmp/evil\n").unwrap();
+
+        assert_eq!(write_extra_model_paths_config_in(&dir, None, Some(1)), None);
+        assert!(!planted.exists());
+
+        std::fs::write(&planted, "evil:\n  custom_nodes: /tmp/evil\n").unwrap();
+        let written =
+            write_extra_model_paths_config_in(&dir, Some("/no/such/loras"), Some(1)).unwrap();
+        assert_eq!(written, planted);
+        let content = std::fs::read_to_string(&written).unwrap();
+        assert!(!content.contains("custom_nodes"));
+        assert!(content.contains("base_path: \"/no/such/loras\""));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod highvram_conflict_tests {
+    use super::h3_highvram_conflict;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn highvram_is_dropped_only_on_evidence() {
+        let big = || Some(("h3_nvfp4.safetensors".to_string(), 12 * GIB + GIB / 2));
+        let conflict = h3_highvram_conflict(Some(12 * GIB), big()).expect("DiT fills the card");
+        assert_eq!(conflict.model, "h3_nvfp4.safetensors");
+        assert_eq!(conflict.vram_bytes, 12 * GIB);
+        assert!(h3_highvram_conflict(Some(24 * GIB), big()).is_none());
+        // Unreadable VRAM or no H3 model installed: keep the flag.
+        assert!(h3_highvram_conflict(None, big()).is_none());
+        assert!(h3_highvram_conflict(Some(12 * GIB), None).is_none());
+    }
+
+    #[tokio::test]
+    async fn gpu_probes_fail_closed_without_the_tools() {
+        // A missing interpreter must read as "no accelerator", not hang or panic.
+        assert!(!super::torch_has_accelerator("/nonexistent/mooshieui/python").await);
     }
 }

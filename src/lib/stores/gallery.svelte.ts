@@ -27,7 +27,7 @@ import {
   copyGalleryFileTo,
   type StorageInfo,
 } from "../utils/api.js";
-import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
+import { isTauri, isBrowserMode, getAuthToken, userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 import { progress } from "./progress.svelte.js";
@@ -88,6 +88,16 @@ async function fullImageUrl(filename: string): Promise<string> {
   const token = getAuthToken();
   const base = `/internal-api/_gallery/${encodeURIComponent(filename)}`;
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+/**
+ * Whether this browser-mode page was loaded from the machine running the
+ * server (a loopback host). Only such a client may use the server's native
+ * clipboard; the server refuses it to every other caller.
+ */
+function pageIsOnServerHost(): boolean {
+  const host = window.location.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host.startsWith("127.");
 }
 
 /** Convert a temp filename to a browser-loadable URL, including auth token in browser mode. */
@@ -275,6 +285,17 @@ class GalleryStore {
   private _compareOwnedUrls = new Set<string>();
   /** Bumped on every open/side change so stale async resolves are discarded. */
   private _compareToken = 0;
+  /**
+   * Bumped on every lightbox open/close so a load that finishes after the user
+   * moved on (an arrow key held down) cannot replace the image now selected.
+   */
+  private _lightboxToken = 0;
+  /**
+   * The full-size blob URL openLightbox decoded for the image on screen. The
+   * only lightbox URL this store may revoke when it moves on: session blobs and
+   * gallery URLs belong to their images.
+   */
+  private _lightboxOwnedUrl: string | null = null;
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Per-image persist promises.  Resolves with the gallery filename once
@@ -318,7 +339,7 @@ class GalleryStore {
 
   private loadBoardAssignments() {
     try {
-      const raw = localStorage.getItem(GALLERY_BOARDS_KEY);
+      const raw = localStorage.getItem(userScopedKey(GALLERY_BOARDS_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as Record<string, string>;
       if (!parsed || typeof parsed !== "object") return;
@@ -330,7 +351,7 @@ class GalleryStore {
 
   private saveBoardAssignments() {
     try {
-      localStorage.setItem(GALLERY_BOARDS_KEY, JSON.stringify(this.boardAssignments));
+      localStorage.setItem(userScopedKey(GALLERY_BOARDS_KEY), JSON.stringify(this.boardAssignments));
     } catch (e) {
       console.error("Failed to save gallery boards:", e);
     }
@@ -338,7 +359,7 @@ class GalleryStore {
 
   private loadCustomBoards() {
     try {
-      const raw = localStorage.getItem(GALLERY_BOARD_NAMES_KEY);
+      const raw = localStorage.getItem(userScopedKey(GALLERY_BOARD_NAMES_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw) as string[];
       if (!Array.isArray(parsed)) return;
@@ -350,7 +371,7 @@ class GalleryStore {
 
   private saveCustomBoards() {
     try {
-      localStorage.setItem(GALLERY_BOARD_NAMES_KEY, JSON.stringify(this.customBoards));
+      localStorage.setItem(userScopedKey(GALLERY_BOARD_NAMES_KEY), JSON.stringify(this.customBoards));
     } catch (e) {
       console.error("Failed to save custom boards:", e);
     }
@@ -567,6 +588,7 @@ class GalleryStore {
    * tile stays in the grid, and expanding one leaves it.
    */
   async openLightbox(image: OutputImage, grid?: boolean) {
+    const token = ++this._lightboxToken;
     this.selectedImage = image;
     this.lastSelectedImage = image;
     this.lightboxOpen = true;
@@ -576,8 +598,11 @@ class GalleryStore {
     // H3 clip can be hundreds of MB, and <video> needs Range requests to seek.
     if (isVideoImage(image)) {
       const videoFilename = await this.resolveGalleryFilename(image);
+      if (token !== this._lightboxToken) return;
       if (videoFilename) {
-        this.lightboxUrl = await fullImageUrl(videoFilename);
+        const url = await fullImageUrl(videoFilename);
+        if (token !== this._lightboxToken) return;
+        this.setLightboxUrl(url);
         this.lightboxLoading = false;
         return;
       }
@@ -586,7 +611,7 @@ class GalleryStore {
       // Serve the real image from backend — supports right-click → Save with metadata.
       // JXL is excluded: WebView2 cannot decode JXL natively, so we always use the
       // blob URL (WebP) for display.
-      this.lightboxUrl = image.fullImageUrl;
+      this.setLightboxUrl(image.fullImageUrl);
       this.lightboxLoading = false;
     } else if (image.url) {
       // Session images still have a blob URL — show it immediately.
@@ -595,20 +620,21 @@ class GalleryStore {
       // gallery:// URL once persistence completes — but only if the resolved
       // filename is NOT a JXL file (guard against the race where gallery_filename
       // wasn't set yet when isJxl was computed above).
-      this.lightboxUrl = image.url;
+      this.setLightboxUrl(image.url);
       this.lightboxLoading = false;
       if (!isJxl) {
         const key = this._imageKey(image);
         const pending = this._persistPromises.get(key);
         if (pending) {
           const galleryFilename = await pending;
-          if (galleryFilename && this.lightboxOpen && this.selectedImage && this._imageKey(this.selectedImage) === key) {
+          if (galleryFilename && token === this._lightboxToken && this.lightboxOpen && this.selectedImage && this._imageKey(this.selectedImage) === key) {
             if (galleryFilename.endsWith(".jxl")) {
               // Persist completed and it turned out to be JXL — don't upgrade to
               // gallery:// (raw JXL, WebView2 can't decode). The WebP blob URL in
               // image.url is already correct.
             } else {
-              this.lightboxUrl = await fullImageUrl(galleryFilename);
+              const url = await fullImageUrl(galleryFilename);
+              if (token === this._lightboxToken) this.setLightboxUrl(url);
             }
           }
         }
@@ -616,17 +642,35 @@ class GalleryStore {
     } else if (image.gallery_filename) {
       // Persisted images without a blob URL — load full-res from disk.
       // JXL files are transcoded to WebP on the fly by loadFullImage.
-      this.lightboxUrl = null;
+      this.setLightboxUrl(null);
       this.lightboxLoading = true;
       try {
         const fullUrl = await this.loadFullImage(image.gallery_filename);
-        this.lightboxUrl = fullUrl;
+        const owned = fullUrl.startsWith("blob:");
+        if (token !== this._lightboxToken) {
+          // Superseded while decoding: another image (or none) is selected now.
+          if (owned) URL.revokeObjectURL(fullUrl);
+          return;
+        }
+        this.setLightboxUrl(fullUrl, owned);
       } catch (e) {
         console.error("Failed to load full image:", e);
       } finally {
-        this.lightboxLoading = false;
+        if (token === this._lightboxToken) this.lightboxLoading = false;
       }
     }
+  }
+
+  /**
+   * Point the lightbox at `url`, revoking the blob openLightbox decoded for the
+   * previous image. `owned` marks a blob decoded here, which the next call (or
+   * closeLightbox) then releases.
+   */
+  private setLightboxUrl(url: string | null, owned = false) {
+    const previous = this._lightboxOwnedUrl;
+    this._lightboxOwnedUrl = owned ? url : null;
+    this.lightboxUrl = url;
+    if (previous && previous !== url) URL.revokeObjectURL(previous);
   }
 
   /** Whether the open lightbox is showing a video rather than a still. */
@@ -636,8 +680,10 @@ class GalleryStore {
 
   /** Open lightbox with a raw image URL (e.g. preview blob). */
   openLightboxUrl(url: string) {
+    this._lightboxToken++;
     this.selectedImage = null;
-    this.lightboxUrl = url;
+    this.setLightboxUrl(url);
+    this.lightboxLoading = false;
     this.lightboxOpen = true;
     // A raw URL has no image behind it, so there is no run to grid.
     this.lightboxGrid = false;
@@ -714,6 +760,10 @@ class GalleryStore {
   }
 
   closeLightbox() {
+    // Drop any load still in flight; the owned blob, if on screen, is revoked below.
+    this._lightboxToken++;
+    this._lightboxOwnedUrl = null;
+    this.lightboxLoading = false;
     if (this.lightboxUrl?.startsWith("blob:")) {
       // Don't revoke a blob URL that is still referenced by a session image,
       // by progress.lastOutputImage, or by the open comparison viewer —
@@ -1554,13 +1604,23 @@ class GalleryStore {
               return;
             }
           }
-          try {
-            const path = await getGalleryImagePath(galleryFilename);
-            await copyImageToClipboard(path);
-            this.showToast(locale.t("gallery.toast.copied"), "success");
-            return;
-          } catch {
-            // Server-side clipboard unavailable — fall through to browser API
+          // The server only lets a client on its own machine use its
+          // clipboard, so a remote LAN client skips straight to the browser
+          // API instead of uploading the image just to be refused. The bytes
+          // come from the gallery URL: browser clients never get host paths.
+          if (pageIsOnServerHost()) {
+            try {
+              const resp = await fetch(await fullImageUrl(galleryFilename));
+              if (resp.ok) {
+                const bytes = Array.from(new Uint8Array(await resp.arrayBuffer()));
+                const ext = galleryFilename.slice(galleryFilename.lastIndexOf(".") + 1).toLowerCase();
+                await copyBytesToClipboard(bytes, ext);
+                this.showToast(locale.t("gallery.toast.copied"), "success");
+                return;
+              }
+            } catch {
+              // Server-side clipboard unavailable — fall through to browser API
+            }
           }
         }
         // Step 2: Try browser Clipboard API, with server-side fallback for insecure (HTTP) contexts.

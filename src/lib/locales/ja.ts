@@ -2413,6 +2413,7 @@ const ja: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "APIキー",
   "settings.civitai.api_key_placeholder": "CivitAI APIキーをここに貼り付け",
+  "settings.civitai.api_key_saved_placeholder": "キーは保存済みです。置き換えるには新しいキーを貼り付けてください。",
   "settings.civitai.api_key_desc": "モデルメタデータの参照、サンプル画像の取得、ダウンロードに使用します。CivitAIが未認証アクセスを制限したため必須です。",
   "settings.civitai.api_key_link": "civitai.com/user/account でキーを取得",
   "settings.novelai.title": "NovelAI",
@@ -3260,6 +3261,7 @@ const ja: Record<string, string> = {
   "settings.lan.temp_password_min": "一時パスワードは 4 文字以上である必要があります。",
   "settings.lan.reset_failed": "パスワードのリセットに失敗しました。",
   "settings.lan.account_validation": "ユーザー名が必要です。パスワードは 4 文字以上である必要があります。",
+  "settings.lan.username_invalid": "ユーザー名に使えるのは英字 (A-Z)、数字、- と _ のみです（最大 {max} 文字）。",
   "settings.lan.time.never": "なし",
   "settings.lan.time.unknown": "不明",
   "settings.lan.time.weeks_ago": "{weeks} 週間前",
@@ -3710,6 +3712,15 @@ const ja: Record<string, string> = {
   "errors.report.opening": "開いています...",
 
   "errors.report.copied_hint": "診断情報がクリップボードにコピーされました。Issue の本文に貼り付けてください。",
+  "errors.report.intro_service": "レポートはMooshieUIのレポートサービスに送信され、公開のGitHub Issueとして投稿されます。誰でも閲覧できます。",
+  "errors.report.include_log": "診断ログを含める",
+  "errors.report.include_log_hint": "ログにはアプリのバージョン、OS、コンピューター名、フォルダーのパス、インストール済みのモデル、最近のアプリログが含まれます。送信前に確認してください。",
+  "errors.report.preview_log": "送信内容を表示",
+  "errors.report.hide_log": "ログを隠す",
+  "errors.report.loading_log": "診断情報を収集しています...",
+  "errors.report.submit_service": "レポートを送信",
+  "errors.report.sending": "送信中...",
+  "errors.report.sent": "レポートを送信しました。MooshieUIの改善にご協力いただきありがとうございます。",
 
   "generation.video.role_fl2va": "最初/最後のフレームモデル",
 

@@ -69,13 +69,29 @@ export async function runRegionalInpaintChain(
 
   const totalSteps = 1 + validRegions.length;
 
-  const baseParams = generation.toParams({ includeConditioningRegions: false });
+  // The chain is a run of its own, outside any paused txt2img run: every step
+  // has to finish its schedule (a paused base pass would hand a half-denoised
+  // preview to the first inpaint), and resume stages only apply to txt2img and
+  // are rejected on the inpaint steps. Building the params outside the pause
+  // flow also keeps TeaCache and style transfer, which an armed pause would
+  // switch off.
+  const baseParams = generation.toParams({
+    includeConditioningRegions: false,
+    outsidePausedRun: true,
+  });
   const facefixOnFinal = baseParams.facefix_enabled;
   // Face fix + segment refinement once on the final combined image; skip on
   // base + intermediate inpaints.
   baseParams.facefix_enabled = false;
   const segmentsOnFinal = baseParams.detail_segments;
   baseParams.detail_segments = [];
+  // Upscale likewise runs once, on the final image. Upscaling every step would
+  // compound the scale and hand the next inpaint an image larger than its
+  // mask.
+  const upscaleOnFinal = baseParams.upscale_enabled;
+  const savePreUpscaleOnFinal = baseParams.save_pre_upscale_image;
+  baseParams.upscale_enabled = false;
+  baseParams.save_pre_upscale_image = false;
 
   const regionalContext = buildRegionalContextPrompt(
     baseParams.positive_prompt,
@@ -132,8 +148,13 @@ export async function runRegionalInpaintChain(
       seed: regionalChainStepSeed(resolvedBaseSeed, i),
       denoise: regionStrengthToDenoise(region.strength),
       differential_diffusion: generation.isAnima || generation.differentialDiffusion,
+      // Style transfer is txt2img-only: it shapes the base pass, and the
+      // inpaints would fail validation carrying it.
+      style_transfer_enabled: false,
       facefix_enabled: isFinalOutput && facefixOnFinal,
       detail_segments: isFinalOutput ? segmentsOnFinal : [],
+      upscale_enabled: isFinalOutput && upscaleOnFinal,
+      save_pre_upscale_image: isFinalOutput && savePreUpscaleOnFinal,
     };
 
     const regionResult = await callbacks.submit(regionParams, {

@@ -114,79 +114,165 @@ impl From<AuthError> for AppError {
     }
 }
 
+/// How long one loopback connection gets to send its request line. The
+/// browser's redirect arrives in one packet; anything slower is not it.
+const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connections read at once. Beyond this, new ones are closed unread until a
+/// slot frees up, so a flood of idle sockets costs a bounded amount of memory.
+const MAX_PENDING_CALLBACKS: usize = 32;
+
 /// Accept loopback connections until the provider redirects to our callback
 /// path. Anything else (a favicon probe, a stray request) gets a 404 and the
 /// listener keeps waiting.
 ///
-/// `expected_state` is checked when the server echoes an OAuth `state`
-/// parameter. The random callback path already scopes the listener to one
-/// flow, so `state` is belt-and-braces for servers that mandate it.
+/// Each connection is read concurrently and under [`CALLBACK_READ_TIMEOUT`]:
+/// read one at a time and without a deadline, a single idle local connection
+/// would hold the listener until the sign-in timed out, and the real redirect
+/// behind it would never be read.
+///
+/// `expected_state` is the OAuth `state` this flow sent, if any; the redirect
+/// must then echo it (see [`callback_outcome`]).
 async fn await_code(
     listener: TcpListener,
     callback_path: &str,
     provider_label: &str,
     expected_state: Option<&str>,
 ) -> Result<String, AuthError> {
+    // Dropping the set on return aborts every connection still being read.
+    let mut pending = tokio::task::JoinSet::new();
     loop {
-        let (mut stream, _) = listener.accept().await.map_err(|e| AuthError {
-            code: "callback_failed".into(),
-            description: Some(e.to_string()),
-        })?;
-
-        let mut buf = [0u8; 4096];
-        let n = stream.read(&mut buf).await.unwrap_or(0);
-        let request = String::from_utf8_lossy(&buf[..n]);
-        // "GET /cb/abc?code=... HTTP/1.1"
-        let target = request
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .unwrap_or("");
-        let parsed = url::Url::parse(&format!("http://localhost{target}")).ok();
-        let (path, params) = match parsed {
-            Some(u) => {
-                let params: HashMap<String, String> = u.query_pairs().into_owned().collect();
-                (u.path().to_string(), params)
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _) = accepted.map_err(|e| AuthError {
+                    code: "callback_failed".into(),
+                    description: Some(e.to_string()),
+                })?;
+                if pending.len() >= MAX_PENDING_CALLBACKS {
+                    continue;
+                }
+                let path = callback_path.to_string();
+                let label = provider_label.to_string();
+                let expected = expected_state.map(str::to_string);
+                pending.spawn(async move {
+                    handle_callback(stream, &path, &label, expected.as_deref()).await
+                });
             }
-            None => (String::new(), HashMap::new()),
-        };
-
-        if path != callback_path {
-            respond(&mut stream, "404 Not Found", "text/plain", "Not found").await;
-            continue;
+            Some(joined) = pending.join_next(), if !pending.is_empty() => {
+                if let Ok(Some(outcome)) = joined {
+                    return outcome;
+                }
+            }
         }
-        // A mismatched `state` means this redirect belongs to some other flow,
-        // so the code in it is not ours to redeem.
-        if let (Some(expected), Some(got)) = (expected_state, params.get("state")) {
-            if expected != got {
-                respond(&mut stream, "400 Bad Request", "text/plain", "Bad state").await;
+    }
+}
+
+/// Read and answer one loopback connection. `None` means it was not our
+/// redirect (wrong path, idle, malformed), so the listener keeps waiting.
+async fn handle_callback(
+    mut stream: tokio::net::TcpStream,
+    callback_path: &str,
+    provider_label: &str,
+    expected_state: Option<&str>,
+) -> Option<Result<String, AuthError>> {
+    let line = tokio::time::timeout(CALLBACK_READ_TIMEOUT, read_request_line(&mut stream))
+        .await
+        .ok()??;
+    // "GET /cb/abc?code=... HTTP/1.1"
+    let target = line.split_whitespace().nth(1).unwrap_or("");
+    let parsed = url::Url::parse(&format!("http://localhost{target}")).ok();
+    let (path, params) = match parsed {
+        Some(u) => {
+            let params: HashMap<String, String> = u.query_pairs().into_owned().collect();
+            (u.path().to_string(), params)
+        }
+        None => (String::new(), HashMap::new()),
+    };
+
+    if path != callback_path {
+        respond(&mut stream, "404 Not Found", "text/plain", "Not found").await;
+        return None;
+    }
+    let outcome = callback_outcome(&params, expected_state);
+    match &outcome {
+        Ok(_) => {
+            let page = done_page(provider_label);
+            respond(&mut stream, "200 OK", "text/html; charset=utf-8", &page).await;
+        }
+        Err(e) if e.code.starts_with("state_") => {
+            respond(&mut stream, "400 Bad Request", "text/plain", "Bad state").await;
+        }
+        Err(_) => {
+            respond(
+                &mut stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                FAILED_PAGE,
+            )
+            .await;
+        }
+    }
+    Some(outcome)
+}
+
+/// The request line of an HTTP request, read up to 8 KiB. `None` for a
+/// connection that closes or overflows before sending one.
+async fn read_request_line(stream: &mut tokio::net::TcpStream) -> Option<String> {
+    const MAX_LINE: usize = 8 * 1024;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while buf.len() < MAX_LINE {
+        let n = stream.read(&mut chunk).await.ok()?;
+        if n == 0 {
+            return (!buf.is_empty()).then(|| String::from_utf8_lossy(&buf).into_owned());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(end) = buf.iter().position(|b| *b == b'\n') {
+            buf.truncate(end);
+            return Some(String::from_utf8_lossy(&buf).into_owned());
+        }
+    }
+    None
+}
+
+/// Decide what a redirect to our callback path means.
+///
+/// When this flow sent a `state`, the redirect must carry the same one: a
+/// missing or different `state` means the redirect belongs to some other
+/// flow (or was forged), so any code in it is not ours to redeem.
+fn callback_outcome(
+    params: &HashMap<String, String>,
+    expected_state: Option<&str>,
+) -> Result<String, AuthError> {
+    if let Some(expected) = expected_state {
+        match params.get("state") {
+            Some(got) if got == expected => {}
+            Some(_) => {
                 return Err(AuthError {
                     code: "state_mismatch".into(),
                     description: Some("the redirect did not match this sign-in attempt".into()),
-                });
+                })
+            }
+            None => {
+                return Err(AuthError {
+                    code: "state_missing".into(),
+                    description: Some(
+                        "the redirect did not carry this sign-in attempt's state".into(),
+                    ),
+                })
             }
         }
-        if let Some(code) = params.get("code") {
-            let page = done_page(provider_label);
-            respond(&mut stream, "200 OK", "text/html; charset=utf-8", &page).await;
-            return Ok(code.clone());
-        }
-        let code = params
+    }
+    if let Some(code) = params.get("code") {
+        return Ok(code.clone());
+    }
+    Err(AuthError {
+        code: params
             .get("error")
             .cloned()
-            .unwrap_or_else(|| "no_authorization_code".to_string());
-        respond(
-            &mut stream,
-            "200 OK",
-            "text/html; charset=utf-8",
-            FAILED_PAGE,
-        )
-        .await;
-        return Err(AuthError {
-            code,
-            description: params.get("error_description").cloned(),
-        });
-    }
+            .unwrap_or_else(|| "no_authorization_code".to_string()),
+        description: params.get("error_description").cloned(),
+    })
 }
 
 /// Trade the one-time code for an API key. The verifier never left this
@@ -287,6 +373,9 @@ align-items:center;justify-content:center;height:100vh;margin:0\">\
 /// the provider registry carries the base URL separately.
 const NOUS_ISSUER: &str = "https://portal.nousresearch.com";
 
+/// Every Nous endpoint discovery may name lives on this domain.
+const NOUS_DOMAIN: &str = "nousresearch.com";
+
 /// What the first authorization attempt asks for.
 ///
 /// Portal's metadata advertises only `mcp:manage_agents`, but its inference API
@@ -327,6 +416,19 @@ struct ServerMetadata {
 }
 
 impl ServerMetadata {
+    /// Whether every endpoint this document names is https on `domain`.
+    fn endpoints_on(&self, domain: &str) -> bool {
+        [
+            Some(&self.authorization_endpoint),
+            Some(&self.token_endpoint),
+            self.registration_endpoint.as_ref(),
+            self.device_authorization_endpoint.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .all(|endpoint| https_url_on(endpoint, domain))
+    }
+
     /// The endpoints as they stood when this was written. Discovery is the
     /// source of truth, but a Portal outage on the well-known path should not
     /// take sign-in down with it when the endpoints have not actually moved.
@@ -359,7 +461,7 @@ impl ServerMetadata {
 /// sign-in rather than once per install: the redirect URI has to name the port
 /// the listener actually got, and that port is different every time.
 pub async fn connect_nous(client: &reqwest::Client) -> Result<OauthSession, AppError> {
-    let meta = match discover(client, NOUS_ISSUER).await {
+    let meta = match discover(client, NOUS_ISSUER, NOUS_DOMAIN).await {
         Ok(m) => m,
         Err(e) => {
             log::warn!("Nous Portal metadata discovery failed ({e}); using the built-in endpoints");
@@ -439,6 +541,14 @@ async fn nous_attempt(
             }
         })?;
 
+    // Discovery was already checked, but this is what reaches the OS URL
+    // handler, so check the final URL itself too.
+    if !https_url_on(auth_url.as_str(), NOUS_DOMAIN) {
+        return Err(AuthError {
+            code: "bad_authorization_endpoint".into(),
+            description: Some(format!("not an https URL on {NOUS_DOMAIN}")),
+        });
+    }
     open::that(auth_url.as_str()).map_err(|e| AuthError {
         code: "browser_launch_failed".into(),
         description: Some(e.to_string()),
@@ -487,7 +597,7 @@ pub async fn refresh_nous(
             "No OAuth client id is stored for this session. Sign in again.".into(),
         ));
     }
-    let meta = match discover(client, NOUS_ISSUER).await {
+    let meta = match discover(client, NOUS_ISSUER, NOUS_DOMAIN).await {
         Ok(m) => m,
         Err(_) => ServerMetadata::nous_fallback(),
     };
@@ -577,7 +687,17 @@ fn expires_at_from(expires_in: Option<i64>, now: i64) -> i64 {
 }
 
 /// Fetch RFC 8414 authorization server metadata for an issuer.
-async fn discover(client: &reqwest::Client, issuer: &str) -> Result<ServerMetadata, AppError> {
+///
+/// Every endpoint in the document must be https on `domain` (or a subdomain
+/// of it). The authorization endpoint is handed to the OS to open, and the
+/// others receive codes and refresh tokens, so a document naming anything
+/// else is treated like a failed discovery and the caller falls back to the
+/// built-in endpoints.
+async fn discover(
+    client: &reqwest::Client,
+    issuer: &str,
+    domain: &str,
+) -> Result<ServerMetadata, AppError> {
     // Portal answers on the RFC 8414 path and xAI on the OIDC one, and neither
     // serves the other, so try both before deciding discovery is down.
     let mut last = AppError::LlmError("Discovery was not attempted".into());
@@ -586,11 +706,32 @@ async fn discover(client: &reqwest::Client, issuer: &str) -> Result<ServerMetada
         ".well-known/openid-configuration",
     ] {
         match discover_at(client, &format!("{issuer}/{path}")).await {
-            Ok(meta) => return Ok(meta),
+            Ok(meta) if meta.endpoints_on(domain) => return Ok(meta),
+            Ok(_) => {
+                last = AppError::LlmError(format!(
+                    "Discovery named an endpoint outside https://{domain}"
+                ))
+            }
             Err(e) => last = e,
         }
     }
     Err(last)
+}
+
+/// Whether `url` is an https URL on `domain` or one of its subdomains, with no
+/// credentials or non-default port. Provider-supplied URLs are checked with
+/// this before they are opened, shown as links, or sent anything.
+fn https_url_on(url: &str, domain: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|u| {
+        u.scheme() == "https"
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.port().is_none()
+            && u.host_str().is_some_and(|host| {
+                let host = host.to_ascii_lowercase();
+                host == domain || host.ends_with(&format!(".{domain}"))
+            })
+    })
 }
 
 /// Fetch and parse one metadata document.
@@ -685,6 +826,10 @@ async fn register_client(
 /// which the provider registry carries separately as the base URL.
 const XAI_ISSUER: &str = "https://auth.x.ai";
 
+/// Every xAI endpoint and verification page this flow accepts lives on this
+/// domain.
+const XAI_DOMAIN: &str = "x.ai";
+
 /// The public client id third-party Grok clients sign in with.
 ///
 /// xAI runs no registration endpoint and issues client ids by hand, so there is
@@ -730,6 +875,23 @@ pub struct DeviceAuth {
 }
 
 impl DeviceAuth {
+    /// Keep this response only if its verification page is https on `domain`.
+    /// A pre-filled URL that fails the same check is dropped rather than
+    /// failing the flow: the bare page still works with the code typed in.
+    fn checked(mut self, domain: &str) -> Option<Self> {
+        if !https_url_on(&self.verification_uri, domain) {
+            return None;
+        }
+        if self
+            .verification_uri_complete
+            .as_deref()
+            .is_some_and(|uri| !https_url_on(uri, domain))
+        {
+            self.verification_uri_complete = None;
+        }
+        Some(self)
+    }
+
     /// Where to send the user: the pre-filled URL when the server offers one,
     /// otherwise the bare page where they enter the code by hand.
     pub fn best_uri(&self) -> &str {
@@ -762,7 +924,7 @@ pub async fn connect_xai(
         "" => XAI_DEFAULT_SCOPE,
         s => s,
     };
-    let meta = discover(client, XAI_ISSUER)
+    let meta = discover(client, XAI_ISSUER, XAI_DOMAIN)
         .await
         .unwrap_or_else(|_| ServerMetadata::xai_fallback());
     let device_endpoint = meta
@@ -796,6 +958,13 @@ pub async fn connect_xai(
         .json()
         .await
         .map_err(|e| AppError::LlmError(format!("Bad device authorization response: {e}")))?;
+    // Both URIs are shown as a link and one is opened by the OS, so neither
+    // may be anything but xAI's own https pages.
+    let auth = auth.checked(XAI_DOMAIN).ok_or_else(|| {
+        AppError::LlmError(format!(
+            "xAI sent a sign-in page outside https://{XAI_DOMAIN}; not opening it."
+        ))
+    })?;
 
     on_prompt(&auth);
     // A browser that will not open is not fatal here: the caller has already
@@ -892,7 +1061,7 @@ pub async fn refresh_xai(
             "No OAuth client id is stored for this session. Sign in again.".into(),
         ));
     }
-    let meta = discover(client, XAI_ISSUER)
+    let meta = discover(client, XAI_ISSUER, XAI_DOMAIN)
         .await
         .unwrap_or_else(|_| ServerMetadata::xai_fallback());
     let form = vec![
@@ -985,5 +1154,122 @@ mod tests {
         let m = ServerMetadata::nous_fallback();
         assert!(m.registration_endpoint.is_some());
         assert!(m.authorization_endpoint.starts_with(NOUS_ISSUER));
+    }
+}
+
+#[cfg(test)]
+mod callback_and_url_tests {
+    use super::*;
+
+    fn params(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_callback_without_the_sent_state_is_refused() {
+        let err = callback_outcome(&params(&[("code", "c")]), Some("s1")).unwrap_err();
+        assert_eq!(err.code, "state_missing");
+        let err =
+            callback_outcome(&params(&[("code", "c"), ("state", "s2")]), Some("s1")).unwrap_err();
+        assert_eq!(err.code, "state_mismatch");
+        assert_eq!(
+            callback_outcome(&params(&[("code", "c"), ("state", "s1")]), Some("s1")).unwrap(),
+            "c"
+        );
+        // OpenRouter's flow sends no state; its random callback path is the
+        // binding, so a code alone is accepted there.
+        assert_eq!(
+            callback_outcome(&params(&[("code", "c")]), None).unwrap(),
+            "c"
+        );
+        let err = callback_outcome(
+            &params(&[("error", "access_denied"), ("state", "s1")]),
+            Some("s1"),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "access_denied");
+    }
+
+    #[tokio::test]
+    async fn an_idle_connection_does_not_block_the_real_redirect() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let waiting =
+            tokio::spawn(
+                async move { await_code(listener, "/cb/nonce", "Test", Some("st")).await },
+            );
+        // Connects and never sends a byte.
+        let _idle = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let mut real = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        real.write_all(b"GET /cb/nonce?code=abc&state=st HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let code = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("the idle connection blocked the callback")
+            .unwrap()
+            .unwrap();
+        assert_eq!(code, "abc");
+    }
+
+    #[test]
+    fn provider_urls_must_be_https_on_the_expected_domain() {
+        assert!(https_url_on("https://accounts.x.ai/device?code=1", "x.ai"));
+        assert!(https_url_on("https://x.ai/device", "x.ai"));
+        for url in [
+            "javascript:alert(1)",
+            "http://accounts.x.ai/device",
+            "https://x.ai.evil.test/device",
+            "https://evilx.ai/device",
+            "https://user@accounts.x.ai/",
+            "https://accounts.x.ai:8443/",
+            "file:///etc/passwd",
+            "ms-settings:",
+        ] {
+            assert!(!https_url_on(url, "x.ai"), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_device_response_pointing_elsewhere_is_rejected_or_trimmed() {
+        let auth = |uri: &str, complete: Option<&str>| DeviceAuth {
+            device_code: "d".into(),
+            user_code: "u".into(),
+            verification_uri: uri.into(),
+            verification_uri_complete: complete.map(str::to_string),
+            expires_in: None,
+            interval: None,
+        };
+        assert!(auth("javascript:alert(1)", None).checked("x.ai").is_none());
+        let trimmed = auth("https://accounts.x.ai/device", Some("javascript:alert(1)"))
+            .checked("x.ai")
+            .unwrap();
+        assert_eq!(trimmed.best_uri(), "https://accounts.x.ai/device");
+        let kept = auth(
+            "https://accounts.x.ai/device",
+            Some("https://accounts.x.ai/device?user_code=u"),
+        )
+        .checked("x.ai")
+        .unwrap();
+        assert_eq!(kept.best_uri(), "https://accounts.x.ai/device?user_code=u");
+    }
+
+    #[test]
+    fn built_in_endpoints_pass_the_discovery_check_and_foreign_ones_do_not() {
+        assert!(ServerMetadata::nous_fallback().endpoints_on(NOUS_DOMAIN));
+        assert!(ServerMetadata::xai_fallback().endpoints_on(XAI_DOMAIN));
+        let mut tampered = ServerMetadata::nous_fallback();
+        tampered.authorization_endpoint = "file:///Applications/Calculator.app".into();
+        assert!(!tampered.endpoints_on(NOUS_DOMAIN));
+        let mut tampered = ServerMetadata::xai_fallback();
+        tampered.token_endpoint = "https://collector.example/token".into();
+        assert!(!tampered.endpoints_on(XAI_DOMAIN));
     }
 }

@@ -432,6 +432,7 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
     let model_id = resolve_model_id(params, nai);
     let model = models::find(&model_id)
         .ok_or_else(|| AppError::Other(format!("Unknown NovelAI model: {model_id}")))?;
+    let (width, height) = request_dimensions(params.width, params.height)?;
 
     // Weight syntax is rewritten here rather than in `payload.rs` so that
     // module stays a pure description of NovelAI's request shape, and so the
@@ -445,8 +446,8 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
         // NovelAI rejects any dimension that is not a multiple of 64. The UI
         // already snaps, so this is the backstop for a preset or a restored
         // gallery setting that predates that.
-        width: snap_dimension(params.width),
-        height: snap_dimension(params.height),
+        width,
+        height,
         steps: params.steps,
         cfg: params.cfg,
         seed: params.seed,
@@ -558,8 +559,30 @@ const DIMENSION_STEP: u32 = 64;
 
 /// Round a pixel dimension onto NovelAI's grid, never below one full step.
 fn snap_dimension(px: u32) -> u32 {
-    let snapped = ((px + DIMENSION_STEP / 2) / DIMENSION_STEP) * DIMENSION_STEP;
+    let snapped = (px.saturating_add(DIMENSION_STEP / 2) / DIMENSION_STEP) * DIMENSION_STEP;
     snapped.max(DIMENSION_STEP)
+}
+
+/// The longest side a request may have. This is a memory bound, not
+/// NovelAI's own size policy (NovelAI still rejects sizes it does not
+/// serve): at 4096x4096 the upload resize allocates at most 64 MiB, and it
+/// stays above every size the dimension controls offer.
+const MAX_REQUEST_SIDE: u32 = 4096;
+
+/// Snap a request's size onto NovelAI's grid, refusing sizes too large to handle.
+///
+/// Checked before any Anlas are spent and before an uploaded source is
+/// resized to the canvas: that resize allocates the full target bitmap, so an
+/// unchecked 200000x200000 request would try to allocate about 160 GB.
+fn request_dimensions(width: u32, height: u32) -> Result<(u32, u32), AppError> {
+    let (snapped_w, snapped_h) = (snap_dimension(width), snap_dimension(height));
+    if snapped_w > MAX_REQUEST_SIDE || snapped_h > MAX_REQUEST_SIDE {
+        return Err(AppError::Other(format!(
+            "NovelAI requests are limited to {MAX_REQUEST_SIDE}px on a side; \
+             {width}x{height} is too large."
+        )));
+    }
+    Ok((snapped_w, snapped_h))
 }
 
 /// Whether an image field holds a ComfyUI upload name rather than image data.
@@ -625,8 +648,7 @@ async fn resolve_upload_images(
     state: &Arc<AppState>,
     params: &GenerationParams,
 ) -> Result<Option<GenerationParams>, AppError> {
-    let width = snap_dimension(params.width);
-    let height = snap_dimension(params.height);
+    let (width, height) = request_dimensions(params.width, params.height)?;
     let mut resolved: Option<GenerationParams> = None;
     let fields = [
         ("image", false, params.input_image.as_deref()),
@@ -935,6 +957,45 @@ async fn run_upscale(
     Ok(RunOutcome::Completed)
 }
 
+/// Absolute path for a local pass model that lives in a folder that does not
+/// match what it is (a split-file model in checkpoints/, or a full checkpoint
+/// in diffusion_models/), so the path loaders can take over. Anything
+/// correctly filed skips this entirely.
+///
+/// Skipped for a remote ComfyUI too, the same as the generate command: a path
+/// on this machine means nothing to that server, and the file need not exist
+/// here. Without `resolved_model_path` the stock loaders address the model by
+/// name.
+fn resolve_local_pass_model_path(
+    config: &crate::config::AppConfig,
+    derived: &mut GenerationParams,
+) -> Result<(), AppError> {
+    let Some(category) = derived.model_source_category.clone() else {
+        return Ok(());
+    };
+    if !crate::commands::api::generation_models_are_local(config) {
+        return Ok(());
+    }
+    let filename = if derived.use_split_model {
+        derived.diffusion_model.clone().unwrap_or_default()
+    } else {
+        derived.checkpoint.clone()
+    };
+    let path = crate::commands::api::resolve_model_path(
+        &config.comfyui_path,
+        config.extra_model_paths.as_deref(),
+        &category,
+        &filename,
+    )
+    .ok_or_else(|| {
+        AppError::Other(format!(
+            "Local post-process model not found: {category}/{filename}"
+        ))
+    })?;
+    derived.resolved_model_path = Some(path.to_string_lossy().to_string());
+    Ok(())
+}
+
 /// Run the local ComfyUI upscale/face-fix chain.
 ///
 /// With NovelAI faces enabled, collect the result privately and return it for
@@ -971,36 +1032,7 @@ async fn run_local_post_process(
     };
     let mut derived = crate::templates::upscale_standalone::build_params(params, &input_name)
         .ok_or_else(|| AppError::Other("Local post-process is not applicable".into()))?;
-    // The local model lives in a folder that does not match what it is (a
-    // split-file model in checkpoints/, or a full checkpoint in
-    // diffusion_models/), so the path loaders take over and need an absolute
-    // path. Anything correctly filed skips this entirely.
-    if let Some(category) = derived.model_source_category.clone() {
-        let filename = if derived.use_split_model {
-            derived.diffusion_model.clone().unwrap_or_default()
-        } else {
-            derived.checkpoint.clone()
-        };
-        let resolved = {
-            let config = state.config.read().await;
-            crate::commands::api::resolve_model_path(
-                &config.comfyui_path,
-                config.extra_model_paths.as_deref(),
-                &category,
-                &filename,
-            )
-        };
-        match resolved {
-            Some(path) => {
-                derived.resolved_model_path = Some(path.to_string_lossy().to_string());
-            }
-            None => {
-                return Err(AppError::Other(format!(
-                    "Local post-process model not found: {category}/{filename}"
-                )));
-            }
-        }
-    }
+    resolve_local_pass_model_path(&*state.config.read().await, &mut derived)?;
     // A split-file model needs all three names. An unresolved companion reaches
     // ComfyUI as `clip_name: ""`, which is rejected during graph validation with
     // no mention of the model that caused it, so refuse it here where the
@@ -1081,10 +1113,7 @@ async fn run_local_post_process(
 
     // From here the ComfyUI websocket owns the prompt: it resolves the alias
     // back to `prompt_id`, finishes the queue entry and releases the worker.
-    if state
-        .prompt_queue
-        .bind_alias(prompt_id, &response.prompt_id)
-    {
+    if state.bind_prompt_alias(prompt_id, &response.prompt_id) {
         // Completion or error beat the bind. The queue entry is already gone,
         // so the worker has to be released here.
         state
@@ -1455,5 +1484,83 @@ mod tests {
         assert_eq!(a, 0);
         assert_eq!(b, 1);
         assert_ne!(a, b);
+    }
+
+    fn generate_params(width: u32, height: u32) -> GenerationParams {
+        let mut params = upscale_params(width, height, None);
+        params.novelai.as_mut().unwrap().action = "generate".into();
+        params
+    }
+
+    #[test]
+    fn a_request_inside_novelais_canvas_is_snapped_and_accepted() {
+        assert_eq!(request_dimensions(832, 1216).unwrap(), (832, 1216));
+        assert_eq!(request_dimensions(1080, 0).unwrap(), (1088, 64));
+        // Large canvases both ways round, a long thin strip, and the
+        // largest square the dimension controls offer.
+        assert_eq!(request_dimensions(1536, 2048).unwrap(), (1536, 2048));
+        assert_eq!(request_dimensions(2048, 1536).unwrap(), (2048, 1536));
+        assert_eq!(request_dimensions(4096, 768).unwrap(), (4096, 768));
+        assert_eq!(request_dimensions(2048, 2048).unwrap(), (2048, 2048));
+        assert!(preflight(&generate_params(832, 1216)).is_ok());
+    }
+
+    #[test]
+    fn an_oversized_request_is_refused_before_anything_is_allocated() {
+        for (w, h) in [
+            (200_000, 200_000),
+            (4160, 64),
+            (64, 4160),
+            (u32::MAX, u32::MAX),
+            (u32::MAX, 64),
+        ] {
+            let err = request_dimensions(w, h).expect_err("over the ceiling");
+            assert!(err.to_string().contains(&format!("{w}x{h}")), "{err}");
+            assert!(preflight(&generate_params(w, h)).is_err(), "{w}x{h}");
+        }
+    }
+
+    #[test]
+    fn snapping_never_overflows() {
+        assert_eq!(snap_dimension(u32::MAX), u32::MAX / 64 * 64);
+    }
+
+    fn misplaced_local_model(
+        mode: crate::config::ServerMode,
+    ) -> Result<GenerationParams, AppError> {
+        let config = crate::config::AppConfig {
+            server_mode: mode,
+            comfyui_path: std::env::temp_dir()
+                .join("mooshie-local-pass-model-test-empty")
+                .to_string_lossy()
+                .to_string(),
+            extra_model_paths: None,
+            ..Default::default()
+        };
+        let mut derived = GenerationParams {
+            checkpoint: "only-on-the-server.safetensors".into(),
+            model_source_category: Some("diffusion_models".into()),
+            ..Default::default()
+        };
+        resolve_local_pass_model_path(&config, &mut derived).map(|()| derived)
+    }
+
+    #[test]
+    fn a_remote_server_local_pass_model_is_not_looked_up_on_this_machine() {
+        let derived = misplaced_local_model(crate::config::ServerMode::Remote)
+            .expect("a remote server's model need not exist here");
+        assert!(
+            derived.resolved_model_path.is_none(),
+            "stock loaders by name"
+        );
+    }
+
+    #[test]
+    fn a_local_server_still_needs_the_local_pass_model_on_disk() {
+        let err = misplaced_local_model(crate::config::ServerMode::AutoLaunch)
+            .expect_err("missing locally");
+        assert!(err
+            .to_string()
+            .contains("Local post-process model not found"));
     }
 }

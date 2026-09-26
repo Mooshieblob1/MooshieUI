@@ -91,10 +91,10 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     out.checkpoint = nai.local_checkpoint.clone()?;
     out.model_architecture = nai.local_architecture.clone().unwrap_or_default();
     out.is_vpred_model = nai.local_is_vpred;
-    out.is_sdxl_like = matches!(
-        out.model_architecture.as_str(),
-        "sdxl" | "illustrious" | "noobai" | "pony" | "anima"
-    );
+    // The same family test the frontend and the regional path use. NAG, APG
+    // and the v-pred patch are SDXL UNet patchers, so an Anima refiner must
+    // not count.
+    out.is_sdxl_like = super::is_sdxl_like_family(&out.model_architecture);
     // Loader mode follows the file the user picked. A split-file model (Anima,
     // Flux, Chroma, ...) has no text encoder or VAE baked in, so it needs
     // UNETLoader + CLIPLoader + VAELoader; the frontend resolves the companion
@@ -160,6 +160,9 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     out.loras = Vec::new();
     out.controlnet = None;
     out.style_transfer_enabled = false;
+    // The Style Reference panel is hidden in NovelAI mode, so a reference left
+    // on in local mode would otherwise steer the refine unseen.
+    out.style_ref_enabled = false;
     out.detail_segments = Vec::new();
     out.positive_regions = Vec::new();
     out.positive_segments = Vec::new();
@@ -412,7 +415,7 @@ mod tests {
         let out = build_params(&p, "nai-abc.png").expect("derived");
         assert_eq!(out.checkpoint, "animaPencilXL.safetensors");
         assert_eq!(out.model_architecture, "anima");
-        assert!(out.is_sdxl_like);
+        assert!(!out.is_sdxl_like, "Anima is not an SDXL UNet");
         assert!(!out.use_split_model);
         assert!(out.novelai.is_none());
     }
@@ -536,6 +539,50 @@ mod tests {
         assert!(out.controlnet.is_none());
         assert!(!out.style_transfer_enabled);
         assert!(out.detail_segments.is_empty());
+    }
+
+    #[test]
+    fn a_hidden_style_reference_does_not_reach_the_refine() {
+        let mut nai = local_nai();
+        nai.local_checkpoint = Some("illustrious.safetensors".into());
+        nai.local_architecture = Some("illustrious".into());
+        let mut p = with_nai(nai);
+        p.style_ref_enabled = true;
+        p.style_ref_image = Some("style.png".into());
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert!(!out.style_ref_enabled);
+        assert!(out.is_sdxl_like, "Illustrious is SDXL-like");
+
+        let wf = build(&p, "nai-abc.png", 12345).expect("workflow");
+        let classes: Vec<&str> = wf
+            .as_object()
+            .unwrap()
+            .values()
+            .filter_map(|n| n["class_type"].as_str())
+            .collect();
+        assert!(
+            !classes.iter().any(|c| c.contains("IPAdapter")),
+            "style reference nodes in the refine: {classes:?}"
+        );
+    }
+
+    #[test]
+    fn an_anima_refiner_gets_no_sdxl_guidance_patches() {
+        let mut nai = local_nai();
+        nai.local_is_vpred = true;
+        let mut p = with_nai(nai);
+        p.nag_enabled = true;
+        p.apg_enabled = true;
+        let wf = build(&p, "nai-abc.png", 12345).expect("workflow");
+        for class in ["NAGuidance", "APG", "ModelSamplingDiscrete"] {
+            assert!(
+                !wf.as_object()
+                    .unwrap()
+                    .values()
+                    .any(|n| n["class_type"] == class),
+                "{class} patched an Anima refiner"
+            );
+        }
     }
 
     #[test]

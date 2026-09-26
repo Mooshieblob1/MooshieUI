@@ -16,6 +16,55 @@ use crate::error::AppError;
 const LLAMA_RELEASE: &str = "b7100";
 const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download";
 
+/// SHA-256 of every `LLAMA_RELEASE` asset [`assets_for`] can pick. The binary
+/// is executed, so a download that does not match is never extracted. Bumping
+/// `LLAMA_RELEASE` means replacing every entry; an asset missing from here is
+/// refused rather than installed unverified.
+const LLAMA_ASSET_SHA256: &[(&str, &str)] = &[
+    (
+        "llama-b7100-bin-win-vulkan-x64.zip",
+        "9670903b9821777f08fa4875603c872626cff8d9a37cd6a80c16cd6b22da0daa",
+    ),
+    (
+        "llama-b7100-bin-win-cpu-x64.zip",
+        "a530dfaf4928f40d08f5f5eb4e6350f37409ce5310f56240d725c3b84aca93ee",
+    ),
+    (
+        "llama-b7100-bin-ubuntu-x64.zip",
+        "a34d005333ede5f4f1c327667cce2546ef77ced1263b666199d97896b8e1e09e",
+    ),
+    (
+        "llama-b7100-bin-macos-arm64.zip",
+        "c54e7997d8dc4bc85d2166de14619cdafdd82aba34aadc15046668320e78ed63",
+    ),
+    (
+        "llama-b7100-bin-macos-x64.zip",
+        "fec57f35bf4c0bfb3bbd12e5d4a73de27d7a9938737aedb41e436adae215ab0c",
+    ),
+];
+
+/// The pinned digest for a release asset, if there is one.
+fn pinned_sha256(asset: &str) -> Option<&'static str> {
+    LLAMA_ASSET_SHA256
+        .iter()
+        .find(|(name, _)| *name == asset)
+        .map(|(_, digest)| *digest)
+}
+
+/// Most a remote provider may send back for one completion or model list.
+/// Model lists are the big ones (a few MB at most for the aggregators).
+pub(super) const RESPONSE_LIMIT: usize = 16 * 1024 * 1024;
+
+/// How much of an error body is read. Only its first 300 characters are ever
+/// shown, so there is no reason to buffer more of it.
+const ERROR_BODY_LIMIT: usize = 16 * 1024;
+
+/// How long a model switch waits for requests already sent to the old server
+/// to finish before stopping it anyway. Just over `LlamaServer::chat`'s own
+/// request timeout, so a switch never cuts off a request that could still
+/// succeed.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(125);
+
 /// Acceleration backend for the downloaded binary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -85,6 +134,18 @@ pub struct LlamaServer {
     /// unload the server while this is non-zero, otherwise a slow CPU generation
     /// (longer than the idle timeout) gets killed mid-request.
     inflight: std::sync::atomic::AtomicU32,
+    /// Serialises `ensure_running`, so two first requests cannot each spawn a
+    /// server (the second replacing the first's child, whose health loop then
+    /// kills the survivor) and a model switch cannot interleave with a start.
+    start_lock: tokio::sync::Mutex<()>,
+    /// Serialises `ensure_binary`: concurrent first uses would otherwise
+    /// download and extract over the same archive path at once.
+    binary_lock: tokio::sync::Mutex<()>,
+    /// Random bearer key of the running server, fresh for every launch.
+    /// llama-server listens on loopback with permissive CORS, so without one
+    /// any local process, or any website probing localhost ports, could use
+    /// the model and read `/slots`.
+    api_key: std::sync::Mutex<String>,
 }
 
 impl LlamaServer {
@@ -98,6 +159,9 @@ impl LlamaServer {
             last_used: std::sync::Mutex::new(Instant::now()),
             watchdog_started: std::sync::atomic::AtomicBool::new(false),
             inflight: std::sync::atomic::AtomicU32::new(0),
+            start_lock: tokio::sync::Mutex::new(()),
+            binary_lock: tokio::sync::Mutex::new(()),
+            api_key: std::sync::Mutex::new(String::new()),
         }
     }
 
@@ -146,8 +210,45 @@ impl LlamaServer {
         }
     }
 
+    /// Whether a server has passed its health check and is serving requests.
+    /// A server that is still loading does not count: its port is only
+    /// published once `/health` answers.
     pub fn is_running(&self) -> bool {
-        self.port.load(std::sync::atomic::Ordering::Relaxed) != 0
+        self.port.load(std::sync::atomic::Ordering::SeqCst) != 0
+    }
+
+    /// Why the child spawned by `ensure_running` is no longer usable: it
+    /// exited, or someone unloaded it while it was still loading. `None`
+    /// while it is alive.
+    async fn child_gone(&self) -> Option<String> {
+        let mut guard = self.child.lock().await;
+        match guard.as_mut() {
+            None => Some("was stopped while the model was loading".to_string()),
+            Some(child) => child
+                .try_wait()
+                .ok()
+                .flatten()
+                .map(|status| format!("exited ({status}) before becoming ready")),
+        }
+    }
+
+    /// Stop the current server for a model switch without cutting off
+    /// requests already sent to it.
+    ///
+    /// Clearing the port first makes every `chat` that has not yet counted
+    /// itself in flight fail fast instead of reaching a server about to die;
+    /// the ones that already did are waited for (bounded by `DRAIN_TIMEOUT`).
+    /// `chat` increments `inflight` before it re-checks the port, and both
+    /// sides use `SeqCst`, so no request can slip between the two.
+    async fn retire(&self) {
+        self.port.store(0, std::sync::atomic::Ordering::SeqCst);
+        let deadline = Instant::now() + DRAIN_TIMEOUT;
+        while self.inflight.load(std::sync::atomic::Ordering::SeqCst) > 0
+            && Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        self.unload().await;
     }
 
     pub fn active_model(&self) -> Option<String> {
@@ -182,11 +283,30 @@ impl LlamaServer {
         if self.is_binary_current() {
             return Ok(());
         }
+        // Re-checked under the lock: whoever held it may just have installed
+        // the binary, and downloading again would extract over files a
+        // freshly started server is executing.
+        let _installing = self.binary_lock.lock().await;
+        if self.is_binary_current() {
+            return Ok(());
+        }
         std::fs::create_dir_all(&self.bin_dir)?;
         let asset = assets_for(backend);
+        let expected = pinned_sha256(&asset).ok_or_else(|| {
+            AppError::LlmError(format!(
+                "No pinned checksum for {asset}; refusing to install an unverified llama-server."
+            ))
+        })?;
         let url = format!("{LLAMA_BASE_URL}/{LLAMA_RELEASE}/{asset}");
         let archive = self.bin_dir.join(&asset);
-        download_with_progress(client, &url, &archive, &asset, progress).await?;
+        let digest = download_with_progress(client, &url, &archive, &asset, progress).await?;
+        if !digest.eq_ignore_ascii_case(expected) {
+            std::fs::remove_file(&archive).ok();
+            return Err(AppError::LlmError(format!(
+                "Downloaded {asset} failed checksum verification (expected {expected}, got {digest}); \
+                 not installing it."
+            )));
+        }
         extract_all_into(&archive, &self.bin_dir)?;
         std::fs::remove_file(&archive).ok();
         if !self.is_binary_present() {
@@ -209,16 +329,25 @@ impl LlamaServer {
         model_id: &str,
         n_gpu_layers: i32,
     ) -> Result<u16, AppError> {
+        // One start at a time; see `start_lock`. A second caller waits here and
+        // then finds the server the first one started.
+        let _starting = self.start_lock.lock().await;
         // Already running with the right model?
         if self.is_running() && self.active_model().as_deref() == Some(model_id) {
             self.touch();
-            return Ok(self.port.load(std::sync::atomic::Ordering::Relaxed));
+            return Ok(self.port.load(std::sync::atomic::Ordering::SeqCst));
         }
-        // Switching models: stop the old server first.
+        // Switching models: stop the old server once its requests are done.
         if self.is_running() {
+            self.retire().await;
+        } else if self.child.lock().await.is_some() {
+            // A child with no published port is left over from a start whose
+            // caller went away mid-load; nothing can be using it.
             self.unload().await;
         }
 
+        let api_key = random_api_key();
+        *self.api_key.lock().unwrap() = api_key.clone();
         let port = pick_free_port()?;
         // Capture llama-server stderr (where it logs model-load diagnostics such as
         // "unknown model architecture") to a file so failures are debuggable instead
@@ -236,6 +365,10 @@ impl LlamaServer {
             .arg("-ngl")
             .arg(n_gpu_layers.to_string())
             .arg("--no-webui")
+            // Passed through the environment rather than `--api-key`: another
+            // local account can read a process's command line, but not its
+            // environment. llama-server reads `LLAMA_API_KEY` as `--api-key`.
+            .env("LLAMA_API_KEY", &api_key)
             .stdout(Stdio::null())
             .stderr(Stdio::from(log_file))
             // Ensure the child dies with the app even if unload() is skipped.
@@ -245,20 +378,21 @@ impl LlamaServer {
             .map_err(|e| AppError::LlmError(format!("Failed to spawn llama-server: {e}")))?;
 
         *self.child.lock().await = Some(child);
-        self.port.store(port, std::sync::atomic::Ordering::Relaxed);
-        *self.active_model.lock().unwrap() = Some(model_id.to_string());
 
         // Health poll (up to ~180s — large models can be slow to load), but bail out
         // immediately if the child exits (e.g. an unsupported model architecture),
         // surfacing the tail of its captured stderr instead of waiting out the full
         // deadline on a process that is already dead.
+        //
+        // The port stays unpublished until this passes, so `is_running` is false
+        // and no request is sent to a server that is still loading.
         let health = format!("http://127.0.0.1:{port}/health");
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
-            if let Some(status) = self.child_exit_status().await {
+            if let Some(reason) = self.child_gone().await {
                 self.unload().await;
                 return Err(AppError::LlmError(format!(
-                    "llama-server exited ({status}) before becoming ready{}",
+                    "llama-server {reason}{}",
                     read_log_tail(&log_path)
                 )));
             }
@@ -271,6 +405,7 @@ impl LlamaServer {
             // and the deadline above could never fire (the enhance hangs).
             if let Ok(resp) = client
                 .get(&health)
+                .bearer_auth(&api_key)
                 .timeout(Duration::from_secs(5))
                 .send()
                 .await
@@ -281,7 +416,20 @@ impl LlamaServer {
             }
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
+
+        // Publish under the child lock: an `unload` that took the child since
+        // the last check above must not be followed by a port for a server that
+        // no longer exists.
+        let child = self.child.lock().await;
+        if child.is_none() {
+            return Err(AppError::LlmError(
+                "llama-server was stopped while the model was loading".into(),
+            ));
+        }
+        *self.active_model.lock().unwrap() = Some(model_id.to_string());
         self.touch();
+        self.port.store(port, std::sync::atomic::Ordering::SeqCst);
+        drop(child);
         Ok(port)
     }
 
@@ -303,6 +451,16 @@ impl LlamaServer {
         self.inflight
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _inflight = InflightGuard(&self.inflight);
+        // Counted in flight *before* this check (see `retire`): a server that
+        // was switched or unloaded since `ensure_running` handed out `port` is
+        // not sent anything, and one that is still current cannot be retired
+        // until this request finishes.
+        if self.port.load(std::sync::atomic::Ordering::SeqCst) != port {
+            return Err(AppError::LlmError(
+                "The local model was stopped or switched by another request. Please retry.".into(),
+            ));
+        }
+        let api_key = self.api_key.lock().unwrap().clone();
         self.touch();
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
         let body = json!({
@@ -316,6 +474,7 @@ impl LlamaServer {
         });
         let resp = match client
             .post(&url)
+            .bearer_auth(&api_key)
             .json(&body)
             .timeout(Duration::from_secs(120))
             .send()
@@ -350,10 +509,7 @@ impl LlamaServer {
                 resp.status()
             )));
         }
-        let v: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::LlmError(format!("Bad llama-server response: {e}")))?;
+        let v = bounded_json(resp, RESPONSE_LIMIT, "llama-server response").await?;
         let content = completion_content(&v, "The local model")?;
         self.touch();
         Ok(content)
@@ -361,12 +517,18 @@ impl LlamaServer {
 
     /// Terminate the server and clear running state.
     pub async fn unload(&self) {
-        if let Some(mut child) = self.child.lock().await.take() {
+        // Unpublish together with taking the child, under its lock, so this
+        // can never interleave with `ensure_running` publishing a new server.
+        let child = {
+            let mut guard = self.child.lock().await;
+            self.port.store(0, std::sync::atomic::Ordering::SeqCst);
+            *self.active_model.lock().unwrap() = None;
+            guard.take()
+        };
+        if let Some(mut child) = child {
             let _ = child.start_kill();
             let _ = child.wait().await;
         }
-        self.port.store(0, std::sync::atomic::Ordering::Relaxed);
-        *self.active_model.lock().unwrap() = None;
     }
 }
 
@@ -542,35 +704,28 @@ pub async fn chat_external(
     let timeout = chat_timeout(!images.is_empty());
     let mut resp = send_external_chat(client, &urls[0], api_key, &body, timeout).await?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
+        // A user-entered base URL can carry credentials (`user:pass@`) or a
+        // `?key=` query, and this log ends up in exported diagnostics.
         log::info!(
             "[prompt-assistant] {} returned 404, retrying at {}",
-            urls[0],
-            urls[1]
+            crate::commands::api::redact_url_secrets(&urls[0]),
+            crate::commands::api::redact_url_secrets(&urls[1])
         );
         resp = send_external_chat(client, &urls[1], api_key, &body, timeout).await?;
     }
     if !resp.status().is_success() {
         let status = resp.status();
-        let detail: String = resp
-            .text()
-            .await
-            .unwrap_or_default()
-            .chars()
-            .take(300)
-            .collect();
+        let detail = error_detail(resp).await;
         let hint = if status.as_u16() == 404 {
             " (check that the base URL is an OpenAI-compatible API root, e.g. http://localhost:11434/v1)"
         } else {
             ""
         };
         return Err(AppError::LlmError(format!(
-            "External LLM returned {status}: {detail}{hint}"
+            "External LLM returned {status}{detail}{hint}"
         )));
     }
-    let v: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::LlmError(format!("Bad external LLM response: {e}")))?;
+    let v = bounded_json(resp, RESPONSE_LIMIT, "external LLM response").await?;
     completion_content(&v, "The external model")
 }
 
@@ -623,14 +778,130 @@ fn anthropic_url(base_url: &str, path: &str) -> String {
     format!("{base}/{path}")
 }
 
-/// First 300 characters of an error response body, for surfacing in messages.
-async fn error_detail(resp: reqwest::Response) -> String {
-    resp.text()
+/// The start of an error response body, formatted to follow the status in a
+/// message (`": <first 300 characters>"`), or empty when there is nothing to
+/// show or it must not be shown.
+///
+/// A custom provider's base URL is chosen by a moderator, and quoting whatever
+/// answered would turn the error message into a way to read internal HTTP
+/// services (routers, cloud metadata, admin panels). So bodies from private
+/// and link-local addresses are withheld; the status code still is reported.
+/// Loopback stays quotable: that is where self-hosted LLM servers live and
+/// their error text is what makes them debuggable.
+async fn error_detail(mut resp: reqwest::Response) -> String {
+    if !may_quote_body(&resp) {
+        return " (response body withheld: the server is on a private network address)".to_string();
+    }
+    let body = match read_limited(&mut resp, ERROR_BODY_LIMIT).await {
+        Ok((bytes, _)) => bytes,
+        Err(_) => return String::new(),
+    };
+    let detail: String = String::from_utf8_lossy(&body).chars().take(300).collect();
+    if detail.trim().is_empty() {
+        String::new()
+    } else {
+        format!(": {detail}")
+    }
+}
+
+/// Whether the body of `resp` may be quoted back in an error message. Checks
+/// both the host the final (post-redirect) URL names and, when known, the
+/// address actually connected to, so neither a redirect nor a public name
+/// that resolves to a private address gets around it.
+fn may_quote_body(resp: &reqwest::Response) -> bool {
+    host_may_quote(resp.url()) && resp.remote_addr().is_none_or(|a| ip_may_quote(a.ip()))
+}
+
+/// Host-name half of [`may_quote_body`]. Names that only resolve inside a
+/// network (single-label hosts and private-use suffixes) count as private.
+fn host_may_quote(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip_may_quote(std::net::IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => ip_may_quote(std::net::IpAddr::V6(ip)),
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            if name == "localhost" || name.ends_with(".localhost") {
+                return true;
+            }
+            const PRIVATE_SUFFIXES: &[&str] = &[
+                ".local",
+                ".localdomain",
+                ".internal",
+                ".intranet",
+                ".lan",
+                ".home",
+                ".home.arpa",
+                ".corp",
+            ];
+            name.contains('.') && !PRIVATE_SUFFIXES.iter().any(|s| name.ends_with(s))
+        }
+        None => false,
+    }
+}
+
+/// Address half of [`may_quote_body`]: loopback and public addresses may be
+/// quoted; private, link-local, CGNAT and unspecified ones may not.
+fn ip_may_quote(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            // 100.64.0.0/10, shared address space (carrier NAT, tailnets).
+            let shared = a == 100 && (64..128).contains(&b);
+            v4.is_loopback()
+                || !(v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast()
+                    || shared)
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return ip_may_quote(std::net::IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            let unique_local = first & 0xfe00 == 0xfc00;
+            let link_local = first & 0xffc0 == 0xfe80;
+            v6.is_loopback() || !(v6.is_unspecified() || unique_local || link_local)
+        }
+    }
+}
+
+/// Read at most `limit` bytes of a body. The flag reports whether more was
+/// left unread. The request's own timeout still bounds how long this takes.
+async fn read_limited(
+    resp: &mut reqwest::Response,
+    limit: usize,
+) -> Result<(Vec<u8>, bool), reqwest::Error> {
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        let room = limit - body.len();
+        if chunk.len() > room {
+            body.extend_from_slice(&chunk[..room]);
+            return Ok((body, true));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok((body, false))
+}
+
+/// Parse a JSON body of at most `limit` bytes. A provider (or whatever a
+/// custom base URL points at) can otherwise stream an unbounded body into
+/// memory. `what` names the response in error messages.
+pub(super) async fn bounded_json(
+    mut resp: reqwest::Response,
+    limit: usize,
+    what: &str,
+) -> Result<serde_json::Value, AppError> {
+    let (body, truncated) = read_limited(&mut resp, limit)
         .await
-        .unwrap_or_default()
-        .chars()
-        .take(300)
-        .collect()
+        .map_err(|e| AppError::LlmError(format!("Bad {what}: {e}")))?;
+    if truncated {
+        return Err(AppError::LlmError(format!(
+            "Bad {what}: larger than {} MB",
+            limit / (1024 * 1024)
+        )));
+    }
+    serde_json::from_slice(&body).map_err(|e| AppError::LlmError(format!("Bad {what}: {e}")))
 }
 
 /// Send a chat completion to Anthropic's Messages API.
@@ -708,16 +979,22 @@ pub async fn chat_anthropic(
         let status = resp.status();
         let detail = error_detail(resp).await;
         return Err(AppError::LlmError(format!(
-            "Anthropic returned {status}: {detail}"
+            "Anthropic returned {status}{detail}"
         )));
     }
-    let v: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::LlmError(format!("Bad Anthropic response: {e}")))?;
-    // Concatenate every text block: a response can lead with a non-text block.
-    let text = v["content"]
-        .as_array()
+    let v = bounded_json(resp, RESPONSE_LIMIT, "Anthropic response").await?;
+    anthropic_text(&v)
+}
+
+/// Pull the answer out of a Messages API response.
+///
+/// Every text block is concatenated, since a response can lead with a
+/// non-text block. A reply with no text at all is an error, for the same
+/// reason [`completion_content`] gives: an empty "answer" returned as success
+/// gets cached and shown downstream as if the model had meant it.
+fn anthropic_text(v: &serde_json::Value) -> Result<String, AppError> {
+    let blocks = v["content"].as_array();
+    let text = blocks
         .map(|blocks| {
             blocks
                 .iter()
@@ -727,7 +1004,26 @@ pub async fn chat_anthropic(
                 .join("")
         })
         .unwrap_or_default();
-    Ok(text)
+    if !text.trim().is_empty() {
+        return Ok(text);
+    }
+    let stop_reason = v["stop_reason"].as_str();
+    let thought = blocks.is_some_and(|blocks| {
+        blocks
+            .iter()
+            .any(|b| b["type"] == "thinking" || b["type"] == "redacted_thinking")
+    });
+    if thought && stop_reason == Some("max_tokens") {
+        return Err(AppError::LlmError(
+            "Anthropic spent its entire token budget on thinking and returned no answer. \
+             Raise the token limit or choose a model without extended thinking."
+                .into(),
+        ));
+    }
+    Err(AppError::LlmError(match stop_reason {
+        Some(reason) => format!("Anthropic returned an empty response (stop reason: {reason})."),
+        None => "Anthropic returned an empty response.".to_string(),
+    }))
 }
 
 /// Send a chat completion to whichever external provider is configured,
@@ -828,13 +1124,10 @@ pub async fn list_models(
         let status = resp.status();
         let detail = error_detail(resp).await;
         return Err(AppError::LlmError(format!(
-            "Model list returned {status}: {detail}"
+            "Model list returned {status}{detail}"
         )));
     }
-    let v: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::LlmError(format!("Bad model list response: {e}")))?;
+    let v = bounded_json(resp, RESPONSE_LIMIT, "model list response").await?;
     let mut ids: Vec<String> = v["data"]
         .as_array()
         .map(|arr| {
@@ -937,13 +1230,23 @@ fn pick_free_port() -> Result<u16, AppError> {
     Ok(port)
 }
 
+/// A fresh bearer key for one llama-server launch: 32 random bytes, hex.
+fn random_api_key() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let bytes: [u8; 32] = std::array::from_fn(|_| rng.random::<u8>());
+    hex::encode(bytes)
+}
+
+/// Stream `url` to `dest` and return the SHA-256 of what was written, as
+/// lowercase hex, so the caller can check it before trusting the file.
 async fn download_with_progress(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
     label: &str,
     progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let resp = tokio::time::timeout(Duration::from_secs(30), client.get(url).send())
         .await
         .map_err(|_| AppError::LlmError("Download timed out while connecting".into()))?
@@ -958,6 +1261,7 @@ async fn download_with_progress(
     let mut file = tokio::fs::File::create(dest).await?;
     progress(label, 0, total, false);
     // Stream to disk; on any error remove the partial file so a retry starts clean.
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
     let stream_result: Result<u64, AppError> = async {
         let mut downloaded: u64 = 0;
         let mut last_emit = 0u64;
@@ -971,6 +1275,7 @@ async fn download_with_progress(
                 .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?;
             let Some(chunk) = chunk else { break };
             file.write_all(&chunk).await?;
+            sha2::Digest::update(&mut hasher, &chunk);
             downloaded += chunk.len() as u64;
             if downloaded - last_emit > 1024 * 1024 || downloaded == total {
                 last_emit = downloaded;
@@ -984,7 +1289,7 @@ async fn download_with_progress(
     match stream_result {
         Ok(downloaded) => {
             progress(label, downloaded, total, true);
-            Ok(())
+            Ok(hex::encode(sha2::Digest::finalize(hasher)))
         }
         Err(e) => {
             drop(file);
@@ -1127,5 +1432,170 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("empty response"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn response(body: &'static str, url: &str) -> reqwest::Response {
+        use reqwest::ResponseBuilderExt;
+        let http = axum::http::Response::builder()
+            .url(url::Url::parse(url).unwrap())
+            .body(body)
+            .unwrap();
+        reqwest::Response::from(http)
+    }
+
+    #[test]
+    fn the_asset_for_this_platform_has_a_pinned_checksum() {
+        for backend in [Backend::Vulkan, Backend::Metal, Backend::Cpu] {
+            let asset = assets_for(backend);
+            assert!(pinned_sha256(&asset).is_some(), "{asset} is not pinned");
+        }
+    }
+
+    #[test]
+    fn pinned_checksums_belong_to_the_pinned_release_and_are_sha256() {
+        for (asset, digest) in LLAMA_ASSET_SHA256 {
+            // A release bump that forgets this table fails here rather than
+            // refusing every download at runtime.
+            assert!(
+                asset.starts_with(&format!("llama-{LLAMA_RELEASE}-")),
+                "{asset}"
+            );
+            assert_eq!(digest.len(), 64, "{asset}");
+            assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{asset}");
+        }
+        assert!(pinned_sha256("llama-b7100-bin-evil.zip").is_none());
+    }
+
+    #[test]
+    fn api_keys_are_random_and_long() {
+        let a = random_api_key();
+        assert_eq!(a.len(), 64);
+        assert_ne!(a, random_api_key());
+    }
+
+    #[tokio::test]
+    async fn a_chat_against_a_retired_port_is_refused_without_a_request() {
+        let server = LlamaServer::new(std::env::temp_dir(), true);
+        // Nothing is listening and no port is published: the check must fail
+        // before any connection is attempted, and release its in-flight slot.
+        let err = server
+            .chat(&reqwest::Client::new(), 9, "s", "u", 16)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("stopped or switched"), "{err}");
+        assert_eq!(server.inflight.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn private_and_link_local_addresses_are_not_quoted() {
+        for ip in [
+            "10.0.0.5",
+            "172.16.1.1",
+            "192.168.1.50",
+            "169.254.169.254",
+            "100.100.100.100",
+            "0.0.0.0",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+            "::",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!ip_may_quote(ip), "{ip}");
+        }
+        for ip in ["127.0.0.1", "::1", "8.8.8.8", "2606:4700::1111"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(ip_may_quote(ip), "{ip}");
+        }
+    }
+
+    #[test]
+    fn internal_host_names_are_not_quoted() {
+        for url in [
+            "http://192.168.1.10:11434/v1",
+            "http://[fe80::1]:80/",
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://router.lan/",
+            "http://nas.local:8080/",
+            "http://ollama:11434/v1",
+        ] {
+            assert!(!host_may_quote(&url::Url::parse(url).unwrap()), "{url}");
+        }
+        for url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:1234/v1",
+            "https://api.openai.com/v1",
+        ] {
+            assert!(host_may_quote(&url::Url::parse(url).unwrap()), "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn error_bodies_from_private_targets_are_withheld() {
+        let detail = error_detail(response("secret admin page", "http://10.0.0.1/x")).await;
+        assert!(!detail.contains("secret"), "{detail}");
+        let detail = error_detail(response("model not found", "http://127.0.0.1:1/x")).await;
+        assert_eq!(detail, ": model not found");
+    }
+
+    #[tokio::test]
+    async fn error_detail_reads_only_a_bounded_prefix() {
+        let big: &'static str = Box::leak("x".repeat(ERROR_BODY_LIMIT * 4).into_boxed_str());
+        let detail = error_detail(response(big, "https://api.example.com/v1")).await;
+        assert_eq!(detail.len(), ": ".len() + 300);
+    }
+
+    #[tokio::test]
+    async fn oversized_json_is_refused() {
+        let ok = bounded_json(response(r#"{"a":1}"#, "https://x.example/"), 64, "test")
+            .await
+            .unwrap();
+        assert_eq!(ok["a"], 1);
+        let err = bounded_json(
+            response(r#"{"a":"0123456789"}"#, "https://x.example/"),
+            8,
+            "test",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("larger than"), "{err}");
+    }
+
+    #[test]
+    fn anthropic_text_joins_text_blocks() {
+        let v = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "hmm" },
+                { "type": "text", "text": "BASE: " },
+                { "type": "text", "text": "a girl" }
+            ]
+        });
+        assert_eq!(anthropic_text(&v).unwrap(), "BASE: a girl");
+    }
+
+    #[test]
+    fn anthropic_without_text_is_an_error() {
+        let err = anthropic_text(&serde_json::json!({ "content": [], "stop_reason": "refusal" }))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("empty response"), "{err}");
+        assert!(err.contains("refusal"), "{err}");
+        let err = anthropic_text(&serde_json::json!({
+            "content": [{ "type": "thinking", "thinking": "long" }],
+            "stop_reason": "max_tokens"
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("token budget"), "{err}");
+        assert!(anthropic_text(&serde_json::json!({})).is_err());
     }
 }

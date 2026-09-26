@@ -42,7 +42,8 @@
     "composition",
     "strong style transfer",
   ];
-  const reduxWeightTypes = ["multiply", "attn_bias", "average"];
+  // StyleModelApply's strength_type choices in ComfyUI core.
+  const reduxWeightTypes = ["multiply", "attn_bias"];
 
   async function probeIpadapter() {
     if (!isIPAdapter) {

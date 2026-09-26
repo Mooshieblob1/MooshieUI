@@ -466,6 +466,21 @@ pub async fn check_audio() -> Result<(), AppError> {
     .await
 }
 
+/// `thread/start` parameters for a reply-only ChatGPT request.
+///
+/// `"untrusted"` is the approval policy that asks for everything: every
+/// command, every patch and every MCP tool call is sent to this client as an
+/// approval request, which `rpc::denied_request` declines. `"never"` is the
+/// opposite of what it sounds like here: it means "never ask", so any tool the
+/// disabled feature flags miss would simply run.
+fn chatgpt_thread_params(cwd: &Path, system: &str, model: &str) -> Value {
+    let mut params = json!({"cwd":cwd,"ephemeral":true,"sandbox":"read-only","approvalPolicy":"untrusted","baseInstructions":system,"developerInstructions":"Return only the requested answer. Do not use tools, inspect files or run commands."});
+    if !model.trim().is_empty() {
+        params["model"] = json!(model);
+    }
+    params
+}
+
 pub async fn chat(
     provider: &str,
     model: &str,
@@ -485,9 +500,7 @@ pub async fn chat(
         if provider == "chatgpt" {
             if audio.is_some() { return Err(error("ChatGPT subscription sign-in does not support music audio analysis. Choose Gemini sign-in or an audio-capable API provider.")); }
             validate_chatgpt_account(&rpc.call("account/read", json!({"refreshToken":false})).await?)?;
-            let mut params = json!({"cwd":cwd.0,"ephemeral":true,"sandbox":"read-only","approvalPolicy":"never","baseInstructions":system,"developerInstructions":"Return only the requested answer. Do not use tools, inspect files or run commands."});
-            if !model.trim().is_empty() { params["model"] = json!(model); }
-            let thread = rpc.call("thread/start", params).await?;
+            let thread = rpc.call("thread/start", chatgpt_thread_params(&cwd.0, system, model)).await?;
             let id = thread["thread"]["id"].as_str().ok_or_else(|| error("ChatGPT returned no thread."))?;
             let mut input = vec![json!({"type":"text","text":user,"text_elements":[]})];
             for image in images { input.push(json!({"type":"image","url":format!("data:{};base64,{}",image.media_type,image.base64)})); }
@@ -571,6 +584,18 @@ mod tests {
         assert!(validate_chatgpt_account(&json!({"account":null})).is_err());
         assert!(validate_chatgpt_account(&json!({"account":{"type":"chatgpt"}})).is_ok());
     }
+    #[test]
+    fn chatgpt_threads_ask_for_every_tool_so_the_client_can_decline_it() {
+        let params = chatgpt_thread_params(Path::new("/tmp/request"), "sys", "");
+        assert_eq!(params["approvalPolicy"], "untrusted");
+        assert_eq!(params["sandbox"], "read-only");
+        assert!(params.get("model").is_none());
+        assert_eq!(
+            chatgpt_thread_params(Path::new("/tmp/request"), "sys", "gpt-x")["model"],
+            "gpt-x"
+        );
+    }
+
     #[test]
     fn login_urls_are_checked_before_opening_browser() {
         assert!(valid_openai_login_url(

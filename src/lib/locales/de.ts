@@ -2408,6 +2408,7 @@ const de: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API-Schlüssel",
   "settings.civitai.api_key_placeholder": "CivitAI-API-Schlüssel hier einfügen",
+  "settings.civitai.api_key_saved_placeholder": "Ein Schlüssel ist gespeichert. Neuen Schlüssel einfügen, um ihn zu ersetzen.",
   "settings.civitai.api_key_desc": "Wird für Modell-Metadaten, Beispielbilder und Downloads verwendet. Seit CivitAI den unauthentifizierten Zugriff eingeschränkt hat erforderlich.",
   "settings.civitai.api_key_link": "Schlüssel unter civitai.com/user/account erstellen",
   "settings.novelai.title": "NovelAI",
@@ -3238,6 +3239,7 @@ const de: Record<string, string> = {
   "settings.lan.temp_password_min": "Das temporäre Passwort muss mindestens 4 Zeichen lang sein.",
   "settings.lan.reset_failed": "Passwort konnte nicht zurückgesetzt werden.",
   "settings.lan.account_validation": "Benutzername erforderlich, Passwort muss mindestens 4 Zeichen lang sein.",
+  "settings.lan.username_invalid": "Benutzernamen dürfen nur Buchstaben A-Z, Ziffern, - und _ enthalten (höchstens {max} Zeichen).",
   "settings.lan.time.never": "Nie",
   "settings.lan.time.unknown": "Unbekannt",
   "settings.lan.time.weeks_ago": "vor {weeks} W.",
@@ -3687,6 +3689,15 @@ const de: Record<string, string> = {
   "errors.report.opening": "Wird geöffnet...",
 
   "errors.report.copied_hint": "Diagnose in die Zwischenablage kopiert. Füge sie in den Issue-Text ein.",
+  "errors.report.intro_service": "Dein Bericht wird an den MooshieUI-Meldedienst gesendet, der ihn als öffentliches GitHub-Issue veröffentlicht. Jeder kann ihn lesen.",
+  "errors.report.include_log": "Diagnoseprotokoll anhängen",
+  "errors.report.include_log_hint": "Das Protokoll enthält deine App-Version, dein Betriebssystem, den Computernamen, Ordnerpfade, installierte Modelle und aktuelle App-Protokolle. Prüfe es vor dem Senden.",
+  "errors.report.preview_log": "Anzeigen, was gesendet wird",
+  "errors.report.hide_log": "Protokoll ausblenden",
+  "errors.report.loading_log": "Diagnosedaten werden gesammelt...",
+  "errors.report.submit_service": "Bericht senden",
+  "errors.report.sending": "Wird gesendet...",
+  "errors.report.sent": "Bericht gesendet. Danke, dass du hilfst, MooshieUI zu verbessern.",
 
   "generation.video.role_fl2va": "Erstes-/Letztes-Bild-Modell",
 

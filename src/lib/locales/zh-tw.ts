@@ -2388,6 +2388,7 @@ const zhTw: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API 金鑰",
   "settings.civitai.api_key_placeholder": "在此貼上 CivitAI API 金鑰",
+  "settings.civitai.api_key_saved_placeholder": "已儲存金鑰。貼上新的金鑰即可取代。",
   "settings.civitai.api_key_desc": "用於模型中繼資料查詢、範例圖片取得與下載。CivitAI 限制未驗證存取後為必填。",
   "settings.civitai.api_key_link": "於 civitai.com/user/account 取得金鑰",
   "settings.novelai.title": "NovelAI",
@@ -3235,6 +3236,7 @@ const zhTw: Record<string, string> = {
   "settings.lan.temp_password_min": "臨時密碼至少需要 4 個字元。",
   "settings.lan.reset_failed": "重設密碼失敗。",
   "settings.lan.account_validation": "需要使用者名稱，密碼至少需要 4 個字元。",
+  "settings.lan.username_invalid": "使用者名稱只能包含英文字母 (A-Z)、數字、- 和 _（最多 {max} 個字元）。",
   "settings.lan.time.never": "從未",
   "settings.lan.time.unknown": "未知",
   "settings.lan.time.weeks_ago": "{weeks} 週前",
@@ -3685,6 +3687,15 @@ const zhTw: Record<string, string> = {
   "errors.report.opening": "正在開啟...",
 
   "errors.report.copied_hint": "診斷資訊已複製到剪貼板。請貼上至問題內容中。",
+  "errors.report.intro_service": "您的回報會傳送到 MooshieUI 回報服務，並以公開的 GitHub Issue 發佈，任何人都能閱讀。",
+  "errors.report.include_log": "附上診斷記錄",
+  "errors.report.include_log_hint": "記錄包含您的應用程式版本、作業系統、電腦名稱、資料夾路徑、已安裝的模型與最近的應用程式記錄。傳送前請先檢查。",
+  "errors.report.preview_log": "顯示將傳送的內容",
+  "errors.report.hide_log": "隱藏記錄",
+  "errors.report.loading_log": "正在收集診斷資訊...",
+  "errors.report.submit_service": "傳送回報",
+  "errors.report.sending": "傳送中...",
+  "errors.report.sent": "回報已傳送。感謝您協助改進 MooshieUI。",
 
   "generation.video.role_fl2va": "首/末幀模型",
 

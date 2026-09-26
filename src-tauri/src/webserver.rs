@@ -22,6 +22,7 @@ use serde::Deserialize;
 
 use crate::auth::AuthState;
 use crate::commands;
+use crate::commands::api::is_single_safe_filename;
 use crate::config;
 use crate::state::AppState;
 
@@ -95,6 +96,169 @@ fn is_localhost(addr: &SocketAddr) -> bool {
     ip.is_loopback()
 }
 
+/// Strip the port from a `Host` header value, keeping IPv6 literals intact.
+fn host_without_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    match host.rsplit_once(':') {
+        Some((name, port)) if port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
+    }
+}
+
+/// Whether the `Host` header names this machine by a name no website can
+/// point at it: `localhost`, a `*.localhost` name, or an IP literal. DNS
+/// rebinding needs an attacker-controlled domain name, so it never passes.
+/// A missing header (non-browser clients) is accepted.
+fn host_header_is_local(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(axum::http::header::HOST) else {
+        return true;
+    };
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    let name = host_without_port(host.trim()).to_ascii_lowercase();
+    name == "localhost" || name.ends_with(".localhost") || name.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Whether a browser request came from a page served by this server. Browsers
+/// send `Origin` on every cross-origin request and on all POSTs, and
+/// `Sec-Fetch-Site` on every request, so a cross-site page cannot pass this.
+/// Requests without either header (curl, scripts) are accepted.
+fn request_is_same_origin(headers: &HeaderMap) -> bool {
+    if headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("cross-site"))
+    {
+        return false;
+    }
+    let Some(origin) = headers.get(axum::http::header::ORIGIN) else {
+        return true;
+    };
+    let Some(host) = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    origin
+        .to_str()
+        .ok()
+        .and_then(|o| {
+            o.strip_prefix("http://")
+                .or_else(|| o.strip_prefix("https://"))
+        })
+        .is_some_and(|authority| authority.eq_ignore_ascii_case(host.trim()))
+}
+
+/// Whether a request gets the implicit owner trust that localhost (and
+/// localhost-only mode) grants without a token. Being on loopback is not
+/// enough on its own: a website the owner visits can reach 127.0.0.1 (CSRF),
+/// DNS rebinding makes a foreign domain resolve to it, and a same-host reverse
+/// proxy or tunnel sidecar makes every internet request arrive from loopback.
+/// Those callers fall through to token auth instead.
+fn is_trusted_local_request(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> bool {
+    (is_localhost(remote) || !state.lan_enabled)
+        && host_header_is_local(headers)
+        && request_is_same_origin(headers)
+}
+
+#[cfg(test)]
+mod local_trust_tests {
+    use super::{
+        host_header_is_local, host_without_port, is_safe_static_path, request_is_same_origin,
+    };
+    use axum::http::HeaderMap;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, value.parse().unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn host_port_is_stripped() {
+        assert_eq!(host_without_port("localhost:3200"), "localhost");
+        assert_eq!(host_without_port("[::1]:3200"), "::1");
+        assert_eq!(host_without_port("127.0.0.1"), "127.0.0.1");
+        assert_eq!(host_without_port("example.com"), "example.com");
+    }
+
+    #[test]
+    fn only_loopback_names_and_ip_literals_are_local_hosts() {
+        for host in [
+            "localhost:3200",
+            "LOCALHOST",
+            "127.0.0.1:3200",
+            "[::1]:3200",
+            "app.localhost:3200",
+            "192.168.1.5:3200",
+        ] {
+            assert!(host_header_is_local(&headers(&[("host", host)])), "{host}");
+        }
+        for host in [
+            "attacker.example:3200",
+            "localhost.attacker.example",
+            "mooshie.example.com",
+        ] {
+            assert!(!host_header_is_local(&headers(&[("host", host)])), "{host}");
+        }
+        assert!(host_header_is_local(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn cross_site_requests_are_not_same_origin() {
+        let host = ("host", "localhost:3200");
+        assert!(request_is_same_origin(&headers(&[host])));
+        assert!(request_is_same_origin(&headers(&[
+            host,
+            ("origin", "http://localhost:3200")
+        ])));
+        assert!(request_is_same_origin(&headers(&[
+            host,
+            ("origin", "http://localhost:3200"),
+            ("sec-fetch-site", "same-origin"),
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("origin", "https://evil.example")
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("origin", "http://localhost:8080")
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("origin", "null")
+        ])));
+        assert!(!request_is_same_origin(&headers(&[
+            host,
+            ("sec-fetch-site", "cross-site")
+        ])));
+    }
+
+    #[test]
+    fn static_paths_cannot_leave_dist() {
+        for ok in ["index.html", "assets/app-1a2b.js", "icons/icon.png"] {
+            assert!(is_safe_static_path(ok), "{ok}");
+        }
+        for bad in [
+            "../secret.txt",
+            "assets/../../etc/passwd",
+            "C:/Windows/win.ini",
+            "..\\x",
+            "a\\b",
+            "./index.html",
+        ] {
+            assert!(!is_safe_static_path(bad), "{bad}");
+        }
+    }
+}
+
 /// Extract the bearer token from request headers.
 fn extract_token(headers: &HeaderMap) -> Option<String> {
     headers
@@ -106,12 +270,9 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
 
 /// Determine the user's role from the request context.
 fn resolve_role(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> UserRole {
-    // Localhost always gets admin
-    if is_localhost(remote) {
-        return UserRole::Admin;
-    }
-    // LAN not enabled → admin (shouldn't happen since LAN users can't reach us, but be safe)
-    if !state.lan_enabled {
+    // The machine owner (localhost, or anyone in localhost-only mode) gets
+    // admin, unless the request looks cross-site or DNS-rebound.
+    if is_trusted_local_request(state, headers, remote) {
         return UserRole::Admin;
     }
     // Check bearer token — all remote users must authenticate
@@ -134,7 +295,7 @@ fn resolve_role(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> U
 /// Resolve the username for the current request.
 /// Returns None for localhost/admin (they use the shared gallery root).
 fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> Option<String> {
-    if is_localhost(remote) || !state.lan_enabled {
+    if is_trusted_local_request(state, headers, remote) {
         return None; // admin — uses root gallery
     }
     if let Some(token) = extract_token(headers) {
@@ -152,9 +313,9 @@ fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) 
 /// Blank the instance owner's NovelAI key out of a config payload and replace
 /// the "configured" flag with this account's own answer.
 ///
-/// Split out and pure so the redaction is unit-testable: `get_config` hands
-/// moderators `include_secrets = true`, which used to include the host's real
-/// NovelAI token.
+/// Split out and pure so the redaction is unit-testable. The redacted config
+/// already reports whether the *host* has a key; a named account has to be
+/// told about its own instead.
 fn scrub_nai_key_for_user(value: &mut serde_json::Value, has_key: bool) {
     if let Some(obj) = value.as_object_mut() {
         obj.insert("novelai_api_key".to_string(), serde_json::Value::Null);
@@ -166,7 +327,9 @@ fn scrub_nai_key_for_user(value: &mut serde_json::Value, has_key: bool) {
 }
 
 /// A moderator can edit shared settings, but cannot replace the owner's
-/// NovelAI credential through a full-config payload.
+/// NovelAI credential through a full-config payload, and the operator
+/// secrets `get_config` blanked for them come back blank without clearing
+/// the stored values.
 fn preserve_config_secrets_for_role(
     incoming: &mut config::AppConfig,
     current: &config::AppConfig,
@@ -174,9 +337,33 @@ fn preserve_config_secrets_for_role(
 ) {
     config::preserve_secrets(incoming, current);
     if role != UserRole::Admin {
+        config::preserve_redacted_secrets(incoming, current);
         incoming
             .novelai_api_key
             .clone_from(&current.novelai_api_key);
+        // Settings that decide what the host executes, which of its folders
+        // the app reads and writes, or how the server is exposed. A moderator
+        // changing them could run code as the host user (venv, launch args,
+        // pip index) or aim downloads and gallery writes at any folder.
+        incoming.comfyui_path.clone_from(&current.comfyui_path);
+        incoming.venv_path.clone_from(&current.venv_path);
+        incoming.extra_args.clone_from(&current.extra_args);
+        incoming
+            .extra_model_paths
+            .clone_from(&current.extra_model_paths);
+        incoming.gallery_path.clone_from(&current.gallery_path);
+        incoming.pip_index_url.clone_from(&current.pip_index_url);
+        incoming
+            .interrogator_custom_models
+            .clone_from(&current.interrogator_custom_models);
+        incoming.tls_cert_path.clone_from(&current.tls_cert_path);
+        incoming.tls_key_path.clone_from(&current.tls_key_path);
+        incoming
+            .report_endpoint
+            .clone_from(&current.report_endpoint);
+        incoming.lan_enabled = current.lan_enabled;
+        incoming.browser_mode = current.browser_mode;
+        incoming.ui_server_port = current.ui_server_port;
     }
 }
 
@@ -203,7 +390,7 @@ fn resolve_username_with_query_token(
     remote: &SocketAddr,
     query: &str,
 ) -> Option<Option<String>> {
-    if !state.lan_enabled || is_localhost(remote) {
+    if is_trusted_local_request(state, headers, remote) {
         return Some(None);
     }
 
@@ -220,6 +407,21 @@ fn resolve_username_with_query_token(
     None
 }
 
+/// Whether a download URL already carries a `token` query parameter.
+fn url_has_token_param(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|u| u.query_pairs().any(|(k, _)| k == "token"))
+}
+
+/// A query string with any `token` parameter (the session token `<img>`-style
+/// callers pass) removed, for forwarding to an external host.
+fn query_without_token(query: &str) -> String {
+    query
+        .split('&')
+        .filter(|p| !p.is_empty() && *p != "token" && !p.starts_with("token="))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// Authentication gate for the read-only external proxies (cdn/animadex).
 /// These serve `<img>`-style requests that cannot set an Authorization header,
 /// so a `?token=` query param is also accepted. Localhost / non-LAN callers are
@@ -230,7 +432,7 @@ fn proxy_request_authed(
     remote: &SocketAddr,
     query: &str,
 ) -> bool {
-    if !state.lan_enabled || is_localhost(remote) {
+    if is_trusted_local_request(state, headers, remote) {
         return true;
     }
     if resolve_role(state, headers, remote) != UserRole::Anonymous {
@@ -260,8 +462,8 @@ fn is_gallery_image_filename(name: &str) -> bool {
 }
 
 /// Commands that moderators (and admins) can execute.
-/// Moderators have full operational access; filesystem/server panels are
-/// hidden in the UI for mods but all commands are permitted at the API level.
+/// Moderators have operational access; commands that touch arbitrary host
+/// paths or run arbitrary code are in `ADMIN_COMMANDS` instead.
 const MODERATOR_COMMANDS: &[&str] = &[
     // server / config control
     "update_config",
@@ -271,6 +473,10 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "install_pip_package",
     "install_attention_backend",
     "clear_all_queues",
+    // the ComfyUI socket is shared by every user, so dropping or replacing it
+    // interrupts everyone's progress/results stream
+    "connect_ws",
+    "disconnect_ws",
     // external LLM provider settings: these mutate config and spend the
     // instance's API key, so they follow `update_config` rather than the
     // enhance/compose commands every user may run
@@ -283,15 +489,43 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "connect_llm_oauth",
     "cancel_llm_oauth",
     "list_external_llm_models",
-    // previously admin-only: mode switching, filesystem, node install
-    "switch_to_app_mode",
-    "set_gallery_path",
+    // node installs; `install_custom_node` is further limited to the packs
+    // the UI offers (see STAFF_INSTALLABLE_NODE_PACKS)
     "install_custom_node",
     "install_rife",
     "install_h3_turbo",
     "install_h3_teacache",
     "install_h3_vdn",
     "install_h3_upscaler",
+    "delete_model_file",
+    "move_model_file",
+    "create_model_folder",
+    "civitai_bulk_scan",
+    "civitai_bulk_scan_cancel",
+    // absolute host paths; only the admin/moderator settings UI shows them
+    "get_gallery_path",
+    "get_install_path",
+    "detect_model_directories",
+    // absolute host path of one gallery file; the browser UI never asks for
+    // it (its clipboard copy goes by gallery URL), so a regular account has
+    // no use for the host layout it reveals
+    "get_gallery_image_path",
+    // the local LLM is one shared host process: downloading a model (multi-GB,
+    // and it rewrites the configured model), deleting one, or unloading it
+    // (killing every user's in-flight generation) is server management
+    "download_llm_model",
+    "delete_llm_model",
+    "unload_llm",
+    // writes `{stem}.png` next to a shared model file, which every account sees
+    "save_model_sidecar_thumbnail",
+];
+
+/// Commands only an admin may run. Each one reads or writes an arbitrary host
+/// path, changes how the server itself runs, or is a desktop-only GUI action,
+/// so granting it to a moderator would hand them the host account.
+const ADMIN_COMMANDS: &[&str] = &[
+    "switch_to_app_mode",
+    "set_gallery_path",
     "import_image_directory",
     "open_directory",
     "move_installation",
@@ -299,12 +533,36 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "save_image_file",
     "save_text_file",
     "upload_image",
-    "delete_model_file",
-    "move_model_file",
-    "create_model_folder",
-    "civitai_bulk_scan",
-    "civitai_bulk_scan_cancel",
 ];
+
+/// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
+/// INT8, style transfer). Moderators may install only these: any other repo
+/// runs its own code, and its pip requirements, on the host.
+const STAFF_INSTALLABLE_NODE_PACKS: &[(&str, &str)] = &[
+    (
+        "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
+        "ComfyUI_IPAdapter_plus",
+    ),
+    (
+        "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+        "comfyui_controlnet_aux",
+    ),
+    (
+        "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
+        "ComfyUI-INT8-Fast",
+    ),
+    (
+        "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+        "ComfyUi-Untwisting-RoPE",
+    ),
+    (
+        "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+        "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
+    ),
+];
+
+/// Pip specs the UI installs on demand; the only ones a moderator may install.
+const STAFF_INSTALLABLE_PIP_PACKAGES: &[&str] = &["ultralytics==8.4.34"];
 
 /// Model Hub commands that require explicit per-user access for regular users.
 const MODELHUB_COMMANDS: &[&str] = &[
@@ -325,7 +583,9 @@ fn is_modelhub_command(command: &str) -> bool {
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
 fn min_role_for_command(command: &str) -> UserRole {
-    if MODERATOR_COMMANDS.contains(&command) {
+    if ADMIN_COMMANDS.contains(&command) {
+        UserRole::Admin
+    } else if MODERATOR_COMMANDS.contains(&command) {
         UserRole::Moderator
     } else {
         UserRole::User
@@ -355,7 +615,7 @@ fn require_remote_lan_auth(
     headers: &HeaderMap,
     remote: &SocketAddr,
 ) -> Option<Response> {
-    if state.lan_enabled && !is_localhost(remote) {
+    if !is_trusted_local_request(state, headers, remote) {
         let role = resolve_role(state, headers, remote);
         if role == UserRole::Anonymous {
             return Some(unauthorized_response("Authentication required"));
@@ -401,6 +661,15 @@ async fn resolve_tls_config(
     }
 }
 
+/// The first 8 characters of a prompt id, for log lines.
+///
+/// Prompt ids come back from ComfyUI, which may be remote, so they are not
+/// guaranteed to be ASCII UUIDs. Cutting by characters rather than bytes keeps
+/// a multibyte id from panicking (and permanently killing) the cleanup reactor.
+fn short_id(id: &str) -> &str {
+    id.char_indices().nth(8).map_or(id, |(end, _)| &id[..end])
+}
+
 /// Start the embedded web server.
 ///
 /// Attempts to bind to `port`; if that port is already in use, tries the
@@ -427,6 +696,10 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
         return;
     }
 
+    // The reactor is what records output ownership, so the saved map is
+    // loaded before it starts.
+    start_output_owner_persistence(&state);
+
     let cleanup_state = state;
     let mut cleanup_rx = cleanup_state.event_tx.subscribe();
     spawn_background(Box::pin(async move {
@@ -440,6 +713,13 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                         .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
 
                     match evt.event.as_str() {
+                        "comfyui:executed" => {
+                            if let Some(raw_pid) =
+                                evt.payload.get("prompt_id").and_then(|v| v.as_str())
+                            {
+                                record_output_owners(&cleanup_state, raw_pid, &evt.payload);
+                            }
+                        }
                         "comfyui:executing" => {
                             if evt.payload.get("node").is_some_and(|n| n.is_null()) {
                                 if let Some(pid) = prompt_id {
@@ -448,7 +728,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                     let owner = cleanup_state.prompt_queue.owner_of(&pid);
                                     log::info!(
                                         "[gen] completed prompt={} user={}",
-                                        &pid[..8.min(pid.len())],
+                                        short_id(&pid),
                                         owner.as_deref().unwrap_or("admin"),
                                     );
                                     let finished = cleanup_state.prompt_queue.finish(&pid);
@@ -485,7 +765,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                 let owner = cleanup_state.prompt_queue.owner_of(&pid);
                                 log::warn!(
                                     "[gen] error prompt={} user={}",
-                                    &pid[..8.min(pid.len())],
+                                    short_id(&pid),
                                     owner.as_deref().unwrap_or("admin"),
                                 );
                                 if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
@@ -518,6 +798,70 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
             }
         }
     }));
+}
+
+/// Load the saved output-ownership map and keep saving it, at most every
+/// [`OUTPUT_OWNER_SAVE_INTERVAL`](crate::output_owners::OUTPUT_OWNER_SAVE_INTERVAL),
+/// so an account can still fetch its earlier outputs after a restart. The
+/// shutdown paths flush it once more.
+fn start_output_owner_persistence(state: &Arc<AppState>) {
+    let Some(path) = crate::output_owners::persist_path() else {
+        log::warn!("No app data directory; output ownership will not survive a restart");
+        return;
+    };
+    state.output_owners.enable_persistence(path);
+    let saver_state = state.clone();
+    spawn_background(Box::pin(async move {
+        let mut interval = tokio::time::interval(crate::output_owners::OUTPUT_OWNER_SAVE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let flush_state = saver_state.clone();
+            let _ = tokio::task::spawn_blocking(move || flush_state.output_owners.flush()).await;
+        }
+    }));
+}
+
+/// Remember which prompt (and account) produced the output files listed in a
+/// ComfyUI `executed` event, for [`ensure_output_owned`].
+fn record_output_owners(state: &AppState, raw_prompt_id: &str, payload: &serde_json::Value) {
+    let files = crate::output_owners::executed_output_files(payload);
+    if files.is_empty() {
+        return;
+    }
+    let resolved = state.prompt_queue.resolve_alias(raw_prompt_id);
+    let owner = state
+        .prompt_queue
+        .owner_of(&resolved)
+        .or_else(|| state.prompt_queue.owner_of(raw_prompt_id));
+    for (subfolder, filename) in files {
+        state
+            .output_owners
+            .record(&subfolder, &filename, raw_prompt_id, owner.clone());
+    }
+}
+
+/// Refuse a named account an output file its own prompts did not produce.
+/// `username` is `None` for the admin (localhost owner or admin account).
+fn ensure_output_owned(
+    state: &AppState,
+    filename: &str,
+    subfolder: &str,
+    username: Option<&str>,
+) -> Result<(), String> {
+    let record = state.output_owners.lookup(subfolder, filename);
+    let caller = username.map(str::to_string);
+    let allowed = crate::output_owners::caller_may_read(record.as_ref(), username, |pid| {
+        state.prompt_queue.is_owned_by(pid, &caller)
+            || state
+                .prompt_queue
+                .is_owned_by(&state.prompt_queue.resolve_alias(pid), &caller)
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err("Output does not belong to the current user".to_string())
+    }
 }
 
 /// Spawn the stuck-worker watchdog.  Every 60s, checks for workers that have
@@ -835,8 +1179,7 @@ pub async fn start_server(
                         Ok((worker_id, response)) => {
                             // Bind alias immediately to prevent race with WebSocket events
                             let was_deferred = drain_state
-                                .prompt_queue
-                                .bind_alias(&hp.placeholder_id, &response.prompt_id);
+                                .bind_prompt_alias(&hp.placeholder_id, &response.prompt_id);
                             if was_deferred {
                                 // Completion/error arrived before bind_alias; release worker.
                                 drain_state
@@ -966,6 +1309,17 @@ fn resolve_dist_dir() -> PathBuf {
     candidates[0].clone()
 }
 
+/// Whether a URL path (leading `/` stripped) names a file inside the dist
+/// directory. The path is not percent-decoded, so `..`, backslashes and
+/// Windows drive prefixes arrive literally; any of them would let
+/// `dist_dir.join` escape the directory (a drive prefix replaces it outright).
+fn is_safe_static_path(rel_path: &str) -> bool {
+    !rel_path.contains(['\\', ':', '\0'])
+        && std::path::Path::new(rel_path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 /// Serve static files from the dist directory, falling back to assets
 /// embedded into the binary at compile time.
 ///
@@ -986,6 +1340,10 @@ async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Respons
     } else {
         raw_path
     };
+
+    if !is_safe_static_path(rel_path) {
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
 
     // 1. On-disk first so hot-reloaded dev builds override any stale
     //    compile-time embed.
@@ -1307,10 +1665,12 @@ async fn sse_handler(
     // Auth check — SSE uses query param since EventSource can't set headers
     let mut hdrs = headers.clone();
     if let Some(token) = query.get("token") {
-        hdrs.insert(
-            "authorization",
-            format!("Bearer {}", token).parse().unwrap(),
-        );
+        // A token with bytes a header cannot carry can never be a real session
+        // token, so it is skipped (the request stays anonymous) instead of
+        // panicking the handler.
+        if let Ok(value) = axum::http::HeaderValue::from_str(&format!("Bearer {token}")) {
+            hdrs.insert(axum::http::header::AUTHORIZATION, value);
+        }
     }
     let role = resolve_role(&state, &hdrs, &remote);
     if role == UserRole::Anonymous {
@@ -1493,7 +1853,7 @@ async fn heartbeat_stop_handler(
 
     // Cancel in-progress generation. Remote LAN users must only stop their own
     // prompts; localhost keeps the legacy browser-mode "stop everything" behavior.
-    if state.lan_enabled && !is_localhost(&remote) {
+    if !is_trusted_local_request(&state, &headers, &remote) {
         let _ = state.app.interrupt_user_prompts(username.as_deref()).await;
     } else {
         let _ = state.app.gpu_manager.interrupt(None).await;
@@ -1514,7 +1874,7 @@ async fn thumbnail_handler(
         .map(|s| s.into_owned())
         .unwrap_or(filename);
 
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(&filename) {
         return (StatusCode::BAD_REQUEST, "Invalid filename").into_response();
     }
 
@@ -1565,7 +1925,7 @@ async fn gallery_image_handler(
         .map(|s| s.into_owned())
         .unwrap_or(filename);
 
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(&filename) {
         return (StatusCode::BAD_REQUEST, "Invalid filename").into_response();
     }
 
@@ -1663,12 +2023,44 @@ async fn gallery_image_handler(
 /// bytes back. Basename only, and only from that one directory - a path with
 /// any separator in it is rejected outright rather than normalised.
 async fn export_download_handler(
-    axum::extract::Path(filename): axum::extract::Path<String>,
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    Path(filename): Path<String>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
 ) -> Response {
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+    if !is_single_safe_filename(&filename) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let path = crate::commands::video_export::export_temp_dir().join(&filename);
+    // Same gate as the gallery endpoints: this is a plain `<a href>` download,
+    // so a `?token=` query param is accepted alongside the Authorization header.
+    let query = req.uri().query().unwrap_or("");
+    let username = match resolve_username_with_query_token(&state, &headers, &remote, query) {
+        Some(username) => username,
+        None => return unauthorized_response("Authentication required"),
+    };
+    // Each LAN user only ever sees their own exports.
+    let Some(dir) = crate::commands::video_export::export_dir_for(username.as_deref()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let path = dir.join(&filename);
+    // Vet the directory the way the export writer does: the root sits in the
+    // shared temp dir under a fixed name, so another local account could have
+    // pre-created it (or a level under it) as a symlink or a directory it owns.
+    // The file itself must be a regular file, never a symlink.
+    let vetted = tokio::task::spawn_blocking({
+        let dir = dir.clone();
+        let path = path.clone();
+        move || {
+            let root = crate::commands::video_export::export_temp_dir();
+            crate::commands::video_export::ensure_private_export_dir(&root, &dir)?;
+            std::fs::symlink_metadata(&path).map(|meta| meta.file_type().is_file())
+        }
+    })
+    .await;
+    if !matches!(vetted, Ok(Ok(true))) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -1698,7 +2090,7 @@ async fn export_download_handler(
 }
 
 /// Serve an mp4 with single-range support so `<video>` seeking works.
-/// Open-ended ranges are capped (see `http_range::OPEN_END_CHUNK`) — players
+/// Every range is capped (see `http_range::OPEN_END_CHUNK`) — players
 /// re-request as they play, so the server never reads a whole multi-hundred-MB
 /// file for one request.
 async fn serve_video_file(
@@ -1981,16 +2373,13 @@ async fn animadex_proxy_handler(
     if !proxy_request_authed(&state, &headers, &remote, uri.query().unwrap_or("")) {
         return unauthorized_response("Authentication required");
     }
-    let clean = path.trim_start_matches('/');
-    if !clean.starts_with("api/characters/") {
+    // The session token rides in `?token=` for `<img>`-style callers; it must
+    // not be forwarded to the third-party host.
+    let query = uri.query().map(query_without_token);
+    let Some(target_url) = commands::api::animadex_proxy_url(&path, query.as_deref()) else {
         return StatusCode::BAD_REQUEST.into_response();
-    }
-    let mut target_url = format!("https://animadex.net/{}", clean);
-    if let Some(query) = uri.query() {
-        target_url.push('?');
-        target_url.push_str(query);
-    }
-    match state.app.http_client.get(&target_url).send().await {
+    };
+    match state.app.http_client.get(target_url).send().await {
         Ok(resp) => {
             let status = resp.status();
             let content_type = resp
@@ -2031,9 +2420,11 @@ async fn cdn_proxy_handler(
         return unauthorized_response("Authentication required");
     }
     let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
-    if let Some(query) = uri.query() {
-        target_url.push('?');
-        target_url.push_str(query);
+    if let Some(query) = uri.query().map(query_without_token) {
+        if !query.is_empty() {
+            target_url.push('?');
+            target_url.push_str(&query);
+        }
     }
     match state.app.http_client.get(&target_url).send().await {
         Ok(resp) => {
@@ -2123,7 +2514,7 @@ async fn command_handler(
     // client is on the same machine as the server: localhost-only web mode, or a
     // localhost request on a LAN-enabled server. A remote LAN client must never
     // pop a window on the operator's screen.
-    let caller_is_local = !state.lan_enabled || is_localhost(&remote);
+    let caller_is_local = is_trusted_local_request(&state, &headers, &remote);
 
     match dispatch_command(
         state.app.clone(),
@@ -2175,13 +2566,14 @@ async fn dispatch_command(
         "get_config" => {
             let mut value = {
                 let config = state.config.read().await;
-                let include_secrets = matches!(caller_role, UserRole::Admin | UserRole::Moderator);
+                // Operator secrets are for the instance admin only; moderators
+                // get the same redacted view as every other account.
+                let include_secrets = caller_role == UserRole::Admin;
                 crate::config::config_to_client_json(&config, include_secrets)
                     .map_err(|e| e.to_string())?
             };
             // A named account uses its own NovelAI key, so it must be told
-            // about its own key and never about the host's -- including
-            // moderators, who take the include_secrets branch above.
+            // about its own key and never about the host's.
             if let Some(user) = username {
                 scrub_nai_key_for_user(&mut value, crate::user_secrets::has_nai_key(user));
             }
@@ -2205,7 +2597,7 @@ async fn dispatch_command(
             serde_json::to_value(&status).map_err(|e| e.to_string())
         }
         "get_compute_capability" => {
-            let cc = crate::commands::api::detect_compute_capability_pub();
+            let cc = crate::commands::api::detect_compute_capability_pub().await;
             serde_json::to_value(cc).map_err(|e| e.to_string())
         }
         "install_attention_backend" => {
@@ -2228,20 +2620,33 @@ async fn dispatch_command(
             }
             #[cfg(feature = "desktop")]
             {
-                // Step 1: Save config. Snapshot under the guard, then write to
-                // disk after dropping it so the blocking file write doesn't hold
-                // the config write lock.
-                let cfg = {
+                // Step 1: Save config while still holding the write lock. Saving
+                // a snapshot after dropping it lets a concurrent `update_config`
+                // land in between and then be overwritten on disk by this
+                // older copy.
+                {
                     let mut cfg = state.config.write().await;
                     cfg.browser_mode = false;
-                    cfg.clone()
-                };
-                config::save_config(&cfg)?;
+                    config::save_config(&cfg)?;
+                }
 
                 // Step 2: Disarm heartbeat watchdog
                 state
                     .app_mode_active
                     .store(true, std::sync::atomic::Ordering::SeqCst);
+
+                // Step 2b: Drop the WebSocket tasks browser mode started. They
+                // are headless (SSE broadcast only), and a live task makes the
+                // desktop connect (start_comfyui after the reload) return early,
+                // so the app window would never receive generation events.
+                crate::comfyui::websocket::disconnect_websocket(&state)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                for worker in &state.gpu_manager.workers {
+                    if let Some(h) = worker.ws_handle.lock().await.take() {
+                        h.abort();
+                    }
+                }
 
                 // Step 3: Show the existing hidden Tauri window.
                 let handle_guard = state.app_handle.lock().await;
@@ -2740,7 +3145,7 @@ async fn dispatch_command(
                 return Ok(serde_json::json!([]));
             }
             // One query for the whole video table, not one per directory entry.
-            let meta = crate::gallery_index::video_meta();
+            let meta = crate::gallery_index::video_meta(&dir);
             let mut files: Vec<_> = std::fs::read_dir(&dir)
                 .map_err(|e| e.to_string())?
                 .filter_map(|entry| {
@@ -2780,7 +3185,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -2795,7 +3200,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -2818,7 +3223,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -2858,7 +3263,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -2871,6 +3276,7 @@ async fn dispatch_command(
                 .ok_or("Missing filename")?
                 .to_string();
             let subfolder = args["subfolder"].as_str().unwrap_or("").to_string();
+            ensure_output_owned(&state, &filename, &subfolder, username)?;
             let result = state
                 .get_output_image_bytes(&filename, &subfolder)
                 .await
@@ -2889,13 +3295,10 @@ async fn dispatch_command(
             crate::templates::upscale_standalone::rewrite_novelai_request(&mut params)?;
             crate::templates::validate_generation_params(&params)?;
             {
+                // Skipped for a remote ComfyUI, whose LoRAs live on that server.
                 let config = state.config.read().await;
-                crate::commands::api::validate_lora_files_for_generation(
-                    &config.comfyui_path,
-                    config.extra_model_paths.as_deref(),
-                    &params.loras,
-                )
-                .map_err(|e| e.to_string())?;
+                crate::commands::api::validate_generation_loras(&config, &params.loras)
+                    .map_err(|e| e.to_string())?;
             }
             // Mirrors the same check in the Tauri `generate` command: catches a
             // missing MiniMax H3 node before submission instead of surfacing
@@ -3032,9 +3435,8 @@ async fn dispatch_command(
                         .await
                     {
                         Ok((worker_id, response)) => {
-                            let was_deferred = bg_state
-                                .prompt_queue
-                                .bind_alias(&bg_placeholder, &response.prompt_id);
+                            let was_deferred =
+                                bg_state.bind_prompt_alias(&bg_placeholder, &response.prompt_id);
                             if was_deferred {
                                 // Completion/error arrived in the window before bind_alias.
                                 // Placeholder is already removed from the queue; release worker.
@@ -3410,6 +3812,7 @@ async fn dispatch_command(
                 .get("metadataMode")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            ensure_output_owned(&state, &filename, &subfolder, username)?;
             let bytes = state
                 .get_output_image_bytes(&filename, &subfolder)
                 .await
@@ -3571,7 +3974,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3607,13 +4010,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing newFilename")?
                 .to_string();
-            if old.contains('/')
-                || old.contains('\\')
-                || old.contains("..")
-                || new_name.contains('/')
-                || new_name.contains('\\')
-                || new_name.contains("..")
-            {
+            if !is_single_safe_filename(&old) || !is_single_safe_filename(&new_name) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3634,7 +4031,7 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+            if !is_single_safe_filename(&filename) {
                 return Err("Invalid filename".into());
             }
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
@@ -3681,6 +4078,17 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing nodeName")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&node_name) {
+                return Err("Invalid node folder name".into());
+            }
+            if git_url.starts_with('-') {
+                return Err("Invalid git URL".into());
+            }
+            if caller_role != UserRole::Admin
+                && !STAFF_INSTALLABLE_NODE_PACKS.contains(&(git_url.as_str(), node_name.as_str()))
+            {
+                return Err("Only an admin can install node packs the app does not offer".into());
+            }
 
             let config = state.config.read().await;
             let custom_nodes_dir = std::path::Path::new(&config.comfyui_path).join("custom_nodes");
@@ -3789,6 +4197,16 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing package")?
                 .to_string();
+            // A leading `-` would be read as a pip option (`-e git+...`,
+            // `--index-url ...`) rather than a package name.
+            if package.trim().is_empty() || package.starts_with('-') {
+                return Err("Invalid package name".into());
+            }
+            if caller_role != UserRole::Admin
+                && !STAFF_INSTALLABLE_PIP_PACKAGES.contains(&package.as_str())
+            {
+                return Err("Only an admin can install packages the app does not offer".into());
+            }
             let config = state.config.read().await;
             let venv_path = config.venv_path.clone();
             let network_proxy = config.network_proxy.clone();
@@ -4174,6 +4592,7 @@ async fn dispatch_command(
                 .get("apiKey")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let api_key = commands::api::civitai_key_with_fallback(&state, api_key).await;
             // Return the hardcoded common architectures (matching the Tauri command)
             let mut architectures: Vec<String> = vec![
                 "SD 1.4",
@@ -4258,6 +4677,9 @@ async fn dispatch_command(
         }
         "civitai_lookup_hash" => {
             let hash = args["hash"].as_str().ok_or("Missing hash")?.to_string();
+            if !commands::api::is_valid_civitai_hash(&hash) {
+                return Err("Invalid model hash".to_string());
+            }
             let api_key = state.config.read().await.civitai_api_key.clone();
             let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
             let mut req = state.http_client.get(&url);
@@ -4531,6 +4953,11 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing nodeName")?
                 .to_string();
+            // One plain directory name: otherwise this is an existence oracle
+            // for any path on the host.
+            if !commands::api::is_safe_path_component(&node_name) {
+                return Err("Invalid custom node name".to_string());
+            }
             let config = state.config.read().await;
             let target_dir = std::path::Path::new(&config.comfyui_path)
                 .join("custom_nodes")
@@ -4817,6 +5244,18 @@ async fn dispatch_command(
             let install_dir = args["installDir"].as_str().map(|s| s.to_string());
             let expected_sha256 = args["expectedSha256"].as_str().map(|s| s.to_string());
 
+            {
+                let cfg = state.config.read().await;
+                commands::api::validate_model_download_target(
+                    &cfg.comfyui_path,
+                    cfg.extra_model_paths.as_deref(),
+                    &category,
+                    &filename,
+                    install_dir.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
             // Resolve destination directory
             let models_dir = if let Some(ref dir) = install_dir {
                 std::path::PathBuf::from(dir)
@@ -4836,34 +5275,18 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             let dest = models_dir.join(&filename);
 
-            // Skip if file exists and is valid
-            if dest.exists() {
-                let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-                if size > 0 {
-                    let cached_is_valid =
-                        crate::comfyui::client::validate_downloaded_model_file(&dest, &filename)
-                            .is_ok();
-                    if !cached_is_valid {
-                        let _ = std::fs::remove_file(&dest);
-                    } else if let Some(ref expected_hex) = expected_sha256 {
-                        let dest_clone = dest.clone();
-                        let expected = expected_hex.to_lowercase();
-                        let computed = tokio::task::spawn_blocking(move || {
-                            crate::comfyui::client::sha256_file(&dest_clone)
-                        })
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .map_err(|e| e.to_string())?;
-                        if computed == expected {
-                            return Ok(serde_json::json!(null));
-                        }
-                        let _ = std::fs::remove_file(&dest);
-                    } else {
-                        return Ok(serde_json::json!(null));
-                    }
-                } else {
-                    let _ = std::fs::remove_file(&dest);
-                }
+            // Skip if the file on disk is complete and matches the expected hash.
+            if crate::comfyui::client::reuse_existing_model_download(
+                &state.http_client,
+                &url,
+                &dest,
+                &filename,
+                expected_sha256.as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?
+            {
+                return Ok(serde_json::json!(null));
             }
 
             // Download with progress broadcast
@@ -4874,8 +5297,16 @@ async fn dispatch_command(
                 .header("User-Agent", "MooshieUI/1.3.0");
             if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
                 req = req.bearer_auth(token);
+            } else if crate::comfyui::client::is_civitai_url(&url) && !url_has_token_param(&url) {
+                // Browser clients below admin no longer hold the instance's
+                // CivitAI key to append as `?token=`, so the server adds it.
+                // reqwest drops the header if CivitAI redirects to another host.
+                if let Some(key) = commands::api::civitai_key_with_fallback(&state, None).await {
+                    req = req.bearer_auth(key);
+                }
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            // reqwest errors quote the full URL, which may carry `?token=`.
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 return Err(crate::comfyui::client::download_status_error_message(
@@ -4890,9 +5321,13 @@ async fn dispatch_command(
                 .to_lowercase();
             crate::comfyui::client::reject_non_model_download_content_type(&url, &content_type)
                 .map_err(|e| e.to_string())?;
-            let total = resp.content_length().unwrap_or(0);
+            // Stream into `<dest>.part` and rename only once verified, so an
+            // interrupted download never leaves a truncated file at `dest`.
+            let part = crate::comfyui::client::partial_download_path(&dest);
+            let expected_len = resp.content_length();
+            let total = expected_len.unwrap_or(0);
             let mut downloaded: u64 = 0;
-            let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+            let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
             let mut last_emit: u64 = 0;
 
             let progress_event =
@@ -4915,19 +5350,30 @@ async fn dispatch_command(
             state.clear_download_cancel(&filename);
             progress_event(&event_tx, &filename, 0, total, false);
             let mut resp = resp;
-            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            loop {
+                let chunk = match resp.chunk().await {
+                    Ok(Some(chunk)) => chunk,
+                    Ok(None) => break,
+                    Err(e) => {
+                        // Connection dropped mid-stream: never leave the partial file.
+                        drop(file);
+                        let _ = std::fs::remove_file(&part);
+                        progress_event(&event_tx, &filename, downloaded, total, true);
+                        return Err(e.without_url().to_string());
+                    }
+                };
                 use std::io::Write;
                 // Abort cleanly if the user cancelled this download (#399).
                 if state.is_download_cancelled(&filename) {
                     drop(file);
-                    let _ = std::fs::remove_file(&dest);
+                    let _ = std::fs::remove_file(&part);
                     state.clear_download_cancel(&filename);
                     progress_event(&event_tx, &filename, downloaded, total, true);
                     return Err(format!("Download cancelled: {}", filename));
                 }
                 if let Err(e) = file.write_all(&chunk) {
                     drop(file);
-                    let _ = std::fs::remove_file(&dest);
+                    let _ = std::fs::remove_file(&part);
                     return Err(e.to_string());
                 }
                 downloaded += chunk.len() as u64;
@@ -4936,32 +5382,20 @@ async fn dispatch_command(
                     progress_event(&event_tx, &filename, downloaded, total, false);
                 }
             }
+            drop(file);
             progress_event(&event_tx, &filename, downloaded, total, true);
 
-            // Verify SHA256 if provided
-            if let Some(ref expected_hex) = expected_sha256 {
-                let dest_clone = dest.clone();
-                let expected = expected_hex.to_lowercase();
-                let computed = tokio::task::spawn_blocking(move || {
-                    crate::comfyui::client::sha256_file(&dest_clone)
-                })
-                .await
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())?;
-                if computed != expected {
-                    let _ = std::fs::remove_file(&dest);
-                    return Err(format!(
-                        "SHA256 mismatch: expected {}, got {}",
-                        expected, computed
-                    ));
-                }
-            }
-            crate::comfyui::client::validate_downloaded_model_file(&dest, &filename).map_err(
-                |e| {
-                    let _ = std::fs::remove_file(&dest);
-                    e.to_string()
-                },
-            )?;
+            // Length, SHA256 (if provided) and format checks, then rename into place.
+            crate::comfyui::client::finalize_partial_download(
+                &part,
+                &dest,
+                &filename,
+                downloaded,
+                expected_len,
+                expected_sha256.as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
             Ok(serde_json::json!(null))
         }
@@ -5002,10 +5436,7 @@ async fn dispatch_command(
                             .as_str()
                             .ok_or("Missing filename")?
                             .to_string();
-                        if filename.contains('/')
-                            || filename.contains('\\')
-                            || filename.contains("..")
-                        {
+                        if !is_single_safe_filename(&filename) {
                             return Err("Invalid filename".to_string());
                         }
                         // Resolve within the caller's own gallery directory so a LAN
@@ -5340,7 +5771,9 @@ async fn dispatch_command(
                         .to_string(),
                 );
             }
-            let s = crate::prompt_assistant::providers::connect_xai_session(&state)
+            // Only the caller sees the code: whoever approves it first binds
+            // the instance's session to their own xAI account.
+            let s = crate::prompt_assistant::providers::connect_xai_session(&state, username)
                 .await
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(s).map_err(|e| e.to_string())
@@ -5450,6 +5883,7 @@ async fn dispatch_command(
                 #[cfg(feature = "desktop")]
                 None,
                 &state,
+                username,
                 &dir.join(&name),
                 args["format"].as_str().unwrap_or("avif"),
                 args["fps"].as_u64().unwrap_or(24) as u32,
@@ -5669,8 +6103,10 @@ async fn dispatch_command(
             let frame_count = args["frameCount"].as_u64().unwrap_or(0);
             let width = args["width"].as_u64().unwrap_or(0) as u32;
             let height = args["height"].as_u64().unwrap_or(0) as u32;
+            let roots = crate::commands::api::manual_save_video_roots(&*state.config.read().await);
             let filename = crate::commands::api::save_video_to_gallery_manual_inner(
                 username,
+                &roots,
                 video_path,
                 prompt_id,
                 fps,
@@ -6079,6 +6515,20 @@ struct AuthRequest {
     password: String,
 }
 
+/// Run an `AuthState` call that hashes or verifies a password (Argon2) on a
+/// blocking thread, so a burst of logins cannot stall the async workers that
+/// serve every other request.
+async fn run_auth_blocking<T, F>(auth: &Arc<AuthState>, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AuthState) -> Result<T, String> + Send + 'static,
+{
+    let auth = Arc::clone(auth);
+    tokio::task::spawn_blocking(move || f(&auth))
+        .await
+        .unwrap_or_else(|e| Err(format!("Authentication task failed: {e}")))
+}
+
 /// POST /internal-api/_auth/logout — invalidate the current session token.
 async fn auth_logout_handler(
     AxumState(state): AxumState<SharedState>,
@@ -6093,17 +6543,28 @@ async fn auth_logout_handler(
 /// POST /internal-api/_auth/login — authenticate and return a session token.
 async fn auth_login_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
     Json(req): Json<AuthRequest>,
 ) -> Response {
-    if let Err(e) = state.auth.check_login_allowed(&req.username) {
+    // Per-address first, so one client guessing across many usernames is
+    // stopped even though unknown names are not counted per username.
+    if let Err(e) = state
+        .auth
+        .check_ip_login_allowed(remote.ip())
+        .and_then(|()| state.auth.check_login_allowed(&req.username))
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response();
     }
-    match state.auth.login(&req.username, &req.password) {
+    let (username, password) = (req.username.clone(), req.password.clone());
+    let login = run_auth_blocking(&state.auth, move |auth| auth.login(&username, &password)).await;
+    match login {
         Ok((token, must_change)) => {
+            // The per-address count is left to decay on its own: clearing it
+            // here would let a client with one valid account reset its budget.
             state.auth.clear_login_attempts(&req.username);
             (
                 StatusCode::OK,
@@ -6115,6 +6576,7 @@ async fn auth_login_handler(
                 .into_response()
         }
         Err(e) => {
+            state.auth.record_failed_login_ip(remote.ip());
             state.auth.record_failed_login(&req.username);
             (
                 StatusCode::UNAUTHORIZED,
@@ -6143,10 +6605,25 @@ async fn auth_register_handler(
         )
             .into_response();
     }
-    match state.auth.create_account(&req.username, &req.password) {
+    if !crate::auth::is_valid_new_username(&req.username) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": crate::auth::invalid_new_username_error() })),
+        )
+            .into_response();
+    }
+    let (username, password) = (req.username.clone(), req.password.clone());
+    let created = run_auth_blocking(&state.auth, move |auth| {
+        auth.create_account(&username, &password)
+    })
+    .await;
+    match created {
         Ok(()) => {
             // Auto-login after registration
-            match state.auth.login(&req.username, &req.password) {
+            let (username, password) = (req.username.clone(), req.password.clone());
+            let login =
+                run_auth_blocking(&state.auth, move |auth| auth.login(&username, &password)).await;
+            match login {
                 Ok((token, _)) => {
                     (StatusCode::OK, Json(serde_json::json!({ "token": token }))).into_response()
                 }
@@ -6334,6 +6811,7 @@ async fn auth_delete_account_handler(
 /// Accepts `{ password }` when authenticated, or `{ username, password }` on the login gate.
 async fn auth_upgrade_password_encryption_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<serde_json::Value>,
 ) -> Response {
@@ -6384,7 +6862,11 @@ async fn auth_upgrade_password_encryption_handler(
         (username, password, false)
     };
 
-    if let Err(e) = state.auth.check_login_allowed(&username) {
+    if let Err(e) = state
+        .auth
+        .check_ip_login_allowed(remote.ip())
+        .and_then(|()| state.auth.check_login_allowed(&username))
+    {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": e })),
@@ -6392,12 +6874,23 @@ async fn auth_upgrade_password_encryption_handler(
             .into_response();
     }
 
-    match state.auth.upgrade_password_encryption(&username, &password) {
+    let upgraded = {
+        let (username, password) = (username.clone(), password.clone());
+        run_auth_blocking(&state.auth, move |auth| {
+            auth.upgrade_password_encryption(&username, &password)
+        })
+        .await
+    };
+    match upgraded {
         Ok(true) => {
             if authenticated {
                 return (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response();
             }
-            match state.auth.login(&username, &password) {
+            let login = {
+                let (username, password) = (username.clone(), password.clone());
+                run_auth_blocking(&state.auth, move |auth| auth.login(&username, &password)).await
+            };
+            match login {
                 Ok((token, must_change)) => (
                     StatusCode::OK,
                     Json(serde_json::json!({
@@ -6425,6 +6918,7 @@ async fn auth_upgrade_password_encryption_handler(
         )
             .into_response(),
         Err(e) => {
+            state.auth.record_failed_login_ip(remote.ip());
             state.auth.record_failed_login(&username);
             (
                 StatusCode::BAD_REQUEST,
@@ -6456,7 +6950,7 @@ async fn auth_change_password_handler(
     };
 
     let current = match req.get("current_password").and_then(|v| v.as_str()) {
-        Some(p) => p,
+        Some(p) => p.to_string(),
         None => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -6466,7 +6960,7 @@ async fn auth_change_password_handler(
         }
     };
     let new_pass = match req.get("new_password").and_then(|v| v.as_str()) {
-        Some(p) => p,
+        Some(p) => p.to_string(),
         None => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -6476,7 +6970,12 @@ async fn auth_change_password_handler(
         }
     };
 
-    match state.auth.change_password(&username, current, new_pass) {
+    // Every other session of the account is signed out; this one stays.
+    let changed = run_auth_blocking(&state.auth, move |auth| {
+        auth.change_password(&username, &current, &new_pass, token.as_deref())
+    })
+    .await;
+    match changed {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -6530,7 +7029,12 @@ async fn auth_reset_password_handler(
         }
     };
 
-    match state.auth.reset_password(username, temp_pass) {
+    let (username, temp_pass) = (username.to_string(), temp_pass.to_string());
+    let reset = run_auth_blocking(&state.auth, move |auth| {
+        auth.reset_password(&username, &temp_pass)
+    })
+    .await;
+    match reset {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -6688,13 +7192,20 @@ fn get_lan_ips() -> Vec<String> {
 pub(crate) fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
     let base = config::gallery_dir()?;
     match username {
-        Some(name) => {
-            // Sanitise the username to prevent path traversal
-            let safe = name.to_ascii_lowercase().replace(['/', '\\', '.'], "_");
-            Some(base.join("users").join(safe))
-        }
+        Some(name) => Some(base.join("users").join(user_gallery_subdir(name)?)),
         None => Some(base),
     }
+}
+
+/// The per-user gallery subdirectory name for `username`, or `None` when the
+/// name cannot safely become one path component.
+fn user_gallery_subdir(username: &str) -> Option<String> {
+    // Sanitise the username to prevent path traversal
+    let safe = username.to_ascii_lowercase().replace(['/', '\\', '.'], "_");
+    // The replace above leaves `:` alone, and `D:x` makes `PathBuf::join`
+    // escape the gallery on Windows. Refuse anything that is still not one
+    // plain path component.
+    is_single_safe_filename(&safe).then_some(safe)
 }
 
 /// Save image bytes to a specific gallery directory with metadata embedding.
@@ -6837,8 +7348,6 @@ fn save_to_gallery_in_dir(
         crate::metadata::ImageFormat::WebP => "webp",
         _ => "png",
     };
-    let gallery_filename = format!("{}.{}", rendered_base, ext);
-    let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
@@ -6885,7 +7394,10 @@ fn save_to_gallery_in_dir(
         bytes.to_vec()
     };
 
-    std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
+    // Never overwrite: the template can render one name for distinct images.
+    let (gallery_filename, path) =
+        commands::api::write_new_gallery_file(dir, &rendered_base, ext, &final_bytes)
+            .map_err(|e| e.to_string())?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
@@ -7322,6 +7834,7 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     crate::prompt_assistant::companion::shutdown().await;
                     commands::music_link::shutdown(&state).await;
                     commands::music_audio_style::shutdown(&state).await;
+                    state.output_owners.flush();
                     std::process::exit(0);
                 }
             }
@@ -7353,7 +7866,20 @@ async fn model_requests_list_handler(
         _ => None,
     });
 
-    let requests = state.app.model_requests.get_requests(status_filter);
+    // Staff triage every account's requests; a regular user sees only their
+    // own, since the list carries other requesters' usernames and picks.
+    let viewer = if matches!(role, UserRole::Admin | UserRole::Moderator) {
+        None
+    } else {
+        resolve_username(&state, &headers, &remote)
+    };
+    if role == UserRole::User && viewer.is_none() {
+        return forbidden_response("Authentication required.");
+    }
+    let requests = state
+        .app
+        .model_requests
+        .visible_requests(status_filter, viewer.as_deref());
     (
         StatusCode::OK,
         Json(serde_json::json!({ "requests": requests })),
@@ -7430,7 +7956,7 @@ async fn model_requests_add_handler(
             .into_response();
     }
 
-    let request = state.app.model_requests.add_request(
+    let request = match state.app.model_requests.add_request(
         &username,
         model_id,
         &model_name,
@@ -7440,7 +7966,16 @@ async fn model_requests_add_handler(
         &file_url,
         file_size_kb,
         &category,
-    );
+    ) {
+        Ok(request) => request,
+        Err(e) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response();
+        }
+    };
 
     // Notify mods/admins about the new request. A "global" notification would
     // leak the request (and requester's username) to every user, so target each
@@ -7958,5 +8493,269 @@ mod nai_key_tests {
 
         assert_eq!(value["novelai_api_key"], serde_json::Value::Null);
         assert_eq!(value["novelai_api_key_configured"], serde_json::json!(true));
+    }
+}
+
+#[cfg(test)]
+mod lan_hardening_tests {
+    use super::{min_role_for_command, short_id, user_gallery_subdir, UserRole};
+
+    #[test]
+    fn shared_comfyui_socket_commands_need_a_moderator() {
+        assert_eq!(min_role_for_command("connect_ws"), UserRole::Moderator);
+        assert_eq!(min_role_for_command("disconnect_ws"), UserRole::Moderator);
+    }
+
+    #[test]
+    fn short_id_cuts_on_char_boundaries() {
+        assert_eq!(short_id("0123456789abcdef"), "01234567");
+        assert_eq!(short_id("abc"), "abc");
+        assert_eq!(short_id(""), "");
+        // Each of these is 3 bytes, so a byte slice at 8 would panic.
+        assert_eq!(
+            short_id("\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}"),
+            "\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}"
+        );
+        assert_eq!(short_id("ab\u{e9}"), "ab\u{e9}");
+    }
+
+    #[test]
+    fn user_gallery_subdir_keeps_existing_names_and_refuses_unsafe_ones() {
+        assert_eq!(user_gallery_subdir("Alice").as_deref(), Some("alice"));
+        assert_eq!(user_gallery_subdir("john.doe").as_deref(), Some("john_doe"));
+        assert_eq!(user_gallery_subdir("../x").as_deref(), Some("___x"));
+        assert_eq!(user_gallery_subdir("D:x"), None);
+        assert_eq!(user_gallery_subdir(""), None);
+        assert_eq!(user_gallery_subdir("a\0b"), None);
+    }
+}
+
+#[cfg(test)]
+mod lan_access_scope_tests {
+    use super::{
+        ensure_output_owned, min_role_for_command, query_without_token, record_output_owners,
+        url_has_token_param, UserRole,
+    };
+    use crate::state::AppState;
+
+    #[test]
+    fn host_paths_and_shared_llm_or_model_writes_need_a_moderator() {
+        for command in [
+            "get_gallery_path",
+            "get_install_path",
+            "detect_model_directories",
+            "download_llm_model",
+            "delete_llm_model",
+            "unload_llm",
+            "save_model_sidecar_thumbnail",
+        ] {
+            assert_eq!(
+                min_role_for_command(command),
+                UserRole::Moderator,
+                "{command}"
+            );
+        }
+        // Using the assistant stays open to every account.
+        assert_eq!(min_role_for_command("enhance_prompt"), UserRole::User);
+        assert_eq!(min_role_for_command("llm_status"), UserRole::User);
+    }
+
+    #[test]
+    fn proxied_queries_drop_the_session_token() {
+        assert_eq!(
+            query_without_token("q=miku&token=abc&page=2"),
+            "q=miku&page=2"
+        );
+        assert_eq!(query_without_token("token=abc"), "");
+        assert_eq!(query_without_token("token"), "");
+        assert_eq!(
+            query_without_token("tokens=1&x=token=2"),
+            "tokens=1&x=token=2"
+        );
+    }
+
+    #[test]
+    fn token_param_detection() {
+        assert!(url_has_token_param(
+            "https://civitai.com/api/download/models/1?type=Model&token=k"
+        ));
+        assert!(!url_has_token_param(
+            "https://civitai.com/api/download/models/1?type=Model"
+        ));
+        assert!(!url_has_token_param("not a url"));
+    }
+
+    fn executed(prompt_id: &str, filename: &str) -> serde_json::Value {
+        serde_json::json!({
+            "prompt_id": prompt_id,
+            "node": "9",
+            "output": {"images": [{"filename": filename, "subfolder": "", "type": "output"}]}
+        })
+    }
+
+    #[test]
+    fn outputs_are_readable_only_by_their_owner_or_the_admin() {
+        let state = AppState::new(crate::config::AppConfig::default());
+        state
+            .prompt_queue
+            .insert("ph-alice", Some("alice".to_string()));
+        state.prompt_queue.bind_alias("ph-alice", "real-alice");
+        record_output_owners(&state, "real-alice", &executed("real-alice", "a.png"));
+
+        assert!(ensure_output_owned(&state, "a.png", "", Some("alice")).is_ok());
+        assert!(ensure_output_owned(&state, "a.png", "", Some("bob")).is_err());
+        assert!(ensure_output_owned(&state, "a.png", "", None).is_ok());
+        // Never observed: only the admin may fetch it.
+        assert!(
+            ensure_output_owned(&state, "mooshie_video_00001_.mp4", "", Some("alice")).is_err()
+        );
+        assert!(ensure_output_owned(&state, "mooshie_video_00001_.mp4", "", None).is_ok());
+
+        // Admin-owned outputs stay hidden from named accounts.
+        state.prompt_queue.insert("ph-admin", None);
+        record_output_owners(&state, "ph-admin", &executed("ph-admin", "admin.png"));
+        assert!(ensure_output_owned(&state, "admin.png", "", Some("alice")).is_err());
+        assert!(ensure_output_owned(&state, "admin.png", "", None).is_ok());
+    }
+
+    #[test]
+    fn output_ownership_bound_after_the_event_is_honoured() {
+        let state = AppState::new(crate::config::AppConfig::default());
+        // `executed` observed before the placeholder was bound to the real id.
+        record_output_owners(&state, "real-bob", &executed("real-bob", "b.png"));
+        assert!(ensure_output_owned(&state, "b.png", "", Some("bob")).is_err());
+        state.prompt_queue.insert("ph-bob", Some("bob".to_string()));
+        state.prompt_queue.bind_alias("ph-bob", "real-bob");
+        assert!(ensure_output_owned(&state, "b.png", "", Some("bob")).is_ok());
+        assert!(ensure_output_owned(&state, "b.png", "", Some("carol")).is_err());
+    }
+
+    #[test]
+    fn output_ownership_survives_a_restart() {
+        let dir =
+            std::env::temp_dir().join(format!("mooshie-owners-restart-{}", uuid::Uuid::new_v4()));
+        let path = dir.join(crate::output_owners::OUTPUT_OWNERS_FILE);
+
+        let state = AppState::new(crate::config::AppConfig::default());
+        state.output_owners.enable_persistence(path.clone());
+        state
+            .prompt_queue
+            .insert("ph-alice", Some("alice".to_string()));
+        state.prompt_queue.bind_alias("ph-alice", "real-alice");
+        record_output_owners(&state, "real-alice", &executed("real-alice", "a.png"));
+        state.output_owners.flush();
+
+        // The next process knows nothing about the prompt, only the saved map.
+        let restarted = AppState::new(crate::config::AppConfig::default());
+        restarted.output_owners.enable_persistence(path);
+        assert!(ensure_output_owned(&restarted, "a.png", "", Some("alice")).is_ok());
+        assert!(ensure_output_owned(&restarted, "a.png", "", Some("bob")).is_err());
+        assert!(ensure_output_owned(&restarted, "a.png", "", None).is_ok());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn output_recorded_before_the_bind_keeps_its_owner_across_a_restart() {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshie-owners-early-output-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = dir.join(crate::output_owners::OUTPUT_OWNERS_FILE);
+
+        let state = AppState::new(crate::config::AppConfig::default());
+        state.output_owners.enable_persistence(path.clone());
+        state.prompt_queue.insert("ph-bob", Some("bob".to_string()));
+        // A cached prompt: `executed` lands before /prompt has returned.
+        record_output_owners(&state, "real-bob", &executed("real-bob", "b.png"));
+        assert!(!state.bind_prompt_alias("ph-bob", "real-bob"));
+        state.output_owners.flush();
+
+        let restarted = AppState::new(crate::config::AppConfig::default());
+        restarted.output_owners.enable_persistence(path);
+        assert!(ensure_output_owned(&restarted, "b.png", "", Some("bob")).is_ok());
+        assert!(ensure_output_owned(&restarted, "b.png", "", Some("carol")).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gallery_image_host_paths_are_staff_only() {
+        // A regular account must never learn where the gallery lives on the
+        // host; the localhost owner resolves to Admin and still gets it.
+        assert_eq!(
+            min_role_for_command("get_gallery_image_path"),
+            UserRole::Moderator
+        );
+        assert_eq!(
+            min_role_for_command("load_gallery_image_png"),
+            UserRole::User
+        );
+    }
+}
+
+#[cfg(test)]
+mod moderator_config_round_trip_tests {
+    use super::{preserve_config_secrets_for_role, UserRole};
+    use crate::config::{config_to_client_json, AppConfig};
+
+    fn owner_config() -> AppConfig {
+        AppConfig {
+            civitai_api_key: Some("civitai-owner".into()),
+            network_proxy: Some("http://u:proxy-pass@10.0.0.2:3128".into()),
+            pip_index_url: Some("https://u:pip-pass@pypi.internal/simple".into()),
+            webhook_url: Some("https://hooks.example/x?token=hook".into()),
+            novelai_api_key: Some("pst-owner".into()),
+            llm_external_api_key: "sk-owner".into(),
+            llm_oauth_refresh_token: "refresh-owner".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_moderator_autosave_of_the_redacted_view_keeps_every_owner_secret() {
+        // get_config serves a moderator the non-admin view ...
+        let current = owner_config();
+        let view = config_to_client_json(&current, false).unwrap();
+        for secret in [
+            "civitai-owner",
+            "proxy-pass",
+            "pip-pass",
+            "token=hook",
+            "sk-owner",
+        ] {
+            assert!(
+                !view.to_string().contains(secret),
+                "{secret} reached a moderator"
+            );
+        }
+        // ... and update_config gets that view back with one real edit.
+        let mut incoming: AppConfig = serde_json::from_value(view).unwrap();
+        incoming.default_steps = 42;
+        crate::config::normalize_config_fields(&mut incoming);
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Moderator);
+
+        assert_eq!(incoming.default_steps, 42);
+        assert_eq!(incoming.civitai_api_key, current.civitai_api_key);
+        assert_eq!(incoming.network_proxy, current.network_proxy);
+        assert_eq!(incoming.pip_index_url, current.pip_index_url);
+        assert_eq!(incoming.webhook_url, current.webhook_url);
+        assert_eq!(incoming.novelai_api_key, current.novelai_api_key);
+        assert_eq!(incoming.llm_external_api_key, current.llm_external_api_key);
+        assert_eq!(
+            incoming.llm_oauth_refresh_token,
+            current.llm_oauth_refresh_token
+        );
+    }
+
+    #[test]
+    fn an_admin_clearing_a_field_it_can_see_still_clears_it() {
+        let current = owner_config();
+        let mut incoming: AppConfig =
+            serde_json::from_value(config_to_client_json(&current, true).unwrap()).unwrap();
+        incoming.webhook_url = None;
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
+        assert_eq!(incoming.webhook_url, None);
+        assert_eq!(incoming.llm_external_api_key, current.llm_external_api_key);
     }
 }

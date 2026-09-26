@@ -162,15 +162,13 @@ fn apply_weight(segment: &str, weight: f64) -> String {
 /// - `{tag}` becomes `(tag:1.05)` and `[tag]` becomes `(tag:0.95)`, innermost
 ///   first, so `{{tag}}` becomes `((tag:1.05):1.05)`
 /// - An escaped bracket is left alone, since it is a literal character
+///
+/// Linear in the prompt's length. It runs on metadata read out of arbitrary
+/// images, so a prompt built to be slow must not be able to pin a worker.
 pub fn from_novelai(prompt: &str) -> String {
-    let mut out = expand_novelai_weights(prompt);
-    while let Some(next) = rewrite_innermost_bracket(&out, b'{', b'}', "1.05") {
-        out = next;
-    }
-    while let Some(next) = rewrite_innermost_bracket(&out, b'[', b']', "0.95") {
-        out = next;
-    }
-    out
+    let out = expand_novelai_weights(prompt);
+    let out = rewrite_brackets(&out, '{', '}', "1.05");
+    rewrite_brackets(&out, '[', ']', "0.95")
 }
 
 /// Rewrite every `weight::text::` run as `(text:weight)`.
@@ -217,40 +215,89 @@ fn expand_novelai_weights(text: &str) -> String {
     out
 }
 
-/// Rewrite the innermost `open ... close` pair as `(inner:weight)`, or return
-/// `None` when there is none left.
+/// Rewrite every unescaped `open ... close` pair as `(inner:weight)`, in one
+/// pass.
 ///
-/// The first unescaped closing bracket is innermost by definition, so the
-/// nearest unescaped opening bracket before it is its partner. Every call
-/// removes one pair, which is what lets the caller loop to a fixed point.
-fn rewrite_innermost_bracket(text: &str, open: u8, close: u8, weight: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    for i in 0..bytes.len() {
-        if bytes[i] != close || is_escaped(bytes, i) {
-            continue;
-        }
-        let mut start = i;
-        let found = loop {
-            if start == 0 {
-                break None;
-            }
-            start -= 1;
-            if bytes[start] == open && !is_escaped(bytes, start) {
-                break Some(start);
-            }
-        };
-        let Some(start) = found else { continue };
-        let inner = &text[start + 1..i];
-        if inner.trim().is_empty() {
-            continue;
-        }
-        let mut out = String::with_capacity(text.len() + 8);
-        out.push_str(&text[..start]);
-        out.push_str(&format!("({inner}:{weight})"));
-        out.push_str(&text[i + 1..]);
-        return Some(out);
+/// A closing bracket pairs with the nearest unescaped opening bracket before it
+/// that is still unpaired, so nesting resolves innermost first. Two cases stay
+/// literal:
+///
+/// - A closing bracket with no unpaired opening bracket before it.
+/// - A closing bracket whose partner would enclose only whitespace, as in `{}`.
+///   That opening bracket stays unpaired. If a later closing bracket takes it,
+///   this one is retried against the next opening bracket out, which no longer
+///   encloses only whitespace.
+///
+/// The second rule is a quirk kept from the original fixed-point loop, which
+/// rewrote one innermost pair per pass and rescanned the whole prompt each
+/// time. The tests hold that loop as an oracle and check this against it.
+fn rewrite_brackets(text: &str, open: char, close: char, weight: &str) -> String {
+    /// An unpaired opening bracket, and the whitespace-only close waiting on
+    /// it, if one is.
+    struct Open {
+        at: usize,
+        blank_close: Option<usize>,
     }
-    None
+
+    let mut unpaired: Vec<Open> = Vec::new();
+    // Byte offsets of the brackets to rewrite, `true` for an opening one.
+    let mut rewrites: Vec<(usize, bool)> = Vec::new();
+    // The last non-whitespace character: a close right after its partner,
+    // with only whitespace between, is the empty-pair case above.
+    let mut last_solid: Option<usize> = None;
+    // Length of the backslash run ending just before the current character.
+    let mut backslashes = 0usize;
+
+    for (i, ch) in text.char_indices() {
+        let escaped = backslashes % 2 == 1;
+        backslashes = if ch == '\\' { backslashes + 1 } else { 0 };
+        if !escaped && ch == open {
+            unpaired.push(Open {
+                at: i,
+                blank_close: None,
+            });
+        } else if !escaped && ch == close {
+            match unpaired.last_mut() {
+                None => {}
+                Some(top) if last_solid == Some(top.at) => top.blank_close = Some(i),
+                Some(_) => {
+                    // Pairing an opening bracket frees the blank close that was
+                    // waiting on it, which pairs with the next one out, and so on.
+                    let mut closing = Some(i);
+                    while let Some(close_at) = closing {
+                        let Some(partner) = unpaired.pop() else { break };
+                        rewrites.push((partner.at, true));
+                        rewrites.push((close_at, false));
+                        closing = partner.blank_close;
+                    }
+                }
+            }
+        }
+        if !ch.is_whitespace() {
+            last_solid = Some(i);
+        }
+    }
+
+    if rewrites.is_empty() {
+        return text.to_string();
+    }
+    rewrites.sort_unstable_by_key(|&(at, _)| at);
+    let mut out = String::with_capacity(text.len() + rewrites.len() / 2 * (weight.len() + 1));
+    let mut cursor = 0;
+    for (at, is_open) in rewrites {
+        out.push_str(&text[cursor..at]);
+        if is_open {
+            out.push('(');
+        } else {
+            out.push(':');
+            out.push_str(weight);
+            out.push(')');
+        }
+        // Both brackets are ASCII, so one byte.
+        cursor = at + 1;
+    }
+    out.push_str(&text[cursor..]);
+    out
 }
 
 /// Split an exact `weight::text::` run into its parts.
@@ -473,5 +520,157 @@ mod tests {
     #[test]
     fn from_novelai_round_trips_a_comfyui_weight() {
         assert_eq!(from_novelai(&to_novelai("(tag:1.2)")), "(tag:1.20)");
+    }
+}
+
+/// The single-pass bracket rewrite checked against the fixed-point loop it
+/// replaced, which rescanned the whole prompt once per bracket pair.
+#[cfg(test)]
+mod linear_bracket_tests {
+    use super::*;
+
+    /// The original `from_novelai`, kept verbatim as the oracle.
+    fn oracle_from_novelai(prompt: &str) -> String {
+        let mut out = expand_novelai_weights(prompt);
+        while let Some(next) = oracle_rewrite_innermost_bracket(&out, b'{', b'}', "1.05") {
+            out = next;
+        }
+        while let Some(next) = oracle_rewrite_innermost_bracket(&out, b'[', b']', "0.95") {
+            out = next;
+        }
+        out
+    }
+
+    fn oracle_rewrite_innermost_bracket(
+        text: &str,
+        open: u8,
+        close: u8,
+        weight: &str,
+    ) -> Option<String> {
+        let bytes = text.as_bytes();
+        for i in 0..bytes.len() {
+            if bytes[i] != close || is_escaped(bytes, i) {
+                continue;
+            }
+            let mut start = i;
+            let found = loop {
+                if start == 0 {
+                    break None;
+                }
+                start -= 1;
+                if bytes[start] == open && !is_escaped(bytes, start) {
+                    break Some(start);
+                }
+            };
+            let Some(start) = found else { continue };
+            let inner = &text[start + 1..i];
+            if inner.trim().is_empty() {
+                continue;
+            }
+            let mut out = String::with_capacity(text.len() + 8);
+            out.push_str(&text[..start]);
+            out.push_str(&format!("({inner}:{weight})"));
+            out.push_str(&text[i + 1..]);
+            return Some(out);
+        }
+        None
+    }
+
+    fn assert_matches_oracle(prompt: &str) {
+        assert_eq!(
+            from_novelai(prompt),
+            oracle_from_novelai(prompt),
+            "diverged on {prompt:?}"
+        );
+    }
+
+    #[test]
+    fn tricky_prompts_match_the_old_loop() {
+        for prompt in [
+            "",
+            "{tag}",
+            "{{tag}}",
+            "{{{{tag}}}}",
+            "[[tag]]",
+            "{[tag]}",
+            "[{tag}]",
+            "{[tag}]",
+            "[{tag]}",
+            "{a}, b, [c]",
+            "{a}}",
+            "{{a}",
+            "}{a}{",
+            "}}{{",
+            "{}",
+            "{ }",
+            "a, {}, b",
+            "{}}",
+            "{{}}",
+            "{ {}}",
+            "{ } a}",
+            "{{ } a}",
+            "{{ }} a}}",
+            "{{{ } } a}",
+            "[ ] {}",
+            "{\u{3000}}",
+            "{\n}",
+            "{\u{3000}a}",
+            r"\{a}",
+            r"\\{a}",
+            r"\\\{a}",
+            r"{a\}",
+            r"{a\\}",
+            r"{a\}}",
+            r"tag_\[1\]",
+            r"{\}}",
+            r"\\",
+            "1.2::{a}::",
+            "{1.2::a::}",
+            "1.2::a::, {b}, [0.9::c::]",
+            "{hatsune_miku_(vocaloid)}",
+            "{\u{3053}\u{3093}}, [\u{3053}]",
+            "{{a}, {b}}, [[c], [d]]",
+        ] {
+            assert_matches_oracle(prompt);
+        }
+    }
+
+    #[test]
+    fn random_prompts_match_the_old_loop() {
+        // A fixed xorshift stream, so a failure reproduces.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let alphabet = [
+            "{", "}", "[", "]", "\\", " ", "a", ":", "::", "1", ".", "(", ")", ",", "\u{3000}",
+            "\u{e9}",
+        ];
+        for _ in 0..40_000 {
+            let len = (next() % 14) as usize;
+            let prompt: String = (0..len)
+                .map(|_| alphabet[(next() % alphabet.len() as u64) as usize])
+                .collect();
+            assert_matches_oracle(&prompt);
+        }
+    }
+
+    #[test]
+    fn a_huge_prompt_converts_in_linear_time() {
+        // The old loop took seconds on 40k pairs and minutes on a megabyte.
+        let flat = "{a}".repeat(200_000);
+        let out = from_novelai(&flat);
+        assert_eq!(out.len(), "(a:1.05)".len() * 200_000);
+        assert!(out.starts_with("(a:1.05)(a:1.05)"));
+
+        let depth = 200_000;
+        let nested = format!("{}a{}", "[".repeat(depth), "]".repeat(depth));
+        let out = from_novelai(&nested);
+        assert!(out.starts_with("((("));
+        assert!(out.ends_with(":0.95):0.95)"));
+        assert_eq!(out.matches(":0.95)").count(), depth);
     }
 }

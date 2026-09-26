@@ -28,6 +28,50 @@ pub fn family_supports_style_ref(arch: &str) -> bool {
     is_flux1_family(arch) || is_sd15_family(arch) || is_sdxl_family(arch)
 }
 
+/// `StyleModelApply.strength_type` choices in ComfyUI core.
+const REDUX_STRENGTH_TYPES: &[&str] = &["multiply", "attn_bias"];
+
+/// `IPAdapterAdvanced.weight_type` choices (ComfyUI_IPAdapter_plus `WEIGHT_TYPES`).
+const IPADAPTER_WEIGHT_TYPES: &[&str] = &[
+    "linear",
+    "ease in",
+    "ease out",
+    "ease in-out",
+    "reverse in-out",
+    "weak input",
+    "weak output",
+    "weak middle",
+    "strong input",
+    "strong output",
+    "strong middle",
+    "style transfer",
+    "composition",
+    "strong style transfer",
+    "style and composition",
+    "style transfer precise",
+    "composition precise",
+];
+
+/// Both branches share one `style_ref_weight_type` setting, whose default
+/// (`linear`) is an IP-Adapter value. Sending a value the target node does not
+/// list fails ComfyUI's prompt validation, so anything foreign to the branch
+/// falls back to that branch's default.
+fn redux_strength_type(weight_type: &str) -> &str {
+    if REDUX_STRENGTH_TYPES.contains(&weight_type) {
+        weight_type
+    } else {
+        "multiply"
+    }
+}
+
+fn ipadapter_weight_type(weight_type: &str) -> &str {
+    if IPADAPTER_WEIGHT_TYPES.contains(&weight_type) {
+        weight_type
+    } else {
+        "linear"
+    }
+}
+
 /// Inject Flux Redux style reference into the workflow.
 /// Appends nodes and updates result.positive_source to the styled conditioning.
 pub fn inject_flux_redux(result: &mut WorkflowResult, params: &GenerationParams) {
@@ -105,7 +149,7 @@ pub fn inject_flux_redux(result: &mut WorkflowResult, params: &GenerationParams)
     next_id += 1;
 
     // StyleModelApply — applies style conditioning to the positive conditioning.
-    let strength_type = params.style_ref_weight_type.as_str();
+    let strength_type = redux_strength_type(&params.style_ref_weight_type);
     let style_apply_id = next_id.to_string();
     result.workflow.insert(
         style_apply_id.clone(),
@@ -179,7 +223,7 @@ pub fn inject_ipadapter(result: &mut WorkflowResult, params: &GenerationParams) 
     next_id += 1;
 
     // IPAdapterAdvanced: applies IP-Adapter conditioning to the model
-    let weight_type = params.style_ref_weight_type.as_str();
+    let weight_type = ipadapter_weight_type(&params.style_ref_weight_type);
     let apply_id = next_id.to_string();
     result.workflow.insert(
         apply_id.clone(),
@@ -338,6 +382,62 @@ mod tests {
             result.workflow[&result.model_source.0]["class_type"],
             "IPAdapterAdvanced"
         );
+    }
+
+    fn style_apply_input(result: &WorkflowResult, class_type: &str, input: &str) -> String {
+        result
+            .workflow
+            .values()
+            .find(|v| v["class_type"] == class_type)
+            .unwrap_or_else(|| panic!("missing {class_type}"))["inputs"][input]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn test_redux_strength_type_only_emits_values_the_node_accepts() {
+        // "linear" is the store default (an IP-Adapter value); "average" was
+        // offered by the old Redux dropdown. Neither is a StyleModelApply choice.
+        for (sent, expected) in [
+            ("linear", "multiply"),
+            ("average", "multiply"),
+            ("", "multiply"),
+            ("multiply", "multiply"),
+            ("attn_bias", "attn_bias"),
+        ] {
+            let mut result = base_result();
+            let mut params = style_ref_params("flux1d");
+            params.style_ref_weight_type = sent.to_string();
+            inject_flux_redux(&mut result, &params);
+            assert_eq!(
+                style_apply_input(&result, "StyleModelApply", "strength_type"),
+                expected,
+                "Redux strength_type for {sent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ipadapter_weight_type_only_emits_values_the_node_accepts() {
+        for (sent, expected) in [
+            ("multiply", "linear"),
+            ("attn_bias", "linear"),
+            ("", "linear"),
+            ("linear", "linear"),
+            ("style transfer", "style transfer"),
+            ("strong style transfer", "strong style transfer"),
+        ] {
+            let mut result = base_result();
+            let mut params = style_ref_params("sdxl");
+            params.style_ref_weight_type = sent.to_string();
+            inject_ipadapter(&mut result, &params);
+            assert_eq!(
+                style_apply_input(&result, "IPAdapterAdvanced", "weight_type"),
+                expected,
+                "IP-Adapter weight_type for {sent:?}"
+            );
+        }
     }
 
     #[test]

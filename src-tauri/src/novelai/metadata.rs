@@ -76,20 +76,14 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
         .or_else(|| comment.and_then(|c| string_of(c.get("prompt")?)))
         .or_else(|| chunks.get("Description").cloned());
     if let Some(positive) = positive {
-        params.insert(
-            "positive_prompt".into(),
-            prompt_syntax::from_novelai(&positive),
-        );
+        params.insert("positive_prompt".into(), import_prompt(&positive));
     }
 
     let negative = comment
         .and_then(|c| base_caption(c.get("v4_negative_prompt")))
         .or_else(|| comment.and_then(|c| string_of(c.get("uc")?)));
     if let Some(negative) = negative {
-        params.insert(
-            "negative_prompt".into(),
-            prompt_syntax::from_novelai(&negative),
-        );
+        params.insert("negative_prompt".into(), import_prompt(&negative));
     }
 
     if let Some(comment) = comment {
@@ -210,6 +204,36 @@ pub fn parse_stealth_json(text: &str) -> Option<HashMap<String, String>> {
     parse_chunks(&chunks)
 }
 
+/// The longest prompt read out of an image, in bytes.
+///
+/// Far past anything NovelAI accepts, whose prompts are capped in tokens. The
+/// metadata comes from whatever image the user opened, and a small compressed
+/// chunk can inflate to megabytes, so the text is cut before its weight syntax
+/// is converted and before it lands in the prompt panel.
+const MAX_IMPORTED_PROMPT_BYTES: usize = 64 * 1024;
+
+/// Convert one imported prompt into ComfyUI weight syntax, capped in length.
+fn import_prompt(text: &str) -> String {
+    prompt_syntax::from_novelai(truncate_on_char_boundary(text, MAX_IMPORTED_PROMPT_BYTES))
+}
+
+/// The longest prefix of `text` that fits in `max` bytes without splitting a
+/// character.
+fn truncate_on_char_boundary(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    log::warn!(
+        "NovelAI metadata: prompt of {} bytes cut to {end} on import",
+        text.len()
+    );
+    &text[..end]
+}
+
 /// Pull `caption.base_caption` out of a V4 structured prompt block.
 fn base_caption(block: Option<&serde_json::Value>) -> Option<String> {
     block?
@@ -254,10 +278,10 @@ fn parse_characters(comment: &serde_json::Map<String, serde_json::Value>) -> Opt
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({ "x": 0.5, "y": 0.5 }));
             serde_json::json!({
-                "prompt": prompt_syntax::from_novelai(
+                "prompt": import_prompt(
                     entry.get("char_caption").and_then(|v| v.as_str()).unwrap_or_default(),
                 ),
-                "negative_prompt": prompt_syntax::from_novelai(
+                "negative_prompt": import_prompt(
                     negatives
                         .get(index)
                         .and_then(|n| n.get("char_caption"))
@@ -552,5 +576,72 @@ mod tests {
         // A V3 image predates every model the app offers, so the panel keeps
         // whatever checkpoint is already selected rather than being cleared.
         assert_eq!(model_id_from_source("Stable Diffusion F1022D28"), None);
+    }
+}
+
+#[cfg(test)]
+mod prompt_cap_tests {
+    use super::*;
+
+    #[test]
+    fn a_normal_prompt_is_imported_whole() {
+        assert_eq!(
+            import_prompt("1girl, {blue hair}"),
+            "1girl, (blue hair:1.05)"
+        );
+    }
+
+    #[test]
+    fn a_giant_prompt_is_cut_before_conversion() {
+        let giant = "{a}".repeat(1_000_000);
+        let out = import_prompt(&giant);
+        // Converted from the capped prefix only: each 3-byte `{a}` becomes the
+        // 8-byte `(a:1.05)`, and the cut leaves one unpaired `{` at the end.
+        assert_eq!(
+            out.len(),
+            MAX_IMPORTED_PROMPT_BYTES / 3 * "(a:1.05)".len() + 1
+        );
+        assert!(out.starts_with("(a:1.05)"));
+    }
+
+    #[test]
+    fn the_cut_never_splits_a_character() {
+        // Three-byte characters, so the byte limit lands mid-character.
+        let text = "\u{3053}".repeat(MAX_IMPORTED_PROMPT_BYTES);
+        let cut = truncate_on_char_boundary(&text, MAX_IMPORTED_PROMPT_BYTES + 1);
+        assert_eq!(cut.len(), MAX_IMPORTED_PROMPT_BYTES + 1 - 2);
+        assert!(cut.chars().all(|c| c == '\u{3053}'));
+        assert_eq!(truncate_on_char_boundary("short", 3), "sho");
+        assert_eq!(truncate_on_char_boundary("short", 64), "short");
+    }
+
+    #[test]
+    fn every_imported_prompt_field_is_capped() {
+        let giant = "x".repeat(MAX_IMPORTED_PROMPT_BYTES * 4);
+        let comment = serde_json::json!({
+            "uc": giant,
+            "v4_prompt": {
+                "caption": {
+                    "base_caption": giant,
+                    "char_captions": [{ "char_caption": giant, "centers": [] }],
+                },
+            },
+            "v4_negative_prompt": {
+                "caption": { "char_captions": [{ "char_caption": giant }] },
+            },
+        })
+        .to_string();
+        let mut raw = HashMap::new();
+        raw.insert("Software".to_string(), "NovelAI".to_string());
+        raw.insert("Comment".to_string(), comment);
+        let params = parse_chunks(&raw).expect("a NovelAI image");
+        assert_eq!(params["positive_prompt"].len(), MAX_IMPORTED_PROMPT_BYTES);
+        assert_eq!(params["negative_prompt"].len(), MAX_IMPORTED_PROMPT_BYTES);
+        let characters: serde_json::Value =
+            serde_json::from_str(&params["mooshie_novelai_characters"]).unwrap();
+        for field in ["prompt", "negative_prompt"] {
+            let text = characters[0][field].as_str().unwrap();
+            assert_eq!(text.len(), MAX_IMPORTED_PROMPT_BYTES, "{field}");
+        }
     }
 }

@@ -364,7 +364,9 @@ pub async fn connect_llm_oauth(
             let session = oauth::connect_nous(&state.http_client).await?;
             providers::store_oauth_session(&state.config, &provider, session).await
         }
-        "xai-oauth" => providers::connect_xai_session(&state).await,
+        // Desktop is the instance owner; the device code goes to its own
+        // connections only.
+        "xai-oauth" => providers::connect_xai_session(&state, None).await,
         _ => {
             let key = oauth::connect_openrouter(&state.http_client).await?;
             providers::store_oauth_key(&state.config, &provider, key).await

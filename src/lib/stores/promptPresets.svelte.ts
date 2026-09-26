@@ -35,6 +35,7 @@ const EXPORT_KIND = "mooshieui.prompt-presets";
 const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 
 export type PresetMode = "prepend" | "append" | "wildcard" | "wildcard_ordered";
@@ -175,7 +176,7 @@ class PromptPresetsStore {
 
   private loadSettings() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<PersistedState>;
         if (parsed && Array.isArray(parsed.presets)) {
@@ -186,7 +187,7 @@ class PromptPresetsStore {
       console.error("prompt-presets: load failed", e);
     }
     try {
-      const raw = localStorage.getItem(ACTIVE_KEY);
+      const raw = localStorage.getItem(userScopedKey(ACTIVE_KEY));
       if (raw) {
         const parsed = JSON.parse(raw) as ActivePreset[];
         if (Array.isArray(parsed)) {
@@ -202,7 +203,7 @@ class PromptPresetsStore {
   private saveSettings() {
     try {
       const payload: PersistedState = { version: EXPORT_VERSION, presets: this.presets };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(payload));
       triggerSync();
     } catch (e) {
       console.error("prompt-presets: save failed", e);
@@ -211,7 +212,7 @@ class PromptPresetsStore {
 
   private saveActive() {
     try {
-      localStorage.setItem(ACTIVE_KEY, JSON.stringify(this.active));
+      localStorage.setItem(userScopedKey(ACTIVE_KEY), JSON.stringify(this.active));
       triggerSync();
     } catch (e) {
       console.error("prompt-presets: save active failed", e);
@@ -588,20 +589,20 @@ class PromptPresetsStore {
   applyServerPrefs(data: any): void {
     try {
       if (Array.isArray(data?.presets)) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: EXPORT_VERSION, presets: data.presets }));
+        localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify({ version: EXPORT_VERSION, presets: data.presets }));
       }
       if (Array.isArray(data?.active)) {
-        localStorage.setItem(ACTIVE_KEY, JSON.stringify(data.active));
+        localStorage.setItem(userScopedKey(ACTIVE_KEY), JSON.stringify(data.active));
       }
       // Re-hydrate from the newly-written localStorage
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<PersistedState>;
         if (Array.isArray(parsed?.presets)) {
           this.presets = parsed.presets.map(sanitizePreset).filter(Boolean) as PromptPreset[];
         }
       }
-      const rawActive = localStorage.getItem(ACTIVE_KEY);
+      const rawActive = localStorage.getItem(userScopedKey(ACTIVE_KEY));
       if (rawActive) {
         const parsed = JSON.parse(rawActive) as ActivePreset[];
         if (Array.isArray(parsed)) {
