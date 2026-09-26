@@ -17,6 +17,7 @@ pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
 pub mod novelai;
+pub mod output_owners;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
@@ -99,6 +100,120 @@ fn fix_wayland_appimage_env() {
     let err = std::process::Command::new(&exe).args(&args).exec();
     // exec() only returns on error
     eprintln!("Failed to re-exec for Wayland fix: {}", err);
+}
+
+/// A fixed set of worker threads for `thumbnail://` decodes.
+///
+/// Each thumbnail request is a full image decode plus a WebP encode, and the
+/// gallery grid requests hundreds at once. A thread per request made that
+/// hundreds of concurrent decodes; this caps it at a few, and the rest wait in
+/// the queue.
+#[cfg(any(feature = "desktop", test))]
+mod thumbnail_pool {
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+
+    type Job = Box<dyn FnOnce() + Send + 'static>;
+
+    /// Workers for the shared pool: one per core, at least 2 and at most 6.
+    fn worker_count() -> usize {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(2, 6)
+    }
+
+    pub(crate) struct Pool {
+        sender: mpsc::Sender<Job>,
+    }
+
+    impl Pool {
+        pub(crate) fn new(workers: usize) -> Self {
+            let (sender, receiver) = mpsc::channel::<Job>();
+            let receiver = Arc::new(Mutex::new(receiver));
+            for i in 0..workers.max(1) {
+                let receiver = Arc::clone(&receiver);
+                let spawned = std::thread::Builder::new()
+                    .name(format!("thumbnail-{i}"))
+                    .spawn(move || loop {
+                        // Hold the lock only to take a job, never to run one.
+                        let job = match receiver.lock() {
+                            Ok(guard) => guard.recv(),
+                            Err(poisoned) => poisoned.into_inner().recv(),
+                        };
+                        let Ok(job) = job else {
+                            return;
+                        };
+                        // A panicking job must not take its worker with it.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                    });
+                if let Err(e) = spawned {
+                    log::warn!("thumbnail worker {i} failed to start: {e}");
+                }
+            }
+            Self { sender }
+        }
+
+        pub(crate) fn execute(&self, job: impl FnOnce() + Send + 'static) {
+            if let Err(mpsc::SendError(job)) = self.sender.send(Box::new(job)) {
+                // No worker could be started at all: fall back to running it
+                // on a thread of its own rather than never answering.
+                std::thread::spawn(job);
+            }
+        }
+    }
+
+    /// Queue a job on the shared thumbnail pool.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn submit(job: impl FnOnce() + Send + 'static) {
+        static POOL: std::sync::OnceLock<Pool> = std::sync::OnceLock::new();
+        POOL.get_or_init(|| Pool::new(worker_count())).execute(job);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        #[test]
+        fn never_runs_more_jobs_at_once_than_it_has_workers() {
+            let pool = Pool::new(3);
+            let active = Arc::new(AtomicUsize::new(0));
+            let peak = Arc::new(AtomicUsize::new(0));
+            let (done_tx, done_rx) = mpsc::channel();
+            for _ in 0..24 {
+                let (active, peak, done_tx) = (active.clone(), peak.clone(), done_tx.clone());
+                pool.execute(move || {
+                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(5));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    done_tx.send(()).unwrap();
+                });
+            }
+            for _ in 0..24 {
+                done_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+            let peak = peak.load(Ordering::SeqCst);
+            assert!(peak <= 3, "peak concurrency {peak}");
+            assert!(peak >= 1);
+        }
+
+        #[test]
+        fn a_panicking_job_does_not_shrink_the_pool() {
+            let pool = Pool::new(1);
+            pool.execute(|| panic!("decode blew up"));
+            let (tx, rx) = mpsc::channel();
+            pool.execute(move || tx.send(42).unwrap());
+            assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), 42);
+        }
+
+        #[test]
+        fn worker_count_is_bounded() {
+            assert!((2..=6).contains(&worker_count()));
+        }
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -225,7 +340,10 @@ pub fn run() {
         })
         .register_asynchronous_uri_scheme_protocol("thumbnail", |ctx, request, responder| {
             let _app_handle = ctx.app_handle().clone();
-            std::thread::spawn(move || {
+            // Decoded on a small fixed pool, not a thread per request: opening
+            // a large gallery fires hundreds of these at once, each a full
+            // image decode. Requests queue and are answered as workers free up.
+            thumbnail_pool::submit(move || {
                 let uri = request.uri().to_string();
                 // URL format varies by platform:
                 //   macOS/Linux: thumbnail://localhost/{filename}?size={max_size}
@@ -307,7 +425,7 @@ pub fn run() {
                     .map(|s| s.into_owned())
                     .unwrap_or_else(|_| filename_encoded.to_string());
 
-                if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                if !commands::api::is_single_safe_filename(&filename) {
                     responder.respond(
                         tauri::http::Response::builder()
                             .status(400)
@@ -650,6 +768,7 @@ pub fn run() {
                 commands::music_link::shutdown(&state).await;
                 commands::music_audio_style::shutdown(&state).await;
             });
+            state.output_owners.flush();
             let keep_alive = {
                 let config = state.config.blocking_read();
                 config.keep_alive

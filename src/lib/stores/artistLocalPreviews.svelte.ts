@@ -1,4 +1,5 @@
 import type { ArtistPreviewVariant } from "../artist-gallery/previewRecipe.js";
+import { userScopedKey } from "../utils/ipc.js";
 
 /**
  * Locally generated artist previews.
@@ -42,7 +43,7 @@ class ArtistLocalPreviewsStore {
 
   private load(): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return;
@@ -63,7 +64,7 @@ class ArtistLocalPreviewsStore {
 
   private persist(): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.previews));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(this.previews));
     } catch {
       /* ignore */
     }

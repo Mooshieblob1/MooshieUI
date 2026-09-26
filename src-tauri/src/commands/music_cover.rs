@@ -169,10 +169,36 @@ pub(crate) async fn status(
 }
 
 struct WorkDir(PathBuf);
+impl WorkDir {
+    /// A newly generated directory in the shared temp dir that only this user
+    /// can enter (0700 on Unix, as `music_link::WorkDir` does): the uploaded
+    /// recording is private to whoever sent it.
+    async fn create() -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!("mooshie-cover-{}", uuid::Uuid::new_v4()));
+        let mut builder = tokio::fs::DirBuilder::new();
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder.create(&path).await?;
+        Ok(Self(path))
+    }
+}
 impl Drop for WorkDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// Write `bytes` to a new file readable only by this user (0600 on Unix).
+/// `create_new` refuses to reuse, or follow, anything already at `path`.
+async fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path).await?;
+    file.write_all(bytes).await?;
+    file.flush().await
 }
 
 async fn transcribe(
@@ -184,12 +210,11 @@ async fn transcribe(
     mut cancel: oneshot::Receiver<()>,
 ) -> Result<Value, AppError> {
     // Only a newly generated private directory is ever written or removed.
-    let dir = std::env::temp_dir().join(format!("mooshie-cover-{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir(&dir).await?;
-    let dir = WorkDir(dir);
+    let dir = WorkDir::create().await?;
     let source = dir.0.join(format!("source.{extension}"));
     let output = dir.0.join("result.json");
-    tokio::fs::write(&source, bytes).await?;
+    write_private(&source, &bytes).await?;
+    drop(bytes);
     let mut command = tokio::process::Command::new(python);
     command
         .current_dir(&model)
@@ -333,5 +358,25 @@ mod tests {
             .await
             .get("latest_job")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn uploaded_audio_lands_in_a_private_dir_and_file() {
+        let dir = WorkDir::create().await.unwrap();
+        let source = dir.0.join("source.wav");
+        write_private(&source, b"RIFFaudio").await.unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"RIFFaudio");
+        // Never reuses or follows something already at the path.
+        assert!(write_private(&source, b"again").await.is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode();
+            assert_eq!(mode(&dir.0) & 0o777, 0o700);
+            assert_eq!(mode(&source) & 0o777, 0o600);
+        }
+        let path = dir.0.clone();
+        drop(dir);
+        assert!(!path.exists());
     }
 }

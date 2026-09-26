@@ -2,11 +2,21 @@
 # CODEOWNERS enforcement is activated by branch protection (require_code_owner_reviews: true).
 # Run scripts/setup-branch-protection.sh once after cloning to enable it.
 
+/.github/CODEOWNERS    @Mooshieblob1
 /.github/workflows/    @Mooshieblob1
+/.github/tauri-no-updater-artifacts.json  @Mooshieblob1
 /.githooks/            @Mooshieblob1
 /scripts/              @Mooshieblob1
 /src-tauri/            @Mooshieblob1
+/comfyui-nodes/        @Mooshieblob1
+/report-proxy/         @Mooshieblob1
+/k8s/                  @Mooshieblob1
+/Dockerfile            @Mooshieblob1
+/docker-compose.yml    @Mooshieblob1
+/docker-entrypoint.sh  @Mooshieblob1
 /package.json          @Mooshieblob1
 /package-lock.json     @Mooshieblob1
+/pnpm-lock.yaml        @Mooshieblob1
+/pnpm-workspace.yaml   @Mooshieblob1
 /src-tauri/Cargo.toml  @Mooshieblob1
 /src-tauri/Cargo.lock  @Mooshieblob1

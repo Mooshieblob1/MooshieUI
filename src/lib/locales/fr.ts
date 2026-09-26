@@ -2412,6 +2412,7 @@ const fr: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Clé API",
   "settings.civitai.api_key_placeholder": "Collez votre clé API CivitAI ici",
+  "settings.civitai.api_key_saved_placeholder": "Une clé est enregistrée. Collez-en une nouvelle pour la remplacer.",
   "settings.civitai.api_key_desc": "Utilisée pour les métadonnées de modèles, les images d'exemple et les téléchargements. Requise depuis que CivitAI a restreint l'accès non authentifié.",
   "settings.civitai.api_key_link": "Obtenir votre clé sur civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
@@ -3261,6 +3262,7 @@ const fr: Record<string, string> = {
   "settings.lan.temp_password_min": "Le mot de passe temporaire doit comporter au moins 4 caractères.",
   "settings.lan.reset_failed": "Échec de la réinitialisation du mot de passe.",
   "settings.lan.account_validation": "Nom d'utilisateur requis, le mot de passe doit comporter au moins 4 caractères.",
+  "settings.lan.username_invalid": "Les noms d'utilisateur ne peuvent contenir que des lettres A-Z, des chiffres, - et _ ({max} caractères maximum).",
   "settings.lan.time.never": "Jamais",
   "settings.lan.time.unknown": "Inconnu",
   "settings.lan.time.weeks_ago": "il y a {weeks} sem.",
@@ -3711,6 +3713,15 @@ const fr: Record<string, string> = {
   "errors.report.opening": "Ouverture...",
 
   "errors.report.copied_hint": "Diagnostics copiés dans le presse-papiers. Collez-les dans le corps du problème.",
+  "errors.report.intro_service": "Votre rapport est envoyé au service de signalement de MooshieUI, qui le publie sous forme de ticket GitHub public. Tout le monde peut le lire.",
+  "errors.report.include_log": "Inclure le journal de diagnostic",
+  "errors.report.include_log_hint": "Le journal contient la version de l'application, votre système d'exploitation, le nom de l'ordinateur, les chemins de dossiers, les modèles installés et les journaux récents de l'application. Vérifiez-le avant l'envoi.",
+  "errors.report.preview_log": "Afficher ce qui sera envoyé",
+  "errors.report.hide_log": "Masquer le journal",
+  "errors.report.loading_log": "Collecte des diagnostics...",
+  "errors.report.submit_service": "Envoyer le rapport",
+  "errors.report.sending": "Envoi...",
+  "errors.report.sent": "Rapport envoyé. Merci de contribuer à améliorer MooshieUI.",
 
   "generation.video.role_fl2va": "Modèle premier/dernier cadre",
 

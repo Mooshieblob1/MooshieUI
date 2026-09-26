@@ -4,6 +4,8 @@ services:
     image: ghcr.io/mooshieblob1/mooshieui:latest
     ports:
       - "${MOOSHIEUI_PORT:-3200}:3200"
+    # The container runs as uid/gid 10001: a host models directory must be
+    # writable by it (sudo chown -R 10001:10001 ./models).
     volumes:
       - mooshie-data:/data
       - ${MODELS_PATH:-./models}:/data/models
@@ -26,7 +28,7 @@ services:
   # Uncomment and set CLOUDFLARE_TUNNEL_TOKEN in .env to enable.
   #
   # cloudflared:
-  #   image: cloudflare/cloudflared:latest
+  #   image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
   #   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
   #   network_mode: "service:mooshieui"
   #   restart: unless-stopped

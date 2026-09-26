@@ -1,5 +1,6 @@
 import { generation } from "./generation.svelte.js";
 import { triggerSync } from "../utils/syncTrigger.js";
+import { userScopedKey } from "../utils/ipc.js";
 import { registerTimelineActivity, registerTimelineCompiler } from "../utils/timelineProvider.js";
 import {
   H3_FPS,
@@ -378,7 +379,7 @@ class VideoTimelineStore {
 
   loadSettings() {
     try {
-      const raw = localStorage.getItem(TIMELINE_KEY);
+      const raw = localStorage.getItem(userScopedKey(TIMELINE_KEY));
       if (!raw) return;
       this.hydrate(JSON.parse(raw));
     } catch (e) {
@@ -406,7 +407,7 @@ class VideoTimelineStore {
 
   saveSettings() {
     try {
-      localStorage.setItem(TIMELINE_KEY, JSON.stringify(this.collectPrefs()));
+      localStorage.setItem(userScopedKey(TIMELINE_KEY), JSON.stringify(this.collectPrefs()));
       triggerSync();
     } catch (e) {
       console.error("Failed to save video timeline:", e);
@@ -429,7 +430,7 @@ class VideoTimelineStore {
   applyServerPrefs(data: unknown): void {
     try {
       this.hydrate(data);
-      localStorage.setItem(TIMELINE_KEY, JSON.stringify(this.collectPrefs()));
+      localStorage.setItem(userScopedKey(TIMELINE_KEY), JSON.stringify(this.collectPrefs()));
     } catch (e) {
       console.error("Failed to apply server prefs (video timeline):", e);
     }

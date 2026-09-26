@@ -145,7 +145,9 @@ pub async fn ollama_vision_models(client: &reqwest::Client, base_url: &str) -> O
     if !resp.status().is_success() {
         return None;
     }
-    let v: serde_json::Value = resp.json().await.ok()?;
+    let v = super::server::bounded_json(resp, super::server::RESPONSE_LIMIT, "Ollama model list")
+        .await
+        .ok()?;
     let names: Vec<String> = v["models"]
         .as_array()?
         .iter()
@@ -178,7 +180,9 @@ async fn model_has_vision(client: &reqwest::Client, root: &str, name: &str) -> b
     if !resp.status().is_success() {
         return false;
     }
-    let Ok(v) = resp.json::<serde_json::Value>().await else {
+    let Ok(v) =
+        super::server::bounded_json(resp, super::server::RESPONSE_LIMIT, "Ollama model info").await
+    else {
         return false;
     };
     v["capabilities"]

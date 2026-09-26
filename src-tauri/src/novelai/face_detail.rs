@@ -280,6 +280,18 @@ pub async fn run_face_pass(
     Ok(Some(restored.unwrap_or(composite)))
 }
 
+/// The seed for face `index`, offset from the (already resolved, so
+/// non-negative) generation seed.
+///
+/// NovelAI's seed is a uint32, so the offset wraps modulo `MAX_SEED + 1`
+/// exactly as `resolve_seed` folds, instead of stepping past `MAX_SEED` on a
+/// seed near the top of the range and being rejected.
+fn face_seed(seed: i64, index: usize) -> i64 {
+    let modulus = crate::novelai::MAX_SEED + 1;
+    let offset = (2 + index as i64).rem_euclid(modulus);
+    (seed.rem_euclid(modulus) + offset) % modulus
+}
+
 /// The request for one face crop.
 ///
 /// Split out and pure so the things that must *not* survive into a face
@@ -314,7 +326,7 @@ fn crop_request(
     out.seed = if params.seed < 0 {
         params.seed
     } else {
-        params.seed.saturating_add(2 + index as i64)
+        face_seed(params.seed, index)
     };
     out.input_image = Some(image);
     out.mask_image = None;
@@ -622,6 +634,27 @@ mod tests {
         random.seed = -1;
         let out = crop_request(&random, &plan(), "portrait", "AAAA".into(), 2);
         assert_eq!(out.seed, -1);
+    }
+
+    #[test]
+    fn face_seeds_wrap_inside_novelais_u32_range() {
+        use crate::novelai::MAX_SEED;
+        // A resolved seed at the top of the range used to step past it.
+        let mut top = params();
+        top.seed = MAX_SEED;
+        let out = crop_request(&top, &plan(), "portrait", "AAAA".into(), 0);
+        assert_eq!(out.seed, 1);
+        let out = crop_request(&top, &plan(), "portrait", "AAAA".into(), 3);
+        assert_eq!(out.seed, 4);
+
+        for seed in [0, 1, MAX_SEED - 2, MAX_SEED - 1, MAX_SEED, i64::MAX] {
+            for index in [0usize, 1, 7, 100] {
+                let s = face_seed(seed, index);
+                assert!((0..=MAX_SEED).contains(&s), "seed {seed} face {index}: {s}");
+            }
+        }
+        // Distinct faces still get distinct seeds across the wrap.
+        assert_ne!(face_seed(MAX_SEED - 2, 0), face_seed(MAX_SEED - 2, 1));
     }
 
     #[test]

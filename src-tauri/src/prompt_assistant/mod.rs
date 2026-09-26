@@ -120,7 +120,14 @@ impl PromptAssistant {
     }
 
     /// Delete all installed files for a model id.
+    ///
+    /// Only catalog ids are accepted: the id is joined onto the models dir and
+    /// the result removed recursively, so `../..` or an absolute path would
+    /// delete arbitrary directories.
     pub fn delete_model(&self, model_id: &str) -> Result<(), AppError> {
+        if catalog::entry(model_id).is_none() {
+            return Err(AppError::LlmError("Unknown model id".into()));
+        }
         let dir = self.models_dir().join(model_id);
         if dir.exists() {
             std::fs::remove_dir_all(&dir)?;
@@ -262,3 +269,23 @@ async fn download_to(
 
 pub use catalog::{LlmCatalogEntry, LlmVariant};
 pub use hardware::{LlmGpu, LlmHardware};
+
+#[cfg(test)]
+mod tests {
+    use super::PromptAssistant;
+
+    #[test]
+    fn delete_model_rejects_ids_outside_the_catalog() {
+        // Paths that don't exist, so a missing check fails the test (Ok) without
+        // deleting anything.
+        let assistant = PromptAssistant::new();
+        for id in [
+            "../mooshie-test-missing",
+            "/mooshie-test-missing",
+            "not-a-catalog-model",
+            "",
+        ] {
+            assert!(assistant.delete_model(id).is_err(), "{id:?}");
+        }
+    }
+}

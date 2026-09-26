@@ -66,6 +66,29 @@
     return locale.t(`settings.prompt_assistant.provider_${id}`);
   }
 
+  /** The device-code page is supplied by xAI's server, and Svelte does not
+   *  block `javascript:` or other schemes in `href`, so only an https URL on
+   *  x.ai (or a subdomain) is ever rendered as a link. The backend checks the
+   *  same thing; this keeps the link safe even if that ever regresses. */
+  function safeXaiUrl(value: string | undefined): string | null {
+    if (!value) return null;
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      const onXai = host === "x.ai" || host.endsWith(".x.ai");
+      return url.protocol === "https:" && onXai && !url.username && !url.password && !url.port
+        ? url.href
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const deviceCodeHref = $derived(
+    safeXaiUrl(promptAssistant.deviceCode?.verification_uri_complete) ??
+      safeXaiUrl(promptAssistant.deviceCode?.verification_uri),
+  );
+
   /** Run a provider mutation, surface its failure, then re-sync SettingsPage. */
   async function run(fn: () => Promise<void>): Promise<void> {
     error = null;
@@ -258,14 +281,18 @@
             <div class="rounded-lg border border-indigo-500/40 bg-indigo-500/5 px-2 py-2 space-y-1">
               <p class="text-[10px] text-neutral-400">{locale.t('settings.prompt_assistant.device_code_title')}</p>
               <p class="font-mono text-sm tracking-widest text-indigo-200 select-all">{promptAssistant.deviceCode.user_code}</p>
-              <a
-                href={promptAssistant.deviceCode.verification_uri_complete}
-                target="_blank"
-                rel="noreferrer"
-                class="text-[10px] text-indigo-300 underline break-all"
-              >
-                {promptAssistant.deviceCode.verification_uri}
-              </a>
+              {#if deviceCodeHref}
+                <a
+                  href={deviceCodeHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-[10px] text-indigo-300 underline break-all"
+                >
+                  {promptAssistant.deviceCode.verification_uri}
+                </a>
+              {:else}
+                <p class="text-[10px] text-neutral-400 break-all select-all">{promptAssistant.deviceCode.verification_uri}</p>
+              {/if}
             </div>
           {/if}
         {:else}

@@ -7,51 +7,78 @@
 //! paths. The only reader is `video_durations()`, used by the gallery
 //! listing; it is equally best-effort and degrades to an empty map.
 //!
-//! The DB lives at `{gallery_dir}/index.sqlite` and is initialized lazily on
-//! first use. FTS5 provides full-text search over prompt, negative_prompt,
-//! and checkpoint.
+//! The DB lives at `{gallery_dir}/index.sqlite` and is opened lazily on first
+//! use, and reopened whenever the gallery directory changes (Settings can
+//! point the gallery elsewhere at runtime), so rows always land in the index
+//! of the gallery they describe. FTS5 provides full-text search over prompt,
+//! negative_prompt, and checkpoint.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
 use crate::metadata::ImageFormat;
 
-static DB: OnceLock<Mutex<Option<Connection>>> = OnceLock::new();
-
-fn db_path() -> Option<PathBuf> {
-    crate::config::gallery_dir().map(|d| d.join("index.sqlite"))
+/// The open index and the gallery directory it belongs to. `conn` is `None`
+/// when opening that gallery's index failed; it is retried only once the
+/// gallery directory changes, so a broken index is not reopened per call.
+struct IndexDb {
+    dir: PathBuf,
+    conn: Option<Connection>,
 }
 
-fn conn() -> &'static Mutex<Option<Connection>> {
-    DB.get_or_init(|| {
-        let Some(path) = db_path() else {
-            log::warn!("gallery_index: gallery_dir() unavailable, index disabled");
-            return Mutex::new(None);
-        };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match Connection::open(&path) {
-            Ok(c) => {
-                if let Err(e) = init_schema(&c) {
-                    log::warn!("gallery_index: schema init failed: {e}; index disabled");
-                    return Mutex::new(None);
-                }
-                log::info!("gallery_index: opened at {}", path.display());
-                Mutex::new(Some(c))
+static DB: Mutex<Option<IndexDb>> = Mutex::new(None);
+
+fn open_index(dir: &Path) -> Option<Connection> {
+    let path = dir.join("index.sqlite");
+    let _ = std::fs::create_dir_all(dir);
+    match Connection::open(&path) {
+        Ok(c) => {
+            if let Err(e) = init_schema(&c) {
+                log::warn!("gallery_index: schema init failed: {e}; index disabled");
+                return None;
             }
-            Err(e) => {
-                log::warn!(
-                    "gallery_index: failed to open {}: {e}; index disabled",
-                    path.display()
-                );
-                Mutex::new(None)
-            }
+            log::info!("gallery_index: opened at {}", path.display());
+            Some(c)
         }
-    })
+        Err(e) => {
+            log::warn!(
+                "gallery_index: failed to open {}: {e}; index disabled",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+/// Run `f` on the index of gallery `dir`, (re)opening `slot` when it holds
+/// another gallery's index. `None` when the index is unavailable.
+fn with_conn_in<T>(
+    slot: &mut Option<IndexDb>,
+    dir: &Path,
+    f: impl FnOnce(&Connection, &Path) -> T,
+) -> Option<T> {
+    if slot.as_ref().is_none_or(|db| db.dir != dir) {
+        *slot = Some(IndexDb {
+            dir: dir.to_path_buf(),
+            conn: open_index(dir),
+        });
+    }
+    let IndexDb { dir, conn } = slot.as_ref()?;
+    conn.as_ref().map(|c| f(c, dir))
+}
+
+/// Run `f` on the index of the current gallery directory. Best-effort: `None`
+/// when the gallery directory or its index is unavailable.
+fn with_conn<T>(f: impl FnOnce(&Connection, &Path) -> T) -> Option<T> {
+    let dir = crate::config::gallery_dir()?;
+    let Ok(mut slot) = DB.lock() else {
+        log::warn!("gallery_index: mutex poisoned, skipping");
+        return None;
+    };
+    with_conn_in(&mut slot, &dir, f)
 }
 
 fn init_schema(c: &Connection) -> rusqlite::Result<()> {
@@ -229,15 +256,16 @@ pub fn upsert(
     format: ImageFormat,
     metadata: Option<&HashMap<String, String>>,
 ) {
-    let guard = conn().lock();
-    let Ok(mut guard) = guard else {
-        log::warn!("gallery_index: mutex poisoned, skipping upsert");
-        return;
-    };
-    let Some(ref mut c) = *guard else {
-        return; // DB disabled
-    };
+    with_conn(|c, _| upsert_in(c, path, file_size, format, metadata));
+}
 
+fn upsert_in(
+    c: &Connection,
+    path: &Path,
+    file_size: u64,
+    format: ImageFormat,
+    metadata: Option<&HashMap<String, String>>,
+) {
     let path_str = path.to_string_lossy().to_string();
     let params_parsed = metadata.map(extract_params).unwrap_or_default();
 
@@ -306,15 +334,10 @@ pub struct VideoIndexMeta {
 /// returned. Videos carry no embedded generation metadata in v1, so
 /// prompt/seed/checkpoint stay NULL (enrichment is a later PR).
 pub fn upsert_video(path: &Path, file_size: u64, meta: &VideoIndexMeta) {
-    let guard = conn().lock();
-    let Ok(mut guard) = guard else {
-        log::warn!("gallery_index: mutex poisoned, skipping video upsert");
-        return;
-    };
-    let Some(ref mut c) = *guard else {
-        return; // DB disabled
-    };
+    with_conn(|c, _| upsert_video_in(c, path, file_size, meta));
+}
 
+fn upsert_video_in(c: &Connection, path: &Path, file_size: u64, meta: &VideoIndexMeta) {
     let path_str = path.to_string_lossy().to_string();
     let res = c.execute(
         r#"
@@ -353,19 +376,15 @@ pub fn upsert_video(path: &Path, file_size: u64, meta: &VideoIndexMeta) {
 
 /// Point a video row at a new poster path after a rename. Best-effort.
 pub fn update_poster_path(video_path: &Path, poster_path: &Path) {
-    let guard = conn().lock();
-    let Ok(guard) = guard else {
-        return;
-    };
-    let Some(ref c) = *guard else {
-        return;
-    };
     let video_str = video_path.to_string_lossy().to_string();
     let poster_str = poster_path.to_string_lossy().to_string();
-    if let Err(e) = c.execute(
-        "UPDATE images SET poster_path = ?1 WHERE path = ?2",
-        params![poster_str, video_str],
-    ) {
+    let res = with_conn(|c, _| {
+        c.execute(
+            "UPDATE images SET poster_path = ?1 WHERE path = ?2",
+            params![poster_str, video_str],
+        )
+    });
+    if let Some(Err(e)) = res {
         log::warn!("gallery_index: poster update failed for {video_str}: {e}");
     }
 }
@@ -381,14 +400,15 @@ pub struct VideoMeta {
 
 /// Pixel dimensions for one indexed video, by gallery path.
 pub fn video_dimensions(path: &str) -> Option<(u32, u32)> {
-    let guard = conn().lock().ok()?;
-    let c = guard.as_ref()?;
-    c.query_row(
-        "SELECT width, height FROM images WHERE path = ?1",
-        [path],
-        |row| Ok((row.get::<_, i64>(0)? as u32, row.get::<_, i64>(1)? as u32)),
-    )
-    .ok()
+    with_conn(|c, _| {
+        c.query_row(
+            "SELECT width, height FROM images WHERE path = ?1",
+            [path],
+            |row| Ok((row.get::<_, i64>(0)? as u32, row.get::<_, i64>(1)? as u32)),
+        )
+        .ok()
+    })
+    .flatten()
     .filter(|(w, h)| *w > 0 && *h > 0)
 }
 
@@ -398,36 +418,102 @@ pub fn video_dimensions(path: &str) -> Option<(u32, u32)> {
 /// the encoder never reported. Callers treat that as "unverifiable" rather than
 /// substituting a default, because a wrong assumed rate is worse than no check.
 pub fn video_fps(path: &str) -> Option<f64> {
-    let guard = conn().lock().ok()?;
-    let c = guard.as_ref()?;
-    c.query_row("SELECT fps FROM images WHERE path = ?1", [path], |row| {
-        row.get::<_, Option<f64>>(0)
+    with_conn(|c, _| {
+        c.query_row("SELECT fps FROM images WHERE path = ?1", [path], |row| {
+            row.get::<_, Option<f64>>(0)
+        })
+        .ok()
+        .flatten()
     })
-    .ok()
     .flatten()
     .filter(|v| *v > 0.0)
 }
 
-/// One query for the whole video table, keyed by gallery path.
+/// The key a stored gallery path is matched on: its path relative to the
+/// gallery root, `/`-separated (`clip.mp4`, `users/alice/clip.mp4`), and
+/// whether it came from the current root (`true`) or had to be rebuilt.
 ///
-/// This is the first **reader** on the index. The gallery listing needs a
-/// duration badge per mp4, and one query for the whole table beats a lookup
-/// per directory entry. Keyed by basename rather than by full path because
-/// the listing walks a directory while the stored paths are absolute; gallery
-/// video names embed a prompt UUID (`{promptId}__video__{stem}.mp4`), so
-/// basenames are unique in practice.
+/// Rows written before the gallery moved (the folder was relocated with its
+/// index, or the setting now points at a copy) are not under `root`. The
+/// gallery layout is `<root>/<file>` or `<root>/users/<name>/<file>`, so their
+/// key is rebuilt from the tail of the stored path.
+fn gallery_relative_key(root: &Path, stored: &Path) -> (String, bool) {
+    let parts = |p: &Path| -> Vec<String> {
+        p.components()
+            .filter_map(|c| match c {
+                Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    if let Ok(rel) = stored.strip_prefix(root) {
+        return (parts(rel).join("/"), true);
+    }
+    let parts = parts(stored);
+    let key = match parts.as_slice() {
+        [.., users, name, file] if users == "users" => format!("users/{name}/{file}"),
+        [.., file] => file.clone(),
+        [] => String::new(),
+    };
+    (key, false)
+}
+
+/// Pick the rows for files directly inside `dir` (the gallery root or one
+/// user's folder under it) and key them by file name. A row stored under the
+/// current root wins over a rebuilt legacy key for the same file.
+fn video_meta_for_dir(
+    root: &Path,
+    dir: &Path,
+    rows: impl IntoIterator<Item = (String, f64, Option<f64>)>,
+) -> HashMap<String, VideoMeta> {
+    let mut out = HashMap::new();
+    let Ok(dir_rel) = dir.strip_prefix(root) else {
+        return out;
+    };
+    let (dir_key, _) = gallery_relative_key(Path::new(""), dir_rel);
+    let prefix = if dir_key.is_empty() {
+        String::new()
+    } else {
+        format!("{dir_key}/")
+    };
+    for (path, duration_seconds, fps) in rows {
+        let (key, exact) = gallery_relative_key(root, Path::new(&path));
+        let Some(name) = key.strip_prefix(&prefix) else {
+            continue;
+        };
+        if name.is_empty() || name.contains('/') {
+            continue;
+        }
+        let meta = VideoMeta {
+            duration_seconds,
+            // A stored 0.0 is meaningless as a frame rate; treat it as absent.
+            fps: fps.filter(|v| *v > 0.0),
+        };
+        if exact {
+            out.insert(name.to_string(), meta);
+        } else {
+            out.entry(name.to_string()).or_insert(meta);
+        }
+    }
+    out
+}
+
+/// Playback metadata for the videos directly inside `dir` (the gallery root,
+/// or one user's folder in LAN mode), keyed by file name. One query for the
+/// whole video table beats a lookup per directory entry.
+///
+/// Rows are matched by their path relative to the gallery root, not by bare
+/// file name, so one user's listing never picks up another user's (or the
+/// root's) video that happens to share a name.
 ///
 /// Best-effort like every other function here: an unavailable or broken index
 /// yields an empty map and the listing simply shows no duration badges.
-pub fn video_meta() -> HashMap<String, VideoMeta> {
-    let mut out = HashMap::new();
-    let guard = conn().lock();
-    let Ok(guard) = guard else {
-        return out;
-    };
-    let Some(ref c) = *guard else {
-        return out;
-    };
+pub fn video_meta(dir: &Path) -> HashMap<String, VideoMeta> {
+    with_conn(|c, root| video_meta_in(c, root, dir)).unwrap_or_default()
+}
+
+fn video_meta_in(c: &Connection, root: &Path, dir: &Path) -> HashMap<String, VideoMeta> {
+    let out = HashMap::new();
     let mut stmt = match c.prepare(
         "SELECT path, duration_seconds, fps FROM images \
          WHERE media_type = 'video' AND duration_seconds IS NOT NULL",
@@ -451,56 +537,108 @@ pub fn video_meta() -> HashMap<String, VideoMeta> {
             return out;
         }
     };
-    for row in rows.flatten() {
-        let name = Path::new(&row.0)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(row.0.as_str())
-            .to_string();
-        out.insert(
-            name,
-            VideoMeta {
-                duration_seconds: row.1,
-                // A stored 0.0 is meaningless as a frame rate; treat it as absent.
-                fps: row.2.filter(|v| *v > 0.0),
-            },
-        );
-    }
-    out
+    video_meta_for_dir(root, dir, rows.flatten())
 }
 
 /// Update an image's path in the index after a rename. Best-effort: errors are
 /// logged. Preserves the existing row (and its metadata/created_at) rather than
 /// dropping and re-inserting.
 pub fn rename(old_path: &Path, new_path: &Path) {
-    let guard = conn().lock();
-    let Ok(guard) = guard else {
-        return;
-    };
-    let Some(ref c) = *guard else {
-        return;
-    };
     let old_str = old_path.to_string_lossy().to_string();
     let new_str = new_path.to_string_lossy().to_string();
-    if let Err(e) = c.execute(
-        "UPDATE images SET path = ?1 WHERE path = ?2",
-        params![new_str, old_str],
-    ) {
+    let res = with_conn(|c, _| {
+        c.execute(
+            "UPDATE images SET path = ?1 WHERE path = ?2",
+            params![new_str, old_str],
+        )
+    });
+    if let Some(Err(e)) = res {
         log::warn!("gallery_index: rename failed for {old_str} -> {new_str}: {e}");
     }
 }
 
 /// Remove a gallery image from the index. Best-effort: errors are logged.
 pub fn remove(path: &Path) {
-    let guard = conn().lock();
-    let Ok(guard) = guard else {
-        return;
-    };
-    let Some(ref c) = *guard else {
-        return;
-    };
     let path_str = path.to_string_lossy().to_string();
-    if let Err(e) = c.execute("DELETE FROM images WHERE path = ?1", params![path_str]) {
+    let res = with_conn(|c, _| c.execute("DELETE FROM images WHERE path = ?1", params![path_str]));
+    if let Some(Err(e)) = res {
         log::warn!("gallery_index: remove failed for {}: {e}", path_str);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-gallery-index-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn row_count(c: &Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM images", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn index_follows_the_gallery_directory() {
+        let base = scratch_dir("follow");
+        let (old, new) = (base.join("old"), base.join("new"));
+        let mut slot = None;
+        with_conn_in(&mut slot, &old, |c, _| {
+            upsert_in(c, &old.join("a.png"), 1, ImageFormat::Png, None)
+        })
+        .unwrap();
+        // The gallery moves: the next write goes to the new gallery's index.
+        with_conn_in(&mut slot, &new, |c, root| {
+            assert_eq!(root, new.as_path());
+            upsert_in(c, &new.join("b.png"), 1, ImageFormat::Png, None);
+            assert_eq!(row_count(c), 1);
+        })
+        .unwrap();
+        let old_db = Connection::open(old.join("index.sqlite")).unwrap();
+        assert_eq!(row_count(&old_db), 1);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn video_meta_is_scoped_to_the_listed_folder() {
+        let root = Path::new("/g");
+        let row = |p: &str, d: f64| (p.to_string(), d, Some(24.0));
+        let rows = || {
+            vec![
+                row("/g/a.mp4", 1.0),
+                row("/g/users/alice/b.mp4", 2.0),
+                row("/g/users/bob/a.mp4", 3.0),
+                // Written before the gallery moved from /old/g.
+                row("/old/g/c.mp4", 4.0),
+                row("/old/g/users/alice/d.mp4", 5.0),
+                row("/old/g/a.mp4", 9.0),
+            ]
+        };
+        let names = |m: &HashMap<String, VideoMeta>| {
+            let mut v: Vec<_> = m.keys().cloned().collect();
+            v.sort();
+            v
+        };
+
+        let top = video_meta_for_dir(root, root, rows());
+        assert_eq!(names(&top), ["a.mp4", "c.mp4"]);
+        assert_eq!(top["a.mp4"].duration_seconds, 1.0, "current root wins");
+
+        let alice = video_meta_for_dir(root, &root.join("users").join("alice"), rows());
+        assert_eq!(names(&alice), ["b.mp4", "d.mp4"]);
+
+        let bob = video_meta_for_dir(root, &root.join("users").join("bob"), rows());
+        assert_eq!(names(&bob), ["a.mp4"]);
+        assert_eq!(bob["a.mp4"].duration_seconds, 3.0);
+
+        assert!(video_meta_for_dir(root, Path::new("/elsewhere"), rows()).is_empty());
     }
 }

@@ -17,10 +17,22 @@ spec:
       labels:
         app: mooshieui
     spec:
+      # The image runs as the unprivileged user mooshie (uid/gid 10001). fsGroup
+      # makes the data and models PVCs group-writable for it (volumes written by
+      # earlier, root-running images included); OnRootMismatch skips the
+      # recursive ownership pass once the volume root already matches.
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         # ── MooshieUI server ──
         - name: mooshieui
           image: ghcr.io/mooshieblob1/mooshieui:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
           ports:
             - containerPort: 3200
               name: http
@@ -72,7 +84,8 @@ spec:
 
         # ── Cloudflare Tunnel sidecar (optional — remove if not needed) ──
         - name: cloudflared
-          image: cloudflare/cloudflared:latest
+          # 2026.9.3 (the `latest` of 2026-09-26), pinned by digest; bump both together.
+          image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
           args:
             - tunnel
             - --no-autoupdate

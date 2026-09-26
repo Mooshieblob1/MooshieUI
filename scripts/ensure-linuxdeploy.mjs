@@ -5,8 +5,20 @@
  * patch and execs the real AppImage at `<cache>/linuxdeploy-<arch>.AppImage.real`.
  */
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,8 +30,20 @@ const NODE_ARCH_TO_LINUXDEPLOY = {
   arm64: "aarch64",
 };
 
+// The same linuxdeploy build Tauri's bundler downloads (tauri-apps/binary-releases
+// release "linuxdeploy": linuxdeploy 1-alpha, git 659c9db, built 2024-07-26).
+// That release tag is reused for updates, so each asset is pinned by SHA-256 and
+// a replaced asset is refused instead of executed. Update URL and hashes together.
 const LINUXDEPLOY_BASE =
   "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy";
+const LINUXDEPLOY_SHA256 = {
+  x86_64: "e762bea85c8eb0d4b3508d46e5c1f037f717d0f9303ae3b4aafc8b04991fa1ef",
+  aarch64: "b12b5cc57bd0921e1f98d73f58aa364503bc1a27f54b7a69fd2870bce7fa2f55",
+};
+
+function sha256(buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -78,12 +102,10 @@ async function isTinyElf(path) {
   }
 }
 
-async function linuxdeployRealLooksValid(path) {
+/** Only the pinned build counts as installed; anything else is never executed. */
+async function linuxdeployRealIsPinned(path, arch) {
   try {
-    const { size } = await stat(path);
-    if (size < 1_000_000) return false;
-    const { stdout, stderr } = await runCapture(path, ["--help"], {});
-    return `${stdout}\n${stderr}`.includes("linuxdeploy");
+    return sha256(await readFile(path)) === LINUXDEPLOY_SHA256[arch];
   } catch {
     return false;
   }
@@ -96,7 +118,17 @@ async function downloadLinuxdeploy(dest) {
     throw new Error(`Failed to download linuxdeploy (${response.status}) from ${url}`);
   }
   const buffer = Buffer.from(await response.arrayBuffer());
-  await writeFile(dest.path, buffer, { mode: 0o755 });
+  const digest = sha256(buffer);
+  if (digest !== LINUXDEPLOY_SHA256[dest.arch]) {
+    throw new Error(
+      `linuxdeploy from ${url} has SHA-256 ${digest}, expected ${LINUXDEPLOY_SHA256[dest.arch]}; refusing to use it`,
+    );
+  }
+  // Write beside the target and rename, so a failed write never leaves a
+  // partial binary at the path that is trusted afterwards.
+  const partial = `${dest.path}.download-${process.pid}`;
+  await writeFile(partial, buffer, { mode: 0o755 });
+  await rename(partial, dest.path);
 }
 
 async function compileWrapper(outputPath) {
@@ -122,9 +154,16 @@ async function wrapperWorks(path) {
 }
 
 async function installWrapper(wrapperPath, realPath) {
-  const tempPath = join(tmpdir(), `linuxdeploy-wrapper-${process.pid}`);
-  await compileWrapper(tempPath);
-  await copyFile(tempPath, wrapperPath);
+  // A private (0700) directory: a predictable /tmp name could be pre-created or
+  // swapped by another local user between compiling and copying.
+  const buildDir = await mkdtemp(join(tmpdir(), "linuxdeploy-wrapper-"));
+  try {
+    const tempPath = join(buildDir, "linuxdeploy-wrapper");
+    await compileWrapper(tempPath);
+    await copyFile(tempPath, wrapperPath);
+  } finally {
+    await rm(buildDir, { recursive: true, force: true });
+  }
   await chmod(wrapperPath, 0o755);
   if (!(await wrapperWorks(wrapperPath))) {
     throw new Error("linuxdeploy wrapper installed but failed to launch the real AppImage");
@@ -149,7 +188,7 @@ export async function ensureLinuxdeploy() {
 
   await mkdir(cacheDir, { recursive: true });
 
-  const realOk = (await exists(realPath)) && (await linuxdeployRealLooksValid(realPath));
+  const realOk = await linuxdeployRealIsPinned(realPath, deployArch);
   if (!realOk) {
     console.info(`[mooshie] downloading linuxdeploy for ${deployArch}…`);
     await downloadLinuxdeploy({ path: realPath, arch: deployArch });

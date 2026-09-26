@@ -1,9 +1,8 @@
 use serde_json::json;
 
 use super::{
-    build_regional_context_prompt, build_scheduled_conditioning, insert_vae_decode,
-    load_model_nodes, merge_regional_encode_text, needs_flux2_latent, needs_sd3_latent,
-    WorkflowResult,
+    build_scheduled_conditioning, insert_vae_decode, is_sdxl_like_family, load_model_nodes,
+    needs_flux2_latent, needs_sd3_latent, strip_lora_tags, WorkflowResult,
 };
 use crate::comfyui::types::GenerationParams;
 
@@ -33,13 +32,14 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
 
     // Regional prompting (syntax-first): <region:x1,y1,x2,y2>text</region>
     // Scope-gated to SDXL-family txt2img to keep v1 risk contained.
-    let supports_regions = matches!(params.model_architecture.as_str(), "sdxl" | "illustrious");
+    let supports_regions = is_sdxl_like_family(&params.model_architecture);
     if params.mode == "txt2img" && supports_regions {
-        let regional_context = build_regional_context_prompt(params);
         for region in &params.positive_regions {
-            let text = merge_regional_encode_text(&regional_context, &region.text)
-                .trim()
-                .to_string();
+            // The frontend sends each region already merged with the prompt
+            // context (without scheduled segments, which must stay inside
+            // their timestep window), so it is encoded as is. Only the LoRA
+            // tags that context carries are removed.
+            let text = strip_lora_tags(&region.text).trim().to_string();
             if text.is_empty() {
                 continue;
             }

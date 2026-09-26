@@ -4,6 +4,8 @@
 //! building its own, and never logs the bearer token.
 
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::time::Duration;
 
 use base64::Engine as _;
 use serde_json::Value;
@@ -29,6 +31,21 @@ use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 const IMAGE_BASE: &str = "https://image.novelai.net";
 const API_BASE: &str = "https://api.novelai.net";
 
+// Per-call deadlines. The shared client sets none, so without these a stalled
+// connection would hold its task, and the queue entry behind it, forever.
+// Each covers the whole call, response body included.
+
+/// Account lookups: small, and nothing waits in NovelAI's queue for them.
+const ACCOUNT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Vibe encoding: one image up, a small token back.
+const ENCODE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Anything that runs a model and returns images. Generous on purpose: NovelAI
+/// queues these under load, and the user has already paid for the result.
+const GENERATION_TIMEOUT: Duration = Duration::from_secs(600);
+/// The longest silence tolerated between two pieces of a generation stream.
+/// NovelAI sends a preview every step, so this is many steps' worth.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
 pub struct NovelAiClient<'a> {
     http: &'a reqwest::Client,
     api_key: &'a str,
@@ -50,6 +67,7 @@ impl<'a> NovelAiClient<'a> {
             .http
             .post(format!("{IMAGE_BASE}/ai/generate-image"))
             .bearer_auth(self.api_key)
+            .timeout(GENERATION_TIMEOUT)
             .json(body)
             .send()
             .await?;
@@ -80,6 +98,7 @@ impl<'a> NovelAiClient<'a> {
             .http
             .post(format!("{API_BASE}/ai/upscale"))
             .bearer_auth(self.api_key)
+            .timeout(GENERATION_TIMEOUT)
             .json(&serde_json::json!({
                 "image": image,
                 "width": width,
@@ -120,6 +139,7 @@ impl<'a> NovelAiClient<'a> {
             .http
             .post(format!("{IMAGE_BASE}/ai/generate-image-stream"))
             .bearer_auth(self.api_key)
+            .timeout(GENERATION_TIMEOUT)
             .json(&streaming_body)
             .send()
             .await?;
@@ -129,8 +149,24 @@ impl<'a> NovelAiClient<'a> {
         // Keyed by sample index so an interleaved batch comes back in order.
         let mut finals: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
         let mut previews: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+        let mut stalled = false;
 
-        while let Some(chunk) = res.chunk().await? {
+        loop {
+            let chunk = match next_chunk(STREAM_IDLE_TIMEOUT, res.chunk()).await? {
+                StreamRead::Chunk(chunk) => chunk,
+                StreamRead::End => break,
+                // Treated like the stream ending early: whatever arrived is
+                // kept below, and the task is freed rather than left waiting.
+                StreamRead::Stalled => {
+                    log::warn!(
+                        "NovelAI stream stalled after {} final and {} preview frame(s); giving up on it",
+                        finals.len(),
+                        previews.len()
+                    );
+                    stalled = true;
+                    break;
+                }
+            };
             for event in decoder.push(&chunk) {
                 match &event {
                     StreamEvent::Final { image, sample } => {
@@ -156,9 +192,11 @@ impl<'a> NovelAiClient<'a> {
             finals.entry(sample).or_insert(image);
         }
         if finals.is_empty() {
-            return Err(AppError::Other(
-                "NovelAI closed the stream without returning an image".into(),
-            ));
+            return Err(AppError::Other(if stalled {
+                "NovelAI stopped responding before returning an image".into()
+            } else {
+                "NovelAI closed the stream without returning an image".into()
+            }));
         }
         Ok(finals.into_values().collect())
     }
@@ -183,6 +221,7 @@ impl<'a> NovelAiClient<'a> {
             .http
             .post(format!("{IMAGE_BASE}/ai/encode-vibe"))
             .bearer_auth(self.api_key)
+            .timeout(ENCODE_TIMEOUT)
             .json(&serde_json::json!({
                 "image": image,
                 "model": model_id,
@@ -214,6 +253,7 @@ impl<'a> NovelAiClient<'a> {
             .http
             .post(format!("{IMAGE_BASE}/ai/augment-image"))
             .bearer_auth(self.api_key)
+            .timeout(GENERATION_TIMEOUT)
             .json(body)
             .send()
             .await?;
@@ -235,12 +275,37 @@ impl<'a> NovelAiClient<'a> {
             .http
             .get(format!("{IMAGE_BASE}/user/subscription"))
             .bearer_auth(self.api_key)
+            .timeout(ACCOUNT_TIMEOUT)
             .send()
             .await?;
 
         let res = check_status(res).await?;
         let sub: Subscription = res.json().await?;
         Ok(sub)
+    }
+}
+
+/// What waiting for the next piece of a generation stream came to.
+#[derive(Debug, PartialEq, Eq)]
+enum StreamRead<T> {
+    Chunk(T),
+    End,
+    /// Nothing arrived within the idle window, or the whole-call deadline
+    /// passed mid-stream.
+    Stalled,
+}
+
+/// Wait for the next piece of a stream, giving up after `idle` of silence.
+async fn next_chunk<T>(
+    idle: Duration,
+    read: impl Future<Output = Result<Option<T>, reqwest::Error>>,
+) -> Result<StreamRead<T>, AppError> {
+    match tokio::time::timeout(idle, read).await {
+        Err(_) => Ok(StreamRead::Stalled),
+        Ok(Ok(Some(chunk))) => Ok(StreamRead::Chunk(chunk)),
+        Ok(Ok(None)) => Ok(StreamRead::End),
+        Ok(Err(err)) if err.is_timeout() => Ok(StreamRead::Stalled),
+        Ok(Err(err)) => Err(err.into()),
     }
 }
 
@@ -293,5 +358,25 @@ mod tests {
             panic!("a blank key must be rejected");
         };
         assert!(err.to_string().contains("No NovelAI API key"));
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_silent_stream_is_reported_as_stalled() {
+        let read = std::future::pending::<Result<Option<u8>, reqwest::Error>>();
+        let outcome = next_chunk(Duration::from_millis(20), read).await.unwrap();
+        assert_eq!(outcome, StreamRead::Stalled);
+    }
+
+    #[tokio::test]
+    async fn a_chunk_or_the_end_passes_straight_through() {
+        let outcome = next_chunk(Duration::from_secs(5), async { Ok(Some(7u8)) }).await;
+        assert_eq!(outcome.unwrap(), StreamRead::Chunk(7));
+        let outcome = next_chunk(Duration::from_secs(5), async { Ok(None::<u8>) }).await;
+        assert_eq!(outcome.unwrap(), StreamRead::End);
     }
 }

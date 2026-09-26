@@ -2388,6 +2388,7 @@ const ru: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API-ключ",
   "settings.civitai.api_key_placeholder": "Вставьте API-ключ CivitAI сюда",
+  "settings.civitai.api_key_saved_placeholder": "Ключ сохранён. Вставьте новый, чтобы заменить его.",
   "settings.civitai.api_key_desc": "Используется для метаданных моделей, примеров изображений и загрузок. Обязателен после ограничения CivitAI неаутентифицированного доступа.",
   "settings.civitai.api_key_link": "Получить ключ на civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
@@ -3235,6 +3236,7 @@ const ru: Record<string, string> = {
   "settings.lan.temp_password_min": "Временный пароль должен содержать не менее 4 символов.",
   "settings.lan.reset_failed": "Не удалось сбросить пароль.",
   "settings.lan.account_validation": "Требуется имя пользователя, пароль должен содержать не менее 4 символов.",
+  "settings.lan.username_invalid": "Имя пользователя может содержать только латинские буквы A-Z, цифры, - и _ (не более {max} символов).",
   "settings.lan.time.never": "Никогда",
   "settings.lan.time.unknown": "Неизвестно",
   "settings.lan.time.weeks_ago": "{weeks} нед. назад",
@@ -3685,6 +3687,15 @@ const ru: Record<string, string> = {
   "errors.report.opening": "Открытие...",
 
   "errors.report.copied_hint": "Диагностика скопирована в буфер обмена. Вставьте её в тело тикета.",
+  "errors.report.intro_service": "Отчёт будет отправлен в службу отчётов MooshieUI, которая опубликует его как публичную задачу на GitHub. Его сможет прочитать любой.",
+  "errors.report.include_log": "Приложить диагностический журнал",
+  "errors.report.include_log_hint": "Журнал содержит версию приложения, ОС, имя компьютера, пути к папкам, установленные модели и недавние журналы приложения. Проверьте его перед отправкой.",
+  "errors.report.preview_log": "Показать, что будет отправлено",
+  "errors.report.hide_log": "Скрыть журнал",
+  "errors.report.loading_log": "Сбор диагностических данных...",
+  "errors.report.submit_service": "Отправить отчёт",
+  "errors.report.sending": "Отправка...",
+  "errors.report.sent": "Отчёт отправлен. Спасибо, что помогаете улучшать MooshieUI.",
 
   "generation.video.role_fl2va": "Модель первого/последнего кадра",
 

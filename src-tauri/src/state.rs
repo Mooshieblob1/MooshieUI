@@ -43,6 +43,9 @@ pub struct HeldPrompt {
 
 /// Tracks which user submitted which prompt for per-user event isolation.
 /// Uses std::sync::RwLock for fast, non-async reads in SSE stream filters.
+/// Lock discipline: methods take one of these locks at a time where possible
+/// (snapshot, drop, then take the next). When two must be held together the
+/// order is `queue` before `held`, and `queue` before `owners`/`music_prompts`.
 pub struct PromptQueue {
     /// prompt_id → username (None = admin/local)
     owners: std::sync::RwLock<HashMap<String, Option<String>>>,
@@ -61,9 +64,11 @@ pub struct PromptQueue {
     /// Used to translate WebSocket events so the frontend sees consistent IDs.
     aliases: std::sync::RwLock<HashMap<String, String>>,
     /// Real ComfyUI prompt_ids whose completion/error arrived before `bind_alias`
-    /// was called (race condition in server mode). `bind_alias` checks this set
-    /// and immediately finishes the placeholder if the real_id is found here.
-    deferred_finishes: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// was called (race condition in server mode), with when each was parked.
+    /// `bind_alias` checks this map and immediately finishes the placeholder if
+    /// the real_id is found here. Bounded by [`DEFERRED_FINISH_TTL`] and
+    /// [`DEFERRED_FINISH_CAP`]: an id nothing ever binds must not stay forever.
+    deferred_finishes: std::sync::RwLock<HashMap<String, std::time::Instant>>,
     /// Placeholder/real prompt ids explicitly canceled while submission may
     /// still be racing. Submission tasks check this before binding aliases.
     cancelled: std::sync::RwLock<std::collections::HashSet<String>>,
@@ -71,10 +76,36 @@ pub struct PromptQueue {
     inserted_at: std::sync::RwLock<HashMap<String, std::time::Instant>>,
 }
 
+/// How long a parked early finish waits for its `bind_alias`. The race it covers
+/// spans one `queue_prompt` round-trip, so anything older will never be bound.
+const DEFERRED_FINISH_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Most early finishes parked at once; the oldest is dropped beyond this.
+const DEFERRED_FINISH_CAP: usize = 1024;
+
 impl Default for PromptQueue {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A prompt id plus its placeholder/real-id aliases, resolved against an
+/// already-locked (or snapshotted) alias map.
+fn related_ids_in(aliases: &HashMap<String, String>, prompt_id: &str) -> Vec<String> {
+    let placeholder = aliases
+        .get(prompt_id)
+        .cloned()
+        .unwrap_or_else(|| prompt_id.to_string());
+    let mut ids = vec![placeholder.clone()];
+    if prompt_id != placeholder {
+        ids.push(prompt_id.to_string());
+    }
+    for (real_id, alias_placeholder) in aliases.iter() {
+        if alias_placeholder == &placeholder && !ids.iter().any(|id| id == real_id) {
+            ids.push(real_id.clone());
+        }
+    }
+    ids
 }
 
 impl PromptQueue {
@@ -87,7 +118,7 @@ impl PromptQueue {
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
             aliases: std::sync::RwLock::new(HashMap::new()),
-            deferred_finishes: std::sync::RwLock::new(std::collections::HashSet::new()),
+            deferred_finishes: std::sync::RwLock::new(HashMap::new()),
             cancelled: std::sync::RwLock::new(std::collections::HashSet::new()),
             inserted_at: std::sync::RwLock::new(HashMap::new()),
         }
@@ -264,14 +295,16 @@ impl PromptQueue {
         }
 
         let id_set: HashSet<String> = prompt_ids.iter().cloned().collect();
+        // Snapshot the aliases before locking `held` so this never holds two
+        // PromptQueue locks at once.
+        let aliases = self.aliases.read().unwrap().clone();
         let mut held = self.held.lock().unwrap();
         let mut kept: Vec<HeldPrompt> = Vec::with_capacity(held.len());
         let mut taken: Vec<HeldPrompt> = Vec::new();
 
         for hp in held.drain(..) {
             let is_match = id_set.contains(&hp.placeholder_id)
-                || self
-                    .related_ids(&hp.placeholder_id)
+                || related_ids_in(&aliases, &hp.placeholder_id)
                     .iter()
                     .any(|id| id_set.contains(id));
 
@@ -288,29 +321,16 @@ impl PromptQueue {
 
     /// Return a prompt id plus its placeholder/real-id aliases.
     pub fn related_ids(&self, prompt_id: &str) -> Vec<String> {
-        let aliases = self.aliases.read().unwrap();
-        let placeholder = aliases
-            .get(prompt_id)
-            .cloned()
-            .unwrap_or_else(|| prompt_id.to_string());
-        let mut ids = vec![placeholder.clone()];
-        if prompt_id != placeholder {
-            ids.push(prompt_id.to_string());
-        }
-        for (real_id, alias_placeholder) in aliases.iter() {
-            if alias_placeholder == &placeholder && !ids.iter().any(|id| id == real_id) {
-                ids.push(real_id.clone());
-            }
-        }
-        ids
+        related_ids_in(&self.aliases.read().unwrap(), prompt_id)
     }
 
     /// Whether a placeholder/real prompt id was explicitly canceled.
     pub fn is_cancelled(&self, prompt_id: &str) -> bool {
+        // Resolve the ids first: the aliases guard is dropped before
+        // `cancelled` is locked (`cleanup_alias` takes them in the other order).
+        let ids = self.related_ids(prompt_id);
         let cancelled = self.cancelled.read().unwrap();
-        self.related_ids(prompt_id)
-            .iter()
-            .any(|id| cancelled.contains(id))
+        ids.iter().any(|id| cancelled.contains(id))
     }
 
     /// Record which worker is handling a prompt.
@@ -395,17 +415,26 @@ impl PromptQueue {
     /// Count how many prompts from a given user are currently active (submitted to ComfyUI).
     /// These are prompts that are in the queue (tracking) but NOT in the held list.
     pub fn active_count_for_user(&self, username: &Option<String>) -> usize {
-        let queue = self.queue.read().unwrap();
-        let held = self.held.lock().unwrap();
-        let held_usernames: Vec<_> = held.iter().map(|h| &h.username).collect();
-
-        // Count queued prompts for this user that are NOT held
-        // (i.e. they have been submitted to ComfyUI)
-        queue
+        // Each count is taken under its own lock (queue first, then held);
+        // the two guards are never held together.
+        let queued = self
+            .queue
+            .read()
+            .unwrap()
             .iter()
             .filter(|(_, owner)| owner == username)
-            .count()
-            .saturating_sub(held_usernames.iter().filter(|u| ***u == *username).count())
+            .count();
+        let held = self
+            .held
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.username == *username)
+            .count();
+
+        // Queued prompts for this user that are NOT held
+        // (i.e. they have been submitted to ComfyUI)
+        queued.saturating_sub(held)
     }
 
     /// Take the next held prompt that should be submitted (round-robin fair).
@@ -444,7 +473,12 @@ impl PromptQueue {
             .unwrap()
             .insert(comfyui_id.to_string(), username);
         // Check if completion/error arrived before this alias was bound.
-        let was_deferred = self.deferred_finishes.write().unwrap().remove(comfyui_id);
+        let was_deferred = self
+            .deferred_finishes
+            .write()
+            .unwrap()
+            .remove(comfyui_id)
+            .is_some();
         if was_deferred {
             self.worker_map.write().unwrap().remove(placeholder_id);
             self.queue
@@ -459,11 +493,34 @@ impl PromptQueue {
     /// Park a ComfyUI real prompt_id whose completion/error arrived before
     /// `bind_alias` was called. The next `bind_alias` call for this id will
     /// immediately finish the corresponding placeholder.
+    ///
+    /// Only ids this queue has never seen are parked. A known id (inserted
+    /// directly, as desktop does, or already bound as an alias) was finished
+    /// through its own record, typically by the desktop WebSocket task before
+    /// the cleanup reactor saw the same event, and no `bind_alias` will ever
+    /// consume it. Entries older than [`DEFERRED_FINISH_TTL`] are pruned here,
+    /// and the map never holds more than [`DEFERRED_FINISH_CAP`] ids.
     pub fn park_deferred_finish(&self, comfyui_id: &str) {
-        self.deferred_finishes
-            .write()
-            .unwrap()
-            .insert(comfyui_id.to_string());
+        // Each lock is taken and released on its own (see the lock discipline
+        // on `PromptQueue`).
+        if self.aliases.read().unwrap().contains_key(comfyui_id)
+            || self.owners.read().unwrap().contains_key(comfyui_id)
+        {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let mut parked = self.deferred_finishes.write().unwrap();
+        parked.retain(|_, at| now.duration_since(*at) < DEFERRED_FINISH_TTL);
+        if parked.len() >= DEFERRED_FINISH_CAP {
+            let oldest = parked
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(id, _)| id.clone());
+            if let Some(oldest) = oldest {
+                parked.remove(&oldest);
+            }
+        }
+        parked.insert(comfyui_id.to_string(), now);
     }
 
     /// Resolve a prompt_id: if it's a ComfyUI real_id with a bound alias,
@@ -479,8 +536,11 @@ impl PromptQueue {
 
     /// Clean up alias entries for a finished prompt.
     pub fn cleanup_alias(&self, placeholder_id: &str) {
-        let mut aliases = self.aliases.write().unwrap();
-        aliases.retain(|_, v| v != placeholder_id);
+        // The aliases guard is released before `cancelled` is locked.
+        self.aliases
+            .write()
+            .unwrap()
+            .retain(|_, v| v != placeholder_id);
         self.cancelled.write().unwrap().remove(placeholder_id);
     }
 
@@ -496,8 +556,10 @@ impl PromptQueue {
         new_user_position: usize,
         username: &Option<String>,
     ) -> bool {
-        let mut held = self.held.lock().unwrap();
+        // Lock order: `queue` before `held`, the same order every other
+        // PromptQueue path uses, so the two cannot deadlock.
         let mut queue = self.queue.write().unwrap();
+        let mut held = self.held.lock().unwrap();
 
         // Locate this prompt in the held list.
         let held_pos = match held.iter().position(|hp| hp.placeholder_id == prompt_id) {
@@ -742,6 +804,9 @@ pub struct AppState {
     /// Updated by the WebSocket bridge on every `comfyui:preview` event.
     /// Sent to clients that reconnect mid-generation via the SSE initial burst.
     pub last_preview_by_prompt: std::sync::RwLock<HashMap<String, String>>,
+    /// Which prompt/account produced each ComfyUI output file, so the browser
+    /// output proxy can refuse other accounts' files.
+    pub output_owners: crate::output_owners::OutputOwners,
     /// Model request queue for non-mod users.
     pub model_requests: ModelRequestState,
     /// Notification system for global and per-user notifications.
@@ -811,6 +876,7 @@ impl AppState {
             comfyui_lifecycle: Mutex::new(()),
             output_image_cache: std::sync::RwLock::new(HashMap::new()),
             last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
+            output_owners: crate::output_owners::OutputOwners::new(),
             model_requests: ModelRequestState::new(),
             notifications: NotificationState::new(),
             download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -1221,6 +1287,20 @@ impl AppState {
         Ok(())
     }
 
+    /// Bind a placeholder to ComfyUI's prompt id ([`PromptQueue::bind_alias`],
+    /// whose return value this passes on) and hand the prompt's owner any
+    /// output files recorded for that id before the bind. A cached prompt can
+    /// finish before `/prompt` returns, so its outputs may be recorded while
+    /// the owner is still unknown; without this they would be admin-only once
+    /// the prompt queue forgets the id (after a restart, for instance).
+    pub fn bind_prompt_alias(&self, placeholder_id: &str, comfyui_id: &str) -> bool {
+        let was_deferred = self.prompt_queue.bind_alias(placeholder_id, comfyui_id);
+        if let Some(owner) = self.prompt_queue.owner_of(comfyui_id) {
+            self.output_owners.assign_owner(comfyui_id, &owner);
+        }
+        was_deferred
+    }
+
     /// Broadcast an event to SSE clients.
     pub fn broadcast(&self, event: &str, payload: serde_json::Value) {
         let _ = self.event_tx.send(BroadcastEvent {
@@ -1251,5 +1331,182 @@ impl AppState {
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod prompt_queue_lock_tests {
+    use super::{related_ids_in, HeldPrompt, PromptQueue};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn held(placeholder: &str, user: Option<&str>) -> HeldPrompt {
+        HeldPrompt {
+            workflow: serde_json::Value::Null,
+            username: user.map(str::to_string),
+            placeholder_id: placeholder.to_string(),
+            submitted: Arc::new(tokio::sync::Notify::new()),
+            result: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    #[test]
+    fn related_ids_resolve_both_directions() {
+        let mut aliases = HashMap::new();
+        aliases.insert("real-1".to_string(), "gen-1".to_string());
+        aliases.insert("real-2".to_string(), "gen-1".to_string());
+        let mut from_real = related_ids_in(&aliases, "real-1");
+        from_real.sort();
+        assert_eq!(from_real, vec!["gen-1", "real-1", "real-2"]);
+        let mut from_placeholder = related_ids_in(&aliases, "gen-1");
+        from_placeholder.sort();
+        assert_eq!(from_placeholder, vec!["gen-1", "real-1", "real-2"]);
+        assert_eq!(related_ids_in(&aliases, "other"), vec!["other"]);
+    }
+
+    #[test]
+    fn cancellation_is_seen_through_aliases_and_cleared_by_cleanup() {
+        let pq = PromptQueue::new();
+        pq.insert("gen-1", None);
+        pq.bind_alias("gen-1", "real-1");
+        pq.cancel_and_remove("real-1");
+        assert!(pq.is_cancelled("gen-1"));
+        pq.cleanup_alias("gen-1");
+        assert!(!pq.is_cancelled("gen-1"));
+    }
+
+    #[test]
+    fn active_count_excludes_held_prompts() {
+        let pq = PromptQueue::new();
+        let alice = Some("alice".to_string());
+        pq.insert("gen-1", alice.clone());
+        pq.insert("gen-2", alice.clone());
+        pq.insert("gen-3", None);
+        pq.held.lock().unwrap().push(held("gen-2", Some("alice")));
+        assert_eq!(pq.active_count_for_user(&alice), 1);
+        assert_eq!(pq.active_count_for_user(&None), 1);
+    }
+
+    #[test]
+    fn take_held_matches_real_id_aliases() {
+        let pq = PromptQueue::new();
+        pq.held.lock().unwrap().push(held("gen-1", None));
+        pq.held.lock().unwrap().push(held("gen-2", None));
+        pq.bind_alias("gen-1", "real-1");
+        let taken = pq.take_held_related_to(&["real-1".to_string()]);
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].placeholder_id, "gen-1");
+        assert_eq!(pq.held.lock().unwrap().len(), 1);
+    }
+
+    /// Hammer the formerly inverted pairs (`is_cancelled` vs `cleanup_alias`,
+    /// `active_count_for_user` vs `reorder_held_prompt`) from two threads. With
+    /// the old lock order this could deadlock; the test fails on a timeout
+    /// instead of hanging.
+    #[test]
+    fn concurrent_paths_do_not_deadlock() {
+        let pq = Arc::new(PromptQueue::new());
+        let user = Some("u".to_string());
+        for i in 0..4 {
+            let id = format!("gen-{i}");
+            pq.insert(&id, user.clone());
+            pq.held.lock().unwrap().push(held(&id, Some("u")));
+        }
+        pq.bind_alias("gen-0", "real-0");
+        pq.cancel_and_remove("real-0");
+
+        const ROUNDS: usize = 200_000;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let a = {
+            let pq = Arc::clone(&pq);
+            let user = user.clone();
+            let tx = tx.clone();
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..ROUNDS {
+                    let _ = pq.is_cancelled("gen-0");
+                    let _ = pq.active_count_for_user(&user);
+                }
+                tx.send(()).unwrap();
+            })
+        };
+        let b = {
+            let pq = Arc::clone(&pq);
+            std::thread::spawn(move || {
+                start.wait();
+                for i in 0..ROUNDS {
+                    pq.cleanup_alias("gen-0");
+                    pq.reorder_held_prompt("gen-1", i % 3, &user);
+                }
+                tx.send(()).unwrap();
+            })
+        };
+        for _ in 0..2 {
+            rx.recv_timeout(std::time::Duration::from_secs(30))
+                .expect("PromptQueue lock-order deadlock");
+        }
+        a.join().unwrap();
+        b.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod deferred_finish_tests {
+    use super::{PromptQueue, DEFERRED_FINISH_CAP, DEFERRED_FINISH_TTL};
+
+    fn parked(pq: &PromptQueue) -> usize {
+        pq.deferred_finishes.read().unwrap().len()
+    }
+
+    #[test]
+    fn early_finish_for_an_unbound_id_finishes_its_placeholder() {
+        let pq = PromptQueue::new();
+        pq.insert("placeholder", Some("alice".into()));
+        pq.park_deferred_finish("real");
+        assert_eq!(parked(&pq), 1);
+        assert!(pq.bind_alias("placeholder", "real"));
+        assert_eq!(parked(&pq), 0);
+        assert_eq!(pq.len(), 0);
+    }
+
+    #[test]
+    fn ids_the_queue_already_finished_are_not_parked() {
+        let pq = PromptQueue::new();
+        // Desktop: the WebSocket task finishes a directly inserted id, then the
+        // cleanup reactor sees the same completion and finds nothing to finish.
+        pq.insert("desktop-id", None);
+        assert!(pq.finish("desktop-id").is_none());
+        pq.park_deferred_finish("desktop-id");
+        // Server: an id already bound as an alias was finished via its placeholder.
+        pq.insert("placeholder", None);
+        assert!(!pq.bind_alias("placeholder", "real"));
+        pq.finish("placeholder");
+        pq.park_deferred_finish("real");
+        assert_eq!(parked(&pq), 0);
+    }
+
+    #[test]
+    fn parked_ids_expire_and_stay_bounded() {
+        let pq = PromptQueue::new();
+        let stale = std::time::Instant::now()
+            .checked_sub(DEFERRED_FINISH_TTL + std::time::Duration::from_secs(1));
+        if let Some(stale) = stale {
+            pq.deferred_finishes
+                .write()
+                .unwrap()
+                .insert("stale".into(), stale);
+            pq.park_deferred_finish("fresh");
+            let map = pq.deferred_finishes.read().unwrap();
+            assert!(!map.contains_key("stale") && map.contains_key("fresh"));
+        }
+
+        for i in 0..DEFERRED_FINISH_CAP + 50 {
+            pq.park_deferred_finish(&format!("unbound-{i}"));
+        }
+        assert_eq!(parked(&pq), DEFERRED_FINISH_CAP);
+        let last = format!("unbound-{}", DEFERRED_FINISH_CAP + 49);
+        assert!(pq.deferred_finishes.read().unwrap().contains_key(&last));
     }
 }

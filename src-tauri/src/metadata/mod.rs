@@ -146,43 +146,216 @@ pub fn read_gif_metadata(bytes: &[u8]) -> Result<Option<HashMap<String, String>>
 ///
 /// Best-effort throughout. Every failure is a `false`, never an error: a video
 /// with no `uuid` mirror is still a perfectly good video.
+///
+/// The file is never read whole. Videos run to gigabytes, so only the box
+/// headers and the small boxes that carry metadata are read, and the new box
+/// is appended in place. Appending moves no existing byte, which is what makes
+/// writing into the live file safe: an interrupted append leaves the original
+/// boxes intact, and a failed one is truncated back off. No temporary sibling
+/// file is created, so there is no predictable temp name to race either.
+///
+/// Blocking I/O: async callers should run it on a blocking thread.
 pub fn mirror_uuid_sidecar(path: &std::path::Path) -> bool {
-    let Ok(bytes) = std::fs::read(path) else {
-        return false;
+    mirror_uuid_sidecar_inner(path).unwrap_or(false)
+}
+
+fn mirror_uuid_sidecar_inner(path: &std::path::Path) -> std::io::Result<bool> {
+    // Written in place, so never through a symlink to somewhere else.
+    if !std::fs::symlink_metadata(path)?.file_type().is_file() {
+        return Ok(false);
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let Some(mut iso) = IsoFile::open(file)? else {
+        return Ok(false);
     };
-    let json = match detect_format(&bytes) {
-        ImageFormat::Mp4 => isobmff::read_udta_comment(&bytes),
-        ImageFormat::Avif => isobmff::read_avif_exif(&bytes)
-            .as_deref()
-            .and_then(read_exif_user_comment),
-        _ => None,
+    // Appending is only safe when the walk accounts for every byte.
+    let Some(last) = iso.boxes.last().copied() else {
+        return Ok(false);
     };
-    let Some(json) = json else {
-        return false;
+    if last.end != iso.len {
+        return Ok(false);
+    }
+    let Some(json) = iso.container_comment()? else {
+        return Ok(false);
     };
     // Already mirrored, by us or by an earlier pass over the same file.
-    if isobmff::read_uuid_xmp(&bytes).as_deref() == Some(json.as_str()) {
-        return false;
+    if iso.uuid_xmp()?.as_deref() == Some(json.as_str()) {
+        return Ok(false);
     }
-    let Some(out) = isobmff::append_uuid_xmp(&bytes, &json) else {
-        return false;
+    let Some(uuid_box) = isobmff::uuid_xmp_box(&json) else {
+        return Ok(false);
     };
-    // Swap rather than overwrite: `fs::write` truncates the video before it
-    // writes a byte, so an interrupted write would leave the gallery holding a
-    // ruined file. The temp name is derived from the target so it lands in the
-    // same directory, which keeps the rename on one volume and atomic.
-    let mut tmp = path.as_os_str().to_os_string();
-    tmp.push(".uuidtmp");
-    let tmp = std::path::PathBuf::from(tmp);
-    if std::fs::write(&tmp, out).is_err() {
-        std::fs::remove_file(&tmp).ok();
-        return false;
+
+    // A trailing Adobe uuid box is ours from a previous pass: replace it
+    // rather than stacking another copy (see `isobmff::append_uuid_xmp`).
+    let keep = if iso.is_xmp_uuid(&last)? {
+        last.start
+    } else {
+        iso.len
+    };
+    let file = &mut iso.file;
+    if let Err(e) = write_at_end(file, keep, &uuid_box) {
+        // Leave the file ending on a whole box so it stays walkable.
+        let _ = file.set_len(keep);
+        return Err(e);
     }
-    if std::fs::rename(&tmp, path).is_err() {
-        std::fs::remove_file(&tmp).ok();
-        return false;
+    Ok(true)
+}
+
+/// Truncate `file` to `keep` bytes and append `data` there.
+fn write_at_end(file: &mut std::fs::File, keep: u64, data: &[u8]) -> std::io::Result<()> {
+    use std::io::{Seek as _, SeekFrom};
+    file.set_len(keep)?;
+    file.seek(SeekFrom::Start(keep))?;
+    file.write_all(data)?;
+    file.sync_all()
+}
+
+/// Largest `moov` / `meta` box read into memory to find the metadata inside
+/// it. Sample tables for even long clips are a few megabytes.
+const MAX_METADATA_BOX: u64 = 64 * 1024 * 1024;
+
+/// Largest non-ISOBMFF file [`read_file_metadata`] will read whole.
+const MAX_WHOLE_FILE_METADATA_READ: u64 = 256 * 1024 * 1024;
+
+/// An mp4 or avif file opened for metadata access, with its top-level boxes
+/// walked by seeking instead of by reading the file into memory.
+struct IsoFile {
+    file: std::fs::File,
+    len: u64,
+    boxes: Vec<isobmff::FileBox>,
+    avif: bool,
+}
+
+impl IsoFile {
+    /// `None` when the file is not ISOBMFF (its first box is not `ftyp`).
+    fn open(mut file: std::fs::File) -> std::io::Result<Option<Self>> {
+        let len = file.metadata()?.len();
+        let boxes = isobmff::file_boxes(&mut file, len)?;
+        let Some(ftyp) = boxes.first().copied().filter(|b| b.kind == *b"ftyp") else {
+            return Ok(None);
+        };
+        let mut iso = Self {
+            file,
+            len,
+            boxes,
+            avif: false,
+        };
+        let Some(ftyp_bytes) = iso.read_box(&ftyp, 4096)? else {
+            return Ok(None);
+        };
+        iso.avif = isobmff::is_avif(&ftyp_bytes);
+        Ok(Some(iso))
     }
-    true
+
+    fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+        use std::io::{Seek as _, SeekFrom};
+        self.file.seek(SeekFrom::Start(offset))?;
+        let mut buf = vec![0u8; len];
+        self.file.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// The whole box, header included, or `None` when it is larger than `cap`.
+    fn read_box(&mut self, b: &isobmff::FileBox, cap: u64) -> std::io::Result<Option<Vec<u8>>> {
+        let len = b.end - b.start;
+        if len > cap {
+            return Ok(None);
+        }
+        self.read_at(b.start, len as usize).map(Some)
+    }
+
+    fn first_box(&self, kind: &[u8; 4]) -> Option<isobmff::FileBox> {
+        self.boxes.iter().find(|b| b.kind == *kind).copied()
+    }
+
+    fn is_xmp_uuid(&mut self, b: &isobmff::FileBox) -> std::io::Result<bool> {
+        if b.kind != *b"uuid" || b.end - b.body < 16 {
+            return Ok(false);
+        }
+        let id = self.read_at(b.body, 16)?;
+        Ok(isobmff::is_xmp_uuid(b.kind, &id))
+    }
+
+    /// The container-native payload: the `moov/udta` comment for mp4, the
+    /// Exif UserComment for avif.
+    fn container_comment(&mut self) -> std::io::Result<Option<String>> {
+        if self.avif {
+            let Some(meta) = self.first_box(b"meta") else {
+                return Ok(None);
+            };
+            let Some(meta_bytes) = self.read_box(&meta, MAX_METADATA_BOX)? else {
+                return Ok(None);
+            };
+            let Some((offset, length)) = isobmff::avif_exif_extent(&meta_bytes) else {
+                return Ok(None);
+            };
+            if (offset as u64).saturating_add(length as u64) > self.len {
+                return Ok(None);
+            }
+            let payload = self.read_at(offset as u64, length)?;
+            Ok(isobmff::exif_from_item_payload(&payload)
+                .as_deref()
+                .and_then(read_exif_user_comment))
+        } else {
+            let Some(moov) = self.first_box(b"moov") else {
+                return Ok(None);
+            };
+            let Some(moov_bytes) = self.read_box(&moov, MAX_METADATA_BOX)? else {
+                return Ok(None);
+            };
+            Ok(isobmff::read_udta_comment(&moov_bytes))
+        }
+    }
+
+    /// The payload of the first top-level Adobe XMP `uuid` box, if any.
+    fn uuid_xmp(&mut self) -> std::io::Result<Option<String>> {
+        let uuids: Vec<isobmff::FileBox> = self
+            .boxes
+            .iter()
+            .filter(|b| b.kind == *b"uuid")
+            .copied()
+            .collect();
+        for b in uuids {
+            if !self.is_xmp_uuid(&b)? {
+                continue;
+            }
+            // The first Adobe box decides, exactly as `read_uuid_xmp` does.
+            let cap = (isobmff::MAX_PAYLOAD + 64) as u64;
+            return Ok(self
+                .read_box(&b, cap)?
+                .and_then(|bytes| isobmff::read_uuid_xmp(&bytes)));
+        }
+        Ok(None)
+    }
+}
+
+/// Read metadata straight from a file on disk.
+///
+/// mp4 and avif are walked box by box, so a multi-gigabyte video costs a few
+/// small reads instead of a full load; the order matches
+/// [`read_mp4_metadata`] and [`read_avif_metadata`]. Any other format is read
+/// whole, up to a sane size. `None` for no metadata or any I/O failure.
+///
+/// Blocking I/O: async callers should run it on a blocking thread.
+pub fn read_file_metadata(path: &std::path::Path) -> Option<HashMap<String, String>> {
+    let file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if let Some(mut iso) = IsoFile::open(file).ok()? {
+        let text = match iso.container_comment().ok()? {
+            Some(text) => Some(text),
+            None => iso.uuid_xmp().ok()?,
+        };
+        return text.and_then(|t| parse_swarmui_json(t.trim()));
+    }
+    if len > MAX_WHOLE_FILE_METADATA_READ {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    read_image_metadata(&bytes).ok().flatten()
 }
 
 /// Append a `uuid` XMP box to ISOBMFF bytes. Test-only: production code reaches
@@ -264,18 +437,21 @@ pub fn embed_png_metadata(
 ) -> Result<Vec<u8>, String> {
     let json_text = format_swarmui_json(params);
 
-    let decoder = png::Decoder::new(Cursor::new(image_bytes));
+    let mut decoder = png::Decoder::new(Cursor::new(image_bytes));
+    // Normalise every input to 8/16-bit gray, gray+alpha, RGB or RGBA: palette
+    // images are expanded to RGB(A), 1/2/4-bit grayscale is widened to 8 bits,
+    // and a tRNS chunk becomes a real alpha channel. Without this, packed
+    // low-bit samples were read as 8-bit ones (and indexed an RGBA buffer out
+    // of bounds in stealth mode), and an indexed image was re-encoded without
+    // its palette, which the encoder always rejected.
+    decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder
         .read_info()
         .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info().clone();
+    let (out_color, out_depth) = reader.output_color_type();
 
-    let mut buf = vec![
-        0u8;
-        reader
-            .output_buffer_size()
-            .expect("PNG output buffer size unavailable")
-    ];
+    let mut buf = png_frame_buffer(reader.output_buffer_size())?;
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG frame read error: {}", e))?;
@@ -283,19 +459,17 @@ pub fn embed_png_metadata(
 
     // If stealth alpha is requested, embed bits into pixel data.
     // If stealth fails (e.g. unsupported color type), fall back to text_chunk only.
-    let is_16bit = info.bit_depth == png::BitDepth::Sixteen;
+    let is_16bit = out_depth == png::BitDepth::Sixteen;
     let (pixel_buf, color_type, effective_mode) = if mode == MetadataMode::StealthAlpha
         || mode == MetadataMode::Both
     {
         let stealth_result = if is_16bit {
-            to_rgba16(&buf, info.color_type, info.width, info.height).and_then(
-                |(mut rgba16, w, h)| {
-                    encode_stealth_alpha(&mut rgba16, w, h, 8, &json_text)?;
-                    Ok((rgba16, w, h))
-                },
-            )
+            to_rgba16(&buf, out_color, info.width, info.height).and_then(|(mut rgba16, w, h)| {
+                encode_stealth_alpha(&mut rgba16, w, h, 8, &json_text)?;
+                Ok((rgba16, w, h))
+            })
         } else {
-            to_rgba8(&buf, info.color_type, info.width, info.height).and_then(|(mut rgba, w, h)| {
+            to_rgba8(&buf, out_color, info.width, info.height).and_then(|(mut rgba, w, h)| {
                 encode_stealth_alpha(&mut rgba, w, h, 4, &json_text)?;
                 Ok((rgba, w, h))
             })
@@ -307,22 +481,28 @@ pub fn embed_png_metadata(
                     "Stealth alpha encoding failed ({}), falling back to text_chunk only",
                     e
                 );
-                (buf, info.color_type, MetadataMode::TextChunk)
+                (buf, out_color, MetadataMode::TextChunk)
             }
         }
     } else {
-        (buf, info.color_type, mode)
+        (buf, out_color, mode)
     };
 
-    // Re-encode PNG
+    // Re-encode PNG, carrying the colour-space and density chunks across.
+    // tRNS and PLTE are not carried: the expansion above folded them into
+    // the pixels.
+    let mut out_info = png::Info::with_size(info.width, info.height);
+    out_info.color_type = color_type;
+    out_info.bit_depth = out_depth;
+    out_info.srgb = info.srgb;
+    out_info.source_gamma = info.gama_chunk;
+    out_info.source_chromaticities = info.chrm_chunk;
+    out_info.icc_profile = info.icc_profile.clone();
+    out_info.pixel_dims = info.pixel_dims;
     let mut output = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut output, info.width, info.height);
-        encoder.set_color(color_type);
-        encoder.set_depth(info.bit_depth);
-        if let Some(srgb) = info.srgb {
-            encoder.set_source_srgb(srgb);
-        }
+        let mut encoder = png::Encoder::with_info(&mut output, out_info)
+            .map_err(|e| format!("PNG encode error: {}", e))?;
 
         if effective_mode == MetadataMode::TextChunk || effective_mode == MetadataMode::Both {
             add_parameters_chunk(&mut encoder, json_text)?;
@@ -416,13 +596,13 @@ pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
             info.utf8_text
                 .iter()
                 .find(|c| c.keyword == "parameters")
-                .and_then(|c| c.get_text().ok())
+                .and_then(itxt_text)
         })
         .or_else(|| {
             info.compressed_latin1_text
                 .iter()
                 .find(|c| c.keyword == "parameters")
-                .and_then(|c| c.get_text().ok())
+                .and_then(ztxt_text)
         });
 
     let Some(raw_text) = raw_text else {
@@ -474,16 +654,56 @@ fn png_text_chunks(info: &png::Info<'_>) -> HashMap<String, String> {
         chunks.insert(chunk.keyword.clone(), chunk.text.clone());
     }
     for chunk in &info.compressed_latin1_text {
-        if let Ok(text) = chunk.get_text() {
+        if let Some(text) = ztxt_text(chunk) {
             chunks.insert(chunk.keyword.clone(), text);
         }
     }
     for chunk in &info.utf8_text {
-        if let Ok(text) = chunk.get_text() {
+        if let Some(text) = itxt_text(chunk) {
             chunks.insert(chunk.keyword.clone(), text);
         }
     }
     chunks
+}
+
+/// Largest decompressed zTXt/iTXt chunk we will read. Real prompts and
+/// workflows are kilobytes; `get_text()` inflates without any bound, so a
+/// small crafted chunk could expand to gigabytes.
+const MAX_TEXT_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Text of a zTXt chunk, or `None` if it is corrupt or inflates past
+/// [`MAX_TEXT_CHUNK_BYTES`].
+fn ztxt_text(chunk: &png::text_metadata::ZTXtChunk) -> Option<String> {
+    let mut chunk = chunk.clone();
+    chunk
+        .decompress_text_with_limit(MAX_TEXT_CHUNK_BYTES)
+        .ok()?;
+    chunk.get_text().ok()
+}
+
+/// Text of an iTXt chunk, or `None` if it is corrupt or inflates past
+/// [`MAX_TEXT_CHUNK_BYTES`].
+fn itxt_text(chunk: &png::text_metadata::ITXtChunk) -> Option<String> {
+    let mut chunk = chunk.clone();
+    chunk
+        .decompress_text_with_limit(MAX_TEXT_CHUNK_BYTES)
+        .ok()?;
+    chunk.get_text().ok()
+}
+
+/// Largest decoded PNG frame we will allocate: 1 GiB, enough for a 16384 x
+/// 16384 RGBA8 image. The size comes straight from the header, and a 68-byte
+/// file can claim billions of rows; allocating that aborts the process.
+const MAX_PNG_FRAME_BYTES: usize = 1024 * 1024 * 1024;
+
+/// Allocate the output buffer for one decoded PNG frame, refusing headers
+/// that claim more than [`MAX_PNG_FRAME_BYTES`].
+fn png_frame_buffer(size: Option<usize>) -> Result<Vec<u8>, String> {
+    match size {
+        Some(n) if n <= MAX_PNG_FRAME_BYTES => Ok(vec![0u8; n]),
+        Some(n) => Err(format!("PNG too large to decode ({n} bytes)")),
+        None => Err("PNG output buffer size unavailable".into()),
+    }
 }
 
 /// The 8 bytes every PNG starts with.
@@ -572,6 +792,42 @@ pub fn copy_png_text_chunks(source: &[u8], target: &[u8]) -> Option<Vec<u8>> {
 
 const STEALTH_MAGIC: &[u8] = b"stealth_pngcomp";
 
+/// Check that `buf` holds exactly `width * height` pixels of `bytes_per_pixel`
+/// bytes each. The converters below index by that geometry, so a buffer of any
+/// other shape (packed sub-byte samples, a truncated frame) is refused rather
+/// than silently misread.
+fn check_pixel_len(
+    buf: &[u8],
+    width: u32,
+    height: u32,
+    bytes_per_pixel: usize,
+) -> Result<usize, String> {
+    let pixel_count = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or("image dimensions overflow")?;
+    let expected = pixel_count
+        .checked_mul(bytes_per_pixel)
+        .ok_or("image dimensions overflow")?;
+    if buf.len() != expected {
+        return Err(format!(
+            "pixel buffer is {} bytes, expected {expected} for {width}x{height}",
+            buf.len()
+        ));
+    }
+    Ok(pixel_count)
+}
+
+/// Channels per pixel for the four colour types the converters accept.
+fn channel_count(color_type: png::ColorType) -> Option<usize> {
+    match color_type {
+        png::ColorType::Grayscale => Some(1),
+        png::ColorType::GrayscaleAlpha => Some(2),
+        png::ColorType::Rgb => Some(3),
+        png::ColorType::Rgba => Some(4),
+        png::ColorType::Indexed => None,
+    }
+}
+
 /// Convert raw 8-bit pixel buffer to RGBA8 (adding alpha if needed).
 fn to_rgba8(
     buf: &[u8],
@@ -579,7 +835,9 @@ fn to_rgba8(
     width: u32,
     height: u32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
-    let pixel_count = (width as usize) * (height as usize);
+    let channels = channel_count(color_type)
+        .ok_or_else(|| format!("Unsupported color type: {:?}", color_type))?;
+    let pixel_count = check_pixel_len(buf, width, height, channels)?;
     match color_type {
         png::ColorType::Rgba => Ok((buf.to_vec(), width, height)),
         png::ColorType::Rgb => {
@@ -618,7 +876,9 @@ fn to_rgba16(
     width: u32,
     height: u32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
-    let pixel_count = (width as usize) * (height as usize);
+    let channels = channel_count(color_type)
+        .ok_or_else(|| format!("Unsupported color type for 16-bit: {:?}", color_type))?;
+    let pixel_count = check_pixel_len(buf, width, height, channels * 2)?;
     match color_type {
         png::ColorType::Rgba => Ok((buf.to_vec(), width, height)),
         png::ColorType::Rgb => {
@@ -692,6 +952,7 @@ fn encode_stealth_alpha(
 ) -> Result<(), String> {
     let w = width as usize;
     let h = height as usize;
+    check_pixel_len(rgba, width, height, bpp)?;
 
     // Set all alpha to max first (matching the Python implementation)
     // For 8-bit: alpha byte = 0xFF. For 16-bit: alpha = 0xFFFF (two bytes).
@@ -774,12 +1035,7 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
         4
     };
 
-    let mut buf = vec![
-        0u8;
-        reader
-            .output_buffer_size()
-            .expect("PNG output buffer size unavailable")
-    ];
+    let mut buf = png_frame_buffer(reader.output_buffer_size())?;
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG frame read error: {}", e))?;
@@ -801,6 +1057,14 @@ fn decode_stealth_alpha_pixels(
     let magic_bits = STEALTH_MAGIC.len() * 8;
 
     if pixel_count < magic_bits + 32 {
+        return Ok(None);
+    }
+    // Every read below indexes by that geometry; a buffer too short for it
+    // is not a stealth carrier.
+    if pixel_count
+        .checked_mul(bpp)
+        .is_none_or(|needed| buf.len() < needed)
+    {
         return Ok(None);
     }
 
@@ -1290,11 +1554,527 @@ fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     encoder.finish()
 }
 
+/// Largest stealth-alpha payload we will inflate. The JSON it carries is
+/// kilobytes, but the gzip stream is attacker-supplied and a megabyte of
+/// pixels can inflate to gigabytes.
+const MAX_STEALTH_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024;
+
 fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut decoder = flate2::read::GzDecoder::new(Cursor::new(data));
+    let decoder = flate2::read::GzDecoder::new(Cursor::new(data));
     let mut out = Vec::new();
-    decoder.read_to_end(&mut out)?;
+    decoder
+        .take(MAX_STEALTH_PAYLOAD_BYTES + 1)
+        .read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_STEALTH_PAYLOAD_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stealth metadata payload is too large",
+        ));
+    }
     Ok(out)
+}
+
+#[cfg(test)]
+mod hostile_input_tests {
+    use super::*;
+
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let mut crc = flate2::Crc::new();
+        crc.update(kind);
+        crc.update(data);
+        out.extend_from_slice(&crc.sum().to_be_bytes());
+    }
+
+    fn zlib(data: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        e.write_all(data).unwrap();
+        e.finish().unwrap()
+    }
+
+    /// Hand-built 8-bit RGBA PNG, so the header can claim any size.
+    fn png_with(w: u32, h: u32, extra: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+        let mut out = PNG_SIGNATURE.to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&w.to_be_bytes());
+        ihdr.extend_from_slice(&h.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        chunk(&mut out, b"IHDR", &ihdr);
+        for (kind, data) in extra {
+            chunk(&mut out, kind, data);
+        }
+        chunk(&mut out, b"IDAT", &zlib(&[0u8; 5]));
+        chunk(&mut out, b"IEND", &[]);
+        out
+    }
+
+    #[test]
+    fn png_claiming_a_huge_frame_is_refused_not_allocated() {
+        // 68 bytes on disk, ~2.7e17 bytes of claimed pixels: allocating that
+        // used to abort the whole process.
+        let png = png_with(16_000_000, 0xFFFF_FFFF, &[]);
+        assert!(read_stealth_alpha(&png).is_err());
+        assert!(embed_png_metadata(&png, &HashMap::new(), MetadataMode::StealthAlpha).is_err());
+        let _ = read_png_metadata(&png);
+    }
+
+    #[test]
+    fn compressed_text_chunks_are_inflated_with_a_limit() {
+        let mut bomb = b"parameters\0\0".to_vec();
+        bomb.extend_from_slice(&zlib(&vec![b'A'; MAX_TEXT_CHUNK_BYTES + 1]));
+        let mut small = b"Comment\0\0".to_vec();
+        small.extend_from_slice(&zlib(b"hello"));
+        let png = png_with(1, 1, &[(*b"zTXt", bomb), (*b"zTXt", small)]);
+
+        let reader = png::Decoder::new(Cursor::new(&png)).read_info().unwrap();
+        let chunks = &reader.info().compressed_latin1_text;
+        assert_eq!(ztxt_text(&chunks[0]), None);
+        assert_eq!(ztxt_text(&chunks[1]).as_deref(), Some("hello"));
+
+        let texts = png_text_chunks(reader.info());
+        assert!(!texts.contains_key("parameters"));
+        assert_eq!(texts.get("Comment").map(String::as_str), Some("hello"));
+    }
+
+    #[test]
+    fn stealth_gzip_payload_is_inflated_with_a_limit() {
+        let bomb = gzip_compress(&vec![b' '; MAX_STEALTH_PAYLOAD_BYTES as usize + 1]).unwrap();
+        assert!(gzip_decompress(&bomb).is_err());
+        let ok = gzip_compress(b"{\"sui_image_params\":{}}").unwrap();
+        assert_eq!(gzip_decompress(&ok).unwrap(), b"{\"sui_image_params\":{}}");
+    }
+}
+
+#[cfg(test)]
+mod png_normalisation_tests {
+    use super::*;
+
+    fn params() -> HashMap<String, String> {
+        let mut params = HashMap::new();
+        params.insert("positive_prompt".to_string(), "low bit depth".to_string());
+        params.insert("seed".to_string(), "4242".to_string());
+        params
+    }
+
+    fn assert_read_back(png_bytes: &[u8]) {
+        let read = read_png_metadata(png_bytes).unwrap().unwrap();
+        assert_eq!(
+            read.get("positive_prompt").map(String::as_str),
+            Some("low bit depth")
+        );
+        assert_eq!(read.get("seed").map(String::as_str), Some("4242"));
+    }
+
+    /// Encode a PNG with an arbitrary colour type / depth and optional
+    /// palette, tRNS, gAMA and iCCP chunks.
+    fn encode(
+        (w, h): (u32, u32),
+        color: png::ColorType,
+        depth: png::BitDepth,
+        data: &[u8],
+        palette: Option<&[u8]>,
+        trns: Option<&[u8]>,
+        colour_space: bool,
+    ) -> Vec<u8> {
+        let mut info = png::Info::with_size(w, h);
+        info.color_type = color;
+        info.bit_depth = depth;
+        info.palette = palette.map(|p| std::borrow::Cow::Owned(p.to_vec()));
+        info.trns = trns.map(|t| std::borrow::Cow::Owned(t.to_vec()));
+        if colour_space {
+            info.source_gamma = Some(png::ScaledFloat::new(0.5));
+            info.icc_profile = Some(std::borrow::Cow::Owned(b"not really an icc".to_vec()));
+            info.pixel_dims = Some(png::PixelDimensions {
+                xppu: 3780,
+                yppu: 3780,
+                unit: png::Unit::Meter,
+            });
+        }
+        let mut out = Vec::new();
+        {
+            let encoder = png::Encoder::with_info(&mut out, info).unwrap();
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(data).unwrap();
+        }
+        out
+    }
+
+    /// Decode with no transformations, returning the output info and pixels.
+    fn decode(bytes: &[u8]) -> (png::ColorType, png::BitDepth, Vec<u8>) {
+        let mut reader = png::Decoder::new(Cursor::new(bytes)).read_info().unwrap();
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        buf.truncate(info.buffer_size());
+        (info.color_type, info.bit_depth, buf)
+    }
+
+    const MODES: [MetadataMode; 3] = [
+        MetadataMode::TextChunk,
+        MetadataMode::StealthAlpha,
+        MetadataMode::Both,
+    ];
+
+    #[test]
+    fn low_bit_grayscale_embeds_in_every_mode() {
+        // 1/2/4-bit grayscale used to reach `to_rgba8` still packed, and
+        // stealth mode then indexed past the end of the RGBA buffer.
+        let (w, h) = (64u32, 64u32);
+        for (depth, bits) in [
+            (png::BitDepth::One, 1u32),
+            (png::BitDepth::Two, 2),
+            (png::BitDepth::Four, 4),
+        ] {
+            let row = (w * bits).div_ceil(8) as usize;
+            // Every sample at its maximum value.
+            let data = vec![0xFFu8; row * h as usize];
+            let src = encode(
+                (w, h),
+                png::ColorType::Grayscale,
+                depth,
+                &data,
+                None,
+                None,
+                false,
+            );
+            for mode in MODES {
+                let out = embed_png_metadata(&src, &params(), mode)
+                    .unwrap_or_else(|e| panic!("{bits}-bit {mode:?}: {e}"));
+                assert_read_back(&out);
+                let (color, out_depth, pixels) = decode(&out);
+                assert_eq!(out_depth, png::BitDepth::Eight, "{bits}-bit {mode:?}");
+                // A maximal low-bit sample widens to 255, not to its raw bits.
+                assert_eq!(pixels[0], 255, "{bits}-bit {mode:?}");
+                if mode == MetadataMode::TextChunk {
+                    assert_eq!(color, png::ColorType::Grayscale);
+                    assert_eq!(pixels.len(), (w * h) as usize);
+                } else {
+                    assert_eq!(color, png::ColorType::Rgba);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_png_keeps_its_colours_in_every_mode() {
+        let (w, h) = (48u32, 48u32);
+        let palette = [255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30];
+        let data: Vec<u8> = (0..w * h).map(|i| (i % 4) as u8).collect();
+        let plain = encode(
+            (w, h),
+            png::ColorType::Indexed,
+            png::BitDepth::Eight,
+            &data,
+            Some(&palette),
+            None,
+            false,
+        );
+        for mode in MODES {
+            // Used to fail every time: re-encoded as indexed without a PLTE.
+            let out = embed_png_metadata(&plain, &params(), mode)
+                .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            assert_read_back(&out);
+            let (color, _, pixels) = decode(&out);
+            let bpp = if color == png::ColorType::Rgb { 3 } else { 4 };
+            assert_eq!(&pixels[bpp..bpp + 3], &[0, 255, 0], "{mode:?}");
+            assert_eq!(&pixels[3 * bpp..3 * bpp + 3], &[10, 20, 30], "{mode:?}");
+        }
+
+        // With tRNS the transparency becomes a real alpha channel.
+        let with_trns = encode(
+            (w, h),
+            png::ColorType::Indexed,
+            png::BitDepth::Eight,
+            &data,
+            Some(&palette),
+            Some(&[0, 128]),
+            false,
+        );
+        let out = embed_png_metadata(&with_trns, &params(), MetadataMode::TextChunk).unwrap();
+        let (color, _, pixels) = decode(&out);
+        assert_eq!(color, png::ColorType::Rgba);
+        assert_eq!(&pixels[..4], &[255, 0, 0, 0]);
+        assert_eq!(&pixels[4..8], &[0, 255, 0, 128]);
+        assert_eq!(&pixels[8..12], &[0, 0, 255, 255]);
+        assert_read_back(&out);
+    }
+
+    #[test]
+    fn sub_byte_indexed_png_embeds() {
+        let (w, h) = (40u32, 40u32);
+        let palette = [0, 0, 0, 200, 100, 50];
+        let data = vec![0b0101_0101u8; (w as usize).div_ceil(8) * h as usize];
+        let src = encode(
+            (w, h),
+            png::ColorType::Indexed,
+            png::BitDepth::One,
+            &data,
+            Some(&palette),
+            None,
+            false,
+        );
+        for mode in MODES {
+            let out = embed_png_metadata(&src, &params(), mode)
+                .unwrap_or_else(|e| panic!("{mode:?}: {e}"));
+            assert_read_back(&out);
+            let (color, _, pixels) = decode(&out);
+            let bpp = if color == png::ColorType::Rgb { 3 } else { 4 };
+            assert_eq!(&pixels[..3], &[0, 0, 0]);
+            assert_eq!(&pixels[bpp..bpp + 3], &[200, 100, 50]);
+        }
+    }
+
+    #[test]
+    fn sixteen_bit_grayscale_trns_becomes_alpha() {
+        let (w, h) = (40u32, 40u32);
+        let data = vec![0x12u8; (w * h * 2) as usize];
+        let src = encode(
+            (w, h),
+            png::ColorType::Grayscale,
+            png::BitDepth::Sixteen,
+            &data,
+            None,
+            Some(&[0x12, 0x12]),
+            false,
+        );
+        let out = embed_png_metadata(&src, &params(), MetadataMode::TextChunk).unwrap();
+        let (color, depth, pixels) = decode(&out);
+        assert_eq!(
+            (color, depth),
+            (png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen)
+        );
+        // Every sample matched the tRNS key, so every pixel is transparent.
+        assert_eq!(&pixels[..4], &[0x12, 0x12, 0, 0]);
+        let stealth = embed_png_metadata(&src, &params(), MetadataMode::StealthAlpha).unwrap();
+        assert_read_back(&stealth);
+    }
+
+    #[test]
+    fn colour_space_and_density_chunks_are_carried() {
+        let (w, h) = (40u32, 40u32);
+        let data = vec![77u8; (w * h * 3) as usize];
+        let src = encode(
+            (w, h),
+            png::ColorType::Rgb,
+            png::BitDepth::Eight,
+            &data,
+            None,
+            None,
+            true,
+        );
+        for mode in MODES {
+            let out = embed_png_metadata(&src, &params(), mode).unwrap();
+            let reader = png::Decoder::new(Cursor::new(&out)).read_info().unwrap();
+            let info = reader.info();
+            assert_eq!(
+                info.gama_chunk,
+                Some(png::ScaledFloat::new(0.5)),
+                "{mode:?}"
+            );
+            assert_eq!(
+                info.icc_profile.as_deref(),
+                Some(&b"not really an icc"[..]),
+                "{mode:?}"
+            );
+            assert_eq!(info.pixel_dims.map(|d| d.xppu), Some(3780), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn mis_sized_pixel_buffers_are_refused_not_indexed() {
+        assert!(to_rgba8(&[0u8; 10], png::ColorType::Grayscale, 8, 8).is_err());
+        assert!(to_rgba16(&[0u8; 10], png::ColorType::Rgb, 8, 8).is_err());
+        assert!(to_rgba8(&[0u8; 64], png::ColorType::Indexed, 8, 8).is_err());
+        let mut short = vec![0u8; 16];
+        assert!(encode_stealth_alpha(&mut short, 64, 64, 4, "{}").is_err());
+        assert_eq!(
+            decode_stealth_alpha_pixels(&[0u8; 16], 64, 64, 4).unwrap(),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod video_file_tests {
+    use super::*;
+
+    fn iso_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn json() -> String {
+        let mut params = HashMap::new();
+        params.insert("positive_prompt".to_string(), "streamed".to_string());
+        params.insert("seed".to_string(), "77".to_string());
+        format_swarmui_json(&params)
+    }
+
+    /// ftyp, a `moov/udta/meta` mdta `comment`, and an `mdat` of `frames`
+    /// bytes placed before the moov, the way a non-faststart mux lays it out.
+    fn mp4_with_comment(text: &str, frames: usize) -> Vec<u8> {
+        let name = b"comment";
+        let mut entry = ((8 + name.len()) as u32).to_be_bytes().to_vec();
+        entry.extend_from_slice(b"mdta");
+        entry.extend_from_slice(name);
+        let mut keys_body = vec![0u8; 4];
+        keys_body.extend_from_slice(&1u32.to_be_bytes());
+        keys_body.extend_from_slice(&entry);
+        let mut data_body = 1u32.to_be_bytes().to_vec();
+        data_body.extend_from_slice(&0u32.to_be_bytes());
+        data_body.extend_from_slice(text.as_bytes());
+        let ilst = iso_box(
+            b"ilst",
+            &iso_box(&1u32.to_be_bytes(), &iso_box(b"data", &data_body)),
+        );
+        let mut meta_body = vec![0u8; 4];
+        meta_body.extend_from_slice(&iso_box(b"keys", &keys_body));
+        meta_body.extend_from_slice(&ilst);
+
+        let mut ftyp_body = b"isom".to_vec();
+        ftyp_body.extend_from_slice(&0u32.to_be_bytes());
+        ftyp_body.extend_from_slice(b"isom");
+        let mut mp4 = iso_box(b"ftyp", &ftyp_body);
+        mp4.extend_from_slice(&iso_box(b"mdat", &vec![0x5A; frames]));
+        mp4.extend_from_slice(&iso_box(
+            b"moov",
+            &iso_box(b"udta", &iso_box(b"meta", &meta_body)),
+        ));
+        mp4
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("mooshie-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn uuid_count(bytes: &[u8]) -> usize {
+        isobmff::boxes(bytes)
+            .iter()
+            .filter(|b| b.kind == *b"uuid")
+            .count()
+    }
+
+    #[test]
+    fn mirroring_appends_in_place_without_moving_a_byte() {
+        let dir = scratch("mirror-stream");
+        let path = dir.join("clip.mp4");
+        // Big enough that the mdat dwarfs everything the mirror reads.
+        let mp4 = mp4_with_comment(&json(), 4 * 1024 * 1024);
+        std::fs::write(&path, &mp4).unwrap();
+
+        assert!(mirror_uuid_sidecar(&path));
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(&after[..mp4.len()], &mp4[..]);
+        assert_eq!(
+            isobmff::read_uuid_xmp(&after).as_deref(),
+            Some(json().as_str())
+        );
+        assert_eq!(uuid_count(&after), 1);
+
+        // A second pass finds it already mirrored and writes nothing.
+        assert!(!mirror_uuid_sidecar(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), after);
+
+        // No temp sibling is ever left behind.
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
+        assert_eq!(names.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mirroring_replaces_its_own_stale_trailing_box() {
+        let dir = scratch("mirror-replace");
+        let path = dir.join("clip.mp4");
+        let mp4 = mp4_with_comment(&json(), 64);
+        let stale = isobmff::append_uuid_xmp(&mp4, "{\"stale\":true}").unwrap();
+        std::fs::write(&path, &stale).unwrap();
+
+        assert!(mirror_uuid_sidecar(&path));
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(after, isobmff::append_uuid_xmp(&mp4, &json()).unwrap());
+        assert_eq!(uuid_count(&after), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mirroring_leaves_a_file_with_an_unwalkable_tail_alone() {
+        let dir = scratch("mirror-tail");
+        let path = dir.join("clip.mp4");
+        let mut mp4 = mp4_with_comment(&json(), 64);
+        mp4.extend_from_slice(&400u32.to_be_bytes());
+        mp4.extend_from_slice(b"free");
+        std::fs::write(&path, &mp4).unwrap();
+
+        assert!(!mirror_uuid_sidecar(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), mp4);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mirroring_never_writes_through_a_symlink() {
+        let dir = scratch("mirror-link");
+        let target = dir.join("real.mp4");
+        let mp4 = mp4_with_comment(&json(), 64);
+        std::fs::write(&target, &mp4).unwrap();
+        let link = dir.join("link.mp4");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(!mirror_uuid_sidecar(&link));
+        assert_eq!(std::fs::read(&target).unwrap(), mp4);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_metadata_reads_mp4_without_loading_it_and_other_formats_whole() {
+        let dir = scratch("file-meta");
+        let mp4_path = dir.join("clip.mp4");
+        std::fs::write(&mp4_path, mp4_with_comment(&json(), 2 * 1024 * 1024)).unwrap();
+        let read = read_file_metadata(&mp4_path).unwrap();
+        assert_eq!(read.get("seed").map(String::as_str), Some("77"));
+
+        // Only the uuid sidecar left (a scrubbed udta): still found.
+        let mut ftyp_body = b"isom".to_vec();
+        ftyp_body.extend_from_slice(&0u32.to_be_bytes());
+        ftyp_body.extend_from_slice(b"isom");
+        let mut bare = iso_box(b"ftyp", &ftyp_body);
+        bare.extend_from_slice(&iso_box(b"moov", b"index"));
+        let uuid_only = isobmff::append_uuid_xmp(&bare, &json()).unwrap();
+        std::fs::write(&mp4_path, &uuid_only).unwrap();
+        let read = read_file_metadata(&mp4_path).unwrap();
+        assert_eq!(
+            read.get("positive_prompt").map(String::as_str),
+            Some("streamed")
+        );
+
+        std::fs::write(&mp4_path, &bare).unwrap();
+        assert!(read_file_metadata(&mp4_path).is_none());
+        assert!(read_file_metadata(&dir.join("missing.mp4")).is_none());
+
+        // A non-ISOBMFF file goes through the in-memory dispatcher.
+        let mut params = HashMap::new();
+        params.insert("seed".to_string(), "5".to_string());
+        let gif_path = dir.join("anim.gif");
+        let mut gif_bytes = b"GIF89a".to_vec();
+        gif_bytes.extend_from_slice(&[1, 0, 1, 0, 0, 0, 0]);
+        gif_bytes.extend_from_slice(&[0x21, 0xFE]);
+        let comment = format_swarmui_json(&params);
+        for chunk in comment.as_bytes().chunks(255) {
+            gif_bytes.push(chunk.len() as u8);
+            gif_bytes.extend_from_slice(chunk);
+        }
+        gif_bytes.extend_from_slice(&[0, 0x3B]);
+        std::fs::write(&gif_path, &gif_bytes).unwrap();
+        let read = read_file_metadata(&gif_path).unwrap();
+        assert_eq!(read.get("seed").map(String::as_str), Some("5"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 // ---------------------------------------------------------------------------

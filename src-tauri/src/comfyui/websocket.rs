@@ -526,18 +526,20 @@ pub async fn connect_websocket(
     state: Arc<AppState>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
-    {
-        let mut handle = state.ws_handle.lock().await;
-        if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
-            log::debug!("ComfyUI WebSocket already connected; skipping reconnect");
-            return Ok(());
-        }
-        if let Some(h) = handle.take() {
-            h.abort();
-        }
+    let base_url = state.base_url().await;
+    // Hold the handle lock from the "already connected" check until the new
+    // task is stored (nothing below awaits). Otherwise two concurrent callers
+    // both spawn a task and the second store overwrites the first without
+    // aborting it, leaving an orphan socket with the same clientId.
+    let mut ws_slot = state.ws_handle.lock().await;
+    if ws_slot.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
+        log::debug!("ComfyUI WebSocket already connected; skipping reconnect");
+        return Ok(());
+    }
+    if let Some(h) = ws_slot.take() {
+        h.abort();
     }
 
-    let base_url = state.base_url().await;
     let client_id = state.client_id.clone();
     let ws_url = base_url
         .replace("http://", "ws://")
@@ -984,7 +986,7 @@ pub async fn connect_websocket(
         }
     });
 
-    *state.ws_handle.lock().await = Some(task);
+    *ws_slot = Some(task);
     Ok(())
 }
 
@@ -995,18 +997,17 @@ pub async fn connect_websocket_headless(
     state: &Arc<AppState>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
-    {
-        let mut handle = state.ws_handle.lock().await;
-        if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
-            log::debug!("ComfyUI WebSocket (headless) already connected; skipping reconnect");
-            return Ok(());
-        }
-        if let Some(h) = handle.take() {
-            h.abort();
-        }
+    let base_url = state.base_url().await;
+    // Held from the check until the new task is stored (see connect_websocket).
+    let mut ws_slot = state.ws_handle.lock().await;
+    if ws_slot.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
+        log::debug!("ComfyUI WebSocket (headless) already connected; skipping reconnect");
+        return Ok(());
+    }
+    if let Some(h) = ws_slot.take() {
+        h.abort();
     }
 
-    let base_url = state.base_url().await;
     let client_id = state.client_id.clone();
     let ws_url = base_url
         .replace("http://", "ws://")
@@ -1209,7 +1210,7 @@ pub async fn connect_websocket_headless(
         }
     });
 
-    *state.ws_handle.lock().await = Some(task);
+    *ws_slot = Some(task);
     Ok(())
 }
 
@@ -1256,18 +1257,17 @@ async fn connect_websocket_for_worker_inner(
     worker: &std::sync::Arc<super::gpu_manager::GpuWorker>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
-    {
-        let mut handle = worker.ws_handle.lock().await;
-        if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
-            log::debug!(
-                "Worker {} WebSocket already connected; skipping reconnect",
-                worker.id
-            );
-            return Ok(());
-        }
-        if let Some(h) = handle.take() {
-            h.abort();
-        }
+    // Held from the check until the new task is stored (see connect_websocket).
+    let mut ws_slot = worker.ws_handle.lock().await;
+    if ws_slot.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
+        log::debug!(
+            "Worker {} WebSocket already connected; skipping reconnect",
+            worker.id
+        );
+        return Ok(());
+    }
+    if let Some(h) = ws_slot.take() {
+        h.abort();
     }
 
     let ws_url = worker
@@ -1309,7 +1309,14 @@ async fn connect_websocket_for_worker_inner(
                 tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
 
                 if let Some(pid) = current_prompt_id.clone() {
-                    match ws_state.get_history_for(&pid).await {
+                    // Ask this socket's own worker: the prompt ran here, and the
+                    // first ready worker (`get_history_for`) may be another GPU
+                    // whose history has never heard of it.
+                    match ws_state
+                        .gpu_manager
+                        .get_history_from_worker(worker_id, &pid)
+                        .await
+                    {
                         Ok(history) => {
                             let completed =
                                 history.get(&pid).map(|v| !v.is_null()).unwrap_or(false);
@@ -1489,7 +1496,7 @@ async fn connect_websocket_for_worker_inner(
         }
     });
 
-    *worker.ws_handle.lock().await = Some(task);
+    *ws_slot = Some(task);
     Ok(())
 }
 
@@ -1545,5 +1552,54 @@ mod tests {
         // A zero side is not a size; treat it as absent rather than record it.
         assert_eq!(png_dimensions(&png_header(0, 64)), None);
         assert_eq!(png_dimensions(&png_header(64, 0)), None);
+    }
+}
+
+#[cfg(test)]
+mod connect_race_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Two callers that reach the "already connected" check together must end
+    /// up with one WebSocket task, not two (the second used to overwrite the
+    /// first handle without aborting it, orphaning a socket with the same
+    /// clientId). The config write guard parks both callers on `base_url()`,
+    /// which is where the old code awaited between its check and its store.
+    #[tokio::test]
+    async fn concurrent_headless_connects_spawn_one_task() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let config = crate::config::AppConfig {
+            server_port: port,
+            server_url: format!("http://127.0.0.1:{port}"),
+            ..crate::config::AppConfig::default()
+        };
+        let state = Arc::new(crate::state::AppState::new(config));
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+
+        let config_guard = state.config.write().await;
+        let callers: Vec<_> = (0..2)
+            .map(|_| {
+                let state = Arc::clone(&state);
+                let tx = tx.clone();
+                tokio::spawn(async move { super::connect_websocket_headless(&state, tx).await })
+            })
+            .collect();
+        tokio::task::yield_now().await;
+        drop(config_guard);
+        for caller in callers {
+            caller.await.unwrap().unwrap();
+        }
+
+        // Each task opens one socket and then waits forever for a handshake
+        // reply that this listener never sends.
+        let mut sockets = Vec::new();
+        while let Ok(Ok((socket, _))) =
+            tokio::time::timeout(Duration::from_millis(1000), listener.accept()).await
+        {
+            sockets.push(socket);
+        }
+        assert_eq!(sockets.len(), 1, "expected exactly one WebSocket task");
+        super::disconnect_websocket(&state).await.unwrap();
     }
 }

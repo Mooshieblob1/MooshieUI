@@ -2,6 +2,7 @@
 //! The Python source is embedded at compile time and written to disk before ComfyUI starts.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -12,6 +13,13 @@ use super::types::GenerationParams;
 struct RequiredCustomNodePackage {
     name: &'static str,
     git_url: &'static str,
+    /// Full commit SHA the pack is installed at. Third-party packs run
+    /// arbitrary Python inside ComfyUI and pull their own pip requirements,
+    /// so installs are pinned (like the VDN pack in `h3_vdn.rs`) instead of
+    /// taking whatever the default branch points at. Bump deliberately after
+    /// reviewing upstream changes, and keep the Dockerfile's copy in step
+    /// (checked by `dockerfile_node_pins_match`).
+    git_rev: &'static str,
     verify_nodes: &'static [&'static str],
     /// Requirements file to pip-install from, relative to the package root.
     /// Almost every pack ships `requirements.txt`, but not all
@@ -24,12 +32,14 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "ComfyUi-Untwisting-RoPE",
         git_url: "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+        git_rev: "b62f39cd22c0d72c83af4b1da7d6c95b6f1e26f3",
         verify_nodes: &["RFInversion", "UntwistingRoPE"],
         requirements_file: "requirements.txt",
     },
     RequiredCustomNodePackage {
         name: "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
         git_url: "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+        git_rev: "79e831097bb7a76ade3a28359300e62332086c42",
         verify_nodes: &["ImageScaleToTotalPixelsX"],
         requirements_file: "requirements.txt",
     },
@@ -39,6 +49,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "ComfyUI-Cosmos-Reference",
         git_url: "https://github.com/Mirumo0u0/ComfyUI-Cosmos-Reference.git",
+        git_rev: "6fd6b27e7c72847d69ad74f4c9cb68ce91b319df",
         verify_nodes: &["ApplyCosmosReferenceLatent"],
         requirements_file: "requirements.txt",
     },
@@ -57,6 +68,7 @@ pub const ANIMA_EDIT_LORA_URL: &str = "https://civitai.com/api/download/models/3
 const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: "ComfyUI-GGUF",
     git_url: "https://github.com/city96/ComfyUI-GGUF.git",
+    git_rev: "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
     verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
     requirements_file: "requirements.txt",
 }];
@@ -69,6 +81,7 @@ const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
 const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: "comfyui_controlnet_aux",
     git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+    git_rev: "59b1fc411ede8623b2997855b8018f0b3b6cf49f",
     verify_nodes: &[
         "CannyEdgePreprocessor",
         "DepthAnythingV2Preprocessor",
@@ -89,6 +102,7 @@ const RIFE_PACKAGE_DIR: &str = "ComfyUI-Frame-Interpolation";
 const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: RIFE_PACKAGE_DIR,
     git_url: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git",
+    git_rev: "26545cc2dd95bc3d27f056016300673bdeee78f5",
     verify_nodes: &["RIFE VFI", "GMFSS Fortuna VFI"],
     // The pack ships no requirements.txt. `requirements-with-cupy.txt` pulls a
     // multi-hundred-MB CUDA-version-specific cupy wheel; the no-cupy file
@@ -111,7 +125,9 @@ pub const RIFE_CKPT_FILENAME: &str = "rife49.pth";
 /// (styler00dollar/VSGAN-tensorrt-docker) now returns 404 for every checkpoint,
 /// which is why that table exists at all, so a single hardcoded URL is not
 /// survivable here either. Every mirror below serves a byte-identical
-/// 21,345,274-byte file.
+/// 21,345,274-byte file ([`RIFE_CKPT_SHA256`]), and each download is checked
+/// against that length and hash, so a mirror can go stale but never swap in a
+/// different (pickle, i.e. code-executing) checkpoint.
 pub const RIFE_CKPT_URLS: &[&str] = &[
     "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation/releases/download/models/rife49.pth",
     "https://huggingface.co/marduk191/rife/resolve/main/rife49.pth",
@@ -120,11 +136,16 @@ pub const RIFE_CKPT_URLS: &[&str] = &[
     "https://huggingface.co/hfmaster/models-moved/resolve/main/rife/rife49.pth",
 ];
 
-/// Smallest plausible size for the checkpoint. A mirror that has been replaced
-/// by an HTML error page or an LFS pointer still answers 200, so size is the
-/// cheap guard against renaming junk into place and failing cryptically at
-/// generation time instead.
-const RIFE_CKPT_MIN_BYTES: u64 = 16 * 1024 * 1024;
+/// Exact size of `rife49.pth`. A mirror that has been replaced by an HTML error
+/// page or an LFS pointer still answers 200, so size is the cheap first guard,
+/// and the download is aborted as soon as a mirror sends more than this.
+const RIFE_CKPT_BYTES: u64 = 21_345_274;
+
+/// SHA-256 of `rife49.pth`. The checkpoint is a torch pickle, which runs code on
+/// load, so the bytes are pinned rather than trusted to whichever mirror
+/// answered. Computed from the GitHub release asset and confirmed identical on
+/// all four Hugging Face mirrors in [`RIFE_CKPT_URLS`].
+const RIFE_CKPT_SHA256: &str = "e55fd00f3cc184e3c65961f4bb827a9da022e78eed36b055242c0ac30000d533";
 
 // MiniMax-H3 Turbo LoRA nodes, installed lazily from the video settings panel
 // for the same reason as RIFE. The adapter file itself is not downloaded here:
@@ -135,6 +156,7 @@ const H3_TURBO_PACKAGE_DIR: &str = "ComfyUI-MiniMax-H3-Turbo";
 const H3_TURBO_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: H3_TURBO_PACKAGE_DIR,
     git_url: "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git",
+    git_rev: "4274783a23afcfdbea3b4876cb79effd6c510785",
     verify_nodes: &["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
     // The pack ships no requirements file at all — it imports torch and comfy's
     // own modules only, so the clone is the entire install.
@@ -161,6 +183,7 @@ const H3_TEACACHE_PACKAGE_DIR: &str = "ComfyUI-MiniMaxH3-TeaCache";
 const H3_TEACACHE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: H3_TEACACHE_PACKAGE_DIR,
     git_url: "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
+    git_rev: "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f",
     verify_nodes: &["MiniMaxH3TeaCache"],
     // The pack's pyproject.toml declares no dependencies beyond ComfyUI itself
     // (pure torch, already provided by the host), and it ships no
@@ -208,6 +231,7 @@ pub const MISSING_IPADAPTER_PLUS_NODES_MARKER: &str =
 const INT8_FAST_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: "ComfyUI-INT8-Fast",
     git_url: "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
+    git_rev: "48a88b2fde88e986c6444fa1f51589b6089d04f3",
     verify_nodes: &["OTUNetLoaderW8A8"],
     requirements_file: "requirements.txt",
 }];
@@ -222,6 +246,7 @@ const IPADAPTER_PLUS_PACKAGE_DIR: &str = "ComfyUI_IPAdapter_plus";
 const IPADAPTER_PLUS_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
     name: IPADAPTER_PLUS_PACKAGE_DIR,
     git_url: "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
+    git_rev: "a0f451a5113cf9becb0847b92884cb10cbdec0ef",
     verify_nodes: &["IPAdapterUnifiedLoader", "IPAdapterAdvanced"],
     requirements_file: "requirements.txt",
 }];
@@ -743,15 +768,25 @@ pub fn is_rife_installed(comfyui_path: &str) -> bool {
     rife_ckpt_has_checkpoint(comfyui_path)
 }
 
-/// Whether a plausible RIFE checkpoint sits on disk. Size-checked rather than
-/// merely present so a truncated file left by an older build cannot report the
-/// install as ready and then fail at generation time.
+/// Whether a RIFE checkpoint of the pinned size sits on disk. Size-checked
+/// rather than merely present so a truncated file left by an older build cannot
+/// report the install as ready and then fail at generation time. Cheap enough
+/// for status polling; [`install_rife`] also checks the hash.
 fn rife_ckpt_has_checkpoint(comfyui_path: &str) -> bool {
     rife_ckpt_dir(comfyui_path)
         .join(RIFE_CKPT_FILENAME)
         .metadata()
-        .map(|m| m.is_file() && m.len() >= RIFE_CKPT_MIN_BYTES)
+        .map(|m| m.is_file() && m.len() == RIFE_CKPT_BYTES)
         .unwrap_or(false)
+}
+
+/// Whether the file at `path` is exactly the pinned RIFE checkpoint.
+fn rife_ckpt_matches_pin(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    bytes.len() as u64 == RIFE_CKPT_BYTES
+        && format!("{:x}", Sha256::digest(&bytes)) == RIFE_CKPT_SHA256
 }
 
 /// Install the frame-interpolation pack that provides `RIFE VFI`.
@@ -935,11 +970,18 @@ pub async fn install_rife(
 
     let ckpt_dir = rife_ckpt_dir(comfyui_path);
     let ckpt_path = ckpt_dir.join(RIFE_CKPT_FILENAME);
-    if rife_ckpt_has_checkpoint(comfyui_path) {
+    let pinned = {
+        let path = ckpt_path.clone();
+        tokio::task::spawn_blocking(move || rife_ckpt_matches_pin(&path))
+            .await
+            .unwrap_or(false)
+    };
+    if pinned {
         on_progress("done", "RIFE frame interpolation is ready", true);
         return Ok(());
     }
-    // A short file is a leftover from a failed download, not an install.
+    // A short or foreign file (a failed download, or one an older build took
+    // from a mirror without a hash check) is not an install.
     let _ = std::fs::remove_file(&ckpt_path);
 
     std::fs::create_dir_all(&ckpt_dir).map_err(|e| {
@@ -1025,12 +1067,19 @@ async fn download_rife_checkpoint_from(
     }
 
     let total = response.content_length().unwrap_or(0);
+    if total > RIFE_CKPT_BYTES {
+        return Err(format!(
+            "server announced {} bytes, expected {}",
+            total, RIFE_CKPT_BYTES
+        ));
+    }
     let partial = dest.with_extension("part");
     let mut file = std::fs::File::create(&partial)
         .map_err(|e| format!("Failed to create '{}': {}", partial.display(), e))?;
 
     let mut downloaded: u64 = 0;
     let mut last_emit: u64 = 0;
+    let mut hasher = Sha256::new();
 
     loop {
         let chunk = match response.chunk().await {
@@ -1043,12 +1092,22 @@ async fn download_rife_checkpoint_from(
             }
         };
 
+        downloaded += chunk.len() as u64;
+        // Never stream more than the pinned size to disk.
+        if downloaded > RIFE_CKPT_BYTES {
+            drop(file);
+            let _ = std::fs::remove_file(&partial);
+            return Err(format!(
+                "served more than the expected {} bytes",
+                RIFE_CKPT_BYTES
+            ));
+        }
+        hasher.update(&chunk);
         if let Err(e) = file.write_all(&chunk) {
             drop(file);
             let _ = std::fs::remove_file(&partial);
             return Err(format!("Failed to write '{}': {}", partial.display(), e));
         }
-        downloaded += chunk.len() as u64;
 
         if downloaded - last_emit > 1024 * 1024 {
             last_emit = downloaded;
@@ -1072,13 +1131,9 @@ async fn download_rife_checkpoint_from(
         return Err(format!("Failed to flush '{}': {}", partial.display(), e));
     }
 
-    if downloaded < RIFE_CKPT_MIN_BYTES {
+    if let Err(e) = check_rife_ckpt(downloaded, &format!("{:x}", hasher.finalize())) {
         let _ = std::fs::remove_file(&partial);
-        return Err(format!(
-            "served only {} bytes, expected at least {} MB",
-            downloaded,
-            RIFE_CKPT_MIN_BYTES >> 20
-        ));
+        return Err(e);
     }
 
     std::fs::rename(&partial, dest).map_err(|e| {
@@ -1090,6 +1145,23 @@ async fn download_rife_checkpoint_from(
         )
     })?;
 
+    Ok(())
+}
+
+/// Accept a finished RIFE download only if it is exactly the pinned checkpoint.
+fn check_rife_ckpt(downloaded: u64, sha256_hex: &str) -> Result<(), String> {
+    if downloaded != RIFE_CKPT_BYTES {
+        return Err(format!(
+            "served {} bytes, expected {}",
+            downloaded, RIFE_CKPT_BYTES
+        ));
+    }
+    if sha256_hex != RIFE_CKPT_SHA256 {
+        return Err(format!(
+            "SHA-256 mismatch: expected {}, got {}",
+            RIFE_CKPT_SHA256, sha256_hex
+        ));
+    }
     Ok(())
 }
 
@@ -1584,11 +1656,12 @@ async fn ensure_custom_node_package(
 
     if !target_dir.exists() {
         log::info!(
-            "Installing required custom node '{}' from {}",
+            "Installing required custom node '{}' from {} at {}",
             package.name,
-            package.git_url
+            package.git_url,
+            package.git_rev
         );
-        clone_custom_node(package.git_url, &target_dir, network_proxy).await?;
+        clone_custom_node(package.git_url, package.git_rev, &target_dir, network_proxy).await?;
     }
 
     let requirements = target_dir.join(package.requirements_file);
@@ -1634,28 +1707,104 @@ pub(crate) fn apply_pip_install_options(
     Ok(())
 }
 
+/// Upper bound for one git step of a node-pack install. Installs run under the
+/// ComfyUI lifecycle lock, so a hung fetch must not block startup forever.
+const NODE_GIT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Run one non-interactive git command in `dir` for a node-pack install. Never
+/// prompts: `GIT_TERMINAL_PROMPT=0` plus an empty credential helper list means
+/// a renamed or deleted (now auth-walled) repo fails fast instead of opening a
+/// credential window on every launch. Returns trimmed stdout.
+async fn run_node_git(
+    dir: &Path,
+    args: &[&str],
+    network_proxy: Option<&str>,
+) -> Result<String, String> {
+    let mut cmd = tokio_command_no_window("git");
+    cmd.args(["-c", "credential.helper=", "-c", "core.hooksPath=/dev/null"])
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .kill_on_drop(true);
+    apply_network_proxy(&mut cmd, network_proxy);
+    let output = tokio::time::timeout(NODE_GIT_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| {
+            format!(
+                "git {} timed out after {}s. Check the connection and network proxy, then retry.",
+                args.first().copied().unwrap_or_default(),
+                NODE_GIT_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| format!("git failed to start: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(command_output_excerpt(&output))
+    }
+}
+
+/// Install `git_url` at commit `git_rev` into `target_dir`.
+///
+/// A depth-1 clone of the default branch cannot check out an arbitrary commit,
+/// so this initialises an empty repo, fetches exactly `git_rev` (GitHub serves
+/// reachable commits by SHA) and checks it out detached. Work happens in a
+/// sibling staging directory that is only renamed into place once complete, so
+/// an interrupted install never leaves a half-populated pack that the "already
+/// installed" check would then skip forever.
 async fn clone_custom_node(
     git_url: &str,
+    git_rev: &str,
     target_dir: &Path,
     network_proxy: Option<&str>,
 ) -> Result<(), String> {
-    let mut cmd = tokio_command_no_window("git");
-    cmd.args(["clone", "--depth=1", git_url]).arg(target_dir);
-    apply_network_proxy(&mut cmd, network_proxy);
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| format!("git clone failed to start for {}: {}", git_url, e))?;
+    let parent = target_dir
+        .parent()
+        .ok_or_else(|| format!("Invalid custom node path '{}'", target_dir.display()))?;
+    let staging = parent.join(format!(".mooshie-clone-{}", uuid::Uuid::new_v4()));
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "git clone failed for {}: {}",
-            git_url,
-            command_output_excerpt(&output)
-        ))
+    let result = async {
+        std::fs::create_dir_all(&staging)
+            .map_err(|e| format!("cannot create '{}': {e}", staging.display()))?;
+        run_node_git(&staging, &["init", "-q"], network_proxy).await?;
+        run_node_git(
+            &staging,
+            &["remote", "add", "origin", git_url],
+            network_proxy,
+        )
+        .await?;
+        run_node_git(
+            &staging,
+            &["fetch", "--depth=1", "origin", git_rev],
+            network_proxy,
+        )
+        .await?;
+        run_node_git(
+            &staging,
+            &["checkout", "-q", "--detach", "FETCH_HEAD"],
+            network_proxy,
+        )
+        .await?;
+        let head = run_node_git(&staging, &["rev-parse", "HEAD"], network_proxy).await?;
+        if !head.eq_ignore_ascii_case(git_rev) {
+            return Err(format!("checked out {head}, expected {git_rev}"));
+        }
+        std::fs::rename(&staging, target_dir).map_err(|e| {
+            format!(
+                "cannot move the checkout into '{}': {e}",
+                target_dir.display()
+            )
+        })
     }
+    .await;
+
+    // Only the uniquely named staging directory is ever removed.
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result.map_err(|e| format!("git install failed for {git_url} at {git_rev}: {e}"))
 }
 
 async fn install_requirements_if_needed(
@@ -2043,5 +2192,295 @@ mod tests {
             class_source.contains("\"ui\": {\"text\":"),
             "MooshieFaceDetect must report through ui.text, which is what Rust reads"
         );
+    }
+
+    fn all_node_packages() -> Vec<RequiredCustomNodePackage> {
+        [
+            STYLE_TRANSFER_PACKAGES,
+            GGUF_PACKAGES,
+            REQUIRED_CONTROLNET_PACKAGES,
+            RIFE_PACKAGES,
+            H3_TURBO_PACKAGES,
+            H3_TEACACHE_PACKAGES,
+            INT8_FAST_PACKAGES,
+            IPADAPTER_PLUS_PACKAGES,
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn every_node_package_is_pinned_to_a_full_commit_sha() {
+        for package in all_node_packages() {
+            assert_eq!(package.git_rev.len(), 40, "{} rev", package.name);
+            assert!(
+                package
+                    .git_rev
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "{} rev must be a lowercase commit SHA",
+                package.name
+            );
+            assert!(package.git_url.starts_with("https://github.com/"));
+        }
+    }
+
+    /// The Docker image pre-installs some of the same packs. Its pins must match
+    /// or the server image and the desktop app run different third-party code.
+    #[test]
+    fn dockerfile_node_pins_match() {
+        const DOCKERFILE: &str = include_str!("../../../Dockerfile");
+        let packages = all_node_packages();
+        let mut seen = 0;
+        for line in DOCKERFILE.lines() {
+            let Some(rest) = line.trim().strip_prefix("clone_pinned ") else {
+                continue;
+            };
+            let mut parts = rest.split_whitespace();
+            let (url, rev) = (parts.next().unwrap(), parts.next().unwrap());
+            let package = packages
+                .iter()
+                .find(|p| p.git_url == url)
+                .unwrap_or_else(|| panic!("Dockerfile installs unknown pack {url}"));
+            assert_eq!(rev, package.git_rev, "Dockerfile pin for {url}");
+            seen += 1;
+        }
+        assert!(seen >= 3, "expected the Dockerfile to pin its node packs");
+        assert!(
+            !DOCKERFILE.contains("git clone"),
+            "Dockerfile must not clone node packs from an unpinned HEAD"
+        );
+    }
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A throwaway upstream repo with one commit; returns (root, url, sha).
+    fn local_upstream() -> (PathBuf, String, String) {
+        let root = std::env::temp_dir().join(format!("mooshie-node-pin-{}", uuid::Uuid::new_v4()));
+        let upstream = root.join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        git_in(&upstream, &["init", "-q"]);
+        std::fs::write(upstream.join("__init__.py"), "NODE_CLASS_MAPPINGS = {}\n").unwrap();
+        git_in(&upstream, &["add", "__init__.py"]);
+        git_in(&upstream, &["commit", "-q", "-m", "init"]);
+        let sha = git_in(&upstream, &["rev-parse", "HEAD"]);
+        // file:// (not a bare path) so --depth is honoured like a remote.
+        let url = format!("file://{}", upstream.display()).replace('\\', "/");
+        std::fs::create_dir_all(root.join("custom_nodes")).unwrap();
+        (root, url, sha)
+    }
+
+    fn leftover_staging_dirs(custom_nodes: &Path) -> usize {
+        std::fs::read_dir(custom_nodes)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".mooshie-clone-")
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn clone_custom_node_checks_out_the_pinned_commit() {
+        if !git_available() {
+            return;
+        }
+        let (root, url, sha) = local_upstream();
+        let target = root.join("custom_nodes").join("Pack");
+        clone_custom_node(&url, &sha, &target, None).await.unwrap();
+        assert!(target.join("__init__.py").is_file());
+        assert_eq!(git_in(&target, &["rev-parse", "HEAD"]), sha);
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn failed_pinned_clone_leaves_nothing_behind() {
+        if !git_available() {
+            return;
+        }
+        let (root, url, _) = local_upstream();
+        let target = root.join("custom_nodes").join("Pack");
+        let err = clone_custom_node(&url, &"0".repeat(40), &target, None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("git install failed"), "{err}");
+        // No half-populated pack for the "already installed" check to trust.
+        assert!(!target.exists());
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod rife_pin_tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-rife-pin-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn only_the_pinned_checkpoint_is_accepted() {
+        assert!(check_rife_ckpt(RIFE_CKPT_BYTES, RIFE_CKPT_SHA256).is_ok());
+        assert!(check_rife_ckpt(RIFE_CKPT_BYTES - 1, RIFE_CKPT_SHA256).is_err());
+        let other = "0".repeat(64);
+        let err = check_rife_ckpt(RIFE_CKPT_BYTES, &other).unwrap_err();
+        assert!(err.contains("SHA-256"), "{err}");
+
+        let dir = scratch_dir("pin");
+        let path = dir.join(RIFE_CKPT_FILENAME);
+        std::fs::write(&path, b"not the checkpoint").unwrap();
+        assert!(!rife_ckpt_matches_pin(&path));
+        assert!(!rife_ckpt_matches_pin(&dir.join("missing.pth")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Serve one GET with `announced` as Content-Length (or none) and `body_len` bytes.
+    async fn serve_once(announced: Option<u64>, body_len: usize) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = socket.read(&mut buf).await;
+                let length = announced
+                    .map(|n| format!("Content-Length: {n}\r\n"))
+                    .unwrap_or_default();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n{length}Connection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&vec![7u8; body_len]).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        format!("http://{addr}/{RIFE_CKPT_FILENAME}")
+    }
+
+    #[tokio::test]
+    async fn oversized_mirrors_are_cut_off() {
+        let dir = scratch_dir("oversized");
+        let dest = dir.join(RIFE_CKPT_FILENAME);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let quiet = |_: &str, _: &str, _: bool| {};
+        let too_big = RIFE_CKPT_BYTES as usize + 1;
+
+        let announced = serve_once(Some(too_big as u64), 0).await;
+        let err = download_rife_checkpoint_from(&client, &announced, &dest, &quiet)
+            .await
+            .unwrap_err();
+        assert!(err.contains("announced"), "{err}");
+
+        let unannounced = serve_once(None, too_big).await;
+        let err = download_rife_checkpoint_from(&client, &unannounced, &dest, &quiet)
+            .await
+            .unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+
+        // Right size, wrong bytes.
+        let wrong = serve_once(Some(RIFE_CKPT_BYTES), RIFE_CKPT_BYTES as usize).await;
+        let err = download_rife_checkpoint_from(&client, &wrong, &dest, &quiet)
+            .await
+            .unwrap_err();
+        assert!(err.contains("SHA-256"), "{err}");
+
+        assert!(!dest.exists() && !dest.with_extension("part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod install_script_tests {
+    use super::ensure_mooshie_nodes;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    fn files_under(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files_under(root, &path, out);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                out.insert(rel, std::fs::read(&path).unwrap());
+            }
+        }
+    }
+
+    /// `comfyui-nodes/install.sh` (for external ComfyUI servers) must deploy
+    /// exactly what the app deploys, or those servers fail the required-node
+    /// check on connect.
+    #[test]
+    fn install_script_deploys_what_the_app_deploys() {
+        let base =
+            std::env::temp_dir().join(format!("mooshieui-install-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (app, script) = (base.join("app"), base.join("script"));
+        for comfy in [&app, &script] {
+            std::fs::create_dir_all(comfy.join("custom_nodes")).unwrap();
+            std::fs::write(comfy.join("nodes.py"), b"").unwrap();
+        }
+        // A stale package-style flux2vae copy both installers must remove.
+        std::fs::create_dir_all(script.join("custom_nodes/sdxl-flux2vae-comfyui-node")).unwrap();
+        std::fs::write(
+            script.join("custom_nodes/sdxl-flux2vae-comfyui-node/nodes.py"),
+            b"old",
+        )
+        .unwrap();
+
+        ensure_mooshie_nodes(app.to_str().unwrap()).unwrap();
+        let installer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../comfyui-nodes/install.sh");
+        let output = std::process::Command::new("bash")
+            .arg(&installer)
+            .arg(&script)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "install.sh failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let (mut expected, mut actual) = (BTreeMap::new(), BTreeMap::new());
+        let app_nodes = app.join("custom_nodes");
+        let script_nodes = script.join("custom_nodes");
+        files_under(&app_nodes, &app_nodes, &mut expected);
+        files_under(&script_nodes, &script_nodes, &mut actual);
+        assert_eq!(
+            expected.keys().collect::<Vec<_>>(),
+            actual.keys().collect::<Vec<_>>()
+        );
+        for (path, bytes) in &expected {
+            assert!(actual[path] == *bytes, "{} differs", path.display());
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -50,7 +50,7 @@ unicode_hits=""
 for f in $staged_files; do
     ext="${f##*.}"
     case "$ext" in
-        py|js|ts|svelte|rs) ;;
+        py|js|mjs|cjs|jsx|ts|tsx|svelte|rs|sh|ps1|yml|yaml|toml|json) ;;
         *) continue ;;
     esac
     [[ -f "$f" ]] || continue
@@ -159,7 +159,7 @@ eval_hits=""
 for f in $staged_files; do
     ext="${f##*.}"
     case "$ext" in
-        py|js|ts|svelte) ;;
+        py|js|mjs|cjs|jsx|ts|tsx|svelte|sh|ps1|yml|yaml|toml|json) ;;
         *) continue ;;
     esac
     [[ -f "$f" ]] || continue

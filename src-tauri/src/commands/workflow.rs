@@ -43,14 +43,13 @@ pub async fn generate(
     // `[Errno 21] Is a directory: '<input_dir>/'`, which surfaces as a generic
     // execution error far away from the actual cause.
     templates::validate_generation_params(&params).map_err(AppError::InvalidWorkflow)?;
-    {
+    // A remote ComfyUI lists and loads its own model files, so the local
+    // install is only consulted when the app launched the server itself.
+    let models_are_local = {
         let config = state.config.read().await;
-        crate::commands::api::validate_lora_files_for_generation(
-            &config.comfyui_path,
-            config.extra_model_paths.as_deref(),
-            &params.loras,
-        )?;
-    }
+        crate::commands::api::validate_generation_loras(&config, &params.loras)?;
+        crate::commands::api::generation_models_are_local(&config)
+    };
 
     // The MiniMax H3 nodes are verified here rather than at startup: they are
     // video-only and need ComfyUI >= 0.30, so an older or external server can be
@@ -76,7 +75,15 @@ pub async fn generate(
     // stock loaders validate the filename against their own folder listing and
     // would reject it, so resolve an absolute path here and let the workflow use
     // the Mooshie path-based loader nodes instead.
-    if let Some(source_category) = params.model_source_category.clone() {
+    //
+    // Skipped for a remote server: a path on this machine means nothing to it,
+    // and the file need not exist here. Without `resolved_model_path` the
+    // templates keep the stock loaders, which address the model by name.
+    let local_source_category = params
+        .model_source_category
+        .clone()
+        .filter(|_| models_are_local);
+    if let Some(source_category) = local_source_category {
         let active_model = if params.use_split_model {
             params.diffusion_model.clone()
         } else {

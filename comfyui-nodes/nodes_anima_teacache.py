@@ -16,8 +16,8 @@ tensors of the wrapped call, the same level MooshieUI's existing MiniMax H3
 TeaCache node (`ComfyUI-MiniMaxH3-TeaCache`) operates at for video models.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
 
 import torch
 from typing_extensions import override
@@ -26,11 +26,43 @@ from comfy_api.latest import ComfyExtension, io
 
 
 @dataclass
-class _TeaCacheState:
-    step: int = -1
+class _SlotCache:
+    """Cache for one cond/uncond batch layout.
+
+    ComfyUI may evaluate cond and uncond in one batched call or in separate
+    calls (low VRAM, or conds that cannot share a batch). Both see the same
+    input at a given step, so a single shared residual would hand the uncond
+    call the cond prediction and collapse CFG. Each layout keeps its own.
+    """
+
     accumulated_distance: float = 0.0
     previous_input_mean: Optional[torch.Tensor] = None
     previous_residual: Optional[torch.Tensor] = None
+
+
+@dataclass
+class _TeaCacheState:
+    step: int = -1
+    last_timestep: Optional[float] = None
+    slots: Dict[Tuple, _SlotCache] = field(default_factory=dict)
+
+    def advance(self, timestep: float) -> int:
+        """Step index of this call within the current sampling run.
+
+        Calls are counted by distinct timesteps, not one per call, so split
+        cond/uncond calls share a step. A timestep above the last one means a
+        new schedule started: the next generation (ComfyUI caches this node's
+        output, so the patched model and this state outlive a prompt), or a
+        refinement sampler reusing the model. Everything is reset then, or the
+        step counter would never re-enter the caching window.
+        """
+        if self.last_timestep is None or timestep > self.last_timestep:
+            self.step = 0
+            self.slots.clear()
+        elif timestep < self.last_timestep:
+            self.step += 1
+        self.last_timestep = timestep
+        return self.step
 
 
 def _rel_l1(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -39,15 +71,41 @@ def _rel_l1(a: torch.Tensor, b: torch.Tensor) -> float:
     return (diff / base).item()
 
 
+def _slot_key(args) -> Tuple:
+    cond_or_uncond = args.get("cond_or_uncond")
+    if cond_or_uncond is None:
+        options = args.get("c", {}).get("transformer_options", {})
+        cond_or_uncond = options.get("cond_or_uncond")
+    return tuple(cond_or_uncond) if cond_or_uncond is not None else ()
+
+
+def _run_steps(c, total_steps: int) -> int:
+    """Step count of the sampling run this call belongs to.
+
+    Once the state resets per schedule, a refinement sampler reusing this model
+    (upscale, face fix) gets a caching window of its own. `total_steps` is the
+    main sampler's count, so a shorter refine would cache right up to its last
+    steps; ComfyUI passes each run's schedule as `sample_sigmas`, which bounds
+    a negative `end_step` by the run itself. `total_steps` is the fallback.
+    """
+    sigmas = c.get("transformer_options", {}).get("sample_sigmas")
+    try:
+        steps = len(sigmas) - 1
+    except TypeError:
+        return total_steps
+    return steps if steps > 0 else total_steps
+
+
 def _make_wrapper(state, rel_l1_thresh, start_step, end_step, total_steps):
     def wrapper(apply_model, args):
         x = args["input"]
         c = args["c"]
 
-        state.step += 1
-        step = state.step
+        step = state.advance(float(args["timestep"].max()))
+        slot = state.slots.setdefault(_slot_key(args), _SlotCache())
 
-        effective_end = end_step if end_step >= 0 else max(total_steps + end_step, 0)
+        run_steps = _run_steps(c, total_steps)
+        effective_end = end_step if end_step >= 0 else max(run_steps + end_step, 0)
         in_window = start_step <= step < effective_end
 
         # Mean-pooled per-sample signature of the current step's input. Fully
@@ -62,27 +120,27 @@ def _make_wrapper(state, rel_l1_thresh, start_step, end_step, total_steps):
         # (or silently compare unrelated batch slots), so treat a shape change
         # the same as having no prior baseline: skip reuse and start fresh.
         same_shape = (
-            state.previous_input_mean is not None
-            and state.previous_input_mean.shape == input_mean.shape
+            slot.previous_input_mean is not None
+            and slot.previous_input_mean.shape == input_mean.shape
         )
 
         can_reuse = False
-        if in_window and same_shape and state.previous_residual is not None:
-            state.accumulated_distance += _rel_l1(input_mean, state.previous_input_mean)
-            if state.accumulated_distance < rel_l1_thresh:
+        if in_window and same_shape and slot.previous_residual is not None:
+            slot.accumulated_distance += _rel_l1(input_mean, slot.previous_input_mean)
+            if slot.accumulated_distance < rel_l1_thresh:
                 can_reuse = True
             else:
-                state.accumulated_distance = 0.0
+                slot.accumulated_distance = 0.0
         else:
-            state.accumulated_distance = 0.0
+            slot.accumulated_distance = 0.0
 
-        state.previous_input_mean = input_mean
+        slot.previous_input_mean = input_mean
 
         if can_reuse:
-            return x + state.previous_residual
+            return x + slot.previous_residual
 
         out = apply_model(x, args["timestep"], **c)
-        state.previous_residual = (out - x).detach()
+        slot.previous_residual = (out - x).detach()
         return out
 
     return wrapper

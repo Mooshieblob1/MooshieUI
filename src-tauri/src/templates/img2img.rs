@@ -101,6 +101,26 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
+    // VAEEncode yields one latent per input image, so a batch has to be
+    // repeated explicitly or batch_size is silently ignored.
+    let latent_source = if params.batch_size > 1 {
+        let repeat_id = next_id.to_string();
+        workflow.insert(
+            repeat_id.clone(),
+            json!({
+                "class_type": "RepeatLatentBatch",
+                "inputs": {
+                    "samples": [encode_id, 0],
+                    "amount": params.batch_size
+                }
+            }),
+        );
+        next_id += 1;
+        repeat_id
+    } else {
+        encode_id
+    };
+
     // KSampler with denoise < 1.0
     let sampler_id = next_id.to_string();
     workflow.insert(
@@ -111,7 +131,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "model": [model_source.0.clone(), model_source.1],
                 "positive": [pos_source.0.clone(), pos_source.1],
                 "negative": [neg_source.0.clone(), neg_source.1],
-                "latent_image": [encode_id, 0],
+                "latent_image": [latent_source, 0],
                 "seed": seed,
                 "steps": params.steps,
                 "cfg": params.cfg,
@@ -139,5 +159,38 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         sampler_id,
         refiner_model_source: None,
         base_sources: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::templates::graph_test_util::{build, linked, nodes, params, single};
+
+    #[test]
+    fn batch_size_repeats_the_encoded_latent() {
+        let mut p = params("img2img", "sdxl");
+        p.denoise = 0.6;
+        p.batch_size = 3;
+        let workflow = build(&p);
+
+        let sampler = single(&workflow, "KSampler");
+        let repeat = linked(&workflow, &sampler["inputs"]["latent_image"]);
+        assert_eq!(repeat["class_type"], "RepeatLatentBatch");
+        assert_eq!(repeat["inputs"]["amount"], 3);
+        assert_eq!(
+            linked(&workflow, &repeat["inputs"]["samples"])["class_type"],
+            "VAEEncode"
+        );
+    }
+
+    #[test]
+    fn single_image_feeds_the_encoded_latent_directly() {
+        let workflow = build(&params("img2img", "sdxl"));
+        let sampler = single(&workflow, "KSampler");
+        assert_eq!(
+            linked(&workflow, &sampler["inputs"]["latent_image"])["class_type"],
+            "VAEEncode"
+        );
+        assert!(nodes(&workflow, "RepeatLatentBatch").is_empty());
     }
 }

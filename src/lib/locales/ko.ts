@@ -2388,6 +2388,7 @@ const ko: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API 키",
   "settings.civitai.api_key_placeholder": "CivitAI API 키를 여기에 붙여넣기",
+  "settings.civitai.api_key_saved_placeholder": "키가 저장되어 있습니다. 바꾸려면 새 키를 붙여넣으세요.",
   "settings.civitai.api_key_desc": "모델 메타데이터 조회, 샘플 이미지 가져오기 및 다운로드에 사용됩니다. CivitAI가 비인증 접근을 제한한 이후 필수입니다.",
   "settings.civitai.api_key_link": "civitai.com/user/account 에서 키 발급",
   "settings.novelai.title": "NovelAI",
@@ -3235,6 +3236,7 @@ const ko: Record<string, string> = {
   "settings.lan.temp_password_min": "임시 비밀번호는 최소 4자 이상이어야 합니다.",
   "settings.lan.reset_failed": "비밀번호 재설정에 실패했습니다.",
   "settings.lan.account_validation": "사용자 이름이 필요하며, 비밀번호는 최소 4자 이상이어야 합니다.",
+  "settings.lan.username_invalid": "사용자 이름에는 영문자(A-Z), 숫자, - 및 _만 사용할 수 있습니다(최대 {max}자).",
   "settings.lan.time.never": "없음",
   "settings.lan.time.unknown": "알 수 없음",
   "settings.lan.time.weeks_ago": "{weeks}주 전",
@@ -3685,6 +3687,15 @@ const ko: Record<string, string> = {
   "errors.report.opening": "열리는 중...",
 
   "errors.report.copied_hint": "진단 정보가 클립보드에 복사되었습니다. 이슈 본문에 붙여넣으세요.",
+  "errors.report.intro_service": "보고서는 MooshieUI 보고 서비스로 전송되며, 공개 GitHub 이슈로 게시됩니다. 누구나 읽을 수 있습니다.",
+  "errors.report.include_log": "진단 로그 포함",
+  "errors.report.include_log_hint": "로그에는 앱 버전, 운영체제, 컴퓨터 이름, 폴더 경로, 설치된 모델, 최근 앱 로그가 포함됩니다. 보내기 전에 확인하세요.",
+  "errors.report.preview_log": "전송될 내용 보기",
+  "errors.report.hide_log": "로그 숨기기",
+  "errors.report.loading_log": "진단 정보를 수집하는 중...",
+  "errors.report.submit_service": "보고서 보내기",
+  "errors.report.sending": "보내는 중...",
+  "errors.report.sent": "보고서를 보냈습니다. MooshieUI 개선에 도움을 주셔서 감사합니다.",
 
   "generation.video.role_fl2va": "첫 번째/마지막 프레임 모델",
 

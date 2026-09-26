@@ -17,6 +17,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          # Read-only job: the base-SHA fetch below works anonymously on this
+          # public repository, so the token is not left in .git/config.
+          persist-credentials: false
 
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -38,7 +41,9 @@ jobs:
           python3 - <<'PYEOF'
           import os, sys
 
-          TARGET_EXTS = {".py", ".js", ".ts", ".svelte", ".rs"}
+          # Same set as Check 2 of glassworm-scan.yml.
+          TARGET_EXTS = {".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".svelte", ".rs",
+                         ".sh", ".ps1", ".yml", ".yaml", ".toml", ".json"}
           any_hit = False
 
           with open("/tmp/changed_files.txt") as fh:

@@ -12,7 +12,8 @@ services:
     # No host port published; only cloudflared reaches it.
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # 2026.9.3 (the `latest` of 2026-09-26), pinned by digest; bump both together.
+    image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     container_name: report-cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}

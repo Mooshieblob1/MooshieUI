@@ -29,12 +29,16 @@ async fn main() {
 
     match (&admin_user, &admin_pass) {
         (Some(user), Some(pass)) if !user.trim().is_empty() && pass.len() >= 4 => {
-            // Refuse the well-known default password: it must not be accepted even
-            // with a forced-change flag because the account would be reachable with
-            // a known credential the moment it is created.
-            if pass == "changeme" {
+            // Refuse the placeholder passwords the shipped docker-compose.yml
+            // and k8s/secret.yaml carry: they must not be accepted even with a
+            // forced-change flag because the account would be reachable with a
+            // known credential the moment it is created.
+            if is_placeholder_password(pass) {
                 log::error!("============================================================");
-                log::error!("  MOOSHIEUI_ADMIN_PASS is set to 'changeme'.");
+                log::error!(
+                    "  MOOSHIEUI_ADMIN_PASS is set to the placeholder '{}'.",
+                    pass
+                );
                 log::error!("  This default password is not accepted for security reasons.");
                 log::error!("  Set a strong unique password in your .env / Kubernetes secret");
                 log::error!("  and restart the server. No admin account was created.");
@@ -179,14 +183,13 @@ async fn main() {
     }
 
     // Wait for shutdown signal
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for ctrl-c");
+    shutdown_signal().await;
     log::info!("Shutdown signal received, cleaning up...");
     comfyui_desktop_lib::media_tools::shutdown(&state).await;
     comfyui_desktop_lib::prompt_assistant::companion::shutdown().await;
     comfyui_desktop_lib::commands::music_link::shutdown(&state).await;
     comfyui_desktop_lib::commands::music_audio_style::shutdown(&state).await;
+    state.output_owners.flush();
 
     // Use the same ownership checks and process-tree cleanup as desktop mode.
     if let Err(err) = process::stop_comfyui_process(&state).await {
@@ -195,4 +198,51 @@ async fn main() {
 
     server_handle.abort();
     log::info!("MooshieUI Server stopped.");
+}
+
+/// Resolve on Ctrl-C, or on SIGTERM where it exists. Docker and Kubernetes
+/// stop a container with SIGTERM (the entrypoint `exec`s this binary, so it
+/// is PID 1 and receives it); without this the shutdown cleanup below, which
+/// stops ComfyUI and saves the output owner map, never ran on a normal stop.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        result.expect("Failed to listen for ctrl-c");
+                    }
+                    _ = term.recv() => {}
+                }
+                return;
+            }
+            Err(e) => log::warn!("Could not listen for SIGTERM ({e}); only Ctrl-C stops cleanly"),
+        }
+    }
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for ctrl-c");
+}
+
+/// Placeholder admin passwords shipped in `docker-compose.yml` and
+/// `k8s/secret.yaml`. Anyone who read those files knows them.
+fn is_placeholder_password(pass: &str) -> bool {
+    ["changeme", "replace_me"]
+        .iter()
+        .any(|placeholder| pass.trim().eq_ignore_ascii_case(placeholder))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_placeholder_password;
+
+    #[test]
+    fn shipped_placeholder_passwords_are_refused() {
+        for pass in ["changeme", "REPLACE_ME", "replace_me", " ChangeMe "] {
+            assert!(is_placeholder_password(pass), "{pass}");
+        }
+        assert!(!is_placeholder_password("correct horse battery staple"));
+    }
 }

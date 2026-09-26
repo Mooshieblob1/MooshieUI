@@ -501,7 +501,8 @@
       const cfg = await getConfig();
       saved = (cfg.civitai_api_key ?? "").trim();
       // One-time migration: older builds stored the key only in localStorage.
-      if (!saved) {
+      // Skipped when the server reports a key this client is not shown.
+      if (!saved && !cfg.civitai_api_key_configured) {
         const legacy = (localStorage.getItem(CIVITAI_API_KEY_KEY) ?? "").trim();
         if (legacy) {
           saved = legacy;

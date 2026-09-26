@@ -2450,6 +2450,7 @@ const es: Record<string, string> = {
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "Clave API",
   "settings.civitai.api_key_placeholder": "Pegue aquí su clave API de CivitAI",
+  "settings.civitai.api_key_saved_placeholder": "Hay una clave guardada. Pegue una nueva para reemplazarla.",
   "settings.civitai.api_key_desc": "Se usa para metadatos de modelos, imágenes de muestra y descargas. Obligatoria desde que CivitAI restringió el acceso sin autenticación.",
   "settings.civitai.api_key_link": "Obtenga su clave en civitai.com/user/account",
   "settings.novelai.title": "NovelAI",
@@ -3264,6 +3265,7 @@ const es: Record<string, string> = {
   "settings.lan.temp_password_min": "La contraseña temporal debe tener al menos 4 caracteres.",
   "settings.lan.reset_failed": "No se pudo restablecer la contraseña.",
   "settings.lan.account_validation": "Se requiere nombre de usuario; la contraseña debe tener al menos 4 caracteres.",
+  "settings.lan.username_invalid": "Los nombres de usuario solo pueden contener letras A-Z, números, - y _ (máximo {max} caracteres).",
   "settings.lan.time.never": "Nunca",
   "settings.lan.time.unknown": "Desconocido",
   "settings.lan.time.weeks_ago": "hace {weeks} sem.",
@@ -3714,6 +3716,15 @@ const es: Record<string, string> = {
   "errors.report.opening": "Abriendo...",
 
   "errors.report.copied_hint": "Diagnósticos copiados al portapapeles. Pégalos en el cuerpo del issue.",
+  "errors.report.intro_service": "Tu informe se envía al servicio de informes de MooshieUI, que lo publica como una incidencia pública en GitHub. Cualquiera puede leerlo.",
+  "errors.report.include_log": "Incluir registro de diagnóstico",
+  "errors.report.include_log_hint": "El registro contiene la versión de la aplicación, el sistema operativo, el nombre del equipo, rutas de carpetas, modelos instalados y registros recientes de la aplicación. Revísalo antes de enviarlo.",
+  "errors.report.preview_log": "Mostrar lo que se enviará",
+  "errors.report.hide_log": "Ocultar registro",
+  "errors.report.loading_log": "Recopilando diagnósticos...",
+  "errors.report.submit_service": "Enviar informe",
+  "errors.report.sending": "Enviando...",
+  "errors.report.sent": "Informe enviado. Gracias por ayudar a mejorar MooshieUI.",
 
   "generation.video.role_fl2va": "Modelo de primer/último fotograma",
 

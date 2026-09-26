@@ -54,6 +54,11 @@ pub struct ModelRequest {
     pub handled_at: Option<String>,
 }
 
+/// How many pending requests one account may have open at once. Past this a
+/// user must wait for staff to handle some before filing more, so one account
+/// cannot flood the queue (and every staff account's notifications).
+pub const MAX_PENDING_REQUESTS_PER_USER: usize = 20;
+
 /// On-disk model request database.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelRequestDatabase {
@@ -73,7 +78,9 @@ impl ModelRequestState {
         }
     }
 
-    /// Add a new pending request. Returns the created request.
+    /// Add a new pending request. Returns the created request, or an error
+    /// when `username` already has [`MAX_PENDING_REQUESTS_PER_USER`] pending.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_request(
         &self,
         username: &str,
@@ -85,7 +92,7 @@ impl ModelRequestState {
         file_url: &str,
         file_size_kb: f64,
         category: &str,
-    ) -> ModelRequest {
+    ) -> Result<ModelRequest, String> {
         let id = format!(
             "req_{}",
             uuid::Uuid::new_v4().to_string().replace("-", "")[..12].to_string()
@@ -110,35 +117,30 @@ impl ModelRequestState {
         };
 
         {
+            // Count and push under one guard so concurrent submissions cannot
+            // both slip under the cap.
             let mut db = self.db.write().unwrap();
+            if pending_count_for(&db.requests, username) >= MAX_PENDING_REQUESTS_PER_USER {
+                return Err(format!(
+                    "You already have {MAX_PENDING_REQUESTS_PER_USER} pending model requests. Wait for a moderator to handle them before requesting more."
+                ));
+            }
             db.requests.push(request.clone());
         }
         self.save();
-        request
+        Ok(request)
     }
 
-    /// Get all requests, optionally filtered by status.
-    pub fn get_requests(&self, status: Option<RequestStatus>) -> Vec<ModelRequest> {
+    /// Requests `viewer` may see, optionally filtered by status. `None` is a
+    /// staff viewer, who sees every account's requests; a regular user sees
+    /// only their own.
+    pub fn visible_requests(
+        &self,
+        status: Option<RequestStatus>,
+        viewer: Option<&str>,
+    ) -> Vec<ModelRequest> {
         let db = self.db.read().unwrap();
-        match status {
-            Some(s) => db
-                .requests
-                .iter()
-                .filter(|r| r.status == s)
-                .cloned()
-                .collect(),
-            None => db.requests.clone(),
-        }
-    }
-
-    /// Get requests for a specific user.
-    pub fn get_requests_for_user(&self, username: &str) -> Vec<ModelRequest> {
-        let db = self.db.read().unwrap();
-        db.requests
-            .iter()
-            .filter(|r| r.username.eq_ignore_ascii_case(username))
-            .cloned()
-            .collect()
+        filter_visible(&db.requests, status.as_ref(), viewer)
     }
 
     /// Approve a request (mod/admin action).
@@ -203,6 +205,26 @@ impl ModelRequestState {
     }
 }
 
+fn pending_count_for(requests: &[ModelRequest], username: &str) -> usize {
+    requests
+        .iter()
+        .filter(|r| r.status == RequestStatus::Pending && r.username.eq_ignore_ascii_case(username))
+        .count()
+}
+
+fn filter_visible(
+    requests: &[ModelRequest],
+    status: Option<&RequestStatus>,
+    viewer: Option<&str>,
+) -> Vec<ModelRequest> {
+    requests
+        .iter()
+        .filter(|r| status.is_none_or(|s| r.status == *s))
+        .filter(|r| viewer.is_none_or(|u| r.username.eq_ignore_ascii_case(u)))
+        .cloned()
+        .collect()
+}
+
 fn model_requests_path() -> Option<PathBuf> {
     config::app_data_dir().map(|d| d.join("model_requests.json"))
 }
@@ -222,6 +244,79 @@ fn save_model_requests(db: &ModelRequestDatabase) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let data = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
-    std::fs::write(&path, data).map_err(|e| e.to_string())?;
+    // Atomic: a truncated file fails to parse on the next start, and
+    // `load_model_requests` would then drop every pending request.
+    config::write_private_file_atomic(&path, data.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod request_visibility_tests {
+    use super::*;
+
+    fn request(id: &str, username: &str, status: RequestStatus) -> ModelRequest {
+        ModelRequest {
+            id: id.to_string(),
+            username: username.to_string(),
+            model_id: 1,
+            model_name: "m".to_string(),
+            model_type: "LORA".to_string(),
+            model_url: String::new(),
+            file_name: "f.safetensors".to_string(),
+            file_url: "https://civitai.com/api/download/models/1".to_string(),
+            file_size_kb: 1.0,
+            category: "loras".to_string(),
+            status,
+            handled_by: None,
+            deny_reason: None,
+            created_at: String::new(),
+            handled_at: None,
+        }
+    }
+
+    fn ids(requests: &[ModelRequest]) -> Vec<&str> {
+        requests.iter().map(|r| r.id.as_str()).collect()
+    }
+
+    #[test]
+    fn users_see_only_their_own_requests_and_staff_see_all() {
+        let all = vec![
+            request("a1", "alice", RequestStatus::Pending),
+            request("b1", "bob", RequestStatus::Pending),
+            request("a2", "alice", RequestStatus::Denied),
+        ];
+        assert_eq!(ids(&filter_visible(&all, None, None)), ["a1", "b1", "a2"]);
+        assert_eq!(
+            ids(&filter_visible(&all, None, Some("Alice"))),
+            ["a1", "a2"]
+        );
+        assert_eq!(
+            ids(&filter_visible(
+                &all,
+                Some(&RequestStatus::Pending),
+                Some("alice")
+            )),
+            ["a1"]
+        );
+        assert_eq!(
+            ids(&filter_visible(&all, Some(&RequestStatus::Pending), None)),
+            ["a1", "b1"]
+        );
+        assert!(filter_visible(&all, None, Some("carol")).is_empty());
+    }
+
+    #[test]
+    fn only_pending_requests_count_toward_the_cap() {
+        let mut all: Vec<ModelRequest> = (0..MAX_PENDING_REQUESTS_PER_USER)
+            .map(|i| request(&format!("a{i}"), "alice", RequestStatus::Pending))
+            .collect();
+        all.push(request("b", "bob", RequestStatus::Pending));
+        all.push(request("done", "alice", RequestStatus::Approved));
+        assert_eq!(
+            pending_count_for(&all, "ALICE"),
+            MAX_PENDING_REQUESTS_PER_USER
+        );
+        assert_eq!(pending_count_for(&all, "bob"), 1);
+        assert_eq!(pending_count_for(&all, "carol"), 0);
+    }
 }

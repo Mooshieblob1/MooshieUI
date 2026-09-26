@@ -64,7 +64,7 @@ function fallbackLog(why: string): string {
  *
  * Order: full server-built log (time-bounded) -> frontend ring buffer -> marker.
  */
-async function captureDiagnosticLog(): Promise<string> {
+export async function captureDiagnosticLog(): Promise<string> {
   try {
     // Send the whole log — the proxy attaches the full text (chunked into issue
     // comments past GitHub's body limit) so nothing useful is lost.
@@ -81,9 +81,10 @@ export async function buildReportPayload(
   error: FriendlyError,
   userNote?: string,
   includeLogs = false,
+  capturedLog?: string,
 ): Promise<ReportPayload> {
   const { os, arch } = platformInfo();
-  const logsTail = includeLogs ? await captureDiagnosticLog() : undefined;
+  const logsTail = includeLogs ? (capturedLog ?? (await captureDiagnosticLog())) : undefined;
   return {
     errorCode: error.code,
     rawMessage: error.raw,
@@ -177,22 +178,42 @@ async function activeSink(): Promise<{ sink: ReportSink; usesLogs: boolean }> {
   return { sink: new PrefilledIssueSink(), usesLogs: false };
 }
 
+/**
+ * Where a report will go: straight to the report service (which files a public
+ * GitHub issue with whatever we send), or a prefilled GitHub page the user
+ * reviews and submits themselves. The report dialog words its consent text by this.
+ */
+export async function reportDestination(): Promise<"service" | "github"> {
+  const { sink } = await activeSink();
+  return sink instanceof ProxySink ? "service" : "github";
+}
+
+export interface ReportOptions {
+  /** Attach the diagnostic log when sending to the report service. Default true. */
+  includeLog?: boolean;
+  /** A log already captured (and shown to the user), sent instead of a fresh capture. */
+  log?: string;
+}
+
 /** Report a resolved error via the active sink, falling back to a prefilled issue. */
 export async function reportError(
   error: FriendlyError,
   userNote?: string,
-): Promise<{ issueUrl?: string }> {
+  options: ReportOptions = {},
+): Promise<{ issueUrl?: string; via: "service" | "github" }> {
   const { sink, usesLogs } = await activeSink();
-  const payload = await buildReportPayload(error, userNote, usesLogs);
+  const includeLog = usesLogs && (options.includeLog ?? true);
+  const payload = await buildReportPayload(error, userNote, includeLog, options.log);
   try {
-    return await sink.submit(payload);
+    const result = await sink.submit(payload);
+    return { ...result, via: sink instanceof ProxySink ? "service" : "github" };
   } catch (err) {
     if (sink instanceof ProxySink) {
       // Proxy unreachable or failed; fall back to a prefilled GitHub issue so the
       // report is never lost. The prefilled sink does not use logsTail.
       const fallback = new PrefilledIssueSink();
       const fallbackPayload = await buildReportPayload(error, userNote, false);
-      return fallback.submit(fallbackPayload);
+      return { ...(await fallback.submit(fallbackPayload)), via: "github" };
     }
     throw err;
   }

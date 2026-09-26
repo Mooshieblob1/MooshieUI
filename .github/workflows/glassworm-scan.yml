@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+
 jobs:
   glassworm-scan:
     name: GlassWorm Infection Audit
@@ -16,6 +19,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -50,7 +54,10 @@ jobs:
 
           # UTF-8 byte sequences for U+FE00–U+FE0F  → EF B8 80–EF B8 8F
           # UTF-8 byte sequences for U+E0100–U+E01EF → F3 A0 84 80–F3 A0 87 AF
-          TARGET_EXTS = {".py", ".js", ".ts", ".svelte", ".rs"}
+          # Everything that can execute or configure execution: source, scripts,
+          # workflows and manifests (package.json scripts, Cargo/pyproject tables).
+          TARGET_EXTS = {".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".svelte", ".rs",
+                         ".sh", ".ps1", ".yml", ".yaml", ".toml", ".json"}
 
           hits = []
           for root, dirs, files in os.walk("."):
@@ -147,7 +154,8 @@ jobs:
           # ── 4. Obfuscated eval scan ────────────────────────────────────────
           print("\n── Check 4: Obfuscated eval() calls ────────────────────────")
 
-          EVAL_EXTS = {".py", ".js", ".ts", ".svelte"}
+          EVAL_EXTS = {".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".svelte",
+                       ".sh", ".ps1", ".yml", ".yaml", ".toml", ".json"}
           KEYWORDS = r"decode|atob|fromCharCode|Buffer\.from|base64"
           # Match eval( followed within 120 chars by one of the keywords
           EVAL_RE = re.compile(

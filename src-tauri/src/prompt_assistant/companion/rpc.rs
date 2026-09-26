@@ -400,6 +400,31 @@ mod tests {
         );
     }
     #[test]
+    fn every_other_approval_request_is_refused() {
+        // The Codex app server (0.155.1) treats an error reply to these as
+        // "decline" / "grant nothing", which is what the `untrusted` approval
+        // policy relies on for tools the feature flags do not cover.
+        for method in [
+            "item/fileChange/requestApproval",
+            "mcpServer/elicitation/request",
+            "item/permissions/requestApproval",
+            "item/tool/requestUserInput",
+            "item/tool/call",
+        ] {
+            let reply = denied_request(&json!({"id":1,"method":method}));
+            assert_eq!(reply["id"], 1, "{method}");
+            let approved = reply["result"]["decision"]
+                .as_str()
+                .is_some_and(|d| d.starts_with("accept"));
+            assert!(!approved, "{method}");
+            assert!(
+                reply.get("error").is_some() || reply["result"]["decision"] == "decline",
+                "{method}"
+            );
+        }
+    }
+
+    #[test]
     fn empty_and_unbounded_answers_fail() {
         assert!(finished("   ".into()).is_err());
         assert!(append(&mut String::new(), &"x".repeat(OUTPUT_LIMIT + 1)).is_err());

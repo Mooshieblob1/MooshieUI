@@ -6,26 +6,61 @@ use std::io::{Cursor, Read};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Largest single image accepted out of a NovelAI archive. A full-size PNG
+/// is tens of megabytes at most; this matches the stream decoder's frame cap.
+const MAX_ARCHIVE_ENTRY_BYTES: u64 = MAX_FRAME_BYTES as u64;
+
+/// Largest total a NovelAI archive may inflate to, across every entry. A batch
+/// is a handful of images, so this is generous; a zip bomb is not.
+const MAX_ARCHIVE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Unpack the ZIP archive NovelAI returns from `/ai/generate-image`.
 ///
 /// The archive holds one entry per sample, named `image_0.png` and up. Entries
 /// are returned in archive order, which matches sample order.
 pub fn unpack_images(body: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    unpack_images_with_limits(body, MAX_ARCHIVE_ENTRY_BYTES, MAX_ARCHIVE_TOTAL_BYTES)
+}
+
+/// [`unpack_images`] with explicit caps, so tests can exercise them cheaply.
+///
+/// Sizes in the central directory are the sender's claim, not a fact: the
+/// buffer is never pre-sized from one beyond the cap, and every entry is read
+/// through a `take` so inflation stops at the cap whatever the header said.
+fn unpack_images_with_limits(
+    body: &[u8],
+    entry_limit: u64,
+    total_limit: u64,
+) -> Result<Vec<Vec<u8>>, String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(body))
         .map_err(|e| format!("NovelAI returned an unreadable archive: {e}"))?;
 
     let mut images = Vec::new();
+    let mut total = 0u64;
     for i in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(i)
             .map_err(|e| format!("failed to read archive entry {i}: {e}"))?;
         if entry.is_dir() {
             continue;
         }
-        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        let claimed = entry.size().min(entry_limit);
+        let mut bytes = Vec::with_capacity(usize::try_from(claimed).unwrap_or(0));
+        // One byte past the cap is how an oversized entry is told apart from
+        // one that is exactly at it.
         entry
+            .take(entry_limit + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| format!("failed to extract archive entry {i}: {e}"))?;
+        if bytes.len() as u64 > entry_limit {
+            return Err(format!(
+                "NovelAI archive entry {i} is larger than {entry_limit} bytes"
+            ));
+        }
+        total += bytes.len() as u64;
+        if total > total_limit {
+            return Err(format!("NovelAI archive inflates past {total_limit} bytes"));
+        }
         if !bytes.is_empty() {
             images.push(bytes);
         }
@@ -366,6 +401,70 @@ mod tests {
         let zip = zip_of(&[("image_0.png", b"first"), ("image_1.png", b"second")]);
         let images = unpack_images(&zip).unwrap();
         assert_eq!(images, vec![b"first".to_vec(), b"second".to_vec()]);
+    }
+
+    /// Like `zip_of` but deflated, so a small archive can inflate to a lot.
+    fn deflated_zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut buf);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (name, bytes) in entries {
+                w.start_file(*name, options).unwrap();
+                w.write_all(bytes).unwrap();
+            }
+            w.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn an_entry_that_inflates_past_the_cap_is_refused() {
+        let bomb = vec![0u8; 1024 * 1024];
+        let zip = deflated_zip_of(&[("image_0.png", &bomb)]);
+        assert!(zip.len() < 16 * 1024, "fixture should compress well");
+
+        let err = unpack_images_with_limits(&zip, 64 * 1024, u64::MAX).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+        // Exactly at the cap is still fine.
+        let images = unpack_images_with_limits(&zip, bomb.len() as u64, u64::MAX).unwrap();
+        assert_eq!(images[0].len(), bomb.len());
+    }
+
+    #[test]
+    fn an_archive_that_inflates_past_the_total_cap_is_refused() {
+        let image = vec![7u8; 40 * 1024];
+        let zip = deflated_zip_of(&[
+            ("image_0.png", &image),
+            ("image_1.png", &image),
+            ("image_2.png", &image),
+        ]);
+        let err = unpack_images_with_limits(&zip, 64 * 1024, 100 * 1024).unwrap_err();
+        assert!(err.contains("inflates past"), "{err}");
+        assert_eq!(
+            unpack_images_with_limits(&zip, 64 * 1024, 120 * 1024)
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn a_central_directory_size_claim_is_not_trusted() {
+        // Claim ~4 GiB uncompressed for a 5-byte stored entry. The old code
+        // pre-sized its buffer from this field.
+        let mut zip = zip_of(&[("image_0.png", b"first")]);
+        let cd = zip
+            .windows(4)
+            .rposition(|w| w == [0x50, 0x4b, 0x01, 0x02])
+            .expect("central directory header");
+        zip[cd + 24..cd + 28].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+        // Whatever the zip crate makes of the mismatch, it must not be an
+        // allocation of the claimed size or an image bigger than the cap.
+        if let Ok(images) = unpack_images_with_limits(&zip, 1024, 4096) {
+            assert!(images.iter().all(|i| i.len() <= 1024));
+        }
     }
 
     #[test]

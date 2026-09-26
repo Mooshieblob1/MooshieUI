@@ -326,8 +326,7 @@ fn audio_output(entry: &Value) -> Result<Option<&Value>, AppError> {
     let filename = output["filename"].as_str().unwrap_or("");
     if !filename.starts_with("mooshie_yue2_")
         || !filename.ends_with(".flac")
-        || filename.contains(['/', '\\', ':'])
-        || filename.contains("..")
+        || !crate::commands::api::is_single_safe_filename(filename)
         || output["subfolder"] != "audio"
         || output["type"] != "output"
     {
@@ -754,6 +753,8 @@ mod tests {
             "../secret.flac",
             "mooshie_yue2_../secret.flac",
             "mooshie_yue2_:secret.flac",
+            "mooshie_yue2_\\..\\secret.flac",
+            "mooshie_yue2_\0.flac",
         ] {
             entry["outputs"]["8"]["audio"][0]["filename"] = json!(name);
             assert!(audio_output(&entry).is_err());
