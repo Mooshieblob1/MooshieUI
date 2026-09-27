@@ -4876,9 +4876,15 @@ mod split_model_pairing_tests {
             "anima-turbo-v1.1.safetensors",
             "anima-aesthetic-v1.1.safetensors",
             "anima-light-lavender.safetensors",
+            "anima-light-lavender_mxfp8.safetensors",
         ] {
             assert!(filename_indicates_anima(name), "{name}");
         }
+        // "light" must not read as a Lightning distill.
+        assert_eq!(
+            turbo_model_variant_from_filename("anima-light-lavender.safetensors"),
+            "none"
+        );
         assert_eq!(
             turbo_model_variant_from_filename("anima-turbo-v1.1.safetensors"),
             "turbo"

@@ -231,6 +231,78 @@
       },
     },
     {
+      // Johnny-Z/Anima-Light-Lavender: community Base v1.0 fine-tune, same
+      // architecture, encoder and VAE. Detection-only for the diffusion file;
+      // the encoder and VAE carry URLs so selecting the entry fetches them.
+      label: "Anima Light Lavender",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-light-lavender.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 25,
+        cfg: 4,
+        samplerName: "euler",
+        scheduler: "simple",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Light Lavender (MXFP8)",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      // MXFP8 tensor-core compute is Blackwell-only (10.0+ datacenter / 12.0 consumer).
+      minComputeCapability: 10.0,
+      gateHint: "Blackwell only",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-light-lavender_mxfp8.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 25,
+        cfg: 4,
+        samplerName: "euler",
+        scheduler: "simple",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
       label: "Anima Preview 3",
       size: "",
       sizeKey: "common.local",

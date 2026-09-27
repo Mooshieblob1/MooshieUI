@@ -1228,6 +1228,23 @@ class GenerationStore {
     return filename.toLowerCase().includes("aesthetic");
   }
 
+  /**
+   * True for Anima Light Lavender (Johnny-Z), a Base v1.0 fine-tune trained on
+   * structured natural-language captions. Upstream recommends euler/simple at
+   * 25 steps, no quality words and an empty negative, so Anima quality tags are
+   * not injected for it.
+   */
+  get isAnimaLightLavender(): boolean {
+    if (!this.isAnima) return false;
+    const filename = (this.useSplitModel ? this.diffusionModel : this.checkpoint) ?? "";
+    return filename.toLowerCase().includes("light-lavender");
+  }
+
+  /** True when auto quality tags use the Anima tag set for the selected model. */
+  get usesAnimaQualityTags(): boolean {
+    return this.isAnima && !this.isAnimaLightLavender;
+  }
+
   /** Anima quality tags actually injected for the selected model. */
   get animaPositiveQuality(): string {
     return this.isAnimaAesthetic ? stripScoreTags(this.customAnimaPositiveQuality) : this.customAnimaPositiveQuality;
@@ -2581,14 +2598,23 @@ class GenerationStore {
       // Anima, Wan, and Qwen share the same 16-channel latent workflow bucket.
       // Anima Turbo is distilled, so it runs at CFG 1 and 8-12 steps.
       case "anima":
-        preset = {
-          steps: this.hasTurboModelVariant ? 10 : 30,
-          cfg: this.hasTurboModelVariant ? 1.0 : 4.0,
-          samplerName: this.hasTurboModelVariant ? "euler" : "er_sde",
-          scheduler: "sgm_uniform",
-          width: 1024,
-          height: 1024,
-        };
+        preset = this.isAnimaLightLavender
+          ? {
+              steps: 25,
+              cfg: 4.0,
+              samplerName: "euler",
+              scheduler: "simple",
+              width: 1024,
+              height: 1024,
+            }
+          : {
+              steps: this.hasTurboModelVariant ? 10 : 30,
+              cfg: this.hasTurboModelVariant ? 1.0 : 4.0,
+              samplerName: this.hasTurboModelVariant ? "euler" : "er_sde",
+              scheduler: "sgm_uniform",
+              width: 1024,
+              height: 1024,
+            };
         break;
 
       case "wan":
@@ -3616,7 +3642,7 @@ class GenerationStore {
     // billing Anlas for `score_9, score_8_up` in the prompt.
     if (!isVideo && !this.isNovelAi && this.autoQualityTags) {
       // Anima models (positive before, negative after)
-      if (this.isAnima) {
+      if (this.usesAnimaQualityTags) {
         positivePrompt = this.mergeTagPrompts(this.animaPositiveQuality, positivePrompt);
         negativePrompt = this.mergeTagPrompts(negativePrompt, this.animaNegativeQuality);
       }
@@ -3648,7 +3674,7 @@ class GenerationStore {
       !this.upscaleFastRefine &&
       (this.upscaleTiling || this.useSplitModel);
     if (!isVideo && !this.isNovelAi && upscaleUsesTiling && this.autoQualityTags) {
-      if (this.isAnima) {
+      if (this.usesAnimaQualityTags) {
         upscalePositivePrompt = this.animaPositiveQuality;
         upscaleNegativePrompt = this.animaNegativeQuality;
       } else if (this.isIllustrious) {
