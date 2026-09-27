@@ -547,6 +547,13 @@ function splitPromptTags(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Drop Pony-style `score_N` / `score_N_up` tags, weighted or not. */
+function stripScoreTags(text: string): string {
+  return splitPromptTags(text)
+    .filter((tag) => !/^\(*score_\d+(_up)?(:[\d.]+)?\)*$/i.test(tag))
+    .join(", ");
+}
+
 function appendMissingNegativeTags(base: string): string {
   const trimmed = base.trim();
   if (!trimmed) return trimmed;
@@ -1208,6 +1215,26 @@ class GenerationStore {
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
     return this.modelFamily === "anima";
+  }
+
+  /**
+   * True for Anima Aesthetic. It was fine-tuned with quality tags stripped from
+   * its captions, and score_* tags push it too hard, so they are left out of
+   * the injected Anima quality tags.
+   */
+  get isAnimaAesthetic(): boolean {
+    if (!this.isAnima) return false;
+    const filename = (this.useSplitModel ? this.diffusionModel : this.checkpoint) ?? "";
+    return filename.toLowerCase().includes("aesthetic");
+  }
+
+  /** Anima quality tags actually injected for the selected model. */
+  get animaPositiveQuality(): string {
+    return this.isAnimaAesthetic ? stripScoreTags(this.customAnimaPositiveQuality) : this.customAnimaPositiveQuality;
+  }
+
+  get animaNegativeQuality(): string {
+    return this.isAnimaAesthetic ? stripScoreTags(this.customAnimaNegativeQuality) : this.customAnimaNegativeQuality;
   }
 
   /** True when the selected model is an Illustrious/NoobAI family variant. */
@@ -3590,8 +3617,8 @@ class GenerationStore {
     if (!isVideo && !this.isNovelAi && this.autoQualityTags) {
       // Anima models (positive before, negative after)
       if (this.isAnima) {
-        positivePrompt = this.mergeTagPrompts(this.customAnimaPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customAnimaNegativeQuality);
+        positivePrompt = this.mergeTagPrompts(this.animaPositiveQuality, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, this.animaNegativeQuality);
       }
 
       // Illustrious/NoobAI family (positive before, negative after)
@@ -3622,8 +3649,8 @@ class GenerationStore {
       (this.upscaleTiling || this.useSplitModel);
     if (!isVideo && !this.isNovelAi && upscaleUsesTiling && this.autoQualityTags) {
       if (this.isAnima) {
-        upscalePositivePrompt = this.customAnimaPositiveQuality;
-        upscaleNegativePrompt = this.customAnimaNegativeQuality;
+        upscalePositivePrompt = this.animaPositiveQuality;
+        upscaleNegativePrompt = this.animaNegativeQuality;
       } else if (this.isIllustrious) {
         upscalePositivePrompt = this.customIllustriousPositiveQuality;
         upscaleNegativePrompt = this.customIllustriousNegativeQuality;
