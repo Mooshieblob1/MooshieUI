@@ -2552,7 +2552,18 @@ class GenerationStore {
         break;
 
       // Anima, Wan, and Qwen share the same 16-channel latent workflow bucket.
+      // Anima Turbo is distilled, so it runs at CFG 1 and 8-12 steps.
       case "anima":
+        preset = {
+          steps: this.hasTurboModelVariant ? 10 : 30,
+          cfg: this.hasTurboModelVariant ? 1.0 : 4.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "er_sde",
+          scheduler: "sgm_uniform",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
       case "wan":
       case "qwen":
         preset = {

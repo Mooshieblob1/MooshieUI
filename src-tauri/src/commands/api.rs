@@ -4435,8 +4435,13 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     {
         return Some("flux1d");
     }
+    // Comfy-Org ships Z-Image as `z_image_turbo_bf16.safetensors` /
+    // `z_image_bf16.safetensors`, so the underscore and hyphen spellings are
+    // matched alongside the CivitAI-style `zimage` ones.
     if name.contains("zimageturbo")
         || name.contains("zimage_turbo")
+        || name.contains("z_image_turbo")
+        || name.contains("z-image-turbo")
         || name.contains("/zit/")
         || name.contains("\\zit\\")
         || name.contains("_zit")
@@ -4455,6 +4460,8 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
         || name.contains(" zib")
         || name.starts_with("zib")
         || (name.contains("zimage") && name.contains("base"))
+        || name.contains("z_image")
+        || name.contains("z-image")
     {
         return Some("zib");
     }
@@ -4557,6 +4564,7 @@ fn turbo_model_variant_from_filename(filename: &str) -> &'static str {
     }
     if name.contains("zimageturbo")
         || name.contains("z-image-turbo")
+        || name.contains("z_image_turbo")
         || name.contains("/zit/")
         || name.contains("\\zit\\")
         || name.contains("_zit")
@@ -4644,6 +4652,19 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
     )
 }
 
+/// The Flux 1 VAE, as Black Forest Labs and Comfy-Org name it (`ae.safetensors`)
+/// or under any `flux` name that is not the incompatible 32-channel Flux 2 VAE.
+fn find_flux1_vae(vaes: &[String]) -> Option<String> {
+    vaes.iter()
+        .find(|vae| {
+            let lower = vae.to_lowercase();
+            let basename = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
+            basename == "ae.safetensors"
+                || (lower.contains("flux") && !lower.contains("flux2") && !lower.contains("flux.2"))
+        })
+        .cloned()
+}
+
 fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String]) -> Option<String> {
     if category != "diffusion_models" || vaes.is_empty() {
         return None;
@@ -4673,15 +4694,28 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
             .or_else(|| vaes.first().cloned());
     }
 
+    if matches!(family, "zib" | "zit") {
+        // Strict: Z-Image decodes with the 16-channel Flux 1 VAE. Omit the VAE
+        // instead of falling back to an unrelated one (usually the SDXL VAE) and
+        // let the frontend offer the download.
+        return find_flux1_vae(vaes);
+    }
+
     if matches!(
         family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma" | "zib" | "zit"
+        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma"
     ) {
-        return find_first_vae_matching(vaes, &["flux"]).or_else(|| vaes.first().cloned());
+        return find_flux1_vae(vaes).or_else(|| vaes.first().cloned());
     }
 
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
+
+/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image, Flux 2 Klein 4B).
+/// Comfy-Org names it `qwen_3_4b*.safetensors`. Mirrored by
+/// `ZIMAGE_ENCODER_MARKERS` in ModelSelector.svelte.
+const QWEN3_4B_TEXT_ENCODER_MARKERS: [&str; 5] =
+    ["zimage", "qwen3-4b", "qwen34b", "qwen_3_4b", "qwen3_4b"];
 
 /// Text-encoder filename markers accepted for Krea 2 (Qwen3-VL 4B, 30720-dim
 /// conditioning). Shared with the generate-time guard in templates/mod.rs.
@@ -4744,16 +4778,16 @@ fn recommended_clip_from_available(
     }
 
     if matches!(family, "flux2klein4b" | "flux2klein4bbase") {
-        let preferred =
-            find_first_text_encoder_matching(encoders, &["zimage", "qwen3-4b", "qwen34b"])
-                .or_else(|| encoders.first().cloned());
+        let preferred = find_first_text_encoder_matching(encoders, &QWEN3_4B_TEXT_ENCODER_MARKERS)
+            .or_else(|| encoders.first().cloned());
         return Some((preferred, "flux2"));
     }
 
     if matches!(family, "zib" | "zit") {
-        let preferred =
-            find_first_text_encoder_matching(encoders, &["zimage", "qwen3-4b", "qwen34b"])
-                .or_else(|| encoders.first().cloned());
+        // Strict: Z-Image is conditioned on Qwen3-4B; any other encoder fails
+        // with a shape mismatch. Omit the model instead of substituting one and
+        // let the frontend offer the download.
+        let preferred = find_first_text_encoder_matching(encoders, &QWEN3_4B_TEXT_ENCODER_MARKERS);
         return Some((preferred, "lumina2"));
     }
 
@@ -4790,6 +4824,111 @@ fn recommended_clip_from_available(
     }
 
     Some((Some(encoders.first()?.clone()), "wan"))
+}
+
+#[cfg(test)]
+mod split_model_pairing_tests {
+    use super::*;
+
+    fn list(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn comfy_org_z_image_filenames_resolve_to_their_family() {
+        assert_eq!(
+            model_family_from_filename("z_image_turbo_bf16.safetensors"),
+            Some("zit")
+        );
+        assert_eq!(
+            model_family_from_filename("z_image_turbo_nvfp4.safetensors"),
+            Some("zit")
+        );
+        assert_eq!(
+            model_family_from_filename("Z-Image-Turbo-fp8.safetensors"),
+            Some("zit")
+        );
+        assert_eq!(
+            model_family_from_filename("z_image_bf16.safetensors"),
+            Some("zib")
+        );
+        assert_eq!(
+            model_family_from_filename("z_image_int8_convrot.safetensors"),
+            Some("zib")
+        );
+        assert_eq!(
+            model_family_from_filename("zimage_base.safetensors"),
+            Some("zib")
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("z_image_turbo_bf16.safetensors"),
+            "turbo"
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("z_image_bf16.safetensors"),
+            "none"
+        );
+    }
+
+    #[test]
+    fn anima_turbo_and_aesthetic_stay_anima() {
+        for name in [
+            "anima-turbo-v1.1.safetensors",
+            "anima-aesthetic-v1.1.safetensors",
+            "anima-light-lavender.safetensors",
+        ] {
+            assert!(filename_indicates_anima(name), "{name}");
+        }
+        assert_eq!(
+            turbo_model_variant_from_filename("anima-turbo-v1.1.safetensors"),
+            "turbo"
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("anima-aesthetic-v1.1.safetensors"),
+            "none"
+        );
+    }
+
+    #[test]
+    fn z_image_pairs_comfy_org_qwen3_4b_encoder() {
+        let encoders = list(&["qwen_3_06b_base.safetensors", "qwen_3_4b.safetensors"]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "zit", &encoders),
+            Some((Some("qwen_3_4b.safetensors".to_string()), "lumina2"))
+        );
+    }
+
+    #[test]
+    fn z_image_never_substitutes_an_unrelated_encoder() {
+        let encoders = list(&["qwen_3_06b_base.safetensors", "t5xxl_fp16.safetensors"]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "zib", &encoders),
+            Some((None, "lumina2"))
+        );
+    }
+
+    #[test]
+    fn z_image_pairs_flux1_vae_but_never_an_unrelated_one() {
+        let vaes = list(&[
+            "sdxl_vae.safetensors",
+            "flux2-vae.safetensors",
+            "ae.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "zit", &vaes),
+            Some("ae.safetensors".to_string())
+        );
+        let vaes = list(&["sdxl_vae.safetensors", "flux2-vae.safetensors"]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "zit", &vaes),
+            None
+        );
+        let vaes = list(&["sdxl_vae.safetensors", "FLUX1/flux_vae.safetensors"]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "zib", &vaes),
+            Some("FLUX1/flux_vae.safetensors".to_string())
+        );
+    }
 }
 
 fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> {
