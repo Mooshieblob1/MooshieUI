@@ -302,6 +302,54 @@ class MooshieH3UpscaleDraft:
         return latent, resize_conditioning(positive), torch.linspace(float(sigma), 0.0, steps + 1)
 
 
+# H3 packs pixel frames into latent frames in a repeating 1, 4, 4, 4, 4 pattern
+# (17 frames per five tokens), which is why clip lengths sit on the 17k+5 grid.
+FRAMES_PER_TOKEN = (1, 4, 4, 4, 4)
+
+
+def token_spans(latent_frames):
+    """[start, end) pixel-frame span covered by each latent frame."""
+    spans, start = [], 0
+    for index in range(latent_frames):
+        size = FRAMES_PER_TOKEN[index % len(FRAMES_PER_TOKEN)]
+        spans.append((start, start + size))
+        start += size
+    return spans
+
+
+class MooshieH3RetakeMask:
+    """Mark a frame range of a retained draft for regeneration, keeping the audio.
+
+    The noise mask covers every latent frame that touches [start_frame, end_frame).
+    Audio is masked out entirely, so its latent stays fixed and the new frames are
+    sampled against the original soundtrack. Same nested-mask contract as
+    MooshieH3UpscaleDraft; ComfyUI v0.34.0+ applies it per token.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"samples": ("LATENT",),
+                "start_frame": ("INT", {"default": 0, "min": 0, "max": 99999}),
+                "end_frame": ("INT", {"default": 1, "min": 1, "max": 99999})}}
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "mask"
+    CATEGORY = "mooshie/video"
+
+    def mask(self, samples, start_frame, end_frame):
+        import torch
+        from comfy.nested_tensor import NestedTensor
+        video, audio = video_audio(samples)
+        spans = token_spans(video.shape[2])
+        frames = spans[-1][1]
+        if not 0 <= start_frame < end_frame <= frames:
+            raise ValueError("Retake range %d-%d is outside the clip's %d frames" % (start_frame, end_frame, frames))
+        video_mask = torch.zeros_like(video[:, :1])
+        for index, (first, last) in enumerate(spans):
+            if first < end_frame and last > start_frame:
+                video_mask[:, :, index] = 1.0
+        return ({"samples": NestedTensor([video, audio]),
+                 "noise_mask": NestedTensor([video_mask, torch.zeros_like(audio[:, :1])])},)
+
+
 class MooshieH3RestoreAudio:
     @classmethod
     def INPUT_TYPES(cls):
@@ -327,7 +375,8 @@ def register_routes():
     async def capabilities(request):
         cleanup_incomplete()
         path = model_path()
-        return web.json_response({"version": 1, "upscaler_ready": path.is_file() and path.stat().st_size == MODEL_BYTES})
+        return web.json_response({"version": 1, "retake": True,
+                                  "upscaler_ready": path.is_file() and path.stat().st_size == MODEL_BYTES})
 
     async def metadata(request):
         try:
@@ -360,4 +409,4 @@ def register_routes():
     server.routes.delete("/mooshie/h3/drafts/{draft_id}")(delete)
 
 
-NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in (MooshieH3SaveDraft, MooshieH3LoadDraft, MooshieH3UpscaleDraft, MooshieH3RestoreAudio)}
+NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in (MooshieH3SaveDraft, MooshieH3LoadDraft, MooshieH3UpscaleDraft, MooshieH3RetakeMask, MooshieH3RestoreAudio)}

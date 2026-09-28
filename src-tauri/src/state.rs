@@ -782,6 +782,10 @@ pub struct AppState {
     pub app_mode_active: std::sync::atomic::AtomicBool,
     /// True once the embedded web server has been started (prevents double-bind).
     pub web_server_running: std::sync::atomic::AtomicBool,
+    /// Effective `trust_localhost` (see [`crate::config::local_trust_enabled`]),
+    /// kept outside the config lock so the web server's synchronous trust check
+    /// can read it. Updated wherever the settings UI replaces the config.
+    pub trust_localhost: std::sync::atomic::AtomicBool,
     /// True once the shared prompt cleanup/watchdog reactors have been spawned
     /// (prevents duplicates when both desktop and browser mode start them).
     pub cleanup_reactors_started: std::sync::atomic::AtomicBool,
@@ -847,6 +851,7 @@ impl AppState {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         let gpu_manager = GpuManager::new(&config, http_client.clone());
+        let trust_localhost = crate::config::local_trust_enabled(config.trust_localhost);
         Self {
             config: RwLock::new(config),
             comfyui_process: Mutex::new(None),
@@ -864,6 +869,7 @@ impl AppState {
             app_handle: Mutex::new(None),
             app_mode_active: std::sync::atomic::AtomicBool::new(false),
             web_server_running: std::sync::atomic::AtomicBool::new(false),
+            trust_localhost: std::sync::atomic::AtomicBool::new(trust_localhost),
             cleanup_reactors_started: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
             cover_jobs: crate::commands::music_cover::CoverJobs::default(),
