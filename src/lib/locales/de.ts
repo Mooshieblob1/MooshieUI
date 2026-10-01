@@ -2233,7 +2233,7 @@ const de: Record<string, string> = {
   "generation.style_ref.model_ipadapter_sdxl_missing": "ip-adapter-plus_sdxl_vit-h.safetensors nicht in models/ipadapter/ gefunden.",
   "generation.style_ref.model_clip_vision_missing_ipadapter": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors nicht in models/clip_vision/ gefunden.",
   "generation.style_ref.download_clip_vision_redux": "sigclip herunterladen (Comfy-Org/sigclip_vision_384)",
-  "generation.style_ref.download_clip_vision_ipadapter": "CLIP-ViT-H-14 herunterladen (h94/IP-Adapter)",
+  "generation.style_ref.download_clip_vision_ipadapter": "CLIP-ViT-H-14 herunterladen (Comfy-Org)",
   "generation.style_ref.download_ipadapter_sd15": "ip-adapter-plus_sd15 herunterladen (h94/IP-Adapter)",
   "generation.style_ref.download_ipadapter_sdxl": "ip-adapter-plus_sdxl_vit-h herunterladen (h94/IP-Adapter)",
   "generation.style_ref.redux_hf_gated": "flux1-redux-dev ist auf Hugging Face gesperrt. Lizenz akzeptieren unter huggingface.co/black-forest-labs/FLUX.1-Redux-dev und Datei manuell ablegen.",

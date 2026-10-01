@@ -547,6 +547,13 @@ function splitPromptTags(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Drop Pony-style `score_N` / `score_N_up` tags, weighted or not. */
+function stripScoreTags(text: string): string {
+  return splitPromptTags(text)
+    .filter((tag) => !/^\(*score_\d+(_up)?(:[\d.]+)?\)*$/i.test(tag))
+    .join(", ");
+}
+
 function appendMissingNegativeTags(base: string): string {
   const trimmed = base.trim();
   if (!trimmed) return trimmed;
@@ -1208,6 +1215,43 @@ class GenerationStore {
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
     return this.modelFamily === "anima";
+  }
+
+  /**
+   * True for Anima Aesthetic. It was fine-tuned with quality tags stripped from
+   * its captions, and score_* tags push it too hard, so they are left out of
+   * the injected Anima quality tags.
+   */
+  get isAnimaAesthetic(): boolean {
+    if (!this.isAnima) return false;
+    const filename = (this.useSplitModel ? this.diffusionModel : this.checkpoint) ?? "";
+    return filename.toLowerCase().includes("aesthetic");
+  }
+
+  /**
+   * True for Anima Light Lavender (Johnny-Z), a Base v1.0 fine-tune trained on
+   * structured natural-language captions. Upstream recommends euler/simple at
+   * 25 steps, no quality words and an empty negative, so Anima quality tags are
+   * not injected for it.
+   */
+  get isAnimaLightLavender(): boolean {
+    if (!this.isAnima) return false;
+    const filename = (this.useSplitModel ? this.diffusionModel : this.checkpoint) ?? "";
+    return filename.toLowerCase().includes("light-lavender");
+  }
+
+  /** True when auto quality tags use the Anima tag set for the selected model. */
+  get usesAnimaQualityTags(): boolean {
+    return this.isAnima && !this.isAnimaLightLavender;
+  }
+
+  /** Anima quality tags actually injected for the selected model. */
+  get animaPositiveQuality(): string {
+    return this.isAnimaAesthetic ? stripScoreTags(this.customAnimaPositiveQuality) : this.customAnimaPositiveQuality;
+  }
+
+  get animaNegativeQuality(): string {
+    return this.isAnimaAesthetic ? stripScoreTags(this.customAnimaNegativeQuality) : this.customAnimaNegativeQuality;
   }
 
   /** True when the selected model is an Illustrious/NoobAI family variant. */
@@ -2552,7 +2596,27 @@ class GenerationStore {
         break;
 
       // Anima, Wan, and Qwen share the same 16-channel latent workflow bucket.
+      // Anima Turbo is distilled, so it runs at CFG 1 and 8-12 steps.
       case "anima":
+        preset = this.isAnimaLightLavender
+          ? {
+              steps: 25,
+              cfg: 4.0,
+              samplerName: "euler",
+              scheduler: "simple",
+              width: 1024,
+              height: 1024,
+            }
+          : {
+              steps: this.hasTurboModelVariant ? 10 : 30,
+              cfg: this.hasTurboModelVariant ? 1.0 : 4.0,
+              samplerName: this.hasTurboModelVariant ? "euler" : "er_sde",
+              scheduler: "sgm_uniform",
+              width: 1024,
+              height: 1024,
+            };
+        break;
+
       case "wan":
       case "qwen":
         preset = {
@@ -3578,9 +3642,9 @@ class GenerationStore {
     // billing Anlas for `score_9, score_8_up` in the prompt.
     if (!isVideo && !this.isNovelAi && this.autoQualityTags) {
       // Anima models (positive before, negative after)
-      if (this.isAnima) {
-        positivePrompt = this.mergeTagPrompts(this.customAnimaPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customAnimaNegativeQuality);
+      if (this.usesAnimaQualityTags) {
+        positivePrompt = this.mergeTagPrompts(this.animaPositiveQuality, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, this.animaNegativeQuality);
       }
 
       // Illustrious/NoobAI family (positive before, negative after)
@@ -3610,9 +3674,9 @@ class GenerationStore {
       !this.upscaleFastRefine &&
       (this.upscaleTiling || this.useSplitModel);
     if (!isVideo && !this.isNovelAi && upscaleUsesTiling && this.autoQualityTags) {
-      if (this.isAnima) {
-        upscalePositivePrompt = this.customAnimaPositiveQuality;
-        upscaleNegativePrompt = this.customAnimaNegativeQuality;
+      if (this.usesAnimaQualityTags) {
+        upscalePositivePrompt = this.animaPositiveQuality;
+        upscaleNegativePrompt = this.animaNegativeQuality;
       } else if (this.isIllustrious) {
         upscalePositivePrompt = this.customIllustriousPositiveQuality;
         upscaleNegativePrompt = this.customIllustriousNegativeQuality;
