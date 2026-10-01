@@ -61,7 +61,7 @@
     !isVideoMode &&
       !generation.isNovelAi &&
       generation.autoQualityTags &&
-      (generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur),
+      (generation.usesAnimaQualityTags || generation.isIllustrious || generation.isPony || generation.isNanosaur),
   );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);

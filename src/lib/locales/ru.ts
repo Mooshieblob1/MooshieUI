@@ -2212,7 +2212,7 @@ const ru: Record<string, string> = {
   "generation.style_ref.model_ipadapter_sdxl_missing": "ip-adapter-plus_sdxl_vit-h.safetensors не найден в models/ipadapter/.",
   "generation.style_ref.model_clip_vision_missing_ipadapter": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors не найден в models/clip_vision/.",
   "generation.style_ref.download_clip_vision_redux": "Скачать sigclip (Comfy-Org/sigclip_vision_384)",
-  "generation.style_ref.download_clip_vision_ipadapter": "Скачать CLIP-ViT-H-14 (h94/IP-Adapter)",
+  "generation.style_ref.download_clip_vision_ipadapter": "Скачать CLIP-ViT-H-14 (Comfy-Org)",
   "generation.style_ref.download_ipadapter_sd15": "Скачать ip-adapter-plus_sd15 (h94/IP-Adapter)",
   "generation.style_ref.download_ipadapter_sdxl": "Скачать ip-adapter-plus_sdxl_vit-h (h94/IP-Adapter)",
   "generation.style_ref.redux_hf_gated": "flux1-redux-dev ограничен на Hugging Face. Примите лицензию на huggingface.co/black-forest-labs/FLUX.1-Redux-dev и разместите файл вручную.",
