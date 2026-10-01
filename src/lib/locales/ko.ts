@@ -2212,7 +2212,7 @@ const ko: Record<string, string> = {
   "generation.style_ref.model_ipadapter_sdxl_missing": "ip-adapter-plus_sdxl_vit-h.safetensors가 models/ipadapter/에 없습니다.",
   "generation.style_ref.model_clip_vision_missing_ipadapter": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors가 models/clip_vision/에 없습니다.",
   "generation.style_ref.download_clip_vision_redux": "sigclip 다운로드 (Comfy-Org/sigclip_vision_384)",
-  "generation.style_ref.download_clip_vision_ipadapter": "CLIP-ViT-H-14 다운로드 (h94/IP-Adapter)",
+  "generation.style_ref.download_clip_vision_ipadapter": "CLIP-ViT-H-14 다운로드 (Comfy-Org)",
   "generation.style_ref.download_ipadapter_sd15": "ip-adapter-plus_sd15 다운로드 (h94/IP-Adapter)",
   "generation.style_ref.download_ipadapter_sdxl": "ip-adapter-plus_sdxl_vit-h 다운로드 (h94/IP-Adapter)",
   "generation.style_ref.redux_hf_gated": "flux1-redux-dev는 Hugging Face에서 제한됩니다. huggingface.co/black-forest-labs/FLUX.1-Redux-dev에서 라이선스에 동의하고 파일을 수동으로 배치하세요.",

@@ -2212,7 +2212,7 @@ const zh: Record<string, string> = {
   "generation.style_ref.model_ipadapter_sdxl_missing": "在 models/ipadapter/ 中未找到 ip-adapter-plus_sdxl_vit-h.safetensors。",
   "generation.style_ref.model_clip_vision_missing_ipadapter": "在 models/clip_vision/ 中未找到 CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors。",
   "generation.style_ref.download_clip_vision_redux": "下载 sigclip（Comfy-Org/sigclip_vision_384）",
-  "generation.style_ref.download_clip_vision_ipadapter": "下载 CLIP-ViT-H-14（h94/IP-Adapter）",
+  "generation.style_ref.download_clip_vision_ipadapter": "下载 CLIP-ViT-H-14（Comfy-Org）",
   "generation.style_ref.download_ipadapter_sd15": "下载 ip-adapter-plus_sd15（h94/IP-Adapter）",
   "generation.style_ref.download_ipadapter_sdxl": "下载 ip-adapter-plus_sdxl_vit-h（h94/IP-Adapter）",
   "generation.style_ref.redux_hf_gated": "flux1-redux-dev 在 Hugging Face 上受限。请在 huggingface.co/black-forest-labs/FLUX.1-Redux-dev 接受许可证并手动放置文件。",
