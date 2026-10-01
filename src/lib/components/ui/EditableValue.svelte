@@ -52,8 +52,8 @@
     bind:this={inputEl}
     type="text"
     inputmode="decimal"
-    class="text-neutral-100 bg-neutral-800 rounded border border-indigo-500/70 outline-none text-right w-[4ch] text-xs px-0.5 py-0 m-0 tabular-nums"
-    style="font: inherit; line-height: inherit;"
+    class="text-neutral-100 bg-neutral-800 rounded border border-indigo-500/70 outline-none text-right text-xs px-0.5 py-0 m-0 tabular-nums"
+    style="font: inherit; line-height: inherit; width: {Math.max(4, editValue.length)}ch;"
     bind:value={editValue}
     onblur={commit}
     onkeydown={onKeydown}

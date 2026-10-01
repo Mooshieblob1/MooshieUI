@@ -728,6 +728,7 @@ pub fn run() {
             commands::video_drafts::install_h3_upscaler,
             commands::video_drafts::get_video_draft_status,
             commands::video_drafts::refine_video_draft,
+            commands::video_drafts::retake_video_draft,
             commands::video_drafts::delete_video_draft,
             commands::music::get_music_capabilities,
             commands::music_review::get_music_review_capabilities,
