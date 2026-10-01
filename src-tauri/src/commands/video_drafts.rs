@@ -294,7 +294,7 @@ pub(crate) async fn draft_status(
         let mut meta = fetch_json(state, &format!("{server}/mooshie/h3/drafts/{}", record.id)).await?;
         meta.as_object_mut().map(|object| object.remove("params"));
         let cap = fetch_json(state, &format!("{server}/mooshie/h3/capabilities")).await?;
-        Ok::<_, AppError>(json!({"retained": true, "available": true, "draft": meta, "upscaler_ready": cap["upscaler_ready"]}))
+        Ok::<_, AppError>(json!({"retained": true, "available": true, "draft": meta, "upscaler_ready": cap["upscaler_ready"], "retake_ready": cap["retake"] == true}))
     }.await;
     Ok(result.unwrap_or_else(
         |error| json!({"retained": true, "available": false, "error": error.to_string()}),
@@ -392,6 +392,77 @@ pub(crate) async fn refine_draft(
     Ok(json!({"prompt_id": response.prompt_id}))
 }
 
+/// Retake steps for the full-denoise pass over the chosen range.
+pub const RETAKE_STEPS: std::ops::RangeInclusive<u32> = 8..=40;
+
+/// Validate a retake range against the draft's pixel frame count.
+fn check_retake_range(start: u32, end: u32, frames: u64) -> Result<(), AppError> {
+    if frames == 0 || frames > 3600 {
+        return Err(AppError::Other("Draft frame count is invalid".into()));
+    }
+    if start >= end || u64::from(end) > frames {
+        return Err(AppError::Other(format!(
+            "Choose a retake range inside the clip's {frames} frames"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) async fn retake_draft(
+    state: &AppState,
+    dir: &Path,
+    filename: &str,
+    start_frame: u32,
+    end_frame: u32,
+    steps: u32,
+    owner: Option<String>,
+) -> Result<Value, AppError> {
+    let _guard = DRAFT_LOCK.lock().await;
+    if !RETAKE_STEPS.contains(&steps) {
+        return Err(AppError::Other(format!(
+            "A retake takes {}–{} steps",
+            RETAKE_STEPS.start(),
+            RETAKE_STEPS.end()
+        )));
+    }
+    let video = super::video_interpolate::resolve_gallery_video(dir, filename)?;
+    let record = read_record(&video)?
+        .ok_or_else(|| AppError::Other("This clip has no retained draft".into()))?;
+    let server = record_server(state, &record).await?;
+    let meta = fetch_json(state, &format!("{server}/mooshie/h3/drafts/{}", record.id)).await?;
+    check_retake_range(start_frame, end_frame, meta["frames"].as_u64().unwrap_or(0))?;
+    let params: crate::comfyui::types::GenerationParams =
+        serde_json::from_value(meta["params"].clone())
+            .map_err(|_| AppError::Other("Draft generation settings are invalid".into()))?;
+    let cap = fetch_json(state, &format!("{server}/mooshie/h3/capabilities")).await?;
+    if cap["retake"] != true {
+        return Err(AppError::Other(
+            "Update the MooshieUI custom nodes on this ComfyUI server to retake clips.".into(),
+        ));
+    }
+    // A new seed: the draft's own seed would re-create the same frames.
+    let seed = i64::from(rand::random::<u32>());
+    let workflow = crate::templates::video_retake::build(
+        &params,
+        &record.id,
+        filename,
+        start_frame,
+        end_frame,
+        steps,
+        seed,
+    );
+    crate::comfyui::process::mark_legacy_worker_idle(state).await;
+    state.free_llm_vram_for_generation().await;
+    let (worker, response) = state
+        .gpu_manager
+        .submit_prompt_to_worker(record.worker, workflow, &state.client_id)
+        .await?;
+    state.prompt_queue.insert(&response.prompt_id, owner);
+    state.prompt_queue.set_worker(&response.prompt_id, worker);
+    state.broadcast_queue_positions();
+    Ok(json!({"prompt_id": response.prompt_id}))
+}
+
 #[cfg(feature = "desktop")]
 mod desktop {
     use super::*;
@@ -433,6 +504,25 @@ mod desktop {
     ) -> Result<Value, AppError> {
         refine_draft(state.inner(), &gallery()?, &filename, steps, sigma, None).await
     }
+    #[tauri::command]
+    pub async fn retake_video_draft(
+        state: State<'_, Arc<AppState>>,
+        filename: String,
+        start_frame: u32,
+        end_frame: u32,
+        steps: u32,
+    ) -> Result<Value, AppError> {
+        retake_draft(
+            state.inner(),
+            &gallery()?,
+            &filename,
+            start_frame,
+            end_frame,
+            steps,
+            None,
+        )
+        .await
+    }
 }
 #[cfg(feature = "desktop")]
 pub use desktop::*;
@@ -468,6 +558,17 @@ mod tests {
         std::fs::write(record_path(&to), vec![b'x'; 4097]).unwrap();
         assert!(read_record(&to).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retake_ranges_must_sit_inside_the_clip() {
+        assert!(check_retake_range(0, 124, 124).is_ok());
+        assert!(check_retake_range(24, 72, 124).is_ok());
+        for (start, end) in [(72, 24), (30, 30), (100, 125)] {
+            assert!(check_retake_range(start, end, 124).is_err());
+        }
+        assert!(check_retake_range(0, 10, 0).is_err());
+        assert!(RETAKE_STEPS.contains(&20) && !RETAKE_STEPS.contains(&4));
     }
 
     #[test]

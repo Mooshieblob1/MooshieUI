@@ -197,4 +197,76 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get("/mooshie/h3/drafts/not-an-id")).status, 400)
 
 
+
+class RetakeMaskTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "h3_core_for_retake", Path(options.comfy) / "comfy_extras" / "nodes_minimax_h3.py")
+        cls.h3 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.h3)
+
+    def latent(self, length=124):
+        _, latent_t, audio_t = self.h3.temporal_shape(length)
+        return {"samples": NestedTensor([torch.randn(1, 24, latent_t, 4, 6), torch.randn(1, 32, 2, audio_t)])}
+
+    def test_token_spans_match_comfyui_frame_counts(self):
+        for length in (5, 22, 124, 243, 362):
+            frames, latent_t, _ = self.h3.temporal_shape(length)
+            spans = drafts.token_spans(latent_t)
+            self.assertEqual(spans[-1][1], frames)
+            self.assertEqual(sum(b - a for a, b in spans), frames)
+
+    def test_range_masks_only_touching_video_frames_and_no_audio(self):
+        latent = self.latent()
+        (out,) = drafts.MooshieH3RetakeMask().mask(latent, 24, 72)
+        video_mask, audio_mask = out["noise_mask"].unbind()
+        spans = drafts.token_spans(latent["samples"].unbind()[0].shape[2])
+        for index, (first, last) in enumerate(spans):
+            expected = 1.0 if first < 72 and last > 24 else 0.0
+            self.assertTrue(torch.all(video_mask[:, :, index] == expected), index)
+        self.assertEqual(float(audio_mask.abs().sum()), 0.0)
+        for kept, given in zip(out["samples"].unbind(), latent["samples"].unbind()):
+            self.assertTrue(torch.equal(kept, given))
+
+    def test_mask_survives_comfyui_sampler_preparation(self):
+        import comfy.sampler_helpers
+        import comfy.utils
+        latent = self.latent()
+        (out,) = drafts.MooshieH3RetakeMask().mask(latent, 0, 30)
+        shapes = [t.shape for t in latent["samples"].unbind()]
+        # Mirrors CFGGuider.sample: each stream's mask is reshaped, then packed.
+        masks = [comfy.sampler_helpers.prepare_mask(m, s, "cpu") for m, s in zip(out["noise_mask"].unbind(), shapes)]
+        packed, packed_shapes = comfy.utils.pack_latents(masks)
+        self.assertEqual([tuple(s) for s in packed_shapes], [tuple(s) for s in shapes])
+        video, audio = comfy.utils.unpack_latents(packed, packed_shapes)
+        self.assertGreater(float(video.sum()), 0.0)
+        self.assertEqual(float(audio.sum()), 0.0)
+
+    def test_h3_reads_a_partial_video_mask_and_fixed_audio(self):
+        import types
+        import comfy.sampler_helpers
+        import comfy.utils
+        from comfy.model_base import MiniMaxH3
+        latent = self.latent()
+        (out,) = drafts.MooshieH3RetakeMask().mask(latent, 24, 72)
+        shapes = [t.shape for t in latent["samples"].unbind()]
+        masks = [comfy.sampler_helpers.prepare_mask(m, s, "cpu") for m, s in zip(out["noise_mask"].unbind(), shapes)]
+        packed = comfy.utils.pack_latents(masks)[0].float()
+        # The model-side conversion needs only the DiT's patch size, not its weights.
+        stub = types.SimpleNamespace(diffusion_model=types.SimpleNamespace(patch_size=(1, 2, 2)))
+        stub._pool_masks_to_token_grid = lambda m: MiniMaxH3._pool_masks_to_token_grid(stub, m)
+        stub._token_grid_masks = lambda d, s: MiniMaxH3._token_grid_masks(stub, d, s)
+        values = MiniMaxH3._denoise_mask_values(stub, packed, shapes)
+        video = values["denoise_mask"]
+        self.assertEqual(float(video.amax()), 1.0)
+        self.assertEqual(float(video.amin()), 0.0)
+        self.assertEqual(float(values["audio_denoise_mask"].abs().sum()), 0.0)
+
+    def test_ranges_outside_the_clip_are_rejected(self):
+        for start, end in ((72, 24), (30, 30), (0, 125)):
+            with self.assertRaises(ValueError):
+                drafts.MooshieH3RetakeMask().mask(self.latent(), start, end)
+
+
 if __name__ == "__main__": unittest.main(verbosity=2)

@@ -1605,6 +1605,8 @@ export interface VideoDraftStatus {
   retained: boolean;
   available?: boolean;
   upscaler_ready?: boolean;
+  /** The server's MooshieUI nodes can mask a frame range (MooshieH3RetakeMask). */
+  retake_ready?: boolean;
   error?: string;
   draft?: { width: number; height: number; frames: number; bytes: number };
 }
@@ -1614,3 +1616,6 @@ export const getVideoDraftStatus = (filename: string) => ipcInvoke<VideoDraftSta
 export const deleteVideoDraft = (filename: string) => ipcInvoke<void>("delete_video_draft", { filename });
 export const refineVideoDraft = (filename: string, steps: number, sigma: number) =>
   ipcInvoke<{ prompt_id: string }>("refine_video_draft", { filename, steps, sigma });
+/** Regenerate pixel frames [startFrame, endFrame) of a retained draft, keeping its audio. */
+export const retakeVideoDraft = (filename: string, startFrame: number, endFrame: number, steps: number) =>
+  ipcInvoke<{ prompt_id: string }>("retake_video_draft", { filename, startFrame, endFrame, steps });

@@ -8,6 +8,7 @@
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
@@ -68,6 +69,20 @@
     detectionOnly?: boolean;
   }
 
+  // Z-Image is conditioned on Qwen3-4B and decodes with the Flux 1 VAE. Marker
+  // list mirrors QWEN3_4B_TEXT_ENCODER_MARKERS in src-tauri/src/commands/api.rs.
+  const ZIMAGE_ENCODER_MARKERS = ["zimage", "qwen3-4b", "qwen34b", "qwen_3_4b", "qwen3_4b"];
+  const ZIMAGE_ENCODER_FILE: ModelFile = {
+    filename: "qwen_3_4b.safetensors",
+    url: "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors",
+    category: "text_encoders",
+  };
+  const ZIMAGE_VAE_FILE: ModelFile = {
+    filename: "ae.safetensors",
+    url: "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+    category: "vae",
+  };
+
   const recommendedModels: RecommendedModel[] = [
     {
       label: "Juice",
@@ -91,11 +106,73 @@
     },
     {
       label: "Anima Base v1.0",
-      size: "~13 GB",
+      size: "~5.6 GB",
       splitModel: {
         diffusionModel: {
           filename: "anima-base-v1.0.safetensors",
           url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-base-v1.0.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      // Distilled Anima: CFG 1 at 8-12 steps. applyModelSpecificPreset keys the
+      // same values off the "turbo" variant, so both paths agree.
+      label: "Anima Turbo v1.1",
+      size: "~5.6 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-turbo-v1.1.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 10,
+        cfg: 1,
+        samplerName: "euler",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Aesthetic v1.1",
+      size: "~5.6 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-aesthetic-v1.1.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
           category: "diffusion_models",
         },
         clipModel: {
@@ -148,6 +225,78 @@
         steps: 30,
         cfg: 4,
         samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      // Johnny-Z/Anima-Light-Lavender: community Base v1.0 fine-tune, same
+      // architecture, encoder and VAE. Detection-only for the diffusion file;
+      // the encoder and VAE carry URLs so selecting the entry fetches them.
+      label: "Anima Light Lavender",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-light-lavender.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 25,
+        cfg: 4,
+        samplerName: "euler",
+        scheduler: "simple",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Light Lavender (MXFP8)",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      // MXFP8 tensor-core compute is Blackwell-only (10.0+ datacenter / 12.0 consumer).
+      minComputeCapability: 10.0,
+      gateHint: "Blackwell only",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-light-lavender_mxfp8.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 25,
+        cfg: 4,
+        samplerName: "euler",
+        scheduler: "simple",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
         facefixSteps: 10,
@@ -296,7 +445,58 @@
         scheduler: "simple",
       },
     },
+    {
+      // Z-Image diffusion weights usually arrive from the Model Hub on their
+      // own. Detection-only for the diffusion file; the Qwen3-4B encoder and
+      // Flux VAE still carry URLs, so selecting the entry fetches them.
+      label: "Z-Image Turbo",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "z_image_turbo_bf16.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: { ...ZIMAGE_ENCODER_FILE, clipType: "lumina2" },
+        vaeModel: ZIMAGE_VAE_FILE,
+      },
+      autoSettings: {
+        steps: 8,
+        cfg: 1.0,
+        samplerName: "euler",
+        scheduler: "simple",
+      },
+    },
+    {
+      label: "Z-Image Base",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "z_image_bf16.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: { ...ZIMAGE_ENCODER_FILE, clipType: "lumina2" },
+        vaeModel: ZIMAGE_VAE_FILE,
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4.0,
+        samplerName: "euler",
+        scheduler: "normal",
+      },
+    },
   ];
+
+  // Some LoRAs are trained for strengths well past 2, and negative strengths
+  // invert a LoRA (sliders, detail tweakers). ComfyUI's LoraLoader accepts
+  // -100..100, so this is a UI range only.
+  const LORA_STRENGTH_MIN = -10;
+  const LORA_STRENGTH_MAX = 10;
 
   let showArchitecturePicker = $state(false);
   let showModelInfo = $state(false);
@@ -423,7 +623,6 @@
     url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors",
     category: "vae",
   };
-  let krea2EnsureRunning = false;
 
   function isKrea2Encoder(filename: string | null | undefined): boolean {
     if (!filename) return false;
@@ -431,43 +630,100 @@
     return KREA2_ENCODER_MARKERS.some((marker) => lower.includes(marker));
   }
 
+  function isZImageEncoder(filename: string | null | undefined): boolean {
+    if (!filename) return false;
+    const lower = filename.toLowerCase();
+    return ZIMAGE_ENCODER_MARKERS.some((marker) => lower.includes(marker));
+  }
+
+  /** Flux 1 VAE (`ae.safetensors` or any non-Flux-2 `flux` name). Mirrors `find_flux1_vae` in api.rs. */
+  function isFlux1Vae(filename: string): boolean {
+    const lower = filename.toLowerCase();
+    const basename = lower.split(/[\\/]/).pop() ?? lower;
+    return basename === "ae.safetensors" || (lower.includes("flux") && !lower.includes("flux2") && !lower.includes("flux.2"));
+  }
+
   /**
-   * Runs after model metadata is applied for a Krea 2 model. Ensures a
-   * Qwen3-VL 4B encoder is selected — preferring one already on disk and
-   * auto-downloading the FP8 build from Comfy-Org/Krea-2 otherwise (plus the
-   * qwen_image VAE when no qwen VAE is installed).
+   * Split families that only work with one specific text encoder. Their
+   * diffusion weights usually arrive alone (Model Hub, CivitAI), so the
+   * matching encoder, and the VAE when none fits, is fetched automatically.
    */
-  async function ensureKrea2Encoder() {
-    if (krea2EnsureRunning || !generation.useSplitModel) return;
-    if (isKrea2Encoder(generation.clipModel)) {
-      if (generation.clipType !== "krea2") {
-        generation.clipType = "krea2";
+  interface RequiredSplitEncoder {
+    label: string;
+    clipType: string;
+    isEncoder: (filename: string | null | undefined) => boolean;
+    encoderFile: ModelFile;
+    isVae: (filename: string) => boolean;
+    vaeFile: ModelFile;
+  }
+
+  const ZIMAGE_REQUIREMENT: RequiredSplitEncoder = {
+    label: "Z-Image",
+    clipType: "lumina2",
+    isEncoder: isZImageEncoder,
+    encoderFile: ZIMAGE_ENCODER_FILE,
+    isVae: isFlux1Vae,
+    vaeFile: ZIMAGE_VAE_FILE,
+  };
+
+  const REQUIRED_SPLIT_ENCODERS: Partial<Record<ModelFamily, RequiredSplitEncoder>> = {
+    krea2: {
+      label: "Krea 2",
+      clipType: "krea2",
+      isEncoder: isKrea2Encoder,
+      encoderFile: KREA2_ENCODER_FILE,
+      isVae: (filename) => filename.toLowerCase().includes("qwen"),
+      vaeFile: KREA2_VAE_FILE,
+    },
+    zit: ZIMAGE_REQUIREMENT,
+    zib: ZIMAGE_REQUIREMENT,
+  };
+
+  let requiredEncoderEnsureRunning = false;
+  // Requirements whose auto-download failed this session. Not retried until the
+  // app restarts, so an offline machine does not loop on the download.
+  const requiredEncoderFailed = new Set<string>();
+
+  /**
+   * Runs after model metadata is applied for a family in
+   * REQUIRED_SPLIT_ENCODERS. Ensures its encoder is selected, preferring one
+   * already on disk, and auto-downloads whatever encoder/VAE is missing.
+   */
+  async function ensureRequiredSplitEncoder(req: RequiredSplitEncoder) {
+    // An empty inventory (not fetched yet, or ComfyUI unreachable) must not
+    // read as "nothing installed" and trigger a multi-GB download.
+    if (requiredEncoderEnsureRunning || !generation.useSplitModel) return;
+    if (models.loading || !Object.keys(models.serverModels).length) return;
+
+    const current = generation.clipModel;
+    const existing =
+      current && req.isEncoder(current) && models.textEncoders.includes(current)
+        ? current
+        : models.textEncoders.find((f) => req.isEncoder(f));
+    if (existing) {
+      if (generation.clipModel !== existing || generation.clipType !== req.clipType) {
+        generation.clipModel = existing;
+        generation.clipType = req.clipType;
         generation.saveSettings();
       }
-      return;
     }
 
-    const existing = models.textEncoders.find((f) => isKrea2Encoder(f));
-    if (existing) {
-      generation.clipModel = existing;
-      generation.clipType = "krea2";
-      generation.saveSettings();
-      return;
+    const files: { file: ModelFile; label: string }[] = [];
+    if (!existing) {
+      files.push({ file: req.encoderFile, label: locale.t('generation.model.downloading_text_encoder') });
     }
+    if (!models.vaes.some(req.isVae)) {
+      files.push({ file: req.vaeFile, label: locale.t('generation.model.downloading_vae') });
+    }
+    if (files.length === 0) return;
 
     // Nothing suitable installed — auto-download. Skip if another batch
     // download already owns the progress UI; the generate-time guard still
     // catches the misconfiguration with an actionable message.
-    if (downloading !== null || models.remote) return;
+    if (downloading !== null || models.remote || requiredEncoderFailed.has(req.label)) return;
 
-    krea2EnsureRunning = true;
-    const files: { file: ModelFile; label: string }[] = [
-      { file: KREA2_ENCODER_FILE, label: locale.t('generation.model.downloading_text_encoder') },
-    ];
-    if (!models.vaes.some((v) => v.toLowerCase().includes("qwen"))) {
-      files.push({ file: KREA2_VAE_FILE, label: locale.t('generation.model.downloading_vae') });
-    }
-    downloading = "Krea 2";
+    requiredEncoderEnsureRunning = true;
+    downloading = req.label;
     downloadError = "";
     const seeded: Record<string, DlEntry> = {};
     const order: string[] = [];
@@ -485,20 +741,20 @@
         }),
       );
       await models.refresh();
-      generation.clipModel = KREA2_ENCODER_FILE.filename;
-      generation.clipType = "krea2";
-      if (
-        files.some(({ file }) => file === KREA2_VAE_FILE) &&
-        !generation.vae.toLowerCase().includes("qwen")
-      ) {
-        generation.vae = KREA2_VAE_FILE.filename;
+      if (!existing) {
+        generation.clipModel = req.encoderFile.filename;
+        generation.clipType = req.clipType;
+      }
+      if (files.some(({ file }) => file === req.vaeFile) && !req.isVae(generation.vae)) {
+        generation.vae = req.vaeFile.filename;
       }
       generation.saveSettings();
       downloading = null;
       dlEntries = {};
       dlOrder = [];
     } catch (e) {
-      console.error("Failed to download Krea 2 text encoder:", e);
+      console.error(`Failed to download ${req.label} text encoder:`, e);
+      requiredEncoderFailed.add(req.label);
       downloadError = `Download failed: ${e}`;
       setTimeout(() => {
         downloading = null;
@@ -507,7 +763,7 @@
         dlOrder = [];
       }, 4000);
     } finally {
-      krea2EnsureRunning = false;
+      requiredEncoderEnsureRunning = false;
     }
   }
 
@@ -515,8 +771,9 @@
   // this panel is collapsed). The encoder download stays here because it drives
   // this component's progress rows, so it only runs while the panel is open.
   $effect(() => {
-    if (generation.modelFamily === "krea2" && generation.useSplitModel) {
-      void ensureKrea2Encoder();
+    const req = REQUIRED_SPLIT_ENCODERS[generation.modelFamily];
+    if (req && generation.useSplitModel) {
+      void ensureRequiredSplitEncoder(req);
     }
   });
 
@@ -734,6 +991,13 @@
     const files = recommendedFiles(rec);
     return files.some(isLocalOnly) && files.every((file) =>
       isModelFileInstalled(file, modelListForCategory(file.category)) || isLocalOnly(file));
+  }
+
+  /** True when every component of `rec` that has no download URL is on disk. */
+  function detectedLocally(rec: RecommendedModel): boolean {
+    return recommendedFiles(rec)
+      .filter((file) => !file.url)
+      .every((file) => isModelFileInstalled(file, modelListForCategory(file.category)) || isLocalOnly(file));
   }
 
   function unavailableMessage(files: ModelFile[]): string {
@@ -1015,10 +1279,11 @@
       if (rec.minComputeCapability !== undefined && !installed) {
         if (computeCapability === null || computeCapability < rec.minComputeCapability) continue;
       }
-      // Detection-only entries (no download URLs) are hidden until every
-      // component is present on disk — otherwise the user would see an entry
-      // they can't action.
-      if (rec.detectionOnly && !installed && !localOnly) continue;
+      // Detection-only entries are hidden until every component without a
+      // download URL is present on disk — otherwise the user would see an
+      // entry they can't action. Components that do carry a URL (Z-Image's
+      // encoder and VAE) are fetched on selection.
+      if (rec.detectionOnly && !installed && !localOnly && !detectedLocally(rec)) continue;
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
@@ -1887,14 +2152,24 @@
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text={locale.t('generation.model.lora_strength_model_tip')} /></span>
-                <span class="text-neutral-300 tabular-nums">{locale.formatDecimal(lora.strength_model, 2)}</span>
+                <EditableValue
+                  value={lora.strength_model}
+                  min={LORA_STRENGTH_MIN}
+                  max={LORA_STRENGTH_MAX}
+                  step={0.01}
+                  decimals={2}
+                  onchange={(v) => {
+                    lora.strength_model = v;
+                    generation.saveSettings();
+                  }}
+                />
               </div>
               <input
                 type="range"
                 bind:value={lora.strength_model}
                 oninput={() => generation.saveSettings()}
-                min="0"
-                max="2"
+                min={LORA_STRENGTH_MIN}
+                max={LORA_STRENGTH_MAX}
                 step="0.05"
                 class="w-full accent-indigo-500"
               />
@@ -1902,14 +2177,24 @@
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text={locale.t('generation.model.lora_strength_clip_tip')} /></span>
-                <span class="text-neutral-300 tabular-nums">{locale.formatDecimal(lora.strength_clip, 2)}</span>
+                <EditableValue
+                  value={lora.strength_clip}
+                  min={LORA_STRENGTH_MIN}
+                  max={LORA_STRENGTH_MAX}
+                  step={0.01}
+                  decimals={2}
+                  onchange={(v) => {
+                    lora.strength_clip = v;
+                    generation.saveSettings();
+                  }}
+                />
               </div>
               <input
                 type="range"
                 bind:value={lora.strength_clip}
                 oninput={() => generation.saveSettings()}
-                min="0"
-                max="2"
+                min={LORA_STRENGTH_MIN}
+                max={LORA_STRENGTH_MAX}
                 step="0.05"
                 class="w-full accent-indigo-500"
               />
