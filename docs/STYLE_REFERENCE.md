@@ -53,10 +53,9 @@ Place files in the paths shown, relative to your ComfyUI root.
 **models/clip_vision/**
 
 - `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors`
-  Download [model.safetensors from h94/IP-Adapter](https://huggingface.co/h94/IP-Adapter/blob/main/models/image_encoder/model.safetensors)
-  and rename it to `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors` in
-  `models/clip_vision/`. The upstream filename differs from the filename the
-  ComfyUI IP-Adapter loader expects.
+  Download from Comfy-Org (already named the way the ComfyUI IP-Adapter
+  loader expects):
+  https://huggingface.co/Comfy-Org/CLIP-ViT-H-14-laion2B-s32B-b79K_repackaged/resolve/main/split_files/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
 
 ### SDXL / Illustrious / Pony (IP-Adapter Plus)
 
