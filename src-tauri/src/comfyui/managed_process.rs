@@ -62,15 +62,23 @@ impl ProcessIdentity {
 mod windows_process {
     use std::io;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Foundation::{FILETIME, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        PROCESS_TERMINATE,
+        GetProcessTimes, OpenProcess, TerminateProcess, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
     };
 
+    /// TerminateProcess only starts termination. ComfyUI can take seconds to
+    /// release its pinned host memory and CUDA context before it has exited.
+    const EXIT_WAIT_MS: u32 = 15_000;
+
     fn open(pid: u32, terminate: bool) -> io::Result<OwnedHandle> {
-        let access =
-            PROCESS_QUERY_LIMITED_INFORMATION | if terminate { PROCESS_TERMINATE } else { 0 };
+        let access = PROCESS_QUERY_LIMITED_INFORMATION
+            | if terminate {
+                PROCESS_TERMINATE | PROCESS_SYNCHRONIZE
+            } else {
+                0
+            };
         // SAFETY: OpenProcess takes scalar arguments. The returned owned handle
         // is checked for null and closed by OwnedHandle on every return path.
         let handle = unsafe { OpenProcess(access, 0, pid) };
@@ -114,9 +122,14 @@ mod windows_process {
         if creation_time(&handle)? != expected_creation {
             return Ok(true); // PID was recycled: leave its new owner alone.
         }
+        // A process that is already exiting (the venv launcher's job object
+        // kills ComfyUI once the launcher is gone) rejects this with
+        // ACCESS_DENIED, so success is judged by the wait below instead.
         // SAFETY: this is the same live handle whose exact creation time was
         // just checked, and it was opened with PROCESS_TERMINATE rights.
-        Ok(unsafe { TerminateProcess(handle.as_raw_handle(), 1) } != 0)
+        unsafe { TerminateProcess(handle.as_raw_handle(), 1) };
+        // SAFETY: same live handle, opened with PROCESS_SYNCHRONIZE rights.
+        Ok(unsafe { WaitForSingleObject(handle.as_raw_handle(), EXIT_WAIT_MS) } == WAIT_OBJECT_0)
     }
 }
 
@@ -323,6 +336,20 @@ mod tests {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
+    }
+
+    /// Killing the venv launcher makes Windows tear down the real ComfyUI
+    /// process through the launcher's job object. Terminating that exiting
+    /// process then fails with ACCESS_DENIED, which must not read as "still
+    /// running" once it has exited.
+    #[cfg(windows)]
+    #[test]
+    fn terminating_an_already_exiting_process_succeeds() {
+        let mut child = TestChild::spawn();
+        let pid = child.0.id();
+        let created = windows_process::created(pid).unwrap();
+        child.0.kill().unwrap();
+        assert!(windows_process::terminate(pid, created).unwrap());
     }
 
     #[test]

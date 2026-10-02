@@ -8130,13 +8130,31 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     // is the prompt-assistant llama-server loaded right now?
     {
         let _ = writeln!(output, "=== Runtime Status ===");
-        let comfyui_pid = {
-            let guard = state.comfyui_process.lock().await;
-            guard.as_ref().and_then(|c| c.id())
+        // `Child::id()` keeps returning the pid of a process that has exited
+        // until it is reaped, so ask whether it has actually exited.
+        let comfyui_status = {
+            let mut guard = state.comfyui_process.lock().await;
+            guard
+                .as_mut()
+                .and_then(|c| c.id().map(|pid| (pid, c.try_wait())))
         };
-        match comfyui_pid {
-            Some(pid) => {
+        match comfyui_status {
+            Some((pid, Ok(None))) => {
                 let _ = writeln!(output, "Managed ComfyUI process: running (pid {})", pid);
+            }
+            Some((pid, Ok(Some(status)))) => {
+                let _ = writeln!(
+                    output,
+                    "Managed ComfyUI process: exited (pid {}, {})",
+                    pid, status
+                );
+            }
+            Some((pid, Err(e))) => {
+                let _ = writeln!(
+                    output,
+                    "Managed ComfyUI process: unknown (pid {}, {})",
+                    pid, e
+                );
             }
             None => {
                 let _ = writeln!(
