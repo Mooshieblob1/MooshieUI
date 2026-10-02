@@ -4620,6 +4620,36 @@ fn find_first_text_encoder_matching(encoders: &[String], markers: &[&str]) -> Op
     })
 }
 
+/// A text encoder shipped alongside a fine-tune and named after it, such as
+/// `pieModelsAnima_cottage_txt.safetensors` for `pieModelsAnima_cottage.safetensors`.
+/// Compares basenames, so either file may sit in a subfolder.
+fn companion_text_encoder(model_filename: &str, encoders: &[String]) -> Option<String> {
+    fn stem(path: &str) -> String {
+        let name = path
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(path)
+            .to_lowercase();
+        name.strip_suffix(".safetensors")
+            .unwrap_or(&name)
+            .to_string()
+    }
+    let model = stem(model_filename);
+    if model.is_empty() {
+        return None;
+    }
+    encoders
+        .iter()
+        .filter(|encoder| encoder.to_lowercase().ends_with(".safetensors"))
+        .find(|encoder| {
+            stem(encoder)
+                .strip_prefix(&model)
+                .and_then(|rest| rest.chars().next())
+                .is_some_and(|separator| matches!(separator, '_' | '-' | '.'))
+        })
+        .cloned()
+}
+
 /// Families that are never distributed as a full single-file checkpoint: their
 /// text encoder always ships separately. Loading one through
 /// `CheckpointLoaderSimple` yields a `None` CLIP and fails at conditioning, so
@@ -4911,6 +4941,41 @@ mod split_model_pairing_tests {
             recommended_clip_from_available("diffusion_models", "zib", &encoders),
             Some((None, "lumina2"))
         );
+    }
+
+    #[test]
+    fn anima_fine_tune_without_a_qwen_named_encoder_still_reports_its_type() {
+        let encoders = list(&["pieModelsAnima_cottage_txt.safetensors"]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "anima", &encoders),
+            Some((None, "wan"))
+        );
+    }
+
+    #[test]
+    fn companion_encoder_is_named_after_the_model() {
+        let encoders = list(&[
+            "qwen_3_06b_base.safetensors",
+            "anima/pieModelsAnima_cottage_txt.safetensors",
+        ]);
+        assert_eq!(
+            companion_text_encoder("pieModelsAnima_cottage.safetensors", &encoders),
+            Some("anima/pieModelsAnima_cottage_txt.safetensors".to_string())
+        );
+        assert_eq!(
+            companion_text_encoder("sub\\PIEMODELSANIMA_COTTAGE.safetensors", &encoders),
+            Some("anima/pieModelsAnima_cottage_txt.safetensors".to_string())
+        );
+    }
+
+    #[test]
+    fn companion_encoder_needs_a_separator_after_the_model_name() {
+        let encoders = list(&[
+            "animagine_te.safetensors",
+            "anima.safetensors",
+            "anima_te.gguf",
+        ]);
+        assert_eq!(companion_text_encoder("anima.safetensors", &encoders), None);
     }
 
     #[test]
@@ -5723,7 +5788,11 @@ pub(crate) async fn read_modelspec_internal(
         {
             // The model key is omitted (not defaulted) when no installed
             // encoder is compatible, so the frontend can offer a download
-            // instead of silently loading a mismatched encoder.
+            // instead of silently loading a mismatched encoder. An encoder
+            // named after this model is the one it shipped with, so it wins
+            // over the family default and fills that gap (#725).
+            let recommended_clip_model =
+                companion_text_encoder(filename, &encoders).or(recommended_clip_model);
             if let Some(recommended_clip_model) = recommended_clip_model {
                 result.insert("recommended_clip_model".to_string(), recommended_clip_model);
             }

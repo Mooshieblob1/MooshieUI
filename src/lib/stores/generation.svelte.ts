@@ -1761,10 +1761,32 @@ class GenerationStore {
 
     const recommendedModel = this.modelRecommendedClipModel?.trim();
     const recommendedType = this.modelRecommendedClipType?.trim();
-    if (!recommendedModel || !recommendedType) return;
+    if (!recommendedType) return;
 
     const currentModel = this.clipModel?.trim() ?? "";
     const currentType = this.clipType?.trim() ?? "";
+
+    // The backend knows the family's loader type but found no installed encoder
+    // whose filename it recognizes. Strict families (Anima, Z-Image, Krea 2,
+    // Ideogram 4) report it this way rather than guess, and a fine-tune that
+    // ships its own encoder (e.g. "pieModelsAnima_cottage_txt") always lands
+    // here. Before this branch existed, clipType stayed null and generation
+    // failed with "Split model text encoder type is still loading." (#725).
+    if (!recommendedModel) {
+      // The loader type belongs to the family, so apply it regardless. Keep the
+      // user's encoder file (it is often the fine-tune's own), dropping it only
+      // once it is no longer installed. An empty list means the inventory has
+      // not loaded yet, not that nothing is installed.
+      const staleModel =
+        !!currentModel && encoders.length > 0 && !encoders.includes(currentModel);
+      if (currentType !== recommendedType || staleModel) {
+        this.clipType = recommendedType;
+        if (staleModel) this.clipModel = null;
+        if (save) this.saveSettings();
+      }
+      return;
+    }
+
     const currentMissing = !!currentModel && !encoders.includes(currentModel);
 
     if (!currentModel || currentMissing || currentType !== recommendedType) {
