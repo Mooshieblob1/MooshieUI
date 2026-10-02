@@ -1560,6 +1560,9 @@ pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
         ws.abort();
     }
     let main_result = stop_owned_process(&state.comfyui_process, &config, None).await;
+    if let Err(e) = &main_result {
+        log::error!("Failed to stop ComfyUI: {}", e);
+    }
     let worker_result = stop_all_workers(state).await;
     main_result.and(worker_result)
 }

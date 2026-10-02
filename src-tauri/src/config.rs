@@ -450,12 +450,24 @@ const OLD_APP_IDENTIFIER: &str = "com.comfyui.desktop";
 /// The platform-default app data directory (always the same location).
 /// Used to store the bootstrap pointer file that redirects to the real data dir.
 fn platform_default_data_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    return Some(test_data_dir());
+    #[cfg(not(test))]
     dirs::data_dir().map(|d| d.join(APP_IDENTIFIER))
+}
+
+/// Tests get a throwaway data dir instead of the developer's real install. A
+/// test that reached `save_config()` once replaced a live `config.json` with
+/// fixture values, blanking `venv_path` so ComfyUI could no longer start.
+#[cfg(test)]
+fn test_data_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("mooshieui-test-{}", std::process::id()))
 }
 
 /// Read the custom data directory from the bootstrap pointer file.
 /// The pointer lives at `{platform_default}/data_dir.txt` and contains
 /// a single line with the absolute path to the real data directory.
+#[cfg_attr(test, allow(dead_code))]
 fn load_custom_data_dir() -> Option<PathBuf> {
     let pointer = platform_default_data_dir()?.join("data_dir.txt");
     let content = std::fs::read_to_string(&pointer).ok()?;
@@ -483,6 +495,15 @@ pub fn save_custom_data_dir(path: &str) -> Result<(), String> {
 
 /// Get the app data directory path.
 /// Priority: MOOSHIEUI_DATA_DIR env var > bootstrap pointer file > platform default.
+#[cfg(test)]
+pub fn app_data_dir() -> Option<PathBuf> {
+    // Ignore MOOSHIEUI_DATA_DIR and the pointer file too: either can name a real install.
+    Some(test_data_dir())
+}
+
+/// Get the app data directory path.
+/// Priority: MOOSHIEUI_DATA_DIR env var > bootstrap pointer file > platform default.
+#[cfg(not(test))]
 pub fn app_data_dir() -> Option<PathBuf> {
     // 1. Environment variable override (highest priority)
     if let Ok(custom) = std::env::var("MOOSHIEUI_DATA_DIR") {
