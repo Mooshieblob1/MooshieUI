@@ -23,7 +23,7 @@ import type { NaiPromptContext } from "./naiPrompt.js";
  * Bump to invalidate every cached skill at once, after changing the authoring
  * prompt or the V5 specification it is written against.
  */
-const SKILL_VERSION = 5;
+const SKILL_VERSION = 6;
 
 const CACHE_PREFIX = "mooshieui.naiskill.";
 
