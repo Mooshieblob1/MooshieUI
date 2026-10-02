@@ -557,6 +557,33 @@ fn migrate_from_old_data_dir() {
     }
 }
 
+/// Last-known-good copy of `config.json`, refreshed before each save while the
+/// config on disk describes a completed setup.
+const CONFIG_BACKUP_FILE: &str = "config.json.bak";
+
+fn is_completed_setup(config: &AppConfig) -> bool {
+    config.setup_complete && !config.venv_path.trim().is_empty()
+}
+
+/// A config with no install at all, i.e. `AppConfig::default()`-shaped.
+fn is_blank_setup(config: &AppConfig) -> bool {
+    !config.setup_complete
+        && config.venv_path.trim().is_empty()
+        && config.comfyui_path.trim().is_empty()
+}
+
+/// No feature ever blanks a finished install (setup and the install move only
+/// fill these paths in), so this write can only come from a bug or from test
+/// code reaching the real data dir. That has happened twice and left ComfyUI
+/// unable to start with "Python not found at '/Scripts/python.exe'".
+fn would_erase_completed_setup(existing: &AppConfig, new: &AppConfig) -> bool {
+    is_completed_setup(existing) && is_blank_setup(new)
+}
+
+fn read_config_file(path: &std::path::Path) -> Option<AppConfig> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
 /// Load persisted config from disk, falling back to defaults.
 pub fn load_persisted_config() -> AppConfig {
     migrate_from_old_data_dir();
@@ -566,6 +593,19 @@ pub fn load_persisted_config() -> AppConfig {
         if let Ok(json) = std::fs::read_to_string(&config_path) {
             match serde_json::from_str::<AppConfig>(&json) {
                 Ok(config) => {
+                    // Self-heal a config blanked out from under a completed
+                    // setup; the next save writes the recovered one back.
+                    let config = match read_config_file(&dir.join(CONFIG_BACKUP_FILE)) {
+                        Some(backup) if would_erase_completed_setup(&backup, &config) => {
+                            log::error!(
+                                "{} had lost the completed setup; using {} instead",
+                                config_path.display(),
+                                CONFIG_BACKUP_FILE
+                            );
+                            backup
+                        }
+                        _ => config,
+                    };
                     eprintln!(
                         "Loaded config from {}: comfyui_path={}, venv_path={}",
                         config_path.display(),
@@ -830,7 +870,28 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
     let dir = app_data_dir().ok_or("Failed to determine app data directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    if let Err(e) = write_private_file_atomic(&dir.join("config.json"), json.as_bytes()) {
+    let config_path = dir.join("config.json");
+    if let Ok(existing_json) = std::fs::read_to_string(&config_path) {
+        if let Ok(existing) = serde_json::from_str::<AppConfig>(&existing_json) {
+            if would_erase_completed_setup(&existing, &config) {
+                log::error!(
+                    "Refusing to overwrite the completed setup in {} with an empty config",
+                    config_path.display()
+                );
+                return Err("Refusing to overwrite a completed setup with an empty config".into());
+            }
+            if is_completed_setup(&existing) {
+                // Same private, atomic write: the config holds plaintext secrets.
+                if let Err(e) = write_private_file_atomic(
+                    &dir.join(CONFIG_BACKUP_FILE),
+                    existing_json.as_bytes(),
+                ) {
+                    log::warn!("Could not refresh {}: {}", CONFIG_BACKUP_FILE, e);
+                }
+            }
+        }
+    }
+    if let Err(e) = write_private_file_atomic(&config_path, json.as_bytes()) {
         // On hosted deployments the config is a read-only mount (e.g. a Kubernetes
         // ConfigMap), so persistence cannot succeed. Downgrade those cases to a
         // warning instead of surfacing a hard error for every settings change;
@@ -845,6 +906,59 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
         return Err(e.to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod config_wipe_guard_tests {
+    use super::{is_blank_setup, would_erase_completed_setup, AppConfig};
+
+    fn completed() -> AppConfig {
+        AppConfig {
+            setup_complete: true,
+            venv_path: "D:\\MooshieUI Install\\venv".into(),
+            comfyui_path: "D:\\MooshieUI Install\\comfyui".into(),
+            ..AppConfig::default()
+        }
+    }
+
+    #[test]
+    fn default_config_counts_as_blank() {
+        // The wipes this guards against wrote default-shaped fixture configs.
+        assert!(is_blank_setup(&AppConfig::default()));
+    }
+
+    #[test]
+    fn blank_config_cannot_replace_a_completed_setup() {
+        let blank = AppConfig {
+            llm_provider: "nous".into(),
+            ..AppConfig::default()
+        };
+        assert!(would_erase_completed_setup(&completed(), &blank));
+    }
+
+    #[test]
+    fn ordinary_saves_are_never_refused() {
+        let mut changed = completed();
+        changed.server_port = 8189;
+        assert!(!would_erase_completed_setup(&completed(), &changed));
+        // First run: nothing completed on disk yet.
+        assert!(!would_erase_completed_setup(
+            &AppConfig::default(),
+            &completed()
+        ));
+        assert!(!would_erase_completed_setup(
+            &AppConfig::default(),
+            &AppConfig::default()
+        ));
+    }
+
+    #[test]
+    fn a_partly_configured_save_is_not_a_wipe() {
+        // Setup still running: paths filled in, completion flag not yet set.
+        let mut in_progress = completed();
+        in_progress.setup_complete = false;
+        assert!(!would_erase_completed_setup(&completed(), &in_progress));
+    }
 }
 
 #[cfg(test)]
