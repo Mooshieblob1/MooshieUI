@@ -80,6 +80,11 @@ export interface NaiPromptContext {
    * model cannot see any earlier rewrite.
    */
   inSession?: boolean;
+  /**
+   * Hidden body recipes the user asked for by trigger phrase, already rendered
+   * by `naiRecipeDirective`, or `""` / absent for none.
+   */
+  recipes?: string;
 }
 
 /**
@@ -111,7 +116,7 @@ export const NAI_VARIANT_BUDGET: Record<NaiVariant, number> = {
 export const NAI_MAX_TOKENS = 2400;
 
 /**
- * The quality stack NovelAI prepends itself, named so the model can avoid it.
+ * The quality stack the toggle appends, named so the model can avoid it.
  *
  * Matches the V5 quality-toggle vocabulary plus the usual aesthetic filler
  * models still emit. Never paste any of these: the toggle owns them.
@@ -200,7 +205,8 @@ FORBIDDEN CHARACTERS
 - Never use an em dash or an en dash anywhere in any field. Use a comma, a period, a colon or an ASCII hyphen.
 
 V5 CUSTOM TAGS
-These are trained V5 tokens and are available to you: depthness, attractive male, low complexity, medium complexity, high complexity, ultra complexity, transparent background, has alpha, alpha transparency, meta:novel era, meta:golden era, visual novel art, bg, cg, chibi, sprite.
+These are trained V5 tokens and are available to you: depthness, attractive male, low complexity, medium complexity, high complexity, ultra complexity, transparent background, has alpha, alpha transparency, meta:novel era, meta:golden era, visual novel art, visual novel bg, visual novel cg, visual novel chibi, visual novel sprite.
+- The visual novel tags are only trained in full. Write visual novel sprite, never bare sprite, bg or cg.
 - Default complexity is high complexity. That is the pretty default, not a quality stack.
 - Add depthness when the scene needs volume or deeper shading.
 - Strengthen a weak alpha with 2.1::transparent background:: rather than repeating the tag.
@@ -316,13 +322,12 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
  *
  * The quality toggle appends NovelAI's own stack to the prompt (MooshieUI
  * writes it into the request, as NovelAI's own client does; the server never
- * adds it), and the toggle
- * is on by default, so writing the words as well doubles them and flattens the
- * image. With the toggle off the user has said they want no stack, which is
+ * adds it), and the toggle is on by default, so writing the words as well
+ * doubles them and flattens the image. With the toggle off the user has said they want no stack, which is
  * theirs to say and not the rewrite's to overrule.
  */
 const QUALITY_TAGS = `QUALITY TAGS
-Never write quality or aesthetic filler. Never include masterpiece, best quality, amazing quality, great quality, very aesthetic, aesthetic, absurdres, high quality or beautiful detailed eyes anywhere in your answer. That stack belongs to NovelAI's own quality toggle, which the user controls: writing it yourself doubles it when the toggle is on, and overrules them when it is off. high complexity and depthness are V5 utility tags, not quality filler, and you should use them.`;
+Never write quality or aesthetic filler. Never include masterpiece, best quality, amazing quality, great quality, very aesthetic, aesthetic, absurdres, high quality or beautiful detailed eyes anywhere in your answer, and never write no text either: the V5 toggle adds very aesthetic, masterpiece and no text itself. That stack belongs to NovelAI's own quality toggle, which the user controls: writing it yourself doubles it when the toggle is on, and overrules them when it is off. high complexity and depthness are V5 utility tags, not quality filler, and you should use them.`;
 
 function ucPresetName(ucPreset: number): string {
   switch (ucPreset) {
@@ -341,15 +346,32 @@ function ucPresetName(ucPreset: number): string {
   }
 }
 
+const HEAVY_UC =
+  "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
+
+/** What each V5 preset applies, per docs.novelai.net/en/image/undesiredcontent. */
+function ucPresetTags(ucPreset: number): string {
+  switch (ucPreset) {
+    case 1:
+      return "lowres, bad hands, bad anatomy, artistic error, sepia, white haze, worst quality, very displeasing, jpeg artifacts";
+    case 2:
+      return `${HEAVY_UC}, bad anatomy, mismatched pupils, glowing eyes`;
+    case 4:
+      return "worst quality, distracting watermark, unfinished, bad quality, widescreen, upscale, sequence, grandfathered content, blurred foreground, chromatic aberration, sketch, everyone, sketch background, simple, flat colors, ych (character), outline, multiple scenes, horror (theme), comic";
+    default:
+      return HEAVY_UC;
+  }
+}
+
 function ucPresetDirective(ucPreset: number): string {
   if (ucPreset === 3) {
     return `UNDESIRED CONTENT
 The user has the undesired content preset set to None, so nothing is applied for them. Write a short undesired content list covering the obvious anatomy and artefact failures for this scene, plus any motif the user wants excluded. Still skip quality-stack negatives such as worst quality, lowres and jpeg artifacts.`;
   }
   return `UNDESIRED CONTENT
-The user is on the ${ucPresetName(ucPreset)} undesired content preset, so the generic quality, anatomy and artefact negatives are already added to the UC automatically. Write custom motif UC only. Empty UC is correct when there is nothing motif-specific to exclude.
+The user is on the ${ucPresetName(ucPreset)} undesired content preset, so its generic negatives are already covered. Write custom motif UC only. Empty UC is correct when there is nothing motif-specific to exclude.
 
-Never repeat preset junk: lowres, worst quality, bad quality, jpeg artifacts, too many watermarks, logo, watermark, signature, username, blurry, scan artifacts, film grain, or greyscale/monochrome boilerplate.
+Never repeat what the preset applies: ${ucPresetTags(ucPreset)}. Skip other generic boilerplate too, such as watermark, signature, username, blurry or greyscale.
 
 Include a tag only when it applies:
 - The canonical appearance you displaced. When a character wears someone else's outfit, negate that someone else by name along with their hair colour, eye colour and signature features. When a character is out of their usual clothes, negate those clothes by name.
@@ -420,6 +442,7 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     QUALITY_TAGS,
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
+    ctx.recipes ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0),
     sessionDirective(ctx.inSession, ctx.existing !== null),
     referenceDirective(ctx.references),

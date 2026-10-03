@@ -1,22 +1,23 @@
 # macOS (Apple Silicon)
 
-As of v2.3.1, native macOS installers remain experimental candidates until
-the physical-Mac checks below have passed. Stable macOS downloads and automatic
-updates remain gated. Intel
-Macs can use MooshieUI in a browser connected to a remote server; the native
-local-generation runtime targets Apple Silicon.
+Starting with v2.3.9, every release ships a native Apple Silicon DMG alongside
+the Windows and Linux builds, with automatic updates. The Mac build passes the
+automated checks below but has not been through the full physical-Mac
+acceptance list, so treat it as user-tested: please report anything that breaks.
+Intel Macs can use MooshieUI in a browser connected to a remote server; the
+native local-generation runtime targets Apple Silicon.
 
 ## Installation
 
-Use macOS 14 or later. Open a successful [macOS Native Validation run](https://github.com/Mooshieblob1/MooshieUI/actions/workflows/macos-native.yml)
-and download its `macos-candidate` artifact (GitHub sign-in required). Extract
-the `_aarch64.dmg` and compare its SHA-256 with the accompanying `SHA256SUMS` before installing:
+Use macOS 14 or later. Download `MooshieUI_<version>_aarch64.dmg` from the
+[latest release](https://github.com/Mooshieblob1/MooshieUI/releases/latest) and
+compare its SHA-256 with the release's `SHA256SUMS` before installing:
 
 ```sh
-shasum -a 256 MooshieUI_2.3.1_aarch64.dmg
+shasum -a 256 MooshieUI_2.3.9_aarch64.dmg
 ```
 
-The exact filename/version can differ for a candidate. Copy MooshieUI into
+Copy MooshieUI into
 Applications and open it from Finder. This build uses free ad-hoc signing and
 is **not notarized by Apple**. If macOS blocks it, try opening once, then use
 System Settings > Privacy & Security > Open Anyway. See
@@ -81,12 +82,12 @@ key on PRs, so the application-update test needs a controlled signed candidate.
 
 ## Publishing with a normal release
 
-`MACOS_RELEASE_ENABLED` is an opt-in repository Actions variable. Leave it unset
-until hardware acceptance evidence has been recorded and reviewed. Once enabled
-(`true`), the existing release workflow also runs the Mac build, requires its
-checks to pass, publishes the DMG and signed updater archive, and adds
-`darwin-aarch64` to `latest.json`. Other platforms can release while Mac hardware
-qualification is pending.
+`MACOS_RELEASE_ENABLED` is an opt-in repository Actions variable, set to `true`
+since v2.3.9: Mac builds ship as user-tested rather than waiting for the
+hardware acceptance list above. With it enabled, the release workflow also runs
+the Mac build, requires its checks to pass, publishes the DMG and signed updater
+archive, and adds `darwin-aarch64` to `latest.json`. Unset it to release other
+platforms without a Mac build.
 
 Apple signing is separate from Tauri updater signing: retain the existing
 `TAURI_SIGNING_PRIVATE_KEY` and password secrets. No Apple developer membership
