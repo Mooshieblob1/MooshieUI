@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod companion;
 pub mod grounding;
 pub mod hardware;
+pub mod history;
 pub mod local_llm;
 pub mod oauth;
 pub mod providers;
