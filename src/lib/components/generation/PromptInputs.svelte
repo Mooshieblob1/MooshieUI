@@ -19,6 +19,7 @@
   import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
+  import type { EnhancerFlow } from "../../utils/enhancerSession.js";
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
   import PromptComposeModal from "./PromptComposeModal.svelte";
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
@@ -217,6 +218,17 @@
   // existing path, so this is a variant check and not an isNovelAi check.
   const naiVariant = $derived(naiV5Variant(generation.checkpoint));
   const isNaiV5 = $derived(!isVideoMode && generation.isNovelAi && naiVariant !== null);
+
+  // NAI V5 keeps its session control in its modal; the chip covers the flows
+  // that rewrite in place.
+  const chipFlow = $derived<EnhancerFlow | null>(isVideoMode ? "h3" : isNaiV5 ? null : "enhance");
+  const chipCount = $derived(chipFlow ? enhancerSessions.count(chipFlow) : 0);
+
+  function clearChipSession() {
+    if (!chipFlow) return;
+    if (!confirm(locale.t("prompt_assistant.session_clear_confirm", { count: chipCount }))) return;
+    enhancerSessions.clear(chipFlow);
+  }
 
   // The V5 rewrite takes its own instructions rather than the prompt box, so the
   // button only opens the modal; the modal owns the call and the review.
@@ -422,6 +434,17 @@
               ? locale.t("prompt_assistant.enhance_nai")
               : locale.t("prompt_assistant.enhance")}
         </button>
+        {#if chipFlow && chipCount > 0}
+          <button
+            class="rounded-full border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-[var(--theme-accent-500)] hover:text-neutral-200 disabled:opacity-40"
+            disabled={promptAssistant.isGenerating}
+            title={locale.t("prompt_assistant.session_chip_tooltip", { count: chipCount })}
+            aria-label={locale.t("prompt_assistant.session_new")}
+            onclick={clearChipSession}
+          >
+            ⟲ {chipCount}
+          </button>
+        {/if}
         {#if !isVideoMode}
           <!-- Compose builds a tag list from a description. Nothing downstream of
                it fits H3, which wants the prose the user already wrote. -->

@@ -14,6 +14,13 @@
 
   const isAnima = $derived(generation.modelFamily === "anima");
 
+  const sessionCount = $derived(enhancerSessions.count("compose"));
+
+  function newSession() {
+    if (!confirm(locale.t("prompt_assistant.session_clear_confirm", { count: sessionCount }))) return;
+    enhancerSessions.clear("compose");
+  }
+
   async function generate() {
     if (!description.trim()) return;
     error = null;
@@ -75,16 +82,37 @@
     aria-modal="true"
   >
     <div class="mb-3 flex items-center justify-between">
-      <h2 class="text-lg font-semibold text-neutral-100">
-        {locale.t("prompt_assistant.compose_title")}
-      </h2>
-      <button
-        class="rounded-lg px-2 py-1 text-neutral-400 hover:bg-neutral-800"
-        onclick={onClose}
-        aria-label={locale.t("common.close")}
-      >
-        ✕
-      </button>
+      <div>
+        <h2 class="text-lg font-semibold text-neutral-100">
+          {locale.t("prompt_assistant.compose_title")}
+        </h2>
+        {#if sessionCount > 0}
+          <p class="mt-0.5 text-[10px] text-neutral-500">
+            {locale.t("prompt_assistant.session_count", { count: sessionCount })}
+            {#if enhancerSessions.dropped.compose > 0}
+              · {locale.t("prompt_assistant.session_trimmed")}
+            {/if}
+          </p>
+        {/if}
+      </div>
+      <div class="flex items-center gap-1.5">
+        {#if sessionCount > 0}
+          <button
+            class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+            disabled={promptAssistant.isGenerating}
+            onclick={newSession}
+          >
+            ⟲ {locale.t("prompt_assistant.session_new")}
+          </button>
+        {/if}
+        <button
+          class="rounded-lg px-2 py-1 text-neutral-400 hover:bg-neutral-800"
+          onclick={onClose}
+          aria-label={locale.t("common.close")}
+        >
+          ✕
+        </button>
+      </div>
     </div>
 
     <textarea
