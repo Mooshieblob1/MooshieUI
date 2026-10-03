@@ -254,7 +254,11 @@ async fn run_generation(
         _ => 192,
     };
 
-    let raw = chat_any(app, state, &system, history, input, max_tokens, &[]).await?;
+    let history = crate::prompt_assistant::history::sanitize(
+        crate::prompt_assistant::history::for_purpose(&purpose, history),
+    );
+    let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
+    let raw = chat_any(app, state, &system, &history, input, max_tokens, &[]).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a

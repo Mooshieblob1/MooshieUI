@@ -6631,7 +6631,11 @@ pub async fn run_prompt_assistant_headless(
         Some("detailed") => 384,
         _ => 192,
     };
-    let raw = chat_any_headless(state, &system, history, input, max_tokens, &[]).await?;
+    let history = crate::prompt_assistant::history::sanitize(
+        crate::prompt_assistant::history::for_purpose(&purpose, history),
+    );
+    let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
+    let raw = chat_any_headless(state, &system, &history, input, max_tokens, &[]).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose. The desktop path runs this too;

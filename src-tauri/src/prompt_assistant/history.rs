@@ -70,6 +70,30 @@ pub fn anthropic_messages(history: &[ChatMessage], user_content: Value) -> Value
     Value::Array(messages)
 }
 
+/// A tag upsampler (DanTagGen) is a completion model, not a chat model: earlier
+/// turns would be read as more tags to continue, so it never gets any.
+pub fn for_purpose<'a>(purpose: &str, history: &'a [ChatMessage]) -> &'a [ChatMessage] {
+    if purpose == "tag_upsampler" {
+        &[]
+    } else {
+        history
+    }
+}
+
+/// Told only when earlier turns are actually sent. Plain enhance is a one-click
+/// rewrite of whatever is in the box, and users change subject freely, so the
+/// session is context for references, not material to carry over.
+pub fn with_session_clause(system: &str, history: &[ChatMessage]) -> String {
+    if history.is_empty() {
+        return system.to_string();
+    }
+    format!(
+        "{system}\n\nEarlier messages are previous requests in this session and your answers to them. \
+Work only on the newest message. Use earlier turns only when it refers to them, and never carry \
+characters, tags or settings over from them on your own."
+    )
+}
+
 /// The companions take one text turn, so earlier exchanges are written into it.
 pub fn single_turn_text(history: &[ChatMessage], user: &str) -> String {
     if history.is_empty() {
@@ -184,6 +208,22 @@ mod tests {
                 { "role": "user", "content": "new" }
             ])
         );
+    }
+
+    #[test]
+    fn tag_upsamplers_get_no_history() {
+        let h = vec![user("a"), assistant("b")];
+        assert!(for_purpose("tag_upsampler", &h).is_empty());
+        assert_eq!(for_purpose("natural_language", &h), &h[..]);
+    }
+
+    #[test]
+    fn session_clause_appears_only_with_history() {
+        assert_eq!(with_session_clause("sys", &[]), "sys");
+        let s = with_session_clause("sys", &[user("a"), assistant("b")]);
+        assert!(s.starts_with("sys\n\n"));
+        assert!(s.contains("Work only on the newest message"));
+        assert!(!s.contains('\u{2014}') && !s.contains('\u{2013}'));
     }
 
     #[test]
