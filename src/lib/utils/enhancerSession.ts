@@ -34,9 +34,30 @@ export const LOCAL_CONTEXT_TOKENS = 16_384;
 /** Plain enhance and Compose build their system prompt in Rust, so the frontend reserves this much for it. */
 export const RUST_SYSTEM_RESERVE_TOKENS = 3_000;
 
-/** Conservative: real tokenizers average closer to 4 characters per token. */
+/**
+ * Conservative for both scripts: ASCII averages closer to 4 characters per
+ * token, while Japanese, Chinese and Korean run near one token per character,
+ * so counting them like ASCII would undershoot by two to three times.
+ */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3);
+  let ascii = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (ch.charCodeAt(0) < 128) ascii++;
+    else other++;
+  }
+  return Math.ceil(ascii / 3) + other;
+}
+
+/**
+ * Appended to a system prompt only when earlier turns are actually sent.
+ * Mirrors `with_session_clause` in src-tauri/src/prompt_assistant/history.rs.
+ */
+export function withSessionClause(system: string, sentTurns: number): string {
+  if (sentTurns <= 0) return system;
+  return `${system}
+
+Earlier messages are previous requests in this session and your answers to them. Work only on the newest message. Use earlier turns only when it refers to them, and never carry characters, tags or settings over from them on your own.`;
 }
 
 export function imageMarker(count: number, kind: "reference" | "first-frame"): string {

@@ -23,6 +23,7 @@ import {
   buildHistory,
   estimateTokens,
   withImageMarker,
+  withSessionClause,
   LOCAL_CONTEXT_TOKENS,
   REMOTE_CONTEXT_TOKENS,
   RUST_SYSTEM_RESERVE_TOKENS,
@@ -551,7 +552,7 @@ class PromptAssistantStore {
     try {
       return await this.withStageListener(async () => {
         const skill = await this.ensureH3Skill(ctx, !!image);
-        const system = h3SystemWithSkill(
+        const baseSystem = h3SystemWithSkill(
           idle
             ? h3IdleRewriteSystemPrompt(ctx, !!image)
             : h3RewriteSystemPrompt(ctx, !!image),
@@ -559,10 +560,11 @@ class PromptAssistantStore {
         );
         const user = idle ? h3IdleUserPrompt(prompt, ctx) : prompt;
         const history = this.sessionHistory("h3", {
-          systemTokens: estimateTokens(system),
+          systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
           userText: user,
           maxOutputTokens: H3_MAX_TOKENS,
         });
+        const system = withSessionClause(baseSystem, history.sentTurns);
         const sessionUser = withImageMarker(prompt, image ? 1 : 0, "first-frame");
         const first = (
           await callExternalLlm(system, user, H3_MAX_TOKENS, image, null, history.messages)
