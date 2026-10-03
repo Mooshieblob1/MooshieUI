@@ -1,3 +1,30 @@
+## What's New in v2.3.9
+
+### macOS
+- **Native Apple Silicon build**: every release now includes `MooshieUI_<version>_aarch64.dmg` for macOS 14 or later, with automatic updates. It is ad-hoc signed and not notarized by Apple, so if macOS blocks it, open it once, then use **System Settings > Privacy & Security > Open Anyway**. It passes the automated Mac checks but has not been tested feature by feature on real Macs yet, so please report anything that breaks. See `docs/MACOS.md`.
+
+### Prompt enhancer
+- **Persistent sessions**: the prompt enhancer now remembers the conversation. **Enhance for V5**, **Enhance**, **Enhance for H3** and **Compose** each keep their own session, so a follow-up such as "make it night" builds on the previous answer. Sessions survive closing the window and restarting the app. Start over with **New session** in the V5 and Compose windows, or with the ⟲ chip next to the Enhance button. When a session grows too long for the model, the oldest exchanges are left out automatically.
+- **Local model context**: the bundled local model now runs with a 16k context so sessions fit, which takes roughly 0.7 to 1.7 GB more VRAM. When that no longer fits next to ComfyUI, the model runs on the CPU instead of slowing image generation down.
+- **Leaner V5 prompts**: the V5 rewrite no longer restates what a character's name already brings (Momo Velia Deviluke already has pink hair), and puts something in Undesired Content only when it would otherwise appear. No more `chibi, mitten hands` in the UC of an ordinary character.
+
+### Models
+- **Anima fine-tunes**: Anima models other than Anima base no longer fail with "Split model text encoder type is still loading", and a fine-tune's own text encoder (such as `pieModelsAnima_cottage_txt.safetensors` next to `pieModelsAnima_cottage.safetensors`) is picked automatically. Fixes #725.
+- **Anima Turbo and Aesthetic v1.1**: both are downloadable from the recommended models. Turbo keeps its CFG 1, 10-step settings, and Aesthetic no longer gets `score_*` quality tags.
+- **Anima Light Lavender**: the community fine-tune (BF16 and MXFP8) is detected once its file is on disk, with its recommended settings and no auto quality tags.
+- **Z-Image**: Comfy-Org filenames are recognised, the Qwen3-4B encoder and Flux VAE are paired correctly and downloaded automatically when missing, and an unrelated encoder or VAE is never substituted.
+- **Style Reference**: the CLIP-ViT-H download link works again, and the file no longer needs renaming.
+
+### Fixes
+- **Stopping ComfyUI on Windows**: stopping or updating ComfyUI no longer fails with "Could not stop managed ComfyUI process", and the diagnostic log no longer reports a ComfyUI that has exited as still running.
+- **Settings protection**: MooshieUI refuses to overwrite a finished setup with an empty configuration and keeps a last known good copy (`config.json.bak`). If the configuration is ever wiped anyway, it is restored on the next start instead of ComfyUI failing with "Python not found".
+
+### Under the hood
+- Tauri 2.12 and all of its plugins, updated together.
+- Dependency and CI updates.
+
+---
+
 ## What's New in v2.3.8
 
 ### Video

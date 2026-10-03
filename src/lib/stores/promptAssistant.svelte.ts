@@ -58,6 +58,7 @@ import {
   naiUserPrompt,
 } from "../utils/naiPrompt.js";
 import type { NaiPromptContext } from "../utils/naiPrompt.js";
+import { naiRecipeDirective } from "../utils/naiRecipes.js";
 import {
   naiRetryInstruction,
   normalizeNaiResponse,
@@ -658,10 +659,16 @@ class PromptAssistantStore {
       return await this.withStageListener(async () => {
         const skill = await this.ensureNaiSkill(ctx);
         const user = naiUserPrompt(prompt, ctx);
-        const sessionSystem = naiSystemWithSkill(
-          naiRewriteSystemPrompt({ ...ctx, inSession: true }),
-          skill,
-        );
+        // Budgeted against every recorded turn, the most the session can send.
+        const sessionCtx = {
+          ...ctx,
+          inSession: true,
+          recipes: naiRecipeDirective([
+            prompt,
+            ...enhancerSessions.turns("nai").map((turn) => turn.user),
+          ]),
+        };
+        const sessionSystem = naiSystemWithSkill(naiRewriteSystemPrompt(sessionCtx), skill);
         const history = this.sessionHistory("nai", {
           systemTokens: estimateTokens(sessionSystem),
           userText: user,
@@ -672,7 +679,14 @@ class PromptAssistantStore {
         const system =
           history.sentTurns > 0
             ? sessionSystem
-            : naiSystemWithSkill(naiRewriteSystemPrompt({ ...ctx, inSession: false }), skill);
+            : naiSystemWithSkill(
+                naiRewriteSystemPrompt({
+                  ...ctx,
+                  inSession: false,
+                  recipes: naiRecipeDirective([prompt]),
+                }),
+                skill,
+              );
         // Saved without the pasted current prompt: the next turn sends that fresh.
         const sessionUser = withImageMarker(prompt, referenceData.length, "reference");
 

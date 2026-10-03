@@ -75,6 +75,11 @@ export interface NaiPromptContext {
    * model cannot see any earlier rewrite.
    */
   inSession?: boolean;
+  /**
+   * Hidden body recipes the user asked for by trigger phrase, already rendered
+   * by `naiRecipeDirective`, or `""` / absent for none.
+   */
+  recipes?: string;
 }
 
 /**
@@ -411,6 +416,7 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     QUALITY_TAGS,
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
+    ctx.recipes ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0),
     sessionDirective(ctx.inSession, ctx.existing !== null),
     referenceDirective(ctx.references),
