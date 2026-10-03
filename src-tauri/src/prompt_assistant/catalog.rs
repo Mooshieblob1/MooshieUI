@@ -154,12 +154,39 @@ pub fn entry(id: &str) -> Option<LlmCatalogEntry> {
 
 /// Pick the largest-footprint GGUF variant a host can run (best quality that
 /// fits). Returns None if no variant fits.
+/// The context every `vram_mb` above was measured at (llama.cpp's default).
+const MEASURED_CONTEXT_TOKENS: u64 = 4096;
+
+/// VRAM the f16 KV cache needs beyond what `vram_mb` already covers, when the
+/// server runs with `context_tokens` instead of the measured 4096.
+///
+/// Per-token cost is 2 (K and V) x layers x KV heads x head dim x 2 bytes.
+/// Unknown models get the larger figure: underestimating here is what pushes
+/// ComfyUI's weights out of VRAM.
+pub fn context_overhead_mb(model_id: &str, context_tokens: u32) -> u64 {
+    let bytes_per_token: u64 = match model_id {
+        "qwen25-7b-instruct" => 2 * 28 * 4 * 128 * 2,
+        _ => 2 * 36 * 8 * 128 * 2, // Qwen3-4B, and the fallback
+    };
+    let extra_tokens = u64::from(context_tokens).saturating_sub(MEASURED_CONTEXT_TOKENS);
+    bytes_per_token * extra_tokens / (1024 * 1024)
+}
+
 pub fn best_variant_for(entry: &LlmCatalogEntry, available_vram_mb: u64) -> Option<&LlmVariant> {
-    entry
-        .variants
-        .iter()
-        .filter(|v| v.format == "gguf" && v.vram_mb <= available_vram_mb)
-        .max_by_key(|v| v.vram_mb)
+    // Prefer the largest variant that fits with the session context's KV
+    // cache, the budget `ensure_running` gates GPU offload on. When none does,
+    // keep the old answer: that model still runs, on CPU, and a natural
+    // language model on CPU beats falling back to the tag-only upsampler.
+    let overhead = context_overhead_mb(&entry.id, super::server::LOCAL_CONTEXT_TOKENS);
+    let largest_within = |budget: u64| {
+        entry
+            .variants
+            .iter()
+            .filter(|v| v.format == "gguf" && v.vram_mb <= budget)
+            .max_by_key(|v| v.vram_mb)
+    };
+    largest_within(available_vram_mb.saturating_sub(overhead))
+        .or_else(|| largest_within(available_vram_mb))
 }
 
 /// Recommend the best catalog model id for the detected hardware:
@@ -228,5 +255,27 @@ mod tests {
         // No GPU, 4 GB RAM → 60% = 2.4 GB, Qwen3-4B Q4 needs 3.6 GB → no NL fits → tiny.
         let id = recommend_model_id(0, 4096);
         assert_eq!(id, "dantaggen-l");
+    }
+
+    #[test]
+    fn recommendations_leave_room_for_the_larger_context() {
+        // 6 GB card: Q8_0 (5500) only fit before the 16k context's extra
+        // 1728 MB; Q5_K_M (4200 + 1728) is the largest that still fits.
+        let e = entry("qwen3-4b-instruct").unwrap();
+        let v = best_variant_for(&e, 6000).unwrap();
+        assert_eq!(v.quant.as_deref(), Some("Q5_K_M"));
+    }
+
+    #[test]
+    fn context_overhead_counts_the_cache_beyond_the_measured_4k() {
+        // f16 KV cache: Qwen3-4B is 144 KiB/token (576 MiB at 4096, as logged),
+        // so 16384 costs three more 4096 slices: 1728 MiB.
+        assert_eq!(context_overhead_mb("qwen3-4b-instruct", 16384), 1728);
+        // Qwen2.5-7B: 56 KiB/token, 224 MiB at 4096.
+        assert_eq!(context_overhead_mb("qwen25-7b-instruct", 16384), 672);
+        // No overhead at the context the catalog sizes were measured at.
+        assert_eq!(context_overhead_mb("qwen3-4b-instruct", 4096), 0);
+        // Unknown models get the larger per-token cost, never a smaller one.
+        assert_eq!(context_overhead_mb("something-new", 16384), 1728);
     }
 }

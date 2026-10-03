@@ -168,7 +168,13 @@ impl PromptAssistant {
                     .find(|v| self.model_file_path(model_id, &v.file).exists())
             })
             .map(|v| v.vram_mb)
-            .unwrap_or(u64::MAX);
+            .unwrap_or(u64::MAX)
+            // The catalog sizes were measured at a 4096 context; the server
+            // now runs with a larger one for persistent enhancer sessions.
+            .saturating_add(catalog::context_overhead_mb(
+                model_id,
+                server::LOCAL_CONTEXT_TOKENS,
+            ));
         // Free VRAM is NVIDIA-only (nvidia-smi). When unknown (AMD/Intel/Apple,
         // or no GPU) fall back to the total-VRAM decision so those hosts are not
         // needlessly forced onto CPU.
