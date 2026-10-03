@@ -1,5 +1,18 @@
 # Changelog
 
+## What's New in v2.3.10
+
+### NovelAI
+- **Quality tags and Undesired Content presets now apply**: NovelAI does not apply these settings itself. Its own web client writes the tags into the prompt before sending, and MooshieUI never did, so neither setting changed any NovelAI generation. Both are now written into the prompt the same way the official client does it.
+- **Light quality tags**: **Quality tags** is now a dropdown with **Standard**, **Light** and **None**. Light is offered on V5 models only.
+- **Furry focus**: a new Undesired Content preset. Both dropdowns list only what the selected model supports, and saved settings keep their meaning.
+- **PNG metadata**: quality and preset choices read back correctly from NovelAI images.
+
+### Prompt enhancer
+- **Enhance for V5 accuracy**: checked against NovelAI's documentation. The rewrite now uses the real V5 visual novel tags (`visual novel sprite`, not bare `sprite`), knows exactly which tags each Undesired Content preset already adds, and no longer writes `no text`, which the quality tags already include.
+
+---
+
 ## What's New in v2.3.9
 
 ### macOS
