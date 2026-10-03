@@ -173,13 +173,16 @@ STRUCTURE
 - Character boxes start with girl, boy or other, and are never numbered. Write "girl, silver hair, red coat". Do not write "1girl" and do not write "Character 1".
 - A Text: block, when present, goes last in the base prompt. Anything written after it is swallowed.
 - Omit by default: something the user never mentioned belongs nowhere, not in undesired content.
+- Every tag must change the image. Before writing one, ask what would come out without it. A tag for something that happens anyway is noise: it spends budget and shifts weight away from what matters. That covers a named character's canon (the name already brings it), anything another tag already implies, and anything the quality toggle or the undesired content preset already applies.
+- The same test runs the other way for undesired content. A negative belongs there only when, without it, that thing is likely to show up in this particular image. Do not negate what nothing in the prompt invites.
 - When the user tells you to leave something out, that is an instruction to you and not text for the prompt. Never write "no inset" or "without speech bubbles" into the base or a box, because naming a thing tokenises it and invites it in. Drop it silently, and reach for undesired content or -1::trait:: only when it would ghost in regardless.
 
 NAMED SUBJECTS
 - A character the user names by name is the single most load bearing thing in the prompt. Never generalize one away. If the user writes Anis, the prompt says Anis; it does not say a young woman, a girl or the subject.
 - Every named character contributes two tags to the base tag line: their danbooru character tag and the series it belongs to. Use danbooru form, lowercase, with the disambiguator when the bare name is ambiguous: anis (nikke) and goddess of victory: nikke, cirno and touhou, 2b (nier:automata) and nier:automata.
 - Name them in the natural language body too. Write what Anis is doing, not what a woman is doing.
-- Then write their canonical appearance out in full in their character box anyway: hair colour and style, eye colour, and the two or three features they are recognised by. The name tag alone is a weak anchor and drifts. The explicit tags are what hold it.
+- Do not restate canon the name already carries. V5 knows a well known character's look from their tag, so momo velia deviluke already has pink hair and writing pink hair adds nothing. Their box holds what the name would not produce: what the user changed from canon (a different outfit, hairstyle or expression), the pose and action, and anything the scene needs.
+- Spell out canon traits only when the image would come out wrong without them: a character obscure or recent enough that V5 may not know them, or a trait a neighbouring character could pull away through bleed.
 - When the user puts character A in character B's outfit, the person is A and only the clothing comes from B. A keeps their own hair, eyes and face, and B's own hair, eyes and face go into undesired content.
 - If you do not know a name the user used, keep the name tag anyway, build the box from whatever the user described, and say which name you did not recognise in a NOTE: line at the very end. Never quietly substitute a character you do know, and never fall back to a generic person.
 
@@ -279,7 +282,7 @@ function sourceFidelity(
     : "to something the user wrote, or to the established appearance of a subject they named by name";
   return `SOURCE FIDELITY
 - ${input}, and none of it is being withheld from you: it was never sent.
-- So do not write as though you remember one. Every element of your answer must trace back ${trace}. The last of those is not a loophole, it is a duty: a named character's canon is yours to supply in full.
+- So do not write as though you remember one. Every element of your answer must trace back ${trace}. The last of those is not a loophole: a named character's canon is yours to supply wherever the name alone would not carry it.
 - Do not invent a location, a time of day, weather, a wardrobe, a mood or a camera angle the user did not ask for. Where the idea is too thin to render without one, choose the plainest option that works and keep it to a few words.
 - Reproduce named things exactly. A bus stop is not a train platform, a phone box is not a phone. If the user names a place, an object or a piece of lettering, it survives into the prompt unchanged.
 - Named people, places and objects survive in full. Dropping a detail the user gave you is as wrong as inventing one they did not.
@@ -347,6 +350,8 @@ Include a tag only when it applies:
 - Text failures, whenever the image contains written words: garbled text, misspelled text.
 - Bleed kills on a multi-character scene: extra arms, the wrong bust size, the wrong eye colour.
 
+Never negate what nothing in this prompt invites. chibi, super deformed, sd, stubby hands, short fingers and mitten hands do not belong in the UC of an ordinary full size character, because none of it would happen. They earn a place only when something in the prompt pulls that way, such as a mascot or plush style, or a figure drawn tiny in a wide shot. The same holds for every tag: the test is whether it would show up without the negative, not whether it would be unwelcome.
+
 Do not pad. A tight list of five real risks beats a dump of thirty generic ones. Leave UC blank when the idea has no displaced canon, no lookalikes, no lettering and no framing risk.`;
 }
 
@@ -361,7 +366,7 @@ Then the natural language body, describing the scene as prose: who the focus is,
 
 Then, only if the image contains written words, a Text: sub-block: the literal word Text: on its own line, followed by the lettering to be rendered, written exactly as it should appear. A line break inside a string is a line break in the image. A blank line starts a separate string, which is how a second sign or a second speech bubble is written. Everything after Text: is treated as lettering, so it is always the last thing in BASE and nothing may follow it.
 
-Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe, then pose and placement in frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features spelled out. A section with nothing to say is simply left out.
+Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe, then pose and placement in frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features: spelled out for an original or little known character, and only where they differ from canon for a character V5 already knows. A section with nothing to say is simply left out.
 
 BASE:
 1girl, solo, <series>, <character>, high complexity, <framing>, <setting tags>
