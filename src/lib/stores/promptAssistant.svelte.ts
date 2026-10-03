@@ -18,6 +18,17 @@ import {
   callExternalLlm,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
+import { enhancerSessions } from "./enhancerSessions.svelte.js";
+import {
+  buildHistory,
+  estimateTokens,
+  withImageMarker,
+  LOCAL_CONTEXT_TOKENS,
+  REMOTE_CONTEXT_TOKENS,
+  RUST_SYSTEM_RESERVE_TOKENS,
+  type EnhancerFlow,
+  type HistoryBudget,
+} from "../utils/enhancerSession.js";
 import { cleanMusicWritingResponse, musicWritingProblems, musicWritingRequest } from "../utils/yue2Skill.js";
 import { musicEditRequest, validateMusicEdit, type MusicEditContext, type MusicEditProposal } from "../utils/musicEdit.js";
 import { musicReviewRequest, validateMusicReviewExplanation, type MusicReviewRecord } from "../utils/musicReview.js";
@@ -426,12 +437,32 @@ class PromptAssistantStore {
   ): Promise<string> {
     this.isGenerating = true;
     try {
+      const history = this.sessionHistory("enhance", {
+        systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
+        userText: prompt,
+        maxOutputTokens: 384,
+      });
       return await this.withStageListener(() =>
-        enhancePrompt(prompt, family, opts),
+        enhancePrompt(prompt, family, opts, history.messages),
       );
     } finally {
       this.isGenerating = false;
     }
+  }
+
+  /** Context the history has to share: the local model's `-c`, or the API allowance. */
+  private get historyContextTokens(): number {
+    return this.provider?.enabled ? REMOTE_CONTEXT_TOKENS : LOCAL_CONTEXT_TOKENS;
+  }
+
+  /** The flow's saved session, trimmed to fit, with the drop count published for the UI. */
+  private sessionHistory(flow: EnhancerFlow, budget: Omit<HistoryBudget, "contextTokens">) {
+    const built = buildHistory(enhancerSessions.turns(flow), {
+      ...budget,
+      contextTokens: this.historyContextTokens,
+    });
+    enhancerSessions.noteDropped(flow, built.droppedTurns);
+    return built;
   }
 
   /**
@@ -509,7 +540,7 @@ class PromptAssistantStore {
     prompt: string,
     ctx: H3PromptContext,
     firstFrameFilename?: string | null,
-  ): Promise<H3RewriteResult> {
+  ): Promise<H3RewriteResult & { sessionUser: string }> {
     const usesFirstFrame =
       ctx.taskType === "i2va" || ctx.taskType === "fl2va";
     const image = (usesFirstFrame && firstFrameFilename) || null;
@@ -527,12 +558,18 @@ class PromptAssistantStore {
           skill,
         );
         const user = idle ? h3IdleUserPrompt(prompt, ctx) : prompt;
+        const history = this.sessionHistory("h3", {
+          systemTokens: estimateTokens(system),
+          userText: user,
+          maxOutputTokens: H3_MAX_TOKENS,
+        });
+        const sessionUser = withImageMarker(prompt, image ? 1 : 0, "first-frame");
         const first = (
-          await callExternalLlm(system, user, H3_MAX_TOKENS, image)
+          await callExternalLlm(system, user, H3_MAX_TOKENS, image, null, history.messages)
         ).trim();
         const check = validate(first, ctx);
         if (check.ok || !check.rule) {
-          return { text: first, ok: check.ok, rule: check.rule, idle };
+          return { text: first, ok: check.ok, rule: check.rule, idle, sessionUser };
         }
         const second = (
           await callExternalLlm(
@@ -540,10 +577,12 @@ class PromptAssistantStore {
             h3RetryInstruction(check.rule, first),
             H3_MAX_TOKENS,
             image,
+            null,
+            history.messages,
           )
         ).trim();
         const recheck = validate(second, ctx);
-        if (recheck.ok) return { text: second, ok: true, rule: null, idle };
+        if (recheck.ok) return { text: second, ok: true, rule: null, idle, sessionUser };
         // Prefer whichever attempt produced something; the second can come back
         // empty when the model gives up on the correction.
         return {
@@ -551,6 +590,7 @@ class PromptAssistantStore {
           ok: false,
           rule: recheck.rule ?? check.rule,
           idle,
+          sessionUser,
         };
       });
     } finally {
@@ -610,52 +650,68 @@ class PromptAssistantStore {
     prompt: string,
     ctx: NaiPromptContext,
     referenceData: string[] = [],
-  ): Promise<NaiRewriteResult> {
+  ): Promise<NaiRewriteResult & { raw: string; sessionUser: string }> {
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
         const skill = await this.ensureNaiSkill(ctx);
-        const system = naiSystemWithSkill(naiRewriteSystemPrompt(ctx), skill);
         const user = naiUserPrompt(prompt, ctx);
+        const sessionSystem = naiSystemWithSkill(
+          naiRewriteSystemPrompt({ ...ctx, inSession: true }),
+          skill,
+        );
+        const history = this.sessionHistory("nai", {
+          systemTokens: estimateTokens(sessionSystem),
+          userText: user,
+          maxOutputTokens: NAI_MAX_TOKENS,
+        });
+        // The SESSION block only when history actually goes out: telling the
+        // model about earlier turns it cannot see would be the opposite lie.
+        const system =
+          history.sentTurns > 0
+            ? sessionSystem
+            : naiSystemWithSkill(naiRewriteSystemPrompt({ ...ctx, inSession: false }), skill);
+        // Saved without the pasted current prompt: the next turn sends that fresh.
+        const sessionUser = withImageMarker(prompt, referenceData.length, "reference");
 
         // Skill authoring above deliberately runs without the images: it asks
         // the model how it writes V5 prompts in general, and the answer is
         // cached per backend and variant, so feeding one user's references into
         // it would bias every later rewrite.
-        const first = normalizeNaiResponse(
-          parseNaiResponse(
-            await callExternalLlm(
-              system,
-              user,
-              NAI_MAX_TOKENS,
-              null,
-              referenceData,
-            ),
-          ),
+        const firstRaw = await callExternalLlm(
+          system,
+          user,
+          NAI_MAX_TOKENS,
+          null,
+          referenceData,
+          history.messages,
         );
+        const first = normalizeNaiResponse(parseNaiResponse(firstRaw));
         const problems = validateNaiResponse(first);
-        if (problems.length === 0) return { parsed: first, problems: [] };
+        if (problems.length === 0) {
+          return { parsed: first, problems: [], raw: firstRaw, sessionUser };
+        }
 
-        const second = normalizeNaiResponse(
-          parseNaiResponse(
-            await callExternalLlm(
-              system,
-              `${user}
+        const secondRaw = await callExternalLlm(
+          system,
+          `${user}
 
 ${naiRetryInstruction(problems)}`,
-              NAI_MAX_TOKENS,
-              null,
-              referenceData,
-            ),
-          ),
+          NAI_MAX_TOKENS,
+          null,
+          referenceData,
+          history.messages,
         );
+        const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
         const recheck = validateNaiResponse(second);
-        if (recheck.length === 0) return { parsed: second, problems: [] };
+        if (recheck.length === 0) {
+          return { parsed: second, problems: [], raw: secondRaw, sessionUser };
+        }
         // Prefer whichever attempt produced a base prompt; the second can come
         // back empty when the model gives up on the correction.
         return second.base.trim()
-          ? { parsed: second, problems: recheck }
-          : { parsed: first, problems };
+          ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser }
+          : { parsed: first, problems, raw: firstRaw, sessionUser };
       });
     } finally {
       this.isGenerating = false;
@@ -670,8 +726,13 @@ ${naiRetryInstruction(problems)}`,
   ): Promise<string> {
     this.isGenerating = true;
     try {
+      const history = this.sessionHistory("compose", {
+        systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
+        userText: description,
+        maxOutputTokens: 384,
+      });
       return await this.withStageListener(() =>
-        composePrompt(description, family, opts),
+        composePrompt(description, family, opts, history.messages),
       );
     } finally {
       this.isGenerating = false;

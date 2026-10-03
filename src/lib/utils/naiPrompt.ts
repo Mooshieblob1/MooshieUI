@@ -69,6 +69,12 @@ export interface NaiPromptContext {
    * is position, plus a name when there is one.
    */
   references: string[];
+  /**
+   * Whether earlier turns of this enhancer session are sent before this one.
+   * Adds the SESSION block, which overrides the blind-mode line saying the
+   * model cannot see any earlier rewrite.
+   */
+  inSession?: boolean;
 }
 
 /**
@@ -380,6 +386,18 @@ boy, <the same five sections>
 
 Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. BASE is required. Everything else is optional.`;
 
+function sessionDirective(inSession: boolean | undefined, existing: boolean): string {
+  if (!inSession) return "";
+  const current = existing
+    ? "- The user's current prompt is given in their message below. It is the current prompt and wins over your earlier answers, since they may have edited it by hand since."
+    : "- Treat your newest answer as the current prompt. A message that reads like a revision applies to it: change what it names and keep everything else.";
+  return `SESSION
+- Earlier turns of this session come before this message: the user's instructions and your answers to them. That overrides anything above saying you cannot see an earlier rewrite: your earlier rewrites are right there.
+${current}
+- A message that clearly starts something new starts fresh. Do not carry characters, settings or style over from earlier turns unless it asks for them.
+- Every answer is still a complete prompt in the output format, never a diff against an earlier answer.`;
+}
+
 /** The system turn for one rewrite. */
 export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
   return [
@@ -389,6 +407,7 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
     sourceFidelity(ctx.existing, ctx.references.length > 0),
+    sessionDirective(ctx.inSession, ctx.existing !== null),
     referenceDirective(ctx.references),
     naiLanguageDirective(ctx.language),
     OUTPUT_CONTRACT,
