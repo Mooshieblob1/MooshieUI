@@ -43,7 +43,12 @@ export interface NaiExistingPrompt {
 
 export interface NaiPromptContext {
   variant: NaiVariant;
-  /** `uc_preset` as sent, so the model knows which negatives are already covered. */
+  /**
+   * MooshieUI's stored `uc_preset` (0 Heavy, 1 Light, 2 Human Focus, 3 None),
+   * so the model knows which negatives are already covered. Not NovelAI's own
+   * numbering: `novelai/presets.rs` maps it to the preset text and to
+   * `tag_hint_uc_preset`.
+   */
   ucPreset: number;
   /**
    * How many character boxes the user already has open. Used when `existing` is
@@ -309,7 +314,9 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
 /**
  * Quality filler is never the model's job, whichever way the toggle is set.
  *
- * NovelAI prepends its own stack when the quality toggle is on, and the toggle
+ * The quality toggle appends NovelAI's own stack to the prompt (MooshieUI
+ * writes it into the request, as NovelAI's own client does; the server never
+ * adds it), and the toggle
  * is on by default, so writing the words as well doubles them and flattens the
  * image. With the toggle off the user has said they want no stack, which is
  * theirs to say and not the rewrite's to overrule.
@@ -338,7 +345,7 @@ function ucPresetDirective(ucPreset: number): string {
 The user has the undesired content preset set to None, so nothing is applied for them. Write a short undesired content list covering the obvious anatomy and artefact failures for this scene, plus any motif the user wants excluded. Still skip quality-stack negatives such as worst quality, lowres and jpeg artifacts.`;
   }
   return `UNDESIRED CONTENT
-The user is on the ${ucPresetName(ucPreset)} undesired content preset, so the generic quality, anatomy and artefact negatives are already applied server side. Write custom motif UC only. Empty UC is correct when there is nothing motif-specific to exclude.
+The user is on the ${ucPresetName(ucPreset)} undesired content preset, so the generic quality, anatomy and artefact negatives are already added to the UC automatically. Write custom motif UC only. Empty UC is correct when there is nothing motif-specific to exclude.
 
 Never repeat preset junk: lowres, worst quality, bad quality, jpeg artifacts, too many watermarks, logo, watermark, signature, username, blurry, scan artifacts, film grain, or greyscale/monochrome boilerplate.
 

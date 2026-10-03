@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 
+use super::presets::UcPreset;
 use super::prompt_syntax;
 
 /// The chunk NovelAI stamps its name into, and the value it writes.
@@ -164,11 +165,34 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
         // the preset text are folded into the captured prompt and UC as well;
         // the frontend import deals with that on the prompt side rather than
         // by forcing the panel's toggles off.
-        if let Some(quality) = comment.get("qualityToggle").and_then(string_of) {
+        //
+        // Current images carry the client's `tag_hint_*` fields, numbered by
+        // NovelAI's preset table rather than MooshieUI's, so they are mapped
+        // back. Older images carry `qualityToggle`/`ucPreset`, where the
+        // preset is an index into that model's own list: only 0 (Heavy) and
+        // 1 (Light) mean the same thing on every model, so anything past them
+        // leaves the panel alone rather than guess.
+        let quality = comment
+            .get("tag_hint_qt")
+            .and_then(|v| v.as_u64())
+            .map(|hint| (hint != 0).to_string())
+            .or_else(|| comment.get("qualityToggle").and_then(string_of));
+        if let Some(quality) = quality {
             params.insert("mooshie_novelai_quality_toggle".into(), quality);
         }
-        if let Some(preset) = comment.get("ucPreset").and_then(string_of) {
-            params.insert("mooshie_novelai_uc_preset".into(), preset);
+        let preset = match comment.get("tag_hint_uc_preset").and_then(|v| v.as_u64()) {
+            Some(hint) => UcPreset::from_tag_hint(hint),
+            None => match comment.get("ucPreset").and_then(|v| v.as_u64()) {
+                Some(0) => Some(UcPreset::Heavy),
+                Some(1) => Some(UcPreset::Light),
+                _ => None,
+            },
+        };
+        if let Some(preset) = preset {
+            params.insert(
+                "mooshie_novelai_uc_preset".into(),
+                preset.index().to_string(),
+            );
         }
     }
 
@@ -461,6 +485,52 @@ mod tests {
             "true"
         );
         assert_eq!(params.get("mooshie_novelai_uc_preset").unwrap(), "1");
+    }
+
+    #[test]
+    fn current_images_are_read_through_the_tag_hints() {
+        // As NovelAI's V5 sample images record them: Standard quality, Heavy
+        // UC. The hint table is NovelAI's (2 = heavy), the stored value is
+        // MooshieUI's (0 = Heavy).
+        for (hint, stored) in [(2, "0"), (3, "1"), (4, "2"), (0, "3")] {
+            let comment = serde_json::json!({
+                "prompt": "1girl",
+                "tag_hint_qt": 1,
+                "tag_hint_uc_preset": hint,
+            })
+            .to_string();
+            let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+            let params = parse_chunks(&map).expect("novelai chunks");
+            assert_eq!(params.get("mooshie_novelai_uc_preset").unwrap(), stored);
+            assert_eq!(
+                params.get("mooshie_novelai_quality_toggle").unwrap(),
+                "true"
+            );
+        }
+    }
+
+    #[test]
+    fn presets_with_no_mooshie_slot_leave_the_panel_alone() {
+        // 5 is Furry Focus; a legacy index past Light differs per model.
+        for comment in [
+            serde_json::json!({ "tag_hint_uc_preset": 5, "tag_hint_qt": 0 }),
+            serde_json::json!({ "ucPreset": 3 }),
+        ] {
+            let comment = comment.to_string();
+            let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+            let params = parse_chunks(&map).expect("novelai chunks");
+            assert!(
+                !params.contains_key("mooshie_novelai_uc_preset"),
+                "{comment}"
+            );
+        }
+        let comment = serde_json::json!({ "tag_hint_qt": 0 }).to_string();
+        let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+        let params = parse_chunks(&map).expect("novelai chunks");
+        assert_eq!(
+            params.get("mooshie_novelai_quality_toggle").unwrap(),
+            "false"
+        );
     }
 
     #[test]

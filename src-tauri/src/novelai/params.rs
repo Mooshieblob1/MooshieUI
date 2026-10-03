@@ -234,9 +234,13 @@ pub struct NovelAiParams {
     /// while the request body is built. See `payload::with_transparency`.
     #[serde(default)]
     pub transparent_background: bool,
+    /// Append the model's quality tags to the prompt. NovelAI's backend does
+    /// not do this from a flag; see `payload::with_quality_tags`.
     #[serde(default = "default_true")]
     pub quality_toggle: bool,
-    /// NovelAI's built-in undesired-content preset index.
+    /// Undesired-content preset in MooshieUI's numbering (0 Heavy, 1 Light,
+    /// 2 Human Focus, 3 None), written into the UC by
+    /// `payload::with_uc_preset`. See `presets::UcPreset`.
     #[serde(default)]
     pub uc_preset: u8,
     #[serde(default)]
