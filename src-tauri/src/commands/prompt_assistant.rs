@@ -122,10 +122,12 @@ async fn chat_any(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
     system: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
     user: &str,
     max_tokens: u32,
     images: &[crate::prompt_assistant::vision::VisionImage],
 ) -> Result<String, AppError> {
+    let history = crate::prompt_assistant::history::sanitize(history);
     // Before reading the key, not after: providers whose sign-in issues an
     // expiring token store it in the same field an API key lives in, so a
     // stale one would be read out and sent as a bearer credential. No-op for
@@ -155,6 +157,7 @@ async fn chat_any(
             &ext_key,
             &ext_model,
             system,
+            &history,
             user,
             max_tokens,
             images,
@@ -202,7 +205,7 @@ async fn chat_any(
 
     app.emit("llm:stage", "generating").ok();
     pa.server
-        .chat(&state.http_client, port, system, user, max_tokens)
+        .chat(&state.http_client, port, system, &history, user, max_tokens)
         .await
 }
 
@@ -211,6 +214,7 @@ async fn run_generation(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
     input: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
     family: &str,
     mode: GenMode,
     opts: &PromptAssistantOpts,
@@ -250,7 +254,7 @@ async fn run_generation(
         _ => 192,
     };
 
-    let raw = chat_any(app, state, &system, input, max_tokens, &[]).await?;
+    let raw = chat_any(app, state, &system, history, input, max_tokens, &[]).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
@@ -266,9 +270,20 @@ pub async fn enhance_prompt(
     prompt: String,
     family: String,
     opts: Option<PromptAssistantOpts>,
+    history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
 ) -> Result<String, AppError> {
     let opts = opts.unwrap_or_default();
-    run_generation(&app, &state, &prompt, &family, GenMode::Enhance, &opts).await
+    let history = history.unwrap_or_default();
+    run_generation(
+        &app,
+        &state,
+        &prompt,
+        &history,
+        &family,
+        GenMode::Enhance,
+        &opts,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -278,9 +293,20 @@ pub async fn compose_prompt(
     description: String,
     family: String,
     opts: Option<PromptAssistantOpts>,
+    history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
 ) -> Result<String, AppError> {
     let opts = opts.unwrap_or_default();
-    run_generation(&app, &state, &description, &family, GenMode::Compose, &opts).await
+    let history = history.unwrap_or_default();
+    run_generation(
+        &app,
+        &state,
+        &description,
+        &history,
+        &family,
+        GenMode::Compose,
+        &opts,
+    )
+    .await
 }
 
 /// Read the current external-provider settings without exposing the key.
@@ -416,6 +442,9 @@ pub async fn set_llm_xai_client(
 /// Both end up in one ordered list, filename first. Anything that goes wrong
 /// while fetching or encoding degrades to a turn without that image, because a
 /// rewrite written from the prompt alone beats an error dialog.
+// A Tauri command's parameters are its IPC argument names, so bundling them
+// into a struct would change the contract every caller uses.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn call_external_llm(
     app: AppHandle,
@@ -425,11 +454,16 @@ pub async fn call_external_llm(
     max_tokens: Option<u32>,
     image_filename: Option<String>,
     image_data: Option<Vec<String>>,
+    history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
 ) -> Result<String, AppError> {
     // Complete score edits need more room than short prompt rewrites. Existing
     // callers keep their requested budgets; the upper bound remains explicit.
     let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 16384);
     let images =
         crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data).await;
-    chat_any(&app, &state, &system, &prompt, max_tokens, &images).await
+    let history = history.unwrap_or_default();
+    chat_any(
+        &app, &state, &system, &history, &prompt, max_tokens, &images,
+    )
+    .await
 }

@@ -16,6 +16,12 @@ use crate::error::AppError;
 const LLAMA_RELEASE: &str = "b7100";
 const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download";
 
+/// Context window the bundled llama-server is started with. llama.cpp's
+/// default is 4096, which the NAI V5 system prompt alone exceeds and which
+/// leaves no room for a persistent enhancer session. The frontend's
+/// `LOCAL_CONTEXT_TOKENS` in `enhancerSession.ts` must match.
+pub const LOCAL_CONTEXT_TOKENS: u32 = 16384;
+
 /// SHA-256 of every `LLAMA_RELEASE` asset [`assets_for`] can pick. The binary
 /// is executed, so a download that does not match is never extracted. Bumping
 /// `LLAMA_RELEASE` means replacing every entry; an asset missing from here is
@@ -365,6 +371,8 @@ impl LlamaServer {
             .arg("-ngl")
             .arg(n_gpu_layers.to_string())
             .arg("--no-webui")
+            .arg("-c")
+            .arg(LOCAL_CONTEXT_TOKENS.to_string())
             // Passed through the environment rather than `--api-key`: another
             // local account can read a process's command line, but not its
             // environment. llama-server reads `LLAMA_API_KEY` as `--api-key`.
@@ -439,6 +447,7 @@ impl LlamaServer {
         client: &reqwest::Client,
         port: u16,
         system: &str,
+        history: &[super::history::ChatMessage],
         user: &str,
         max_tokens: u32,
     ) -> Result<String, AppError> {
@@ -464,10 +473,7 @@ impl LlamaServer {
         self.touch();
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
         let body = json!({
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user }
-            ],
+            "messages": super::history::openai_messages(system, history, json!(user)),
             "temperature": 0.7,
             "max_tokens": max_tokens,
             "stream": false
@@ -667,6 +673,7 @@ pub async fn chat_external(
     api_key: &str,
     model: &str,
     system: &str,
+    history: &[super::history::ChatMessage],
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
@@ -692,10 +699,7 @@ pub async fn chat_external(
     };
     let body = json!({
         "model": model,
-        "messages": [
-            { "role": "system", "content": system },
-            { "role": "user", "content": user_content }
-        ],
+        "messages": super::history::openai_messages(system, history, user_content),
         "temperature": 0.7,
         "max_tokens": max_tokens,
         "stream": false
@@ -922,6 +926,7 @@ pub async fn chat_anthropic(
     api_key: &str,
     model: &str,
     system: &str,
+    history: &[super::history::ChatMessage],
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
@@ -958,7 +963,7 @@ pub async fn chat_anthropic(
         "max_tokens": max_tokens,
         "system": system,
         "temperature": 0.7,
-        "messages": [ { "role": "user", "content": user_content } ]
+        "messages": super::history::anthropic_messages(history, user_content)
     });
     let timeout = chat_timeout(!images.is_empty());
     let resp = client
@@ -1039,6 +1044,7 @@ pub async fn chat_provider(
     api_key: &str,
     model: &str,
     system: &str,
+    history: &[super::history::ChatMessage],
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
@@ -1046,11 +1052,13 @@ pub async fn chat_provider(
     let base = super::providers::effective_base_url(provider_id, base_url);
     match super::providers::wire_for(provider_id) {
         super::providers::Wire::Companion => {
-            super::companion::chat(provider_id, model, system, user, images, None).await
+            // One text turn per request, so the session is written into it.
+            let user = super::history::single_turn_text(history, user);
+            super::companion::chat(provider_id, model, system, &user, images, None).await
         }
         super::providers::Wire::Anthropic => {
             chat_anthropic(
-                client, &base, api_key, model, system, user, max_tokens, images,
+                client, &base, api_key, model, system, history, user, max_tokens, images,
             )
             .await
         }
@@ -1062,7 +1070,7 @@ pub async fn chat_provider(
                 ));
             }
             chat_external(
-                client, &base, api_key, model, system, user, max_tokens, images,
+                client, &base, api_key, model, system, history, user, max_tokens, images,
             )
             .await
         }
@@ -1485,7 +1493,7 @@ mod hardening_tests {
         // Nothing is listening and no port is published: the check must fail
         // before any connection is attempted, and release its in-flight slot.
         let err = server
-            .chat(&reqwest::Client::new(), 9, "s", "u", 16)
+            .chat(&reqwest::Client::new(), 9, "s", &[], "u", 16)
             .await
             .unwrap_err()
             .to_string();

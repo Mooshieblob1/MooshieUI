@@ -5711,6 +5711,7 @@ async fn dispatch_command(
             };
             let length = args["opts"]["length"].as_str().map(|s| s.to_string());
             let include_artists = args["opts"]["include_artists"].as_bool().unwrap_or(false);
+            let history = crate::prompt_assistant::history::history_from_args(&args["history"]);
 
             match args["requestId"].as_str() {
                 // Browser mode delivers the result asynchronously over SSE.
@@ -5726,6 +5727,7 @@ async fn dispatch_command(
                         let (event, payload) = match run_prompt_assistant_headless(
                             &state,
                             &input,
+                            &history,
                             &family,
                             mode,
                             length.as_deref(),
@@ -5759,6 +5761,7 @@ async fn dispatch_command(
                     let result = run_prompt_assistant_headless(
                         &state,
                         &input,
+                        &history,
                         &family,
                         mode,
                         length.as_deref(),
@@ -5920,6 +5923,7 @@ async fn dispatch_command(
                 }),
             )
             .await;
+            let history = crate::prompt_assistant::history::history_from_args(&args["history"]);
 
             match args["requestId"].as_str() {
                 // Same SSE hand-off as enhance/compose: a long rewrite would
@@ -5930,34 +5934,36 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) =
-                            match chat_any_headless(&state, &system, &prompt, max_tokens, &images)
-                                .await
-                            {
-                                Ok(text) => (
-                                    "llm:result",
-                                    serde_json::json!({
-                                        "request_id": request_id,
-                                        "result": text,
-                                        "_target_user": owner,
-                                    }),
-                                ),
-                                Err(e) => (
-                                    "llm:error",
-                                    serde_json::json!({
-                                        "request_id": request_id,
-                                        "error": e,
-                                        "_target_user": owner,
-                                    }),
-                                ),
-                            };
+                        let (event, payload) = match chat_any_headless(
+                            &state, &system, &history, &prompt, max_tokens, &images,
+                        )
+                        .await
+                        {
+                            Ok(text) => (
+                                "llm:result",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "result": text,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                            Err(e) => (
+                                "llm:error",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "error": e,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                        };
                         state.broadcast(event, payload);
                     });
                     Ok(serde_json::json!({ "queued": true }))
                 }
                 None => {
                     let text =
-                        chat_any_headless(&state, &system, &prompt, max_tokens, &images).await?;
+                        chat_any_headless(&state, &system, &history, &prompt, max_tokens, &images)
+                            .await?;
                     Ok(serde_json::Value::String(text))
                 }
             }
@@ -6479,11 +6485,13 @@ async fn run_interrogation_headless(
 pub async fn chat_any_headless(
     state: &Arc<AppState>,
     system: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
     user: &str,
     max_tokens: u32,
     images: &[crate::prompt_assistant::vision::VisionImage],
 ) -> Result<String, String> {
     use crate::prompt_assistant::hardware;
+    let history = crate::prompt_assistant::history::sanitize(history);
 
     // Same reason as the desktop path: an OAuth provider parks its access token
     // in the API-key field, so it has to be renewed before the read below
@@ -6513,6 +6521,7 @@ pub async fn chat_any_headless(
             &ext_key,
             &ext_model,
             system,
+            &history,
             user,
             max_tokens,
             images,
@@ -6567,7 +6576,7 @@ pub async fn chat_any_headless(
     state
         .prompt_assistant
         .server
-        .chat(&state.http_client, port, system, user, max_tokens)
+        .chat(&state.http_client, port, system, &history, user, max_tokens)
         .await
         .map_err(|e| e.to_string())
 }
@@ -6576,6 +6585,7 @@ pub async fn chat_any_headless(
 pub async fn run_prompt_assistant_headless(
     state: &Arc<AppState>,
     input: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
     family: &str,
     mode: crate::prompt_assistant::grounding::GenMode,
     length: Option<&str>,
@@ -6621,7 +6631,7 @@ pub async fn run_prompt_assistant_headless(
         Some("detailed") => 384,
         _ => 192,
     };
-    let raw = chat_any_headless(state, &system, input, max_tokens, &[]).await?;
+    let raw = chat_any_headless(state, &system, history, input, max_tokens, &[]).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose. The desktop path runs this too;
