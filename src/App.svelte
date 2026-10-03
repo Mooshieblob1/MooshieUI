@@ -1871,6 +1871,7 @@
       metadata.mooshie_novelai_transparent_background = String(nai.transparent_background);
       metadata.mooshie_novelai_use_coords = String(nai.use_coords);
       metadata.mooshie_novelai_quality_toggle = String(nai.quality_toggle);
+      metadata.mooshie_novelai_quality_preset = String(nai.quality_preset);
       metadata.mooshie_novelai_uc_preset = String(nai.uc_preset);
       metadata.mooshie_novelai_legacy_uc = String(nai.legacy_uc);
       if (params.mode !== "txt2img") {

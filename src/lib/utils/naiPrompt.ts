@@ -43,7 +43,12 @@ export interface NaiExistingPrompt {
 
 export interface NaiPromptContext {
   variant: NaiVariant;
-  /** `uc_preset` as sent, so the model knows which negatives are already covered. */
+  /**
+   * MooshieUI's stored `uc_preset` (0 Heavy, 1 Light, 2 Human Focus, 3 None,
+   * 4 Furry Focus), so the model knows which negatives are already covered.
+   * Not NovelAI's own numbering: `novelai/presets.rs` maps it to the preset
+   * text and to `tag_hint_uc_preset`.
+   */
   ucPreset: number;
   /**
    * How many character boxes the user already has open. Used when `existing` is
@@ -111,7 +116,7 @@ export const NAI_VARIANT_BUDGET: Record<NaiVariant, number> = {
 export const NAI_MAX_TOKENS = 2400;
 
 /**
- * The quality stack NovelAI prepends itself, named so the model can avoid it.
+ * The quality stack the toggle appends, named so the model can avoid it.
  *
  * Matches the V5 quality-toggle vocabulary plus the usual aesthetic filler
  * models still emit. Never paste any of these: the toggle owns them.
@@ -315,9 +320,10 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
 /**
  * Quality filler is never the model's job, whichever way the toggle is set.
  *
- * NovelAI prepends its own stack when the quality toggle is on, and the toggle
- * is on by default, so writing the words as well doubles them and flattens the
- * image. With the toggle off the user has said they want no stack, which is
+ * The quality toggle appends NovelAI's own stack to the prompt (MooshieUI
+ * writes it into the request, as NovelAI's own client does; the server never
+ * adds it), and the toggle is on by default, so writing the words as well
+ * doubles them and flattens the image. With the toggle off the user has said they want no stack, which is
  * theirs to say and not the rewrite's to overrule.
  */
 const QUALITY_TAGS = `QUALITY TAGS
@@ -333,6 +339,8 @@ function ucPresetName(ucPreset: number): string {
       return "Human Focus";
     case 3:
       return "None";
+    case 4:
+      return "Furry Focus";
     default:
       return "default";
   }
@@ -348,6 +356,8 @@ function ucPresetTags(ucPreset: number): string {
       return "lowres, bad hands, bad anatomy, artistic error, sepia, white haze, worst quality, very displeasing, jpeg artifacts";
     case 2:
       return `${HEAVY_UC}, bad anatomy, mismatched pupils, glowing eyes`;
+    case 4:
+      return "worst quality, distracting watermark, unfinished, bad quality, widescreen, upscale, sequence, grandfathered content, blurred foreground, chromatic aberration, sketch, everyone, sketch background, simple, flat colors, ych (character), outline, multiple scenes, horror (theme), comic";
     default:
       return HEAVY_UC;
   }

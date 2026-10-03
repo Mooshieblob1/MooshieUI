@@ -221,6 +221,7 @@ function applyNovelAiSettings(meta: Record<string, string>, withCharacters = tru
   const numbers: [string, keyof NovelAiSettings][] = [
     ["mooshie_novelai_cfg_rescale", "cfg_rescale"],
     ["mooshie_novelai_uncond_scale", "uncond_scale"],
+    ["mooshie_novelai_quality_preset", "quality_preset"],
     ["mooshie_novelai_uc_preset", "uc_preset"],
     ["mooshie_novelai_strength", "strength"],
     ["mooshie_novelai_noise", "noise"],

@@ -8,6 +8,7 @@ use serde_json::{json, Map, Value};
 
 use super::models::{self, NovelAiModel};
 use super::params::{NovelAiCharacter, NovelAiParams};
+use super::presets::{self, QualityPreset, UcPreset};
 use super::reference_canvas;
 
 /// The generic half of a generation, extracted from `GenerationParams`.
@@ -36,14 +37,25 @@ pub fn build(
     model: &NovelAiModel,
 ) -> Result<Value, String> {
     let action = normalise_action(&nai.action, input);
-    // Own-line first, transparency second, text third, so the `Text:` block
-    // ends up last and on its own line: the API wants it at the very end of
-    // the prompt, after every tag, and reads `, Text:` as a comma to render.
+    // Own-line first, then transparency, quality and text, so the `Text:`
+    // block ends up last and on its own line: the API wants it at the very end
+    // of the prompt, after every tag, and reads `, Text:` as a comma to render.
+    // Transparency before quality is the order NovelAI's client writes them.
     let positive_prompt = text_block_on_own_line(&input.positive_prompt);
     let positive_prompt = without_artist_prefixes(&positive_prompt);
     let positive_prompt = with_transparency(&positive_prompt, nai, model);
+    let quality = nai
+        .quality_toggle
+        .then(|| presets::quality_tags(model, QualityPreset::from_index(nai.quality_preset)))
+        .flatten();
+    let positive_prompt = with_quality_tags(&positive_prompt, quality.map(|(_, tags)| tags));
+    let (uc_preset, negative_prompt) = with_uc_preset(
+        &strip_artist_prefixes(&input.negative_prompt),
+        &positive_prompt,
+        nai,
+        model,
+    );
     let positive_prompt = with_text_blocks(&positive_prompt, model);
-    let negative_prompt = strip_artist_prefixes(&input.negative_prompt);
     let mut parameters = Map::new();
 
     parameters.insert("params_version".into(), json!(model.params_version));
@@ -54,8 +66,16 @@ pub fn build(
     parameters.insert("steps".into(), json!(input.steps));
     parameters.insert("n_samples".into(), json!(input.n_samples.clamp(1, 8)));
     parameters.insert("seed".into(), json!(input.seed));
-    parameters.insert("ucPreset".into(), json!(nai.uc_preset));
-    parameters.insert("qualityToggle".into(), json!(nai.quality_toggle));
+    // Hints only: the text they name is already in the prompt and UC above.
+    // NovelAI's client sends these in place of the old `ucPreset` and
+    // `qualityToggle`, which the backend never expanded.
+    // Both name the preset that applied, which on an older model can be the
+    // fallback rather than the one picked.
+    parameters.insert(
+        "tag_hint_qt".into(),
+        json!(quality.map_or(presets::QUALITY_HINT_NONE, |(preset, _)| preset.tag_hint())),
+    );
+    parameters.insert("tag_hint_uc_preset".into(), json!(uc_preset.tag_hint()));
     parameters.insert(
         "dynamic_thresholding".into(),
         json!(nai.dynamic_thresholding),
@@ -196,21 +216,79 @@ fn with_transparency(prompt: &str, nai: &NovelAiParams, model: &NovelAiModel) ->
     if prompt.to_lowercase().contains("transparent background") {
         return prompt.to_string();
     }
-    // The tag joins the tag list, never the lettering: a user-written `Text:`
-    // block must stay the last thing in the prompt, so the tag goes in front
-    // of it.
+    append_before_text_block(prompt, TRANSPARENCY_TAG)
+}
+
+/// Append tags to the tag list, never the lettering: a user-written `Text:`
+/// block must stay the last thing in the prompt, so the tags go in front of
+/// it. A trailing comma on the tag list is folded into the join.
+fn append_before_text_block(prompt: &str, tags: &str) -> String {
     let (head, text) = split_text_block(prompt);
     let trimmed = head.trim_end().trim_end_matches(',').trim_end();
-    let tags = if trimmed.is_empty() {
-        TRANSPARENCY_TAG.to_string()
+    let joined = if trimmed.is_empty() {
+        tags.to_string()
     } else {
-        format!("{trimmed}, {TRANSPARENCY_TAG}")
+        format!("{trimmed}, {tags}")
     };
     if text.is_empty() {
-        tags
+        joined
     } else {
-        format!("{tags}\n{text}")
+        format!("{joined}\n{text}")
     }
+}
+
+/// Append the quality tags of the chosen preset, if any.
+///
+/// NovelAI's backend ignores the setting; its client writes the tags into the
+/// prompt itself, as `prompt, very aesthetic, masterpiece, no text` for V5
+/// Standard, and ahead of any `Text:` section. A prompt that already carries
+/// the exact stack (one pasted back from a NovelAI image, say) is left as it
+/// is rather than given a second copy.
+fn with_quality_tags(prompt: &str, tags: Option<&str>) -> String {
+    let Some(tags) = tags else {
+        return prompt.to_string();
+    };
+    let (head, _) = split_text_block(prompt);
+    if head.to_lowercase().contains(tags) {
+        return prompt.to_string();
+    }
+    append_before_text_block(prompt, tags)
+}
+
+/// Prepend the undesired-content preset to the user's UC, the way NovelAI's
+/// client does before sending (the backend does not expand the preset).
+///
+/// On a Full model the client also leads with `nsfw` whenever a preset is on
+/// and the prompt does not ask for NSFW content; Curated is SFW already. The
+/// preset that actually applied comes back too, because a model without the
+/// chosen preset falls back to another and the tag hint has to name that one.
+fn with_uc_preset(
+    negative: &str,
+    prompt: &str,
+    nai: &NovelAiParams,
+    model: &NovelAiModel,
+) -> (UcPreset, String) {
+    let (preset, prefix) = presets::uc_preset(model, UcPreset::from_index(nai.uc_preset));
+    let Some(prefix) = prefix else {
+        return (preset, negative.to_string());
+    };
+    let negative = negative.trim();
+    // Same courtesy as the quality tags: a UC pasted back from a NovelAI image
+    // already starts with the preset.
+    let mut uc = if negative.contains(prefix) {
+        negative.to_string()
+    } else if negative.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}, {negative}")
+    };
+    if presets::guards_nsfw(model)
+        && !prompt.to_lowercase().contains("nsfw")
+        && !uc.to_lowercase().contains("nsfw")
+    {
+        uc = format!("nsfw, {uc}");
+    }
+    (preset, uc)
 }
 
 /// Split a prompt at the first `Text:` label that starts a line. The tail
@@ -556,7 +634,10 @@ mod tests {
             action: "generate".into(),
             noise_schedule: "karras".into(),
             uncond_scale: 1.0,
-            quality_toggle: true,
+            // Both off, so every other test sees the prompts it wrote. The
+            // composition has its own tests below.
+            quality_toggle: false,
+            uc_preset: 3,
             add_original_image: true,
             strength: 0.7,
             ..Default::default()
@@ -1219,6 +1300,255 @@ mod tests {
         assert_eq!(uc["char_caption"], "wlop");
         assert_eq!(p["characterPrompts"][0]["prompt"], "1girl, as109");
         assert_eq!(p["characterPrompts"][0]["uc"], "wlop");
+    }
+
+    fn presets_on(uc_preset: u8) -> NovelAiParams {
+        NovelAiParams {
+            quality_toggle: true,
+            uc_preset,
+            ..nai()
+        }
+    }
+
+    const V5_HEAVY: &str = "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
+
+    #[test]
+    fn v5_standard_quality_and_heavy_uc_match_the_official_client() {
+        // The exact composition NovelAI's client sends for V5, Quality:
+        // Standard + UC: Heavy, as recorded in its signed sample images.
+        let mut i = input();
+        i.negative_prompt = String::new();
+        let body = build(&i, &presets_on(0), v5()).unwrap();
+        let p = &body["parameters"];
+        let prompt = "1girl, solo, very aesthetic, masterpiece, no text";
+        assert_eq!(body["input"], prompt);
+        assert_eq!(p["v4_prompt"]["caption"]["base_caption"], prompt);
+        let uc = format!("nsfw, {V5_HEAVY}");
+        assert_eq!(p["negative_prompt"], uc.as_str());
+        assert_eq!(
+            p["v4_negative_prompt"]["caption"]["base_caption"],
+            uc.as_str()
+        );
+        assert_eq!(p["tag_hint_qt"], 1);
+        assert_eq!(p["tag_hint_uc_preset"], 2);
+        // The flags NovelAI's backend never expanded are gone.
+        assert!(p.get("ucPreset").is_none());
+        assert!(p.get("qualityToggle").is_none());
+    }
+
+    #[test]
+    fn the_preset_leads_the_users_own_uc() {
+        let body = build(&input(), &presets_on(0), v5()).unwrap();
+        assert_eq!(
+            body["parameters"]["negative_prompt"],
+            format!("nsfw, {V5_HEAVY}, lowres")
+        );
+    }
+
+    #[test]
+    fn each_v5_preset_maps_to_its_text_and_tag_hint() {
+        for (stored, hint, ends) in [
+            (1, 3, "very displeasing, jpeg artifacts, 0::ai-generated::"),
+            (2, 4, "@_@, mismatched pupils, glowing eyes, bad anatomy"),
+            (4, 5, "multiple scenes, [[horror (theme)]], comic"),
+        ] {
+            let mut i = input();
+            i.negative_prompt = String::new();
+            let p = &build(&i, &presets_on(stored), v5()).unwrap()["parameters"];
+            assert!(
+                p["negative_prompt"].as_str().unwrap().ends_with(ends),
+                "{stored}"
+            );
+            assert_eq!(p["tag_hint_uc_preset"], hint, "{stored}");
+        }
+    }
+
+    #[test]
+    fn furry_focus_leads_the_uc_on_v45_and_falls_back_to_heavy_on_v4() {
+        let mut i = input();
+        i.negative_prompt = String::new();
+        let p = &build(&i, &presets_on(4), v45()).unwrap()["parameters"];
+        assert!(p["negative_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("nsfw, {worst quality}, distracting watermark"));
+        assert_eq!(p["tag_hint_uc_preset"], 5);
+
+        let v4 = models::find("nai-diffusion-4-full").unwrap();
+        let p = &build(&i, &presets_on(4), v4).unwrap()["parameters"];
+        assert!(p["negative_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("nsfw, blurry, lowres, error, film grain"));
+        assert_eq!(p["tag_hint_uc_preset"], 2);
+    }
+
+    #[test]
+    fn light_quality_tags_on_v5() {
+        let mut n = presets_on(3);
+        n.quality_preset = 1;
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, solo, very aesthetic, amazing quality, no text"
+        );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 3);
+    }
+
+    #[test]
+    fn light_quality_falls_back_to_standard_before_v5() {
+        let mut n = presets_on(3);
+        n.quality_preset = 1;
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, solo, very aesthetic, masterpiece, no text"
+        );
+        // The hint names the stack that was actually written.
+        assert_eq!(body["parameters"]["tag_hint_qt"], 1);
+    }
+
+    #[test]
+    fn quality_off_ignores_the_preset() {
+        let mut n = presets_on(3);
+        n.quality_toggle = false;
+        n.quality_preset = 1;
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(body["input"], "1girl, solo");
+        assert_eq!(body["parameters"]["tag_hint_qt"], 0);
+    }
+
+    #[test]
+    fn none_and_quality_off_leave_the_prompts_alone() {
+        let body = build(&input(), &nai(), v5()).unwrap();
+        let p = &body["parameters"];
+        assert_eq!(body["input"], "1girl, solo");
+        assert_eq!(p["negative_prompt"], "lowres");
+        assert_eq!(p["tag_hint_qt"], 0);
+        assert_eq!(p["tag_hint_uc_preset"], 0);
+    }
+
+    #[test]
+    fn curated_gets_the_preset_without_the_nsfw_guard() {
+        let curated = models::find("nai-diffusion-5-curated").unwrap();
+        let mut i = input();
+        i.negative_prompt = String::new();
+        let body = build(&i, &presets_on(0), curated).unwrap();
+        assert_eq!(body["parameters"]["negative_prompt"], V5_HEAVY);
+    }
+
+    #[test]
+    fn a_prompt_asking_for_nsfw_drops_the_guard() {
+        let mut i = input();
+        i.positive_prompt = "1girl, NSFW".into();
+        i.negative_prompt = String::new();
+        let body = build(&i, &presets_on(0), v5()).unwrap();
+        assert_eq!(body["parameters"]["negative_prompt"], V5_HEAVY);
+    }
+
+    #[test]
+    fn quality_tags_go_before_a_manual_text_block() {
+        let mut i = input();
+        i.positive_prompt = "1girl, rain,\nText:\nMumei\n\nHello".into();
+        let body = build(&i, &presets_on(3), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, rain, very aesthetic, masterpiece, no text\nText:\nMumei\n\nHello"
+        );
+    }
+
+    #[test]
+    fn quality_tags_land_before_an_auto_text_block() {
+        // NovelAI's client runs auto-text after the quality pass, so the
+        // lettering stays last.
+        let mut i = input();
+        i.positive_prompt = "sign saying \"hello\"".into();
+        let body = build(&i, &presets_on(3), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "sign saying \"hello\", very aesthetic, masterpiece, no text\nText: hello"
+        );
+    }
+
+    #[test]
+    fn quality_tags_follow_the_transparency_tag() {
+        let mut n = presets_on(3);
+        n.transparent_background = true;
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, solo, 2.1::transparent background::, very aesthetic, masterpiece, no text"
+        );
+    }
+
+    #[test]
+    fn quality_tags_survive_an_empty_prompt_and_are_not_doubled() {
+        let mut i = input();
+        i.positive_prompt = String::new();
+        assert_eq!(
+            build(&i, &presets_on(3), v5()).unwrap()["input"],
+            "very aesthetic, masterpiece, no text"
+        );
+
+        i.positive_prompt = "1girl, very aesthetic, masterpiece, no text".into();
+        assert_eq!(
+            build(&i, &presets_on(3), v5()).unwrap()["input"],
+            "1girl, very aesthetic, masterpiece, no text"
+        );
+    }
+
+    #[test]
+    fn a_uc_already_carrying_the_preset_is_not_doubled() {
+        let mut i = input();
+        i.negative_prompt = format!("nsfw, {V5_HEAVY}, hat");
+        let body = build(&i, &presets_on(0), v5()).unwrap();
+        assert_eq!(
+            body["parameters"]["negative_prompt"],
+            format!("nsfw, {V5_HEAVY}, hat")
+        );
+    }
+
+    #[test]
+    fn older_models_get_their_own_text() {
+        let v4 = models::find("nai-diffusion-4-full").unwrap();
+        let mut i = input();
+        i.negative_prompt = String::new();
+        // V4 Full has no Human Focus preset; the client falls back to Heavy,
+        // and the tag hint names the preset that applied.
+        let body = build(&i, &presets_on(2), v4).unwrap();
+        let p = &body["parameters"];
+        assert_eq!(
+            body["input"],
+            "1girl, solo, no text, best quality, very aesthetic, absurdres"
+        );
+        assert!(p["negative_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("nsfw, blurry, lowres, error, film grain"));
+        assert_eq!(p["tag_hint_uc_preset"], 2);
+
+        let body = build(&i, &presets_on(1), v45()).unwrap();
+        assert_eq!(
+            body["parameters"]["negative_prompt"],
+            "nsfw, lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page"
+        );
+    }
+
+    #[test]
+    fn character_negatives_do_not_get_the_preset() {
+        let mut n = presets_on(0);
+        n.characters = vec![NovelAiCharacter {
+            prompt: "girl".into(),
+            negative_prompt: "hat".into(),
+            enabled: true,
+            ..Default::default()
+        }];
+        let p = &build(&input(), &n, v5()).unwrap()["parameters"];
+        assert_eq!(
+            p["v4_negative_prompt"]["caption"]["char_captions"][0]["char_caption"],
+            "hat"
+        );
+        assert_eq!(p["characterPrompts"][0]["uc"], "hat");
     }
 
     #[test]

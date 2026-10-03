@@ -16,6 +16,7 @@ pub mod metadata;
 pub mod models;
 pub mod params;
 pub mod payload;
+pub mod presets;
 pub mod prompt_syntax;
 pub mod reference_canvas;
 pub mod response;

@@ -12,10 +12,52 @@
   import { models } from "../../stores/models.svelte.js";
   import NovelAiReferences from "./NovelAiReferences.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import {
+    NAI_QUALITY_LIGHT,
+    NAI_QUALITY_STANDARD,
+    effectiveNovelAiQualityPreset,
+    effectiveNovelAiUcPreset,
+  } from "../../utils/novelaiModels.js";
 
-  const UC_PRESETS = [0, 1, 2, 3];
+  type QualityChoice = "standard" | "light" | "none";
+
+  // The quality label carries an InfoTip button, and a <label> names its first
+  // labelable descendant, so the select is tied to it by id instead.
+  const uid = $props.id();
+  const qualitySelectId = `${uid}-quality`;
 
   const nai = $derived(generation.novelaiSettings);
+  const novelAiModel = $derived(generation.novelAiModel);
+
+  /**
+   * Only the presets this model has are listed, and each dropdown shows the one
+   * that will actually be sent. The stored pick is left alone, so Light or Furry
+   * Focus come back when the user returns to a model that offers them.
+   */
+  const qualityChoices = $derived<QualityChoice[]>(
+    novelAiModel?.lightQuality ? ["standard", "light", "none"] : ["standard", "none"],
+  );
+  const qualityChoice = $derived<QualityChoice>(
+    !nai.quality_toggle
+      ? "none"
+      : effectiveNovelAiQualityPreset(novelAiModel, nai.quality_preset) === NAI_QUALITY_LIGHT
+        ? "light"
+        : "standard",
+  );
+  const ucPresets = $derived(novelAiModel?.ucPresets ?? []);
+  const ucPreset = $derived(effectiveNovelAiUcPreset(novelAiModel, nai.uc_preset));
+
+  /** One dropdown over two stored fields: the on/off toggle and the stack. */
+  function pickQuality(choice: QualityChoice) {
+    if (choice === "none") {
+      generation.updateNovelAiSettings({ quality_toggle: false });
+      return;
+    }
+    generation.updateNovelAiSettings({
+      quality_toggle: true,
+      quality_preset: choice === "light" ? NAI_QUALITY_LIGHT : NAI_QUALITY_STANDARD,
+    });
+  }
   const postProcessArmed = $derived(generation.upscaleEnabled || generation.facefixEnabled);
 
   /**
@@ -76,25 +118,33 @@
       {locale.t("generation.novelai.advanced.title")}
     </span>
 
-    <label class="flex items-center gap-2 text-xs text-neutral-300">
-      <input
-        type="checkbox"
-        class="accent-indigo-500"
-        checked={nai.quality_toggle}
-        onchange={(e) => generation.updateNovelAiSettings({ quality_toggle: e.currentTarget.checked })}
-      />
-      {locale.t("generation.novelai.advanced.quality_toggle")}
-      <InfoTip text={locale.t("generation.novelai.advanced.quality_toggle_desc")} />
-    </label>
+    <div class="text-[11px] text-neutral-500">
+      <span class="flex items-center gap-2">
+        <label for={qualitySelectId}>{locale.t("generation.novelai.advanced.quality_toggle")}</label>
+        <InfoTip text={locale.t("generation.novelai.advanced.quality_toggle_desc")} />
+      </span>
+      <select
+        id={qualitySelectId}
+        class="mt-1 w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
+        value={qualityChoice}
+        onchange={(e) => pickQuality(e.currentTarget.value as QualityChoice)}
+      >
+        {#each qualityChoices as choice (choice)}
+          <option value={choice}>
+            {locale.t(`generation.novelai.advanced.quality_preset_${choice}`)}
+          </option>
+        {/each}
+      </select>
+    </div>
 
     <label class="block text-[11px] text-neutral-500">
       {locale.t("generation.novelai.advanced.uc_preset")}
       <select
         class="mt-1 w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
-        value={String(nai.uc_preset)}
+        value={String(ucPreset)}
         onchange={(e) => generation.updateNovelAiSettings({ uc_preset: Number(e.currentTarget.value) })}
       >
-        {#each UC_PRESETS as preset (preset)}
+        {#each ucPresets as preset (preset)}
           <option value={String(preset)}>
             {locale.t(`generation.novelai.advanced.uc_preset_${preset}`)}
           </option>
