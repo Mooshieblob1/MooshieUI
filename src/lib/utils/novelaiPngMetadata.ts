@@ -106,6 +106,47 @@ function parseCharacters(comment: any): string | undefined {
   return JSON.stringify(characters);
 }
 
+/** NovelAI's `tag_hint_*` id -> MooshieUI's stored `uc_preset`. */
+const UC_PRESET_FROM_HINT: Record<number, number> = { 0: 3, 2: 0, 3: 1, 4: 2, 5: 4 };
+/** NovelAI's `tag_hint_qt` id -> MooshieUI's stored `quality_preset`. */
+const QUALITY_PRESET_FROM_HINT: Record<number, number> = { 1: 0, 3: 1 };
+
+/**
+ * The quality and UC preset settings an image records, in MooshieUI's own
+ * numbering. Mirrors `novelai/metadata.rs`.
+ *
+ * Current images carry the client's `tag_hint_*` fields, numbered by NovelAI's
+ * shared preset table, so they are mapped back. Older images carry
+ * `qualityToggle`/`ucPreset`, where the preset is an index into that model's
+ * own list: only 0 (Heavy) and 1 (Light) mean the same thing on every model, so
+ * anything past them leaves the panel alone rather than guess.
+ */
+function novelAiPresetSettings(comment: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  const qualityHint = comment.tag_hint_qt;
+  if (typeof qualityHint === "number") {
+    if (qualityHint === 0) {
+      out.mooshie_novelai_quality_toggle = "false";
+    } else if (QUALITY_PRESET_FROM_HINT[qualityHint] !== undefined) {
+      out.mooshie_novelai_quality_toggle = "true";
+      out.mooshie_novelai_quality_preset = String(QUALITY_PRESET_FROM_HINT[qualityHint]);
+    }
+  } else {
+    const legacy = scalar(comment.qualityToggle);
+    if (legacy !== undefined) out.mooshie_novelai_quality_toggle = legacy;
+  }
+
+  const ucHint = comment.tag_hint_uc_preset;
+  if (typeof ucHint === "number") {
+    if (UC_PRESET_FROM_HINT[ucHint] !== undefined) {
+      out.mooshie_novelai_uc_preset = String(UC_PRESET_FROM_HINT[ucHint]);
+    }
+  } else if (comment.ucPreset === 0 || comment.ucPreset === 1) {
+    out.mooshie_novelai_uc_preset = String(comment.ucPreset);
+  }
+  return out;
+}
+
 /**
  * Parse NovelAI PNG text chunks into the app's flat metadata map.
  *
@@ -146,12 +187,6 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
       ["noise_schedule", "scheduler"],
       ["cfg_rescale", "mooshie_novelai_cfg_rescale"],
       ["dynamic_thresholding", "mooshie_novelai_dynamic_thresholding"],
-      // NovelAI records both toggles as it ran them. The quality tags and the
-      // preset text are folded into the captured prompt and UC as well; the
-      // import handles that on the prompt side (see `applyNovelAiSelection`)
-      // rather than by forcing the panel's toggles off.
-      ["qualityToggle", "mooshie_novelai_quality_toggle"],
-      ["ucPreset", "mooshie_novelai_uc_preset"],
       // Which endpoint made the image. An `Img2ImgRequest` was seeded by a
       // source image nothing in the metadata carries, so the settings here
       // cannot reproduce it and the import dialog says so.
@@ -161,6 +196,12 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
       const value = scalar(comment[naiKey]);
       if (value !== undefined) params[internal] = value;
     }
+
+    // NovelAI records both settings as it ran them. The quality tags and the
+    // preset text are folded into the captured prompt and UC as well; the
+    // import handles that on the prompt side (see `applyNovelAiSelection`)
+    // rather than by forcing the panel's toggles off.
+    Object.assign(params, novelAiPresetSettings(comment));
 
     // V5's recorded zero is a placeholder. Preserve real zero values from
     // older models and images with no known version. Mirrored in the Rust reader.

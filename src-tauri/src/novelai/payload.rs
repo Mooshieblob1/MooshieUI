@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 
 use super::models::{self, NovelAiModel};
 use super::params::{NovelAiCharacter, NovelAiParams};
-use super::presets::{self, UcPreset};
+use super::presets::{self, QualityPreset, UcPreset};
 use super::reference_canvas;
 
 /// The generic half of a generation, extracted from `GenerationParams`.
@@ -44,7 +44,11 @@ pub fn build(
     let positive_prompt = text_block_on_own_line(&input.positive_prompt);
     let positive_prompt = without_artist_prefixes(&positive_prompt);
     let positive_prompt = with_transparency(&positive_prompt, nai, model);
-    let positive_prompt = with_quality_tags(&positive_prompt, nai, model);
+    let quality = nai
+        .quality_toggle
+        .then(|| presets::quality_tags(model, QualityPreset::from_index(nai.quality_preset)))
+        .flatten();
+    let positive_prompt = with_quality_tags(&positive_prompt, quality.map(|(_, tags)| tags));
     let (uc_preset, negative_prompt) = with_uc_preset(
         &strip_artist_prefixes(&input.negative_prompt),
         &positive_prompt,
@@ -65,15 +69,11 @@ pub fn build(
     // Hints only: the text they name is already in the prompt and UC above.
     // NovelAI's client sends these in place of the old `ucPreset` and
     // `qualityToggle`, which the backend never expanded.
+    // Both name the preset that applied, which on an older model can be the
+    // fallback rather than the one picked.
     parameters.insert(
         "tag_hint_qt".into(),
-        json!(
-            if nai.quality_toggle && presets::quality_tags(model).is_some() {
-                presets::QUALITY_HINT_STANDARD
-            } else {
-                presets::QUALITY_HINT_NONE
-            }
-        ),
+        json!(quality.map_or(presets::QUALITY_HINT_NONE, |(preset, _)| preset.tag_hint())),
     );
     parameters.insert("tag_hint_uc_preset".into(), json!(uc_preset.tag_hint()));
     parameters.insert(
@@ -237,15 +237,15 @@ fn append_before_text_block(prompt: &str, tags: &str) -> String {
     }
 }
 
-/// Append the model's quality tags when the toggle is on.
+/// Append the quality tags of the chosen preset, if any.
 ///
-/// NovelAI's backend ignores the toggle; its client writes the tags into the
-/// prompt itself, as `prompt, very aesthetic, masterpiece, no text` on V5, and
-/// ahead of any `Text:` section. A prompt that already carries the exact stack
-/// (one pasted back from a NovelAI image, say) is left as it is rather than
-/// given a second copy.
-fn with_quality_tags(prompt: &str, nai: &NovelAiParams, model: &NovelAiModel) -> String {
-    let Some(tags) = presets::quality_tags(model).filter(|_| nai.quality_toggle) else {
+/// NovelAI's backend ignores the setting; its client writes the tags into the
+/// prompt itself, as `prompt, very aesthetic, masterpiece, no text` for V5
+/// Standard, and ahead of any `Text:` section. A prompt that already carries
+/// the exact stack (one pasted back from a NovelAI image, say) is left as it
+/// is rather than given a second copy.
+fn with_quality_tags(prompt: &str, tags: Option<&str>) -> String {
+    let Some(tags) = tags else {
         return prompt.to_string();
     };
     let (head, _) = split_text_block(prompt);
@@ -1350,6 +1350,7 @@ mod tests {
         for (stored, hint, ends) in [
             (1, 3, "very displeasing, jpeg artifacts, 0::ai-generated::"),
             (2, 4, "@_@, mismatched pupils, glowing eyes, bad anatomy"),
+            (4, 5, "multiple scenes, [[horror (theme)]], comic"),
         ] {
             let mut i = input();
             i.negative_prompt = String::new();
@@ -1360,6 +1361,61 @@ mod tests {
             );
             assert_eq!(p["tag_hint_uc_preset"], hint, "{stored}");
         }
+    }
+
+    #[test]
+    fn furry_focus_leads_the_uc_on_v45_and_falls_back_to_heavy_on_v4() {
+        let mut i = input();
+        i.negative_prompt = String::new();
+        let p = &build(&i, &presets_on(4), v45()).unwrap()["parameters"];
+        assert!(p["negative_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("nsfw, {worst quality}, distracting watermark"));
+        assert_eq!(p["tag_hint_uc_preset"], 5);
+
+        let v4 = models::find("nai-diffusion-4-full").unwrap();
+        let p = &build(&i, &presets_on(4), v4).unwrap()["parameters"];
+        assert!(p["negative_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("nsfw, blurry, lowres, error, film grain"));
+        assert_eq!(p["tag_hint_uc_preset"], 2);
+    }
+
+    #[test]
+    fn light_quality_tags_on_v5() {
+        let mut n = presets_on(3);
+        n.quality_preset = 1;
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, solo, very aesthetic, amazing quality, no text"
+        );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 3);
+    }
+
+    #[test]
+    fn light_quality_falls_back_to_standard_before_v5() {
+        let mut n = presets_on(3);
+        n.quality_preset = 1;
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, solo, very aesthetic, masterpiece, no text"
+        );
+        // The hint names the stack that was actually written.
+        assert_eq!(body["parameters"]["tag_hint_qt"], 1);
+    }
+
+    #[test]
+    fn quality_off_ignores_the_preset() {
+        let mut n = presets_on(3);
+        n.quality_toggle = false;
+        n.quality_preset = 1;
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(body["input"], "1girl, solo");
+        assert_eq!(body["parameters"]["tag_hint_qt"], 0);
     }
 
     #[test]

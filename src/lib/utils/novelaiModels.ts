@@ -37,7 +37,33 @@ export interface NovelAiModelInfo {
    * positioning was demonstrated with up to 22 characters; V4/V4.5 stop at 6.
    */
   maxCharacters: number;
+  /** Offers the Light quality stack. Mirrors `presets::quality_tags`. */
+  lightQuality: boolean;
+  /**
+   * Undesired content presets the model offers, as stored `uc_preset` values in
+   * the order NovelAI's own client lists them. Mirrors `presets::uc_preset`.
+   */
+  ucPresets: readonly number[];
 }
+
+/** Stored `uc_preset` values (MooshieUI's numbering, not NovelAI's). */
+export const NAI_UC_HEAVY = 0;
+export const NAI_UC_LIGHT = 1;
+export const NAI_UC_HUMAN_FOCUS = 2;
+export const NAI_UC_NONE = 3;
+export const NAI_UC_FURRY_FOCUS = 4;
+
+/** Stored `quality_preset` values. */
+export const NAI_QUALITY_STANDARD = 0;
+export const NAI_QUALITY_LIGHT = 1;
+
+const ALL_UC_PRESETS: readonly number[] = [
+  NAI_UC_HEAVY,
+  NAI_UC_LIGHT,
+  NAI_UC_FURRY_FOCUS,
+  NAI_UC_HUMAN_FOCUS,
+  NAI_UC_NONE,
+];
 
 /**
  * Ordered newest-first, which is the order the model dropdown shows them in.
@@ -57,6 +83,8 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     alpha: true,
     autoText: true,
     maxCharacters: 22,
+    lightQuality: true,
+    ucPresets: ALL_UC_PRESETS,
   },
   {
     id: "nai-diffusion-5-curated",
@@ -72,6 +100,8 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     alpha: true,
     autoText: true,
     maxCharacters: 22,
+    lightQuality: true,
+    ucPresets: ALL_UC_PRESETS,
   },
   {
     id: "nai-diffusion-4-5-full",
@@ -84,6 +114,8 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     alpha: false,
     autoText: false,
     maxCharacters: 6,
+    lightQuality: false,
+    ucPresets: ALL_UC_PRESETS,
   },
   {
     id: "nai-diffusion-4-full",
@@ -96,11 +128,44 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     alpha: false,
     autoText: false,
     maxCharacters: 6,
+    lightQuality: false,
+    // No focus presets on V4 Full.
+    ucPresets: [NAI_UC_HEAVY, NAI_UC_LIGHT, NAI_UC_NONE],
   },
 ] as const;
 
 export function findNovelAiModel(id: string): NovelAiModelInfo | undefined {
   return NOVELAI_MODELS.find((m) => m.id === id);
+}
+
+/**
+ * The quality preset that applies on this model. Light only exists from V5 on;
+ * older models fall back to Standard, as the backend does.
+ */
+export function effectiveNovelAiQualityPreset(
+  model: NovelAiModelInfo | null | undefined,
+  preset: number,
+): number {
+  return preset === NAI_QUALITY_LIGHT && model?.lightQuality ? NAI_QUALITY_LIGHT : NAI_QUALITY_STANDARD;
+}
+
+/**
+ * The UC preset that applies on this model. A preset the model lacks falls
+ * back the way NovelAI's client does (a focus preset to Heavy, then Light),
+ * which is also what the backend writes into the request.
+ */
+export function effectiveNovelAiUcPreset(
+  model: NovelAiModelInfo | null | undefined,
+  preset: number,
+): number {
+  // An unknown stored value adds no hidden text, matching `UcPreset::from_index`.
+  if (!ALL_UC_PRESETS.includes(preset)) return NAI_UC_NONE;
+  const offered = model?.ucPresets ?? ALL_UC_PRESETS;
+  if (offered.includes(preset)) return preset;
+  for (const fallback of [NAI_UC_HEAVY, NAI_UC_LIGHT]) {
+    if (offered.includes(fallback)) return fallback;
+  }
+  return NAI_UC_NONE;
 }
 
 /**

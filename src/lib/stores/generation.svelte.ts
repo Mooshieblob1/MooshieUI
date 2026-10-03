@@ -148,6 +148,7 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     variety_plus: false,
     transparent_background: false,
     quality_toggle: true,
+    quality_preset: 0,
     uc_preset: 0,
     legacy_uc: false,
     characters: [],

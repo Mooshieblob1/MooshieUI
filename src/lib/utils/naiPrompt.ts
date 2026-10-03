@@ -44,10 +44,10 @@ export interface NaiExistingPrompt {
 export interface NaiPromptContext {
   variant: NaiVariant;
   /**
-   * MooshieUI's stored `uc_preset` (0 Heavy, 1 Light, 2 Human Focus, 3 None),
-   * so the model knows which negatives are already covered. Not NovelAI's own
-   * numbering: `novelai/presets.rs` maps it to the preset text and to
-   * `tag_hint_uc_preset`.
+   * MooshieUI's stored `uc_preset` (0 Heavy, 1 Light, 2 Human Focus, 3 None,
+   * 4 Furry Focus), so the model knows which negatives are already covered.
+   * Not NovelAI's own numbering: `novelai/presets.rs` maps it to the preset
+   * text and to `tag_hint_uc_preset`.
    */
   ucPreset: number;
   /**
@@ -334,6 +334,8 @@ function ucPresetName(ucPreset: number): string {
       return "Human Focus";
     case 3:
       return "None";
+    case 4:
+      return "Furry Focus";
     default:
       return "default";
   }

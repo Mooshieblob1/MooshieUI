@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use super::presets::UcPreset;
+use super::presets::{QualityPreset, UcPreset};
 use super::prompt_syntax;
 
 /// The chunk NovelAI stamps its name into, and the value it writes.
@@ -172,13 +172,24 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
         // preset is an index into that model's own list: only 0 (Heavy) and
         // 1 (Light) mean the same thing on every model, so anything past them
         // leaves the panel alone rather than guess.
-        let quality = comment
-            .get("tag_hint_qt")
-            .and_then(|v| v.as_u64())
-            .map(|hint| (hint != 0).to_string())
-            .or_else(|| comment.get("qualityToggle").and_then(string_of));
-        if let Some(quality) = quality {
-            params.insert("mooshie_novelai_quality_toggle".into(), quality);
+        match comment.get("tag_hint_qt").and_then(|v| v.as_u64()) {
+            Some(0) => {
+                params.insert("mooshie_novelai_quality_toggle".into(), "false".into());
+            }
+            Some(hint) => {
+                if let Some(preset) = QualityPreset::from_tag_hint(hint) {
+                    params.insert("mooshie_novelai_quality_toggle".into(), "true".into());
+                    params.insert(
+                        "mooshie_novelai_quality_preset".into(),
+                        preset.index().to_string(),
+                    );
+                }
+            }
+            None => {
+                if let Some(quality) = comment.get("qualityToggle").and_then(string_of) {
+                    params.insert("mooshie_novelai_quality_toggle".into(), quality);
+                }
+            }
         }
         let preset = match comment.get("tag_hint_uc_preset").and_then(|v| v.as_u64()) {
             Some(hint) => UcPreset::from_tag_hint(hint),
@@ -492,7 +503,7 @@ mod tests {
         // As NovelAI's V5 sample images record them: Standard quality, Heavy
         // UC. The hint table is NovelAI's (2 = heavy), the stored value is
         // MooshieUI's (0 = Heavy).
-        for (hint, stored) in [(2, "0"), (3, "1"), (4, "2"), (0, "3")] {
+        for (hint, stored) in [(2, "0"), (3, "1"), (4, "2"), (0, "3"), (5, "4")] {
             let comment = serde_json::json!({
                 "prompt": "1girl",
                 "tag_hint_qt": 1,
@@ -506,14 +517,27 @@ mod tests {
                 params.get("mooshie_novelai_quality_toggle").unwrap(),
                 "true"
             );
+            assert_eq!(params.get("mooshie_novelai_quality_preset").unwrap(), "0");
         }
     }
 
     #[test]
+    fn light_quality_is_read_back_as_the_light_preset() {
+        let comment = serde_json::json!({ "tag_hint_qt": 3 }).to_string();
+        let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+        let params = parse_chunks(&map).expect("novelai chunks");
+        assert_eq!(
+            params.get("mooshie_novelai_quality_toggle").unwrap(),
+            "true"
+        );
+        assert_eq!(params.get("mooshie_novelai_quality_preset").unwrap(), "1");
+    }
+
+    #[test]
     fn presets_with_no_mooshie_slot_leave_the_panel_alone() {
-        // 5 is Furry Focus; a legacy index past Light differs per model.
+        // 6 is a V1-era preset; a legacy index past Light differs per model.
         for comment in [
-            serde_json::json!({ "tag_hint_uc_preset": 5, "tag_hint_qt": 0 }),
+            serde_json::json!({ "tag_hint_uc_preset": 6, "tag_hint_qt": 0 }),
             serde_json::json!({ "ucPreset": 3 }),
         ] {
             let comment = comment.to_string();
@@ -531,6 +555,8 @@ mod tests {
             params.get("mooshie_novelai_quality_toggle").unwrap(),
             "false"
         );
+        // Off says nothing about which stack was picked.
+        assert!(!params.contains_key("mooshie_novelai_quality_preset"));
     }
 
     #[test]

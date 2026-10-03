@@ -242,6 +242,15 @@ export interface NovelAiParams {
    */
   transparent_background: boolean;
   quality_toggle: boolean;
+  /**
+   * Which quality tags the toggle adds: 0 Standard, 1 Light (V5 only; older
+   * models fall back to Standard). Mirrors `presets::QualityPreset`.
+   */
+  quality_preset: number;
+  /**
+   * Undesired content preset, in MooshieUI's numbering: 0 Heavy, 1 Light,
+   * 2 Human Focus, 3 None, 4 Furry Focus. Mirrors `presets::UcPreset`.
+   */
   uc_preset: number;
   legacy_uc: boolean;
   characters: NovelAiCharacter[];
