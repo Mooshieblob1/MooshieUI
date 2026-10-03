@@ -2,6 +2,7 @@
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
 
   let { onClose }: { onClose: () => void } = $props();
 
@@ -18,12 +19,17 @@
     error = null;
     result = "";
     try {
-      result = await promptAssistant.compose(description, generation.modelFamily, {
+      const answer = await promptAssistant.compose(description, generation.modelFamily, {
         length,
         include_artists: includeArtists,
       });
+      // Closed while waiting: the request is cancelled from the user's side.
+      if (!promptAssistant.composeModalOpen) return;
+      result = answer;
       if (!result.trim()) {
         error = locale.t("prompt_assistant.couldnt_compose");
+      } else {
+        enhancerSessions.record("compose", description, result);
       }
     } catch (e) {
       console.error("Prompt compose failed:", e);

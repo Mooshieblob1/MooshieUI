@@ -18,6 +18,7 @@
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
   import PromptComposeModal from "./PromptComposeModal.svelte";
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
@@ -142,6 +143,7 @@
         generation.positivePrompt = result;
         generation.saveSettings();
         triggerUndo();
+        enhancerSessions.record("enhance", current, result);
       } else {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
       }
@@ -183,6 +185,9 @@
       generation.positivePrompt = result.text;
       generation.saveSettings();
       triggerUndo();
+      // A near-miss is applied but not remembered: the session keeps only
+      // answers that passed the format check.
+      if (result.ok) enhancerSessions.record("h3", result.sessionUser, result.text);
       // Applied either way: a near-miss rewrite is still a better starting point
       // than the prose it replaced, and undo is one click away. The warning names
       // the rule the model broke so the guide below shows what to fix by hand.

@@ -20,6 +20,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
@@ -164,6 +165,12 @@
       if (!result.parsed.base.trim()) {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
+      }
+      // Recorded once on screen, applied or not: the answer is part of the
+      // conversation either way. Not when it failed validation, and not when
+      // the modal was cancelled (the early return above).
+      if (result.problems.length === 0) {
+        enhancerSessions.record("nai", result.sessionUser, result.raw);
       }
       naiEnhance.showReview({
         variant: v,
