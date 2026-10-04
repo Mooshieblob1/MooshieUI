@@ -1895,6 +1895,19 @@ class GalleryStore {
     return this._blobToPngBytes(blob);
   }
 
+  /**
+   * Ask before deleting one image, then delete it. Deletion is permanent (the
+   * file and its video draft/poster go), so every one-off delete button and
+   * menu item goes through here. The lightbox trash and the bottom panel's
+   * floating bar call deleteImage() directly: they are deliberate culling
+   * flows meant for deleting image after image.
+   */
+  async confirmDeleteImage(image: OutputImage): Promise<boolean> {
+    if (!confirm(locale.t("gallery.delete_confirm"))) return false;
+    await this.deleteImage(image);
+    return true;
+  }
+
   /** Delete an image from the gallery. */
   async deleteImage(image: OutputImage) {
     try {

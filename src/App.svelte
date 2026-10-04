@@ -1335,7 +1335,7 @@
       { label: locale.t("gallery.save_as"), action: () => gallery.saveImageAs(image) },
       { label: locale.t("gallery.copy"), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
-      { label: locale.t("gallery.delete"), action: () => gallery.deleteImage(image), destructive: true },
+      { label: locale.t("gallery.delete"), action: () => gallery.confirmDeleteImage(image), destructive: true },
     );
     return items;
   });

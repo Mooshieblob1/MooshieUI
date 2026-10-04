@@ -35,6 +35,9 @@
   let galleryView = $state<"huge" | "large" | "small" | "details">("large");
   let galleryRenderLimit = $state(48);
   let dirPickerImage = $state<OutputImage | null>(null);
+  // Touch screens have no hover, so a tile's action tray stays hidden until its
+  // Actions toggle opens it. One tile at a time.
+  let touchActionsImage = $state<OutputImage | null>(null);
 
   function loadMoreGallery(node: HTMLElement) {
     const observer = new IntersectionObserver(
@@ -56,6 +59,19 @@
     if (!gallery.comparePin) return locale.t("gallery.compare.pin");
     if (gallery.comparePin === image) return locale.t("gallery.compare.unpin");
     return locale.t("gallery.compare.with_pinned");
+  }
+
+  /**
+   * Visibility for a tile's overlays (action tray, save-to-folder button). A
+   * hidden overlay must not take taps, or a tap near the tile's edge on a touch
+   * screen hits an invisible button, delete included (issue #736). Overlays
+   * show on mouse hover, on keyboard focus inside the tile, or while the tile's
+   * touch Actions toggle is open.
+   */
+  function tileOverlayClass(image: OutputImage): string {
+    return touchActionsImage === image
+      ? "opacity-100"
+      : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:pointer-events-auto";
   }
 
   function getImageSize(image: OutputImage): number {
@@ -472,7 +488,7 @@
                       <button class="px-2 py-1 text-[11px] rounded text-neutral-100 {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-neutral-800 hover:bg-neutral-700'}" title={comparePinTitle(image)} onclick={() => gallery.toggleComparePin(image)}>{locale.t("gallery.compare.short")}</button>
                     {/if}
                     <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 disabled:opacity-50" disabled={gallery.saving} onclick={() => gallery.saveImageAs(image)}>{gallery.saving ? locale.t("gallery.saving") : locale.t("gallery.save")}</button>
-                    <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>{locale.t("gallery.delete")}</button>
+                    <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.confirmDeleteImage(image)}>{locale.t("gallery.delete")}</button>
                   </div>
                 </div>
               {/each}
@@ -509,13 +525,21 @@
                   {/if}
                   <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">{boardLabel(image)}</div>
                   {#if generation.manualSaveMode && !image.gallery_filename}
-                    <div class="absolute top-0 right-0 pt-1 pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div class="absolute top-0 right-0 pt-1 pr-1 transition-opacity {tileOverlayClass(image)}">
                       <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow" title={locale.t("gallery.save_to_folder")} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
                         <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
                       </button>
                     </div>
                   {/if}
-                  <div class="absolute bottom-0 inset-x-0 flex flex-wrap justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-t from-black/80 to-transparent">
+                  <button
+                    type="button"
+                    class="hidden pointer-coarse:flex absolute bottom-1.5 right-1.5 z-10 w-7 h-7 items-center justify-center rounded shadow {touchActionsImage === image ? 'bg-indigo-600 text-neutral-100' : 'bg-black/70 text-neutral-200'}"
+                    title={locale.t("gallery.col_actions")}
+                    aria-label={locale.t("gallery.col_actions")}
+                    aria-expanded={touchActionsImage === image}
+                    onclick={(e) => { e.stopPropagation(); touchActionsImage = touchActionsImage === image ? null : image; }}
+                  >{touchActionsImage === image ? "×" : "⋯"}</button>
+                  <div class="absolute bottom-0 inset-x-0 flex flex-wrap justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 pointer-coarse:pr-10 transition-opacity bg-linear-to-t from-black/80 to-transparent {tileOverlayClass(image)}">
                     {#if !isVideoImage(image)}
                       <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("gallery.img2img")} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
                       <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.inpaint")} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>✎</button>
@@ -540,7 +564,7 @@
                       <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500 text-neutral-100' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" title={comparePinTitle(image)} onclick={(e) => { e.stopPropagation(); gallery.toggleComparePin(image); }}>⇄</button>
                     {/if}
                     <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow disabled:opacity-50" disabled={gallery.saving} title={locale.t(isVideoImage(image) ? "gallery.save_video_as" : "gallery.save_as")} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>↓</button>
-                    <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>×</button>
+                    <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.confirmDeleteImage(image); }}>×</button>
                   </div>
                 </div>
               {/each}

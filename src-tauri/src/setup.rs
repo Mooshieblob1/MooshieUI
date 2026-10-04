@@ -1113,11 +1113,18 @@ const AMD_ROCM_WINDOWS_TORCH_WHEELS: [&str; 3] = [
     "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
 ];
 
-/// Install AMD's ROCm-on-Windows PyTorch preview: SDK components first, then
-/// the torch/torchvision/torchaudio wheels, per AMD's documented two-stage
-/// install. Requires a Python 3.12 venv (the wheels are cp312-only) and a
-/// model on `amd_windows_rocm_model_supported`'s allowlist -- callers must
-/// check both before calling this.
+/// Install AMD's ROCm-on-Windows PyTorch preview: the SDK components and the
+/// torch/torchvision/torchaudio wheels in one uv resolve. Requires a Python
+/// 3.12 venv (the wheels are cp312-only) and a model on
+/// `amd_windows_rocm_model_supported`'s allowlist -- callers must check both
+/// before calling this.
+///
+/// AMD documents this as two pip installs, but it can't be split under uv:
+/// torch depends on `rocm[libraries]==7.2.1`, which exists only as the
+/// repo.radeon.com tarball, and `--reinstall` makes uv ignore the copy the
+/// first stage installed, so a separate torch stage fails with "no version of
+/// rocm[libraries]==7.2.1". Listing every URL in one command lets the
+/// resolver satisfy torch's dependency from the tarball.
 #[cfg(target_os = "windows")]
 async fn install_amd_windows_rocm_pytorch(
     app: &AppHandle,
@@ -1126,16 +1133,17 @@ async fn install_amd_windows_rocm_pytorch(
 ) -> Result<(), String> {
     emit_log(
         app,
-        "Installing AMD ROCm 7.2.1 SDK components (Windows preview)...",
+        "Installing AMD ROCm 7.2.1 SDK and PyTorch wheels (Windows preview)...",
     );
-    let mut sdk_args: Vec<&str> = AMD_ROCM_WINDOWS_SDK_WHEELS.to_vec();
-    sdk_args.push("--reinstall");
-    uv_pip(app, base, &sdk_args, net, false).await?;
+    uv_pip(app, base, &amd_rocm_windows_install_args(), net, false).await
+}
 
-    emit_log(app, "Installing PyTorch (ROCm 7.2.1) wheels...");
-    let mut torch_args: Vec<&str> = AMD_ROCM_WINDOWS_TORCH_WHEELS.to_vec();
-    torch_args.push("--reinstall");
-    uv_pip(app, base, &torch_args, net, false).await
+#[cfg(target_os = "windows")]
+fn amd_rocm_windows_install_args() -> Vec<&'static str> {
+    let mut args: Vec<&str> = AMD_ROCM_WINDOWS_SDK_WHEELS.to_vec();
+    args.extend(AMD_ROCM_WINDOWS_TORCH_WHEELS);
+    args.push("--reinstall");
+    args
 }
 
 #[cfg(not(target_os = "windows"))]

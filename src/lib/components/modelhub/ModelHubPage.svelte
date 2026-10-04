@@ -22,6 +22,7 @@
   import { modelRequests } from "../../stores/modelRequests.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { showError } from "../../stores/errorModal.svelte.js";
+  import { portal } from "../../utils/portal.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
   const CIVITAI_COLUMNS_KEY = "mooshieui.civitai.columns.v1";
@@ -1399,6 +1400,7 @@
           {@const expanded = isCardExpanded(model.id)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
+            use:portal
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
             onmousedown={(e) => { if (e.target === e.currentTarget) selectedModel = null; }}
             onkeydown={(e) => { if (e.key === "Escape") selectedModel = null; }}

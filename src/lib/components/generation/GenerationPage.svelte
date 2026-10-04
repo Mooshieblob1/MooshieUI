@@ -783,7 +783,7 @@
       { label: locale.t('generation.ctx.save_as'), action: () => gallery.saveImageAs(image) },
       { label: locale.t('generation.ctx.copy'), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
-      { label: locale.t('generation.ctx.delete'), action: () => gallery.deleteImage(image), destructive: true },
+      { label: locale.t('generation.ctx.delete'), action: () => gallery.confirmDeleteImage(image), destructive: true },
     ];
   });
 
