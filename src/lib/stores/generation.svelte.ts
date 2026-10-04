@@ -4021,15 +4021,23 @@ class GenerationStore {
     }
   }
 
+  /**
+   * Flip a LoRA on or off, taking its chip-inserted trigger words out of the
+   * prompt when it goes off and putting them back when it comes on again.
+   * Words that were no longer in the prompt when it went off (the user
+   * removed or edited them) stop being tracked, so they are not re-added.
+   */
   toggleLora(index: number) {
     const target = this.loras[index];
-    const disabling = !!target?.enabled;
-    this.loras = this.loras.map((l, i) =>
-      i === index ? { ...l, enabled: !l.enabled } : l
-    );
-    if (disabling && target?.insertedWords?.length) {
-      this.removeInsertedWordsFromPrompt(target.insertedWords);
+    if (!target) return;
+    let insertedWords = target.insertedWords;
+    if (insertedWords?.length) {
+      if (target.enabled) insertedWords = this.removeInsertedWordsFromPrompt(insertedWords);
+      else this.restoreInsertedWordsToPrompt(insertedWords);
     }
+    this.loras = this.loras.map((l, i) =>
+      i === index ? { ...l, enabled: !l.enabled, insertedWords } : l
+    );
   }
 
   /** Record a trigger word inserted into the prompt via a LoRA's trigger-word chip, so it can be removed on deselect. */
@@ -4041,9 +4049,13 @@ class GenerationStore {
     );
   }
 
-  /** Strip trigger words previously inserted via addTriggerWord/recordInsertedLoraWord, removing each as its own comma-delimited segment so surrounding text is untouched. */
-  private removeInsertedWordsFromPrompt(words: string[]) {
+  /**
+   * Strip trigger words previously inserted via addTriggerWord/recordInsertedLoraWord, removing each as its own comma-delimited segment so surrounding text is untouched.
+   * Returns the words actually found and removed.
+   */
+  private removeInsertedWordsFromPrompt(words: string[]): string[] {
     let text = this.positivePrompt;
+    const removed: string[] = [];
     for (const word of words) {
       const trimmed = word.trim();
       if (!trimmed) continue;
@@ -4052,6 +4064,21 @@ class GenerationStore {
       if (idx === -1) continue;
       segments.splice(idx, 1);
       text = segments.join(",").replace(/^\s*,\s*/, "").replace(/,\s*$/, "").trim();
+      removed.push(word);
+    }
+    if (text !== this.positivePrompt) {
+      this.positivePrompt = text;
+    }
+    return removed;
+  }
+
+  /** Append trigger words removed by removeInsertedWordsFromPrompt, each as its own comma-delimited segment, skipping any already in the prompt. */
+  private restoreInsertedWordsToPrompt(words: string[]) {
+    let text = this.positivePrompt.trim();
+    for (const word of words) {
+      const trimmed = word.trim();
+      if (!trimmed || text.split(",").some((s) => s.trim() === trimmed)) continue;
+      text = text ? `${text}, ${trimmed}` : trimmed;
     }
     if (text !== this.positivePrompt) {
       this.positivePrompt = text;
