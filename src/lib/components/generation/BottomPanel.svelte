@@ -26,6 +26,7 @@
   import { notes } from "../../stores/notes.svelte.js";
   import type { OutputImage } from "../../types/index.js";
   import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
+  import { cdnVariantCountOf, imageExtOf, imageIdForVariant } from "../../artist-gallery/variants.js";
   import {
     sendImageToVideoFrame,
     addImageToVideoReference,
@@ -282,13 +283,31 @@
     return list;
   });
 
+  /**
+   * Variant a favourite card shows (1-based). The choice lives in the shared
+   * artist store, so a card flipped here is flipped on the Artists page too.
+   */
+  function artistVariantOf(hit: ArtistSearchHit): number {
+    return Math.min(artistStore?.resolveVariant(hit.slug) ?? 1, cdnVariantCountOf(hit));
+  }
+
+  /** Most variants any favourite ships; drives the toolbar toggle (1 = hide it). */
+  const favouriteVariantCount = $derived(
+    favouriteArtistHits.reduce((m, hit) => (hit.hasImage ? Math.max(m, cdnVariantCountOf(hit)) : m), 1),
+  );
+
+  function flipArtistVariant(hit: ArtistSearchHit, e: MouseEvent) {
+    e.stopPropagation();
+    const count = cdnVariantCountOf(hit);
+    if (!artistStore || count < 2) return;
+    artistStore.setVariant(hit.slug, (artistVariantOf(hit) % count) + 1);
+  }
+
   function artistThumbUrl(hit: ArtistSearchHit): string {
     const m = artistStore?.manifest;
     if (!m || !hit.hasImage || !hit.imageId) return "";
-    // Match the gallery page's imgExt(): index v2+ stores AVIF, v1 stored WebP.
-    // Hardcoding .webp here 404s against the v2 multi-variant dataset.
-    const ext = (m.version ?? 1) >= 2 ? "avif" : "webp";
-    return `${m.imageBaseUrl}/${m.releasePrefix}/images/${hit.imageId}.${ext}`;
+    const imageId = imageIdForVariant(hit, artistVariantOf(hit));
+    return `${m.imageBaseUrl}/${m.releasePrefix}/images/${imageId}.${imageExtOf(m)}`;
   }
 
   function applyArtistTag(hit: ArtistSearchHit) {
@@ -701,6 +720,22 @@
               placeholder={locale.t('bottom_panel.artist_search_placeholder')}
               class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
+            {#if artistStore && favouriteVariantCount >= 2}
+              <div
+                class="flex shrink-0 items-center gap-0.5 rounded border border-neutral-800 bg-neutral-900/50 p-0.5"
+                role="group"
+                aria-label={locale.t('artist_gallery.variant_label')}
+              >
+                {#each Array(favouriteVariantCount) as _, idx}
+                  {@const n = idx + 1}
+                  <button
+                    type="button"
+                    class="rounded px-1.5 py-0.5 text-[10px] transition-colors {artistStore.globalVariant === n ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+                    onclick={() => artistStore.setGlobalVariant(n)}
+                  >{locale.t('artist_gallery.variant_n', { n })}</button>
+                {/each}
+              </div>
+            {/if}
             <div use:scrollCapture>
               <input
                 type="range"
@@ -758,7 +793,7 @@
                   tabindex="0"
                   class="group relative flex flex-col rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {isArtistInPrompt(hit.tag) ? 'border-amber-500/60 ring-1 ring-amber-500/20' : 'border-neutral-800 hover:border-indigo-500'}"
                   onclick={() => applyArtistTag(hit)}
-                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyArtistTag(hit); } }}
+                  onkeydown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyArtistTag(hit); } }}
                   title={locale.t('bottom_panel.apply_artist_tag', { tag: hit.tag })}
                 >
                   <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
@@ -774,6 +809,15 @@
                       aria-label={locale.t('bottom_panel.unfavorite')}
                       title={locale.t('bottom_panel.unfavorite')}
                     >♥</button>
+                    {#if thumb && cdnVariantCountOf(hit) >= 2}
+                      <button
+                        type="button"
+                        class="absolute bottom-1 left-1 rounded border border-neutral-700 bg-neutral-900/90 px-1.5 py-0.5 text-[10px] text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:border-indigo-500"
+                        onclick={(e) => flipArtistVariant(hit, e)}
+                        aria-label={locale.t('artist_gallery.flip_variant_aria')}
+                        title={locale.t('artist_gallery.flip_variant_aria')}
+                      >⇄ {artistVariantOf(hit)}</button>
+                    {/if}
                     {#if favCat}
                       <span
                         class="absolute left-1 top-1 h-3 w-3 rounded-full border border-black/40"

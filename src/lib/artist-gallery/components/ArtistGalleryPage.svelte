@@ -15,6 +15,7 @@
   import { stripArtistSigil } from "../../utils/artistTag.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { detectArtistsInPrompt } from "../detection.js";
+  import { cdnVariantCountOf, imageExtOf, imageIdForVariant } from "../variants.js";
   import { ARTIST_PREVIEW_RECIPE } from "../previewRecipe.js";
   import type { ArtistPreviewStatus, ArtistPreviewVariant } from "../previewRecipe.js";
 
@@ -212,11 +213,6 @@
   // ---------------------------------------------------------------------------
   let globalVariant = $derived(store.globalVariant);
 
-  /** Variants the CDN ships for this artist. Cheap; safe to call over allEntries. */
-  function cdnVariantCountOf(hit: ArtistSearchHit): number {
-    return Math.max(1, hit.variantCount ?? hit.images?.length ?? 1);
-  }
-
   /** Highest local variant that exists or is being generated (0 = none). */
   function localPreviewCount(hit: ArtistSearchHit): number {
     if (!previewStatus) return 0;
@@ -260,18 +256,9 @@
     store.setVariant(hit.slug, next);
   }
 
-  function imageIdForVariant(hit: ArtistSearchHit, variant: number): string {
-    // Prefer an explicit per-variant entry when the shard data is present.
-    const img = hit.images?.[variant - 1];
-    if (img?.imageId) return img.imageId;
-    // search.json hits carry no `images[]`, so derive the variant id by
-    // swapping the `-p<n>` suffix (all v2 imageIds end in `-p1`/`-p2`).
-    return hit.imageId.replace(/-p\d+$/, `-p${variant}`);
-  }
-
   /** Image extension for the active dataset: AVIF in index v2+, WebP in v1. */
   function imgExt(): string {
-    return (store.manifest?.version ?? 1) >= 2 ? "avif" : "webp";
+    return imageExtOf(store.manifest);
   }
 
   function thumbUrl(hit: ArtistSearchHit): string {
