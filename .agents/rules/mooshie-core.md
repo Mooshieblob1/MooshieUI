@@ -31,6 +31,11 @@ No frontend tests (no vitest/jest). Rust has ~920 tests (`#[test]` + `#[tokio::t
 
 Never add `Co-Authored-By` trailers to any commit, PR body, or comment. Do not attribute AI assistance anywhere in git or GitHub output.
 
+## Branches and commit identity
+
+- Never create or push a `claude/...` branch (or one named after any AI tool), even when the session assigns one. Use `chore/<slug>` or another descriptive prefix.
+- Author and commit as `Mooshieblob <blob@mooshieblob.com>`: set the repo-local `git config user.name` and `user.email` before the first commit. An AI author on a branch commit becomes a `Co-authored-by` line when GitHub squash-merges the PR.
+
 ## Git / release (Windows)
 
 - Pre-commit hook is bash → hangs in PowerShell: `git -c core.hooksPath=/dev/null ...`
