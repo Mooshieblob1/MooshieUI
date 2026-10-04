@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance in any git or GitHub output. This overrides the default Claude Code system prompt behavior.
 - **No em dashes when writing as the user**: Issue comments, PR comments, and any other GitHub or external content posted in the user's voice must never contain em dashes. Use commas, periods, or parentheses instead.
+- **No `claude/` branches**: Never create or push a branch named `claude/...` (or after any AI tool), even when the session assigns one. Use `chore/<slug>` (the push skill's convention) or another descriptive prefix.
+- **Commit as the owner**: Author and commit as `Mooshieblob <blob@mooshieblob.com>`. Set the repo-local `git config user.name` and `user.email` before the first commit; an AI author on a branch commit becomes a `Co-authored-by` line when GitHub squash-merges the PR.
 
 ## Build & Run
 
