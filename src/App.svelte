@@ -664,18 +664,36 @@
       if (target) void gallery.openLightbox(target, true);
       return;
     }
-    // Try sorted gallery images first, fall back to session images for bottom panel
-    let list = sortedGalleryImages;
-    let idx = list.indexOf(gallery.selectedImage);
-    if (idx === -1) {
-      list = gallery.sessionImages;
-      idx = list.indexOf(gallery.selectedImage);
-    }
+    const list = lightboxPageList(gallery.selectedImage);
+    const idx = list.indexOf(gallery.selectedImage);
     if (idx === -1 || list.length < 2) return;
     const len = list.length;
     const next = direction === "prev" ? (idx - 1 + len) % len : (idx + 1) % len;
     const nextImage = list[next];
     if (nextImage) void gallery.openLightbox(nextImage);
+  }
+
+  /** The list the lightbox pages through: the sorted gallery, else the bottom panel's session images. */
+  function lightboxPageList(image: OutputImage): OutputImage[] {
+    return sortedGalleryImages.includes(image) ? sortedGalleryImages : gallery.sessionImages;
+  }
+
+  /**
+   * Delete the image the lightbox shows and stay open on its neighbour.
+   *
+   * Steps to the next image, or the previous one when the deleted image was the
+   * last, before deleting (as deleteBatchTile does), so images can be culled at
+   * full size without reopening the lightbox each time. Closes only when no
+   * image is left to show.
+   */
+  async function deleteLightboxImage() {
+    const image = gallery.selectedImage;
+    if (!image) return;
+    const list = lightboxPageList(image);
+    const idx = list.indexOf(image);
+    const neighbour = idx === -1 ? undefined : (list[idx + 1] ?? list[idx - 1]);
+    if (neighbour) void gallery.openLightbox(neighbour);
+    await gallery.deleteImage(image);
   }
 
   async function rescanGalleryMetadata() {
@@ -2174,7 +2192,7 @@
   ) {
     if (images.length === 0) return;
 
-    const newImages: OutputImage[] = images.map((img, i) => {
+    const created: OutputImage[] = images.map((img, i) => {
       const ext =
         img.blob.type === "image/jxl" ? "jxl" : img.blob.type === "image/webp" ? "webp" : "png";
       return {
@@ -2194,7 +2212,9 @@
       };
     });
 
-    gallery.addImages(newImages);
+    // Write through the gallery's own objects from here on: a write to
+    // `created` (the saved filename, metadata) never reaches them. See addImages().
+    const newImages = gallery.addImages(created);
     progress.setLastOutputForMode(mode, newImages[0]?.url ?? null);
     if (mode === "inpainting" && generation.mode === "inpainting" && canvas.isCanvasMode && newImages[0]) {
       const sourceVersion = canvas.inpaintSourceVersion;
@@ -2566,7 +2586,7 @@
       const gridUrl = URL.createObjectURL(gridBlob);
       const gridPromptId = `grid_${Date.now()}`;
 
-      const gridImage: OutputImage = {
+      const gridEntry: OutputImage = {
         filename: `${gridPromptId}.png`,
         subfolder: "",
         type: "output",
@@ -2578,7 +2598,8 @@
         generated_at_ms: Date.now(),
       };
 
-      gallery.addImages([gridImage]);
+      // Save through the gallery's copy, as finalizeOutputImages does.
+      const gridImage = gallery.addImages([gridEntry])[0]!;
       gallery.persistImages([gridImage], undefined, [gridBlob], generation.metadataMode);
       // Mirror the single-image path (finalizeOutputImages) so a completed grid
       // also surfaces a done toast / notification when off the generate page.
@@ -4416,7 +4437,7 @@
         <button
           title={locale.t("gallery.delete")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-red-900/60 hover:bg-red-800 text-red-400 hover:text-red-300 transition-colors"
-          onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
+          onclick={deleteLightboxImage}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>

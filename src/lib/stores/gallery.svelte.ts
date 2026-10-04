@@ -516,9 +516,19 @@ class GalleryStore {
     }
   }
 
-  addImages(newImages: OutputImage[]) {
+  /**
+   * Prepend a run's images to the gallery and the session list, returning the
+   * objects the store now holds. `$state` gives each array its own proxy of a
+   * plain object, and a proxy snapshots a field on first read, so a later
+   * write to the plain object never reaches it. Both lists share one proxy
+   * here, and callers make later writes (gallery_filename, metadata) through
+   * the returned objects; otherwise deleting from the gallery misses the file.
+   */
+  addImages(newImages: OutputImage[]): OutputImage[] {
     this.images = [...newImages, ...this.images];
-    this.sessionImages = [...newImages, ...this.sessionImages];
+    const added = this.images.slice(0, newImages.length);
+    this.sessionImages = [...added, ...this.sessionImages];
+    return added;
   }
 
   /** Remember that `promptId` was a variations run, so its images grid together. */
@@ -753,7 +763,8 @@ class GalleryStore {
     // because they're saved server-side rather than streamed as blobs, so
     // they need to be added to both to show up while the app is still open.
     if (addToSession) {
-      this.sessionImages = [entry, ...this.sessionImages];
+      // The gallery's proxy, not `entry`: see addImages().
+      this.sessionImages = [this.images[0]!, ...this.sessionImages];
     }
     // Pull in the embedded metadata (artist detection etc.) in the background.
     void this.hydrateMetadataInBackground();
@@ -1887,22 +1898,28 @@ class GalleryStore {
   /** Delete an image from the gallery. */
   async deleteImage(image: OutputImage) {
     try {
-      if (image.gallery_filename) {
-        await deleteGalleryImage(image.gallery_filename);
+      // An image deleted while its save is still in flight has no
+      // gallery_filename yet. Skipping the disk delete then would let the save
+      // land afterwards and bring the image back on the next launch.
+      const galleryFilename = await this.resolveGalleryFilename(image);
+      if (galleryFilename) {
+        await deleteGalleryImage(galleryFilename);
         const nextAssignments = { ...this.boardAssignments };
-        delete nextAssignments[image.gallery_filename];
+        delete nextAssignments[galleryFilename];
         this.boardAssignments = nextAssignments;
         this.saveBoardAssignments();
       }
       if (image.url) {
         URL.revokeObjectURL(image.url);
       }
-      this.images = this.images.filter((i) => i !== image);
-      this.sessionImages = this.sessionImages.filter((i) => i !== image);
-      if (this.selectedImage === image) {
+      const isTarget = (i: OutputImage) =>
+        i === image || (!!galleryFilename && i.gallery_filename === galleryFilename);
+      this.images = this.images.filter((i) => !isTarget(i));
+      this.sessionImages = this.sessionImages.filter((i) => !isTarget(i));
+      if (this.selectedImage && isTarget(this.selectedImage)) {
         this.closeLightbox();
       }
-      if (this.lastSelectedImage === image) {
+      if (this.lastSelectedImage && isTarget(this.lastSelectedImage)) {
         this.lastSelectedImage = null;
       }
     } catch (e) {
@@ -1926,10 +1943,12 @@ class GalleryStore {
     let assignmentsChanged = false;
     for (const image of targets) {
       try {
-        if (image.gallery_filename) {
-          await deleteGalleryImage(image.gallery_filename);
-          if (nextAssignments[image.gallery_filename] !== undefined) {
-            delete nextAssignments[image.gallery_filename];
+        // Wait out an in-flight save, as deleteImage() does.
+        const galleryFilename = await this.resolveGalleryFilename(image);
+        if (galleryFilename) {
+          await deleteGalleryImage(galleryFilename);
+          if (nextAssignments[galleryFilename] !== undefined) {
+            delete nextAssignments[galleryFilename];
             assignmentsChanged = true;
           }
         }
