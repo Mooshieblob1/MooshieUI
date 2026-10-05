@@ -1477,6 +1477,14 @@ const pt: Record<string, string> = {
   "generation.sampler.dmd2_toggle": "Usar DMD2 (4 passos, CFG 1)",
   "generation.sampler.dmd2_tip": "Carrega a LoRA de destilação DMD2 e define 4 passos, CFG 1, sampler LCM, scheduler SGM uniform — qualidade quase total em uma fração do tempo. Desativar remove a LoRA, mas mantém as configurações do sampler para você restaurar.",
   "generation.sampler.dmd2_downloading": "Baixando a LoRA DMD2...",
+  "generation.sampler.krea_steps_title": "Passos do Krea 2 Turbo",
+  "generation.sampler.krea_steps_8": "8 passos",
+  "generation.sampler.krea_steps_4": "4 passos",
+  "generation.sampler.krea_steps_2": "2 passos",
+  "generation.sampler.krea_steps_8_hint": "Turbo padrão, sem LoRA de velocidade.",
+  "generation.sampler.krea_steps_4_hint": "LoRA da comunidade de 4 passos (418 MB). Cerca de 1,6x mais rápida com qualidade quase total. Reduza a força para 0,75 se a textura ficar forte demais.",
+  "generation.sampler.krea_steps_2_hint": "LoRA da comunidade de prévia de 2 passos (418 MB). Boa para objetos próximos; rostos pequenos e cenas amplas podem borrar. Use 4 passos para renders finais.",
+  "generation.sampler.krea_steps_downloading": "Baixando a LoRA do Krea 2 Turbo...",
 
   "generation.upscale_history.title": "Histórico do Refiner",
 

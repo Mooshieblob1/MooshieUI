@@ -20,6 +20,16 @@
   import { connection } from "../../stores/connection.svelte.js";
   import { checkNodeAvailable, downloadModel } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
+  import {
+    KREA_FEW_STEP_LORAS,
+    KREA_TURBO_CFG,
+    KREA_TURBO_SAMPLER,
+    KREA_TURBO_SCHEDULER,
+    activeKreaTurboSteps,
+    installedKreaFewStepLora,
+    kreaFewStepLoraFor,
+    type KreaTurboSteps,
+  } from "../../utils/kreaFewStep.js";
   import { onMount } from "svelte";
 
   const RDBT_ANIMA_FILENAME = "rdbt_v1.0_anima_b1_16-step.safetensors";
@@ -47,6 +57,15 @@
   const dmd2Enabled = $derived(
     generation.loras.some((l) => l.name === DMD2_FILENAME && l.enabled)
   );
+
+  const isKreaTurbo = $derived(generation.modelFamily === "krea2" && generation.hasTurboModelVariant);
+  const kreaSteps = $derived(activeKreaTurboSteps(generation.loras));
+  let kreaRecOpen = $state(true);
+  let kreaDownloadingFile = $state<string | null>(null);
+  let kreaDownloadError = $state<string | null>(null);
+  let kreaDlBytes = $state(0);
+  let kreaDlTotal = $state(0);
+  const kreaDlPercent = $derived(kreaDlTotal > 0 ? Math.round((kreaDlBytes / kreaDlTotal) * 100) : 0);
 
   // NAG and APG are core ComfyUI guidance patchers, but they are recent
   // additions: an older ComfyUI has neither class and the workflow would fail
@@ -97,6 +116,14 @@
         } else {
           rdbtDlBytes = data.downloaded;
           rdbtDlTotal = data.total;
+        }
+      } else if (data.filename === kreaDownloadingFile) {
+        if (data.done) {
+          kreaDlBytes = 0;
+          kreaDlTotal = 0;
+        } else {
+          kreaDlBytes = data.downloaded;
+          kreaDlTotal = data.total;
         }
       } else if (data.filename === DMD2_FILENAME) {
         if (data.done) {
@@ -180,6 +207,43 @@
     generation.scheduler = "sgm_uniform";
   }
 
+  /**
+   * Swaps the Krea 2 Turbo few-step LoRA in the LoRA list and writes the
+   * upstream settings for that step count. 8 is stock Turbo with no adapter.
+   */
+  async function setKreaSteps(steps: KreaTurboSteps) {
+    if (kreaDownloadingFile) return;
+    kreaDownloadError = null;
+    let loraName: string | null = null;
+    const lora = KREA_FEW_STEP_LORAS.find((l) => l.steps === steps);
+    if (lora) {
+      loraName = installedKreaFewStepLora(lora, models.loras) ?? null;
+      if (!loraName) {
+        kreaDownloadingFile = lora.filename;
+        try {
+          await downloadModel(lora.url, "loras", lora.filename);
+          await models.refresh();
+        } catch (e) {
+          kreaDownloadError = `${e}`;
+          return;
+        } finally {
+          kreaDownloadingFile = null;
+        }
+        loraName = lora.filename;
+      }
+    }
+
+    const others = generation.loras.filter((l) => !kreaFewStepLoraFor(l.name));
+    generation.loras = loraName
+      ? [...others, { name: loraName, strength_model: 1.0, strength_clip: 1.0, enabled: true }]
+      : others;
+    generation.steps = steps;
+    generation.cfg = KREA_TURBO_CFG;
+    generation.samplerName = KREA_TURBO_SAMPLER;
+    generation.scheduler = KREA_TURBO_SCHEDULER;
+    generation.saveSettings();
+  }
+
   let randomSeed = $derived(generation.seed === "-1");
   const activeModelName = $derived((generation.diffusionModel || generation.checkpoint || "").toLowerCase());
   const hasAnimaRecommendation = $derived(generation.isAnima || activeModelName.includes("anima"));
@@ -201,6 +265,8 @@
     // would rate its own recommended 23 steps as out of range.
     if (generation.isNovelAi) return { min: 20, max: 28 };
     if (dmd2Enabled) return { min: 4, max: 8 };
+    // Upstream advice for more quality is more steps at full strength.
+    if (isKreaTurbo && kreaSteps < 8) return { min: kreaSteps, max: kreaSteps * 2 };
     const sampler = generation.samplerName.toLowerCase();
     if (sampler.includes("euler")) return { min: 18, max: 28 };
     if (sampler.includes("dpmpp")) return { min: 24, max: 36 };
@@ -210,6 +276,7 @@
   function recommendedCfgRange() {
     if (generation.isNovelAi) return { min: 4.0, max: 8.0, target: NOVELAI_DEFAULTS.cfg };
     if (dmd2Enabled) return { min: 1.0, max: 1.5, target: 1.0 };
+    if (isKreaTurbo && kreaSteps < 8) return { min: KREA_TURBO_CFG, max: KREA_TURBO_CFG, target: KREA_TURBO_CFG };
     if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
@@ -388,6 +455,59 @@
             {locale.t('common.apply')}
           </button>
         </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if !generation.isNovelAi && isKreaTurbo}
+    <div class="rounded-lg border border-sky-700/50 bg-sky-900/15 overflow-hidden">
+      <button
+        class="w-full flex items-center justify-between px-2.5 py-2 text-left"
+        onclick={() => (kreaRecOpen = !kreaRecOpen)}
+      >
+        <p class="text-xs text-sky-300 font-medium">{locale.t('generation.sampler.krea_steps_title')}</p>
+        <svg class="w-3 h-3 text-sky-400 shrink-0 transition-transform {kreaRecOpen ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {#if kreaRecOpen}
+        <div class="px-2.5 pb-2.5 space-y-2">
+          <div class="grid grid-cols-3 gap-1" role="radiogroup" aria-label={locale.t('generation.sampler.krea_steps_title')}>
+            {#each [8, 4, 2] as const as option (option)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={kreaSteps === option}
+                class="px-2 py-1 text-[11px] rounded border transition-colors {kreaSteps === option
+                  ? 'border-sky-400 bg-sky-600/30 text-sky-100'
+                  : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
+                disabled={kreaDownloadingFile !== null}
+                onclick={() => setKreaSteps(option)}
+              >
+                {locale.t(`generation.sampler.krea_steps_${option}`)}
+              </button>
+            {/each}
+          </div>
+          <p class="text-[11px] text-neutral-400">{locale.t(`generation.sampler.krea_steps_${kreaSteps}_hint`)}</p>
+        </div>
+        {#if kreaDownloadingFile}
+          <div class="mx-2.5 mb-2.5 bg-neutral-900/60 rounded-lg px-3 py-2">
+            <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+              <span class="truncate mr-2">{locale.t('generation.sampler.krea_steps_downloading')}</span>
+              {#if kreaDlTotal > 0}
+                <span class="shrink-0 tabular-nums">{locale.formatBytes(kreaDlBytes)} / {locale.formatBytes(kreaDlTotal)} ({kreaDlPercent}%)</span>
+              {/if}
+            </div>
+            <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+              {#if kreaDlTotal > 0}
+                <div class="bg-sky-400 h-full rounded-full transition-[width] duration-300 ease-out" style="width: {kreaDlPercent}%"></div>
+              {:else}
+                <div class="bg-sky-400 h-full rounded-full w-1/3 animate-pulse"></div>
+              {/if}
+            </div>
+          </div>
+        {/if}
+        {#if kreaDownloadError}
+          <p class="text-xs text-red-400 mx-2.5 mb-2.5">{kreaDownloadError}</p>
+        {/if}
       {/if}
     </div>
   {/if}
