@@ -1057,6 +1057,8 @@ const pl: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
   "generation.sampler.anima_rdbt_tip": "Pobiera i stosuje społecznościową, destylowaną pod kątem guidance LoRA RDBT-Anima (~92MB, nieoficjalne lustro). Przyspiesza generowanie, eliminując potrzebę CFG.",
   "generation.sampler.anima_rdbt_downloading": "Pobieranie LoRA RDBT-Anima…",
+  "generation.sampler.anima_beta57_toggle": "Malarskie tekstury (beta57)",
+  "generation.sampler.anima_beta57_tip": "Przełącza scheduler na beta57 z pakietu węzłów RES4LYF, który karta modelu Anima poleca dla bardziej malarskiego lub realistycznego wyglądu. Kroki, CFG i sampler pozostają bez zmian. Wyłącz, aby wrócić do zwykłego schedulera.",
   "generation.sampler.nanosaur_recommended": "Zalecane ustawienia Nanosaur",
   "generation.sampler.nanosaur_hint": "40 kroków, CFG 7, sampler euler, prosty scheduler. Domyślna rozdzielczość 896×1152.",
   "generation.sampler.novelai_recommended": "Ustawienia zalecane przez NovelAI",

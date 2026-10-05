@@ -946,6 +946,8 @@ const ru: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
   "generation.sampler.anima_rdbt_tip": "Загружает и применяет созданную сообществом LoRA RDBT-Anima с дистилляцией guidance (~92 МБ, неофициальное зеркало). Ускоряет генерацию, устраняя необходимость в CFG.",
   "generation.sampler.anima_rdbt_downloading": "Загрузка LoRA RDBT-Anima…",
+  "generation.sampler.anima_beta57_toggle": "Живописные текстуры (beta57)",
+  "generation.sampler.anima_beta57_tip": "Переключает планировщик на beta57 из пакета узлов RES4LYF, который карточка модели Anima советует для более живописного или реалистичного вида. Шаги, CFG и сэмплер не меняются. Выключите, чтобы вернуть обычный планировщик.",
   "generation.sampler.sih_recommended": "Рекомендуемые настройки SIH",
   "generation.sampler.sih_hint": "Публичных настроек модели SIH не найдено; используются стандартные проекта: 20 шагов, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Рекомендуемые настройки Juice",

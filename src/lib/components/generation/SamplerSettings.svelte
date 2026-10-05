@@ -13,6 +13,7 @@
   } from "../../utils/novelaiModels.js";
   import {
     ANIMA_SAMPLING,
+    BETA57_SCHEDULER,
     JUICE_SAMPLING,
     NANOSAUR_SAMPLING,
     type SamplingRecommendation,
@@ -255,6 +256,8 @@
   );
   const hasNanosaurRecommendation = $derived(generation.isNanosaur || activeModelName.includes("nanosaur"));
 
+  const beta57Enabled = $derived(generation.scheduler === BETA57_SCHEDULER);
+
   let animaRecOpen = $state(true);
   let juiceRecOpen = $state(true);
   let nanosaurRecOpen = $state(true);
@@ -368,6 +371,28 @@
             {locale.t('common.apply')}
           </button>
         </div>
+        {#if generation.beta57Available}
+          <div class="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+            <label class="text-[11px] text-neutral-300">
+              {locale.t('generation.sampler.anima_beta57_toggle')}<InfoTip text={locale.t('generation.sampler.anima_beta57_tip')} />
+            </label>
+            <button
+              class="relative w-10 h-5 rounded-full transition-colors shrink-0 {beta57Enabled
+                ? 'bg-indigo-600'
+                : 'bg-neutral-700'}"
+              onclick={() => generation.setBeta57Scheduler(!beta57Enabled)}
+              role="switch"
+              aria-checked={beta57Enabled}
+              aria-label={locale.t('generation.sampler.anima_beta57_toggle')}
+            >
+              <span
+                class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {beta57Enabled
+                  ? 'translate-x-5'
+                  : ''}"
+              ></span>
+            </button>
+          </div>
+        {/if}
         <div class="flex items-center justify-between gap-2 px-2.5 pb-2.5">
           <label class="text-[11px] text-neutral-300">
             {locale.t('generation.sampler.anima_rdbt_toggle')}<InfoTip text={locale.t('generation.sampler.anima_rdbt_tip')} />

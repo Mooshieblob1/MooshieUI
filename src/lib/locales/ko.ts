@@ -946,6 +946,8 @@ const ko: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
   "generation.sampler.anima_rdbt_tip": "커뮤니티 제작 RDBT-Anima 가이던스 증류 LoRA를 다운로드하여 적용합니다 (~92MB, 비공식 미러). CFG가 필요 없어져 생성 속도가 빨라집니다.",
   "generation.sampler.anima_rdbt_downloading": "RDBT-Anima LoRA 다운로드 중…",
+  "generation.sampler.anima_beta57_toggle": "회화풍 질감 (beta57)",
+  "generation.sampler.anima_beta57_tip": "스케줄러를 RES4LYF 노드 팩의 beta57로 바꿉니다. Anima 모델 카드에서 더 회화적이거나 사실적인 느낌에 권장합니다. 스텝, CFG, 샘플러는 그대로 유지됩니다. 끄면 기존 스케줄러로 돌아갑니다.",
   "generation.sampler.sih_recommended": "SIH 권장 설정",
   "generation.sampler.sih_hint": "공개 SIH 모델 카드 설정 없음. 프로젝트 기본값 사용: 20단계, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Juice 권장 설정",

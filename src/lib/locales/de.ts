@@ -967,6 +967,8 @@ const de: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
   "generation.sampler.anima_rdbt_tip": "Lädt die von der Community erstellte RDBT-Anima Guidance-Distilled-LoRA herunter und wendet sie an (~92MB, inoffizieller Mirror). Beschleunigt die Generierung, da kein CFG mehr nötig ist.",
   "generation.sampler.anima_rdbt_downloading": "RDBT-Anima LoRA wird heruntergeladen…",
+  "generation.sampler.anima_beta57_toggle": "Malerische Texturen (beta57)",
+  "generation.sampler.anima_beta57_tip": "Stellt den Scheduler auf beta57 aus dem RES4LYF-Node-Paket um, das die Anima-Modellkarte für einen malerischeren oder realistischeren Look empfiehlt. Schritte, CFG und Sampler bleiben unverändert. Ausschalten stellt den üblichen Scheduler wieder her.",
   "generation.sampler.sih_recommended": "Empfohlene SIH-Einstellungen",
   "generation.sampler.sih_hint": "Keine öffentlichen SIH-Modellkarteneinstellungen. Projekt-Standardwerte: 20 Schritte, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Empfohlene Juice-Einstellungen",
