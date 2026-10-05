@@ -1654,7 +1654,7 @@ const ru: Record<string, string> = {
   "bottom_panel.no_videos": "Видео не сгенерированы в этой сессии",
   "bottom_panel.no_video_results": "Видео не найдены",
   "bottom_panel.video_search_placeholder": "Поиск видео...",
-  "bottom_panel.delete_all_videos_confirm": "Удалить все видео, созданные в этой сессии ({count})? Это действие нельзя отменить.",
+  "bottom_panel.delete_all_videos_confirm": "Удалить все видео, созданные в этой сессии ({count})? Они будут перемещены в корзину.",
   "bottom_panel.tab.prompts": "Промпты",
   "bottom_panel.no_images": "Изображения не сгенерированы в этой сессии",
   "bottom_panel.no_prompts": "История промптов появится здесь после генерации",
@@ -1675,7 +1675,7 @@ const ru: Record<string, string> = {
   "bottom_panel.no_prompt_results": "Промпты не найдены",
   "bottom_panel.card_size": "Размер карточки",
   "bottom_panel.delete_all": "Удалить все",
-  "bottom_panel.delete_all_confirm": "Удалить все изображения, созданные в этой сессии ({count})? Это действие нельзя отменить.",
+  "bottom_panel.delete_all_confirm": "Удалить все изображения, созданные в этой сессии ({count})? Они будут перемещены в корзину.",
 
   // ── Загрузки ────────────────────────────────────────────
   "downloads.cancel": "Отменить загрузку",

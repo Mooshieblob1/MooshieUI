@@ -1675,7 +1675,7 @@ const de: Record<string, string> = {
   "bottom_panel.no_videos": "Keine Videos in dieser Sitzung erzeugt",
   "bottom_panel.no_video_results": "Keine Videos entsprechen Ihrer Suche",
   "bottom_panel.video_search_placeholder": "Videos suchen...",
-  "bottom_panel.delete_all_videos_confirm": "Alle {count} in dieser Sitzung erzeugten Videos löschen? Dies kann nicht rückgängig gemacht werden.",
+  "bottom_panel.delete_all_videos_confirm": "Alle {count} in dieser Sitzung erzeugten Videos löschen? Sie werden in den Papierkorb verschoben.",
   "bottom_panel.tab.prompts": "Prompts",
   "bottom_panel.no_images": "Keine Bilder in dieser Sitzung erzeugt",
   "bottom_panel.no_prompts": "Prompt-Verlauf wird nach dem Erzeugen hier angezeigt",
@@ -1696,7 +1696,7 @@ const de: Record<string, string> = {
   "bottom_panel.no_prompt_results": "Keine Prompts entsprechen Ihrer Suche",
   "bottom_panel.card_size": "Kartengröße",
   "bottom_panel.delete_all": "Alle löschen",
-  "bottom_panel.delete_all_confirm": "Alle {count} in dieser Sitzung erzeugten Bilder löschen? Dies kann nicht rückgängig gemacht werden.",
+  "bottom_panel.delete_all_confirm": "Alle {count} in dieser Sitzung erzeugten Bilder löschen? Sie werden in den Papierkorb verschoben.",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.cancel": "Download abbrechen",

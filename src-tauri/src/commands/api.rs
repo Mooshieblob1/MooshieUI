@@ -2641,26 +2641,86 @@ pub async fn delete_gallery_image(
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     match resolve_gallery_image_path(&dir, &filename) {
-        Ok(path) => {
-            if filename.ends_with(".mp4") {
-                super::video_drafts::delete_draft(state.inner(), &dir, &filename).await?;
-            }
-            std::fs::remove_file(&path)?;
-            crate::gallery_index::remove(&path);
-            // Videos own a poster sidecar that listings never surface; delete it
-            // together with its mp4.
-            if let Some(stem) = filename.strip_suffix(".mp4") {
-                let poster = path.with_file_name(format!("{stem}_poster.webp"));
-                if poster.is_file() {
-                    let _ = std::fs::remove_file(&poster);
-                    crate::gallery_index::remove(&poster);
-                }
-            }
-        }
+        Ok(path) => delete_gallery_file(state.inner(), &dir, &filename, &path).await?,
         Err(GalleryPathResolveError::NotFound) => {}
         Err(e) => return Err(AppError::Other(format!("{}: {}", e, filename))),
     }
     Ok(())
+}
+
+/// Delete one gallery file, for both the desktop command and the browser-mode
+/// route: release a video's retained draft, send the file to the OS recycle
+/// bin, and drop it from the gallery index. Videos own a poster sidecar that
+/// listings never surface; it goes to the bin with its mp4 so restoring both
+/// brings the thumbnail back. A file already gone only loses its index rows.
+pub(crate) async fn delete_gallery_file(
+    state: &AppState,
+    dir: &std::path::Path,
+    filename: &str,
+    path: &std::path::Path,
+) -> Result<(), AppError> {
+    if path.exists() {
+        if filename.ends_with(".mp4") {
+            super::video_drafts::delete_draft(state, dir, filename).await?;
+        }
+        trash_or_remove(path).await?;
+    }
+    crate::gallery_index::remove(path);
+    if let Some(stem) = filename.strip_suffix(".mp4") {
+        let poster = path.with_file_name(format!("{stem}_poster.webp"));
+        if poster.is_file() {
+            let _ = trash_or_remove(&poster).await;
+            crate::gallery_index::remove(&poster);
+        }
+    }
+    Ok(())
+}
+
+/// Move `path` to the OS recycle bin (Windows Recycle Bin, macOS Trash,
+/// freedesktop trash on Linux) so a gallery delete can be undone from the
+/// file manager. When the platform has no usable bin for the path (a network
+/// share, a headless server without a home trash) the file is deleted for
+/// good instead: a delete that silently fails brings the image back on the
+/// next launch.
+pub(crate) async fn trash_or_remove(path: &std::path::Path) -> std::io::Result<()> {
+    let target = path.to_path_buf();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // A fresh thread per call: on Windows `trash` initialises COM on the
+    // calling thread and panics if that thread already joined another
+    // apartment, which a reused tokio worker may have. A panic drops `tx`
+    // and lands in the fallback below.
+    std::thread::Builder::new()
+        .name("gallery-trash".into())
+        .spawn(move || {
+            let _ = tx.send(move_to_trash(&target));
+        })?;
+    let reason = match rx.await {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(e)) => e.to_string(),
+        Err(_) => "trash worker panicked".to_string(),
+    };
+    log::warn!(
+        "[gallery] Recycle bin unavailable for {} ({reason}); deleting permanently",
+        path.display()
+    );
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+fn move_to_trash(path: &std::path::Path) -> Result<(), trash::Error> {
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    // The default Finder method needs Automation permission and fails without
+    // it; NSFileManager needs none, and the file is still restorable by
+    // dragging it out of the Trash.
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx.delete(path)
 }
 
 #[cfg(feature = "desktop")]

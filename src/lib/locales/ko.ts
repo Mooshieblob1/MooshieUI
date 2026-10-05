@@ -1654,7 +1654,7 @@ const ko: Record<string, string> = {
   "bottom_panel.no_videos": "이 세션에서 생성된 동영상 없음",
   "bottom_panel.no_video_results": "검색 결과에 맞는 동영상이 없습니다",
   "bottom_panel.video_search_placeholder": "동영상 검색...",
-  "bottom_panel.delete_all_videos_confirm": "이 세션에서 생성한 동영상 {count}개를 모두 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+  "bottom_panel.delete_all_videos_confirm": "이 세션에서 생성한 동영상 {count}개를 모두 삭제하시겠습니까? 휴지통으로 이동됩니다.",
   "bottom_panel.tab.prompts": "프롬프트",
   "bottom_panel.no_images": "이 세션에서 생성된 이미지 없음",
   "bottom_panel.no_prompts": "생성 후 프롬프트 기록이 여기에 표시됩니다",
@@ -1675,7 +1675,7 @@ const ko: Record<string, string> = {
   "bottom_panel.no_prompt_results": "검색 결과에 맞는 프롬프트가 없습니다",
   "bottom_panel.card_size": "카드 크기",
   "bottom_panel.delete_all": "모두 삭제",
-  "bottom_panel.delete_all_confirm": "이 세션에서 생성한 이미지 {count}개를 모두 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+  "bottom_panel.delete_all_confirm": "이 세션에서 생성한 이미지 {count}개를 모두 삭제하시겠습니까? 휴지통으로 이동됩니다.",
 
   // ── 다운로드 ────────────────────────────────────────────
   "downloads.cancel": "다운로드 취소",
