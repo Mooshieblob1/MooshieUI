@@ -1498,6 +1498,14 @@ const ja: Record<string, string> = {
   "generation.sampler.dmd2_toggle": "DMD2を使用（4ステップ、CFG 1）",
   "generation.sampler.dmd2_tip": "DMD2蒸留LoRAを読み込み、4ステップ、CFG 1、LCMサンプラー、SGM uniformスケジューラーを設定します。わずかな時間でほぼフル品質を実現します。オフにするとLoRAが削除されますが、サンプラー設定はそのまま残ります。",
   "generation.sampler.dmd2_downloading": "DMD2 LoRAをダウンロード中...",
+  "generation.sampler.krea_steps_title": "Krea 2 Turbo ステップ",
+  "generation.sampler.krea_steps_8": "8ステップ",
+  "generation.sampler.krea_steps_4": "4ステップ",
+  "generation.sampler.krea_steps_2": "2ステップ",
+  "generation.sampler.krea_steps_8_hint": "標準のTurbo。高速化LoRAなし。",
+  "generation.sampler.krea_steps_4_hint": "コミュニティ製4ステップLoRA(418 MB)。ほぼ同等の品質で約1.6倍高速。質感が強すぎる場合は強度を0.75に下げてください。",
+  "generation.sampler.krea_steps_2_hint": "コミュニティ製2ステッププレビューLoRA(418 MB)。近い被写体向け。小さな顔や広い構図はにじむことがあります。最終出力には4ステップを使ってください。",
+  "generation.sampler.krea_steps_downloading": "Krea 2 Turbo LoRAをダウンロード中...",
 
   // リファイナー履歴
   "generation.upscale_history.title": "リファイナー履歴",

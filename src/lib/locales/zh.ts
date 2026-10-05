@@ -1479,6 +1479,14 @@ const zh: Record<string, string> = {
   "generation.sampler.dmd2_toggle": "使用 DMD2（4 步，CFG 1）",
   "generation.sampler.dmd2_tip": "加载 DMD2 蒸馏 LoRA，并设置 4 步、CFG 1、LCM 采样器、SGM uniform 调度器——以极短的时间获得接近完整质量的效果。关闭后将移除 LoRA，但采样器设置保留以供手动还原。",
   "generation.sampler.dmd2_downloading": "正在下载 DMD2 LoRA...",
+  "generation.sampler.krea_steps_title": "Krea 2 Turbo 步数",
+  "generation.sampler.krea_steps_8": "8 步",
+  "generation.sampler.krea_steps_4": "4 步",
+  "generation.sampler.krea_steps_2": "2 步",
+  "generation.sampler.krea_steps_8_hint": "原版 Turbo，不加加速 LoRA。",
+  "generation.sampler.krea_steps_4_hint": "社区 4 步 LoRA（418 MB）。约快 1.6 倍，画质几乎不变。若纹理过重，可将强度降到 0.75。",
+  "generation.sampler.krea_steps_2_hint": "社区 2 步预览 LoRA（418 MB）。适合近景主体；小脸和远景可能模糊。最终出图请用 4 步。",
+  "generation.sampler.krea_steps_downloading": "正在下载 Krea 2 Turbo LoRA...",
 
   "generation.upscale_history.title": "精炼历史",
 
