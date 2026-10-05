@@ -120,6 +120,12 @@
       filename: "qwen3vl_4b_fp8_scaled.safetensors",
       category: "text_encoders",
     },
+    {
+      label: "Krea 2 - Wulver v0.5 FP8 (Turbo)",
+      url: "https://huggingface.co/Vaelico/Wulver/resolve/main/Wulver_v0.5_fp8_e4m3fn.safetensors",
+      filename: "Wulver_v0.5_fp8_e4m3fn.safetensors",
+      category: "diffusion_models",
+    },
   ] as const;
 
   let source = $state<"civitai" | "direct">("civitai");

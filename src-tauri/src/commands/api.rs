@@ -4485,10 +4485,13 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.contains("ideogram4") {
         return Some("ideogram4");
     }
+    // Wulver (Vaelico/Wulver) is a Krea 2 Raw fine-tune whose filenames carry no
+    // Krea marker (e.g. "Wulver_v0.5_fp8_e4m3fn.safetensors").
     if name.contains("krea2")
         || name.contains("krea-2")
         || name.contains("krea_2")
         || name.contains("krea 2")
+        || name.contains("wulver")
     {
         return Some("krea2");
     }
@@ -4572,6 +4575,15 @@ fn turbo_model_variant_from_filename(filename: &str) -> &'static str {
         || name.contains(" zit")
         || name.starts_with("zit")
     {
+        return "turbo";
+    }
+    // "non_turbo" names the undistilled weights, not a Turbo variant.
+    if name.contains("non_turbo") || name.contains("non-turbo") || name.contains("nonturbo") {
+        return "none";
+    }
+    // Wulver ships its Turbo-merged files without "turbo" in the name; only the
+    // non_turbo files (caught above) are undistilled.
+    if name.contains("wulver") {
         return "turbo";
     }
     if name.contains("dmd2") {
@@ -4922,6 +4934,38 @@ mod split_model_pairing_tests {
         assert_eq!(
             turbo_model_variant_from_filename("anima-aesthetic-v1.1.safetensors"),
             "none"
+        );
+    }
+
+    #[test]
+    fn wulver_files_resolve_to_krea2_with_turbo_variant() {
+        for name in [
+            "Wulver_v0.5_fp8_e4m3fn.safetensors",
+            "Wulver_v0.5_w4a8-convrot.safetensors",
+            "Wulver_v0.5_non_turbo_bf16.safetensors",
+            "Wulver_v0.5_non_turbo_int8-convrot.safetensors",
+        ] {
+            assert_eq!(model_family_from_filename(name), Some("krea2"), "{name}");
+        }
+        assert_eq!(
+            turbo_model_variant_from_filename("Wulver_v0.5_fp8_e4m3fn.safetensors"),
+            "turbo"
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("Wulver_v0.5_bf16.safetensors"),
+            "turbo"
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("Wulver_v0.5_non_turbo_bf16.safetensors"),
+            "none"
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("Wulver_v0.5_non_turbo_int8-convrot.safetensors"),
+            "none"
+        );
+        assert_eq!(
+            turbo_model_variant_from_filename("Krea-2-Turbo-Q5_K_S.gguf"),
+            "turbo"
         );
     }
 
