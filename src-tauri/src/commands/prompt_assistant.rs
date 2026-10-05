@@ -245,9 +245,9 @@ async fn run_generation(
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
-    let tag_only = grounding::is_tag_only(&purpose, family);
-    let candidates = grounding::retrieve_candidates(input, 40);
-    let system = grounding::system_prompt(tag_only, mode, &candidates, opts.include_artists);
+    let style = grounding::prompt_style(&purpose, family);
+    let candidates = grounding::candidates_for(style, input);
+    let system = grounding::system_prompt(style, mode, &candidates, opts.include_artists);
     let max_tokens = match opts.length.as_deref() {
         Some("short") => 96,
         Some("detailed") => 384,
@@ -259,12 +259,10 @@ async fn run_generation(
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
     let raw = chat_any(app, state, &system, &history, input, max_tokens, &[]).await?;
-    let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
-    // "blue hair" prompt). No-op for Compose.
-    let cleaned = grounding::reconcile_enhance(input, &cleaned, mode);
-    Ok(cleaned)
+    // "blue hair" prompt). No-op for Compose and for prose families.
+    Ok(grounding::finish(input, &raw, mode, style))
 }
 
 #[tauri::command]

@@ -6606,9 +6606,9 @@ pub async fn run_prompt_assistant_headless(
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
-    let tag_only = grounding::is_tag_only(&purpose, family);
-    let candidates = grounding::retrieve_candidates(input, 40);
-    let system = grounding::system_prompt(tag_only, mode, &candidates, include_artists);
+    let style = grounding::prompt_style(&purpose, family);
+    let candidates = grounding::candidates_for(style, input);
+    let system = grounding::system_prompt(style, mode, &candidates, include_artists);
     // Mirror the desktop token budget so browser Enhance/Compose honors the
     // user's length pick instead of always generating at the medium default.
     let max_tokens = match length {
@@ -6621,11 +6621,10 @@ pub async fn run_prompt_assistant_headless(
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
     let raw = chat_any_headless(state, &system, &history, input, max_tokens, &[]).await?;
-    let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
-    // pinned attribute. No-op for Compose. The desktop path runs this too;
-    // omitting it here made browser Enhance silently drop user tags.
-    Ok(grounding::reconcile_enhance(input, &cleaned, mode))
+    // pinned attribute. No-op for Compose and for prose families. The desktop path
+    // runs this too; omitting it here made browser Enhance silently drop user tags.
+    Ok(grounding::finish(input, &raw, mode, style))
 }
 
 // ---------------------------------------------------------------------------

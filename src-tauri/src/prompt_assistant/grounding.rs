@@ -138,24 +138,78 @@ pub fn retrieve_candidates(input: &str, limit: usize) -> Vec<String> {
     matches.iter().map(|(tag, _)| to_display(tag)).collect()
 }
 
-/// Whether a family uses tag-only prompting (vs Anima natural language).
-pub fn is_tag_only_family(family: &str) -> bool {
-    !matches!(family, "anima")
+/// The prompt convention Enhance/Compose writes for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptStyle {
+    /// Comma-separated danbooru tags (SDXL, Illustrious, Pony, SD 1.5, ...).
+    Tags,
+    /// Anima: known tags first, then one natural-language sentence.
+    Anima,
+    /// Plain descriptive prose for families with an LLM or T5 text encoder
+    /// (Krea 2, Flux, Z-Image, Qwen-Image, ...), which read sentences, not tags.
+    Prose,
 }
 
-/// Whether grounding should run in tag-only mode. A purpose-built tag upsampler
-/// (e.g. DanTagGen) is always tag-only regardless of family; otherwise the
-/// family decides (everything except Anima is tag-only).
-pub fn is_tag_only(purpose: &str, family: &str) -> bool {
-    purpose == "tag_upsampler" || is_tag_only_family(family)
+/// Families whose text encoder reads natural-language descriptions. Edit models
+/// (Kontext, Qwen-Image-Edit) take instructions rather than scene descriptions,
+/// so they are left out until they get a recipe of their own.
+fn is_prose_family(family: &str) -> bool {
+    matches!(
+        family,
+        "krea2"
+            | "flux"
+            | "flux1d"
+            | "flux1s"
+            | "flux1krea"
+            | "flux2d"
+            | "flux2klein9b"
+            | "flux2klein9bbase"
+            | "flux2klein4b"
+            | "flux2klein4bbase"
+            | "chroma"
+            | "zib"
+            | "zit"
+            | "qwen"
+            | "sd3"
+            | "wan"
+            | "ideogram4"
+            | "auraflow"
+            | "pixart"
+            | "hunyuandit"
+            | "kolors"
+    )
 }
 
-/// Build the system prompt, seeded with grounding candidates. `tag_only`
-/// selects between danbooru-tag and Anima natural-language conventions.
-/// `include_artists` relaxes the default artist restriction when the user opts
-/// in, letting the assistant suggest well-known artists for style.
+/// Pick the prompt convention. A purpose-built tag upsampler (e.g. DanTagGen)
+/// only emits tags, so it is always [`PromptStyle::Tags`]; otherwise the family
+/// decides, and anything unrecognized stays on tags.
+pub fn prompt_style(purpose: &str, family: &str) -> PromptStyle {
+    if purpose == "tag_upsampler" {
+        PromptStyle::Tags
+    } else if family == "anima" {
+        PromptStyle::Anima
+    } else if is_prose_family(family) {
+        PromptStyle::Prose
+    } else {
+        PromptStyle::Tags
+    }
+}
+
+/// Danbooru tag candidates seed the tag and Anima prompts. Prose families never
+/// see them: a tag list in the instructions pulls the model back into tags.
+pub fn candidates_for(style: PromptStyle, input: &str) -> Vec<String> {
+    match style {
+        PromptStyle::Prose => Vec::new(),
+        PromptStyle::Tags | PromptStyle::Anima => retrieve_candidates(input, 40),
+    }
+}
+
+/// Build the system prompt, seeded with grounding candidates. `style` selects
+/// danbooru-tag, Anima, or plain-prose conventions. `include_artists` relaxes
+/// the default artist restriction when the user opts in, letting the assistant
+/// suggest well-known artists for style.
 pub fn system_prompt(
-    tag_only: bool,
+    style: PromptStyle,
     mode: GenMode,
     candidates: &[String],
     include_artists: bool,
@@ -168,7 +222,10 @@ pub fn system_prompt(
             candidates.join(", ")
         )
     };
-    if tag_only {
+    if style == PromptStyle::Prose {
+        return prose_system_prompt(mode, include_artists);
+    }
+    if style == PromptStyle::Tags {
         let body = match mode {
             GenMode::Enhance => {
                 "Improve the user's danbooru tag list without changing its \
@@ -234,6 +291,43 @@ Do not repeat tags inside the sentence. \
 Do not add headings, labels like 'tags:', or em dashes. No explanations or quotes.{cand}"
         )
     }
+}
+
+/// System prompt for natural-language families. Follows the shape of Krea's own
+/// prompt-expansion guidance: one coherent visual description that keeps every
+/// named subject, attribute, count and spatial relationship the user gave.
+fn prose_system_prompt(mode: GenMode, include_artists: bool) -> String {
+    let body = match mode {
+        GenMode::Enhance => {
+            "Rewrite the user's prompt as a richer description of the same image. \
+The input may be a sentence or a list of tags; either way, keep everything it states: every \
+named character, the number of people, their appearance, clothing, pose and expression, any \
+text to be shown, and every spatial relationship such as left and right, foreground and \
+background, or who is holding what. Then add concrete visual detail that supports it: \
+setting, lighting, colour, composition, camera framing and art style. Never change the subject, \
+never add or remove a character, never contradict anything the user wrote, and do not invent a \
+different scene."
+        }
+        GenMode::Compose => {
+            "Write an image prompt from the user's description. Describe the main \
+subject first, then their appearance, clothing, pose and expression, then the setting, \
+lighting, composition and art style. Keep every detail the user gave, including names, counts \
+and left/right placement, and do not invent subjects they did not mention."
+        }
+    };
+    let artist_rule = if include_artists {
+        " You may name a well-known artist whose style fits, written as 'in the style of Name'; \
+only use real artists you are confident exist."
+    } else {
+        " Only name an artist the user already mentioned."
+    };
+    format!(
+        "You are a prompt writer for a text-to-image model that reads natural language. {body}\
+{artist_rule} \
+Write flowing, grammatically complete sentences in a single paragraph, not a list of tags. \
+Output ONLY the prompt: no headings, no labels like 'prompt:', no quotes, no explanations, no \
+em dashes."
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -628,16 +722,29 @@ pub fn reconcile_enhance(input: &str, output: &str, mode: GenMode) -> String {
     }
 }
 
+/// Repair raw model output for `style`, then (tags and Anima only) reconcile it
+/// against the user's input. Prose is a paragraph, not a tag list: splitting it on
+/// commas would treat clauses as tags and prepend the user's whole sentence, so
+/// keeping the user's details there is left to the system prompt.
+pub fn finish(input: &str, raw: &str, mode: GenMode, style: PromptStyle) -> String {
+    let cleaned = repair(raw, style);
+    if style == PromptStyle::Prose {
+        cleaned
+    } else {
+        reconcile_enhance(input, &cleaned, mode)
+    }
+}
+
 /// Post-filter repair of raw model output. Validates/repairs against the corpus
 /// and enforces the active conventions. Returns a cleaned prompt string (possibly
 /// empty if nothing survived — caller keeps the original prompt in that case).
-/// `tag_only` selects danbooru-tag vs Anima natural-language repair.
-pub fn repair(raw: &str, tag_only: bool) -> String {
+/// `style` selects danbooru-tag, Anima, or plain-prose repair.
+pub fn repair(raw: &str, style: PromptStyle) -> String {
     let pre = presanitize(raw);
-    if tag_only {
-        repair_tag_only(&pre)
-    } else {
-        repair_anima(&pre)
+    match style {
+        PromptStyle::Tags => repair_tag_only(&pre),
+        PromptStyle::Anima => repair_anima(&pre),
+        PromptStyle::Prose => repair_prose(&pre),
     }
 }
 
@@ -694,6 +801,30 @@ fn repair_tag_only(raw: &str) -> String {
         // Unrecognized tokens are dropped (hallucination guard).
     }
     out.join(", ")
+}
+
+/// Prose: there is no corpus to validate against, so only strip the wrapping
+/// models add despite instructions (a leading label, surrounding quotes) and fold
+/// the text onto one line.
+fn repair_prose(raw: &str) -> String {
+    let mut text = raw.trim();
+    let lower = text.to_ascii_lowercase();
+    for label in ["prompt:", "description:", "enhanced prompt:"] {
+        if lower.starts_with(label) {
+            text = text[label.len()..].trim_start();
+            break;
+        }
+    }
+    let text = text.trim_matches(|c| c == '"' || c == '\u{201c}' || c == '\u{201d}');
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // presanitize turns em dashes into ", "; a dash that sat before punctuation
+    // leaves ", ," or ", ." behind.
+    joined
+        .replace(" ,", ",")
+        .replace(",,", ",")
+        .replace(",.", ".")
+        .trim_matches(|c: char| c == ',' || c.is_whitespace())
+        .to_string()
 }
 
 /// Anima: split the output into a leading tag section and a trailing
@@ -818,7 +949,7 @@ mod tests {
         // @artist_name placeholder, plus a redundant trailing "tags:" block.
         let raw = "1girl, wearing a red dress, subtle elegance — @artist_name\n\n\
 tags: 1girl, red dress, hair bun";
-        let out = repair(raw, false);
+        let out = repair(raw, PromptStyle::Anima);
         assert!(!out.contains('\u{2014}'), "em dash should be gone: {out}");
         assert!(
             !out.to_ascii_lowercase().contains("artist_name"),
@@ -841,13 +972,74 @@ tags: 1girl, red dress, hair bun";
     }
 
     #[test]
-    fn is_tag_only_routes_by_purpose_and_family() {
+    fn prompt_style_routes_by_purpose_and_family() {
         // Tag upsampler is always tag-only, even on Anima.
-        assert!(is_tag_only("tag_upsampler", "anima"));
-        // Natural-language model on Anima uses prose mode.
-        assert!(!is_tag_only("natural_language", "anima"));
-        // Natural-language model on a non-Anima family stays tag-only.
-        assert!(is_tag_only("natural_language", "illustrious"));
+        assert_eq!(prompt_style("tag_upsampler", "anima"), PromptStyle::Tags);
+        assert_eq!(prompt_style("tag_upsampler", "krea2"), PromptStyle::Tags);
+        // Natural-language model on Anima uses the tags-then-sentence mode.
+        assert_eq!(
+            prompt_style("natural_language", "anima"),
+            PromptStyle::Anima
+        );
+        // Tag-trained families stay on tags.
+        assert_eq!(
+            prompt_style("natural_language", "illustrious"),
+            PromptStyle::Tags
+        );
+        assert_eq!(prompt_style("natural_language", "sdxl"), PromptStyle::Tags);
+        assert_eq!(
+            prompt_style("natural_language", "unknown"),
+            PromptStyle::Tags
+        );
+        // LLM/T5-encoder families get prose.
+        for fam in ["krea2", "flux1d", "flux2klein4b", "chroma", "zit", "qwen"] {
+            assert_eq!(
+                prompt_style("natural_language", fam),
+                PromptStyle::Prose,
+                "{fam}"
+            );
+        }
+        // Edit models take instructions, not descriptions.
+        assert_eq!(
+            prompt_style("natural_language", "flux1kontext"),
+            PromptStyle::Tags
+        );
+    }
+
+    #[test]
+    fn prose_system_prompt_asks_for_sentences_without_tags() {
+        let sys = system_prompt(PromptStyle::Prose, GenMode::Enhance, &[], false);
+        assert!(!sys.contains("danbooru"), "{sys}");
+        assert!(sys.contains("left and right"), "{sys}");
+        assert!(candidates_for(PromptStyle::Prose, "1girl, long hair").is_empty());
+        assert!(!candidates_for(PromptStyle::Tags, "1girl, long hair").is_empty());
+    }
+
+    #[test]
+    fn prose_repair_strips_wrapping_and_keeps_sentences() {
+        let raw = "Prompt: \"A girl with long red hair stands on the left,\n holding an umbrella \u{2014} rain falls behind her.\"";
+        assert_eq!(
+            repair(raw, PromptStyle::Prose),
+            "A girl with long red hair stands on the left, holding an umbrella, rain falls behind her."
+        );
+    }
+
+    #[test]
+    fn prose_finish_does_not_prepend_user_input() {
+        let input = "a girl on the left and a boy on the right";
+        let raw = "A cheerful girl stands on the left while a tall boy waves from the right, under a bright sky.";
+        assert_eq!(
+            finish(input, raw, GenMode::Enhance, PromptStyle::Prose),
+            raw
+        );
+        // Tag mode still re-injects a dropped user tag.
+        assert!(finish(
+            "1girl, solo",
+            "long hair",
+            GenMode::Enhance,
+            PromptStyle::Tags
+        )
+        .starts_with("1girl, solo"));
     }
 
     #[test]
