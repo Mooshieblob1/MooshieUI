@@ -1075,6 +1075,8 @@ const en: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
   "generation.sampler.anima_rdbt_tip": "Downloads and applies the community RDBT-Anima guidance-distilled LoRA (~92MB, unofficial mirror). Speeds up generation by removing the need for CFG.",
   "generation.sampler.anima_rdbt_downloading": "Downloading RDBT-Anima LoRA…",
+  "generation.sampler.anima_beta57_toggle": "Painterly textures (beta57)",
+  "generation.sampler.anima_beta57_tip": "Switches the scheduler to beta57 from the RES4LYF node pack, which the Anima model card suggests for a more painterly or realistic look. Steps, CFG and sampler stay as they are. Turn it off to go back to the usual scheduler.",
   "generation.sampler.nanosaur_recommended": "Nanosaur Recommended Settings",
   "generation.sampler.nanosaur_hint": "40 steps, CFG 7, euler sampler, simple scheduler. 896×1152 default resolution.",
   "generation.sampler.novelai_recommended": "NovelAI Recommended Settings",

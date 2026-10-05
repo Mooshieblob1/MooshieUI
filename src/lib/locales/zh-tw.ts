@@ -946,6 +946,8 @@ const zhTw: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
   "generation.sampler.anima_rdbt_tip": "下載並套用社群製作的 RDBT-Anima 引導蒸餾 LoRA（約 92MB，非官方鏡像）。透過移除 CFG 需求加快生成速度。",
   "generation.sampler.anima_rdbt_downloading": "正在下載 RDBT-Anima LoRA…",
+  "generation.sampler.anima_beta57_toggle": "繪畫質感 (beta57)",
+  "generation.sampler.anima_beta57_tip": "將排程器切換為 RES4LYF 節點包中的 beta57，Anima 模型卡建議用它獲得更具繪畫感或更寫實的效果。步數、CFG 與取樣器維持不變。關閉後恢復常用排程器。",
   "generation.sampler.sih_recommended": "SIH 建議設定",
   "generation.sampler.sih_hint": "無公開 SIH 模型卡設定。使用專案預設值：20 步，CFG 1.4，euler_cfg_pp，sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice 建議設定",

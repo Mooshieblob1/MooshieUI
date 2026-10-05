@@ -19,6 +19,7 @@
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
+  import { BETA57_SCHEDULER } from "./lib/utils/samplingRecommendation.js";
   import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
@@ -349,6 +350,14 @@
     autocomplete.notifyModelChanged(
       generation.isAnima || generation.isWan || generation.isQwen,
     );
+  });
+
+  // beta57 comes from the RES4LYF node pack. A saved beta57 scheduler on an
+  // install without it (pack removed, or settings synced from another machine)
+  // would fail ComfyUI's validation, so fall back once the scheduler list loads.
+  $effect(() => {
+    if (models.schedulers.length === 0 || generation.scheduler !== BETA57_SCHEDULER) return;
+    if (!generation.beta57Available) untrack(() => generation.setBeta57Scheduler(false));
   });
 
   // NovelAI has no image-edit or video endpoint, so those navigation entries are hidden.

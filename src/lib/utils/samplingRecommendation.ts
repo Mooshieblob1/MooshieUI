@@ -33,6 +33,14 @@ export const ANIMA_SAMPLING: SamplingRecommendation = {
   facefixSteps: 10,
 };
 
+/**
+ * RES4LYF's beta57 scheduler. The Anima model card suggests it for a more
+ * painterly or realistic look, since it spends more of the schedule on
+ * low-noise steps. It only exists when the RES4LYF node pack is installed, so
+ * it is offered only while ComfyUI lists it.
+ */
+export const BETA57_SCHEDULER = "beta57";
+
 /** Juice / Seele / SIH. */
 export const JUICE_SAMPLING: SamplingRecommendation = {
   steps: 20,

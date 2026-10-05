@@ -959,6 +959,8 @@ const fr: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
   "generation.sampler.anima_rdbt_tip": "Télécharge et applique le LoRA communautaire RDBT-Anima à guidance distillée (~92 Mo, miroir non officiel). Accélère la génération en supprimant le besoin de CFG.",
   "generation.sampler.anima_rdbt_downloading": "Téléchargement du LoRA RDBT-Anima…",
+  "generation.sampler.anima_beta57_toggle": "Textures picturales (beta57)",
+  "generation.sampler.anima_beta57_tip": "Passe le scheduler à beta57 du pack de nœuds RES4LYF, que la fiche du modèle Anima suggère pour un rendu plus pictural ou réaliste. Les étapes, le CFG et le sampler ne changent pas. Désactivez-le pour revenir au scheduler habituel.",
   "generation.sampler.sih_recommended": "Paramètres recommandés SIH",
   "generation.sampler.sih_hint": "Aucun paramètre public SIH trouvé ; utilisation des défauts du projet : 20 étapes, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Paramètres recommandés Juice",

@@ -24,7 +24,7 @@ import {
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
-import { GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
+import { BETA57_SCHEDULER, GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import {
@@ -2067,6 +2067,26 @@ class GenerationStore {
     if (options.includes(preferred)) return preferred;
     if (options.includes(fallback)) return fallback;
     return options[0] ?? preferred;
+  }
+
+  /** True when ComfyUI lists RES4LYF's beta57 scheduler. */
+  get beta57Available(): boolean {
+    return models.schedulers.includes(BETA57_SCHEDULER);
+  }
+
+  /**
+   * Switch the Anima painterly preset on or off. Only the scheduler changes:
+   * steps, CFG and sampler stay on whatever the Anima variant (Base, Turbo,
+   * Light Lavender) set, since beta57 is a texture choice, not a new recipe.
+   * Off returns to the scheduler the Anima preset uses for this variant.
+   */
+  setBeta57Scheduler(on: boolean) {
+    if (on) {
+      if (this.beta57Available) this.scheduler = BETA57_SCHEDULER;
+      return;
+    }
+    const preferred = this.isAnimaLightLavender ? "simple" : "sgm_uniform";
+    this.scheduler = this.resolveAvailableOption(models.schedulers, preferred, "normal");
   }
 
   private applyResolvedPreset(preset: ModelPreset) {

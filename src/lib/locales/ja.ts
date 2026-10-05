@@ -959,6 +959,8 @@ const ja: Record<string, string> = {
   "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
   "generation.sampler.anima_rdbt_tip": "コミュニティ製のRDBT-Anima ガイダンス蒸留LoRAをダウンロードして適用します(約92MB、非公式ミラー)。CFGが不要になり生成が高速化します。",
   "generation.sampler.anima_rdbt_downloading": "RDBT-Anima LoRAをダウンロード中…",
+  "generation.sampler.anima_beta57_toggle": "絵画的な質感 (beta57)",
+  "generation.sampler.anima_beta57_tip": "スケジューラをRES4LYFノードパックのbeta57に切り替えます。Animaのモデルカードでは、より絵画的またはリアルな表現に勧められています。ステップ数、CFG、サンプラーはそのままです。オフにすると通常のスケジューラに戻ります。",
   "generation.sampler.sih_recommended": "SIH推奨設定",
   "generation.sampler.sih_hint": "公開SIHモデルカード設定なし。プロジェクトデフォルト使用：20ステップ、CFG 1.4、euler_cfg_pp、sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice推奨設定",
