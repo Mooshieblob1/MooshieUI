@@ -1477,6 +1477,14 @@ const ko: Record<string, string> = {
   "generation.sampler.dmd2_toggle": "DMD2 사용 (4단계, CFG 1)",
   "generation.sampler.dmd2_tip": "DMD2 증류 LoRA를 불러오고 4단계, CFG 1, LCM 샘플러, SGM uniform 스케줄러를 설정합니다. 짧은 시간에 거의 최고 품질을 구현합니다. 끄면 LoRA가 제거되지만 샘플러 설정은 그대로 남습니다.",
   "generation.sampler.dmd2_downloading": "DMD2 LoRA 다운로드 중...",
+  "generation.sampler.krea_steps_title": "Krea 2 Turbo 스텝",
+  "generation.sampler.krea_steps_8": "8스텝",
+  "generation.sampler.krea_steps_4": "4스텝",
+  "generation.sampler.krea_steps_2": "2스텝",
+  "generation.sampler.krea_steps_8_hint": "기본 Turbo, 가속 LoRA 없음.",
+  "generation.sampler.krea_steps_4_hint": "커뮤니티 4스텝 LoRA (418 MB). 거의 같은 품질로 약 1.6배 빠릅니다. 질감이 너무 강하면 강도를 0.75로 낮추세요.",
+  "generation.sampler.krea_steps_2_hint": "커뮤니티 2스텝 미리보기 LoRA (418 MB). 가까운 피사체에 적합하며, 작은 얼굴과 넓은 장면은 번질 수 있습니다. 최종 결과물에는 4스텝을 사용하세요.",
+  "generation.sampler.krea_steps_downloading": "Krea 2 Turbo LoRA 다운로드 중...",
 
   "generation.upscale_history.title": "리파이너 기록",
 
