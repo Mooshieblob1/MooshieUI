@@ -1477,6 +1477,14 @@ const ru: Record<string, string> = {
   "generation.sampler.dmd2_toggle": "Использовать DMD2 (4 шага, CFG 1)",
   "generation.sampler.dmd2_tip": "Загружает дистилляционную LoRA DMD2 и устанавливает 4 шага, CFG 1, сэмплер LCM, планировщик SGM uniform — почти полное качество за долю времени. Отключение убирает LoRA, но оставляет настройки сэмплера для самостоятельного восстановления.",
   "generation.sampler.dmd2_downloading": "Загрузка LoRA DMD2...",
+  "generation.sampler.krea_steps_title": "Шаги Krea 2 Turbo",
+  "generation.sampler.krea_steps_8": "8 шагов",
+  "generation.sampler.krea_steps_4": "4 шага",
+  "generation.sampler.krea_steps_2": "2 шага",
+  "generation.sampler.krea_steps_8_hint": "Стандартный Turbo без ускоряющей LoRA.",
+  "generation.sampler.krea_steps_4_hint": "Community LoRA на 4 шага (418 МБ). Примерно в 1,6 раза быстрее при почти полном качестве. Снизьте силу до 0,75, если текстура слишком резкая.",
+  "generation.sampler.krea_steps_2_hint": "Community LoRA для превью на 2 шага (418 МБ). Хороша для крупных объектов; мелкие лица и широкие сцены могут размываться. Для финальных изображений используйте 4 шага.",
+  "generation.sampler.krea_steps_downloading": "Загрузка LoRA Krea 2 Turbo...",
 
   "generation.upscale_history.title": "История рифайнера",
 
