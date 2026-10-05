@@ -1896,8 +1896,9 @@ class GalleryStore {
   }
 
   /**
-   * Ask before deleting one image, then delete it. Deletion is permanent (the
-   * file and its video draft/poster go), so every one-off delete button and
+   * Ask before deleting one image, then delete it. The file (and a video's
+   * poster) goes to the OS recycle bin, but its video draft and board
+   * assignment do not come back with it, so every one-off delete button and
    * menu item goes through here. The lightbox trash and the bottom panel's
    * floating bar call deleteImage() directly: they are deliberate culling
    * flows meant for deleting image after image.
