@@ -1686,7 +1686,7 @@ const ja: Record<string, string> = {
   "bottom_panel.no_videos": "このセッションで生成された動画はありません",
   "bottom_panel.no_video_results": "検索に一致する動画がありません",
   "bottom_panel.video_search_placeholder": "動画を検索...",
-  "bottom_panel.delete_all_videos_confirm": "このセッションで生成した {count} 本の動画をすべて削除しますか？この操作は元に戻せません。",
+  "bottom_panel.delete_all_videos_confirm": "このセッションで生成した {count} 本の動画をすべて削除しますか？ごみ箱に移動されます。",
   "bottom_panel.tab.prompts": "プロンプト",
   "bottom_panel.no_images": "このセッションで生成された画像はありません",
   "bottom_panel.no_prompts": "生成後にプロンプト履歴がここに表示されます",
@@ -1707,7 +1707,7 @@ const ja: Record<string, string> = {
   "bottom_panel.no_prompt_results": "検索に一致するプロンプトがありません",
   "bottom_panel.card_size": "カードサイズ",
   "bottom_panel.delete_all": "すべて削除",
-  "bottom_panel.delete_all_confirm": "このセッションで生成した {count} 枚の画像をすべて削除しますか？この操作は元に戻せません。",
+  "bottom_panel.delete_all_confirm": "このセッションで生成した {count} 枚の画像をすべて削除しますか？ごみ箱に移動されます。",
 
   // ── ダウンロード ────────────────────────────────────────
   "downloads.cancel": "ダウンロードをキャンセル",

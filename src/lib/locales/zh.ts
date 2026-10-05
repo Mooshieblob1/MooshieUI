@@ -1664,7 +1664,7 @@ const zh: Record<string, string> = {
   "bottom_panel.no_videos": "本次会话未生成视频",
   "bottom_panel.no_video_results": "没有符合搜索条件的视频",
   "bottom_panel.video_search_placeholder": "搜索视频...",
-  "bottom_panel.delete_all_videos_confirm": "删除本次会话生成的全部 {count} 个视频？此操作无法撤销。",
+  "bottom_panel.delete_all_videos_confirm": "删除本次会话生成的全部 {count} 个视频？将移至回收站。",
   "bottom_panel.tab.prompts": "提示词",
   "bottom_panel.no_images": "本次会话未生成图像",
   "bottom_panel.no_prompts": "生成后提示词历史将显示在这里",
@@ -1685,7 +1685,7 @@ const zh: Record<string, string> = {
   "bottom_panel.no_prompt_results": "没有符合搜索条件的提示词",
   "bottom_panel.card_size": "卡片大小",
   "bottom_panel.delete_all": "全部删除",
-  "bottom_panel.delete_all_confirm": "删除本次会话生成的全部 {count} 张图片？此操作无法撤销。",
+  "bottom_panel.delete_all_confirm": "删除本次会话生成的全部 {count} 张图片？将移至回收站。",
 
   // ── 下载 ────────────────────────────────────────────────
   "downloads.cancel": "取消下载",

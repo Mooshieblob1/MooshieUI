@@ -1664,7 +1664,7 @@ const zhTw: Record<string, string> = {
   "bottom_panel.no_videos": "本次工作階段未生成影片",
   "bottom_panel.no_video_results": "沒有符合搜尋條件的影片",
   "bottom_panel.video_search_placeholder": "搜尋影片...",
-  "bottom_panel.delete_all_videos_confirm": "刪除本次工作階段產生的全部 {count} 部影片？此操作無法復原。",
+  "bottom_panel.delete_all_videos_confirm": "刪除本次工作階段產生的全部 {count} 部影片？將移至資源回收筒。",
   "bottom_panel.tab.prompts": "提示詞",
   "bottom_panel.no_images": "本次工作階段未生成影像",
   "bottom_panel.no_prompts": "生成後提示詞歷史將顯示在這裡",
@@ -1685,7 +1685,7 @@ const zhTw: Record<string, string> = {
   "bottom_panel.no_prompt_results": "沒有符合搜尋條件的提示詞",
   "bottom_panel.card_size": "卡片大小",
   "bottom_panel.delete_all": "全部刪除",
-  "bottom_panel.delete_all_confirm": "刪除本次工作階段產生的全部 {count} 張圖片？此操作無法復原。",
+  "bottom_panel.delete_all_confirm": "刪除本次工作階段產生的全部 {count} 張圖片？將移至資源回收筒。",
 
   // ── 下載 ────────────────────────────────────────────────
   "downloads.cancel": "取消下載",

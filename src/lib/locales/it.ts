@@ -1664,7 +1664,7 @@ const it: Record<string, string> = {
   "bottom_panel.no_videos": "Nessun video generato in questa sessione",
   "bottom_panel.no_video_results": "Nessun video corrisponde alla ricerca",
   "bottom_panel.video_search_placeholder": "Cerca video...",
-  "bottom_panel.delete_all_videos_confirm": "Eliminare tutti i {count} video generati in questa sessione? L'operazione non può essere annullata.",
+  "bottom_panel.delete_all_videos_confirm": "Eliminare tutti i {count} video generati in questa sessione? Verranno spostati nel cestino.",
   "bottom_panel.tab.prompts": "Prompt",
   "bottom_panel.no_images": "Nessuna immagine generata in questa sessione",
   "bottom_panel.no_prompts": "La cronologia prompt apparirà qui dopo la generazione",
@@ -1685,7 +1685,7 @@ const it: Record<string, string> = {
   "bottom_panel.no_prompt_results": "Nessun prompt corrisponde alla ricerca",
   "bottom_panel.card_size": "Dimensione scheda",
   "bottom_panel.delete_all": "Elimina tutto",
-  "bottom_panel.delete_all_confirm": "Eliminare tutte le {count} immagini generate in questa sessione? L'operazione non può essere annullata.",
+  "bottom_panel.delete_all_confirm": "Eliminare tutte le {count} immagini generate in questa sessione? Verranno spostate nel cestino.",
 
   // ── Download ────────────────────────────────────────────
   "downloads.cancel": "Annulla download",
