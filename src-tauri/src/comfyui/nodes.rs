@@ -2256,6 +2256,35 @@ mod tests {
         );
     }
 
+    /// The macOS release smoke test deploys the bundled nodes from its own file
+    /// map. A file the app deploys but the map omits fails the import of the
+    /// whole pack there (v2.3.13 shipped `gguf_compat.py` this way). Unlike the
+    /// install.sh parity test this runs on every platform.
+    #[test]
+    fn smoke_test_deploys_every_bundled_node_file() {
+        const NODES_RS: &str = include_str!("nodes.rs");
+        const SMOKE_TEST: &str = include_str!("../../../scripts/comfyui-compat/smoke_test.py");
+        const NEEDLE: &str = "include_str!(\"../../../comfyui-nodes/";
+        let mut seen = 0;
+        for (start, _) in NODES_RS.match_indices(NEEDLE) {
+            let rest = &NODES_RS[start + NEEDLE.len()..];
+            let file = &rest[..rest.find('"').unwrap()];
+            // Package files may be mapped by a comprehension over their names:
+            // f"comfyui-nodes/minimax_director/{name}" for name in ("LICENSE", ...).
+            let listed = SMOKE_TEST.contains(&format!("\"comfyui-nodes/{file}\""))
+                || file.split_once('/').is_some_and(|(dir, name)| {
+                    SMOKE_TEST.contains(&format!("comfyui-nodes/{dir}/{{name}}"))
+                        && SMOKE_TEST.contains(&format!("\"{name}\""))
+                });
+            assert!(
+                listed,
+                "scripts/comfyui-compat/smoke_test.py NODE_FILE_MAP is missing comfyui-nodes/{file}"
+            );
+            seen += 1;
+        }
+        assert!(seen >= 10, "expected nodes.rs to bundle the node files");
+    }
+
     fn git_available() -> bool {
         std::process::Command::new("git")
             .arg("--version")

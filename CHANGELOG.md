@@ -1,6 +1,8 @@
 # Changelog
 
-## What's New in v2.3.13
+## What's New in v2.3.14
+
+v2.3.13 was tagged but never published (its macOS build failed), so this release carries its fix.
 
 ### Fixes and maintenance
 - **Krea 2 GGUF files load**: Krea 2 GGUF files labelled `krea2` (for example the Civitai Turbo GGUF conversions and realrebelai/KREA-2_GGUFs) or `pig` (gguf-org/krea-2-gguf) failed with "Unexpected architecture type in GGUF file: 'krea2'". The ComfyUI-GGUF nodes only accept a fixed list of model types and Krea 2 is not on it, even though ComfyUI itself recognises the model. MooshieUI now adds Krea 2 to that list when ComfyUI starts, so these files generate normally. No reinstall needed.

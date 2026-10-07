@@ -60,6 +60,7 @@ NODE_FILE_MAP = [
     ("comfyui-nodes/h3_upscaler.py", "mooshie-nodes/h3_upscaler.py"),
     ("comfyui-nodes/h3_preview.py", "mooshie-nodes/h3_preview.py"),
     ("comfyui-nodes/h3_upscaler.LICENSE", "mooshie-nodes/h3_upscaler.LICENSE"),
+    ("comfyui-nodes/gguf_compat.py", "mooshie-nodes/gguf_compat.py"),
     ("comfyui-nodes/nodes_tiled_diffusion.py", "nodes_tiled_diffusion.py"),
     ("comfyui-nodes/nodes_guidance.py", "nodes_guidance.py"),
     ("comfyui-nodes/nodes_anima_teacache.py", "nodes_anima_teacache.py"),
