@@ -366,6 +366,10 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
             "h3_upscaler.LICENSE",
             include_str!("../../../comfyui-nodes/h3_upscaler.LICENSE"),
         ),
+        (
+            "gguf_compat.py",
+            include_str!("../../../comfyui-nodes/gguf_compat.py"),
+        ),
     ] {
         std::fs::write(mooshie_dir.join(name), content).map_err(|e| e.to_string())?;
     }

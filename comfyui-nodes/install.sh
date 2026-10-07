@@ -41,6 +41,7 @@ SOURCES=(
     "$SCRIPT_DIR/h3_upscaler.py"
     "$SCRIPT_DIR/h3_upscaler.LICENSE"
     "$SCRIPT_DIR/h3_preview.py"
+    "$SCRIPT_DIR/gguf_compat.py"
     "$SCRIPT_DIR/nodes_tiled_diffusion.py"
     "$SCRIPT_DIR/nodes_guidance.py"
     "$SCRIPT_DIR/nodes_anima_teacache.py"
@@ -78,7 +79,7 @@ mkdir -p "$CUSTOM_NODES"
 echo "  - mooshie-nodes/"
 mkdir -p "$CUSTOM_NODES/mooshie-nodes"
 cp "$MOOSHIE_NODES_INIT" "$CUSTOM_NODES/mooshie-nodes/__init__.py"
-for name in h3_drafts.py h3_upscaler.py h3_upscaler.LICENSE h3_preview.py; do
+for name in h3_drafts.py h3_upscaler.py h3_upscaler.LICENSE h3_preview.py gguf_compat.py; do
     cp "$SCRIPT_DIR/$name" "$CUSTOM_NODES/mooshie-nodes/$name"
 done
 printf '%s\n' "$MOOSHIE_NODES_REQUIREMENTS" > "$CUSTOM_NODES/mooshie-nodes/requirements.txt"
