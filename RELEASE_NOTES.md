@@ -1,3 +1,21 @@
+## What's New in v2.3.12
+
+### Krea 2
+- **GGUF models show up**: `.gguf` diffusion models and text encoders in `models/diffusion_models`, `models/unet`, `models/text_encoders` or `models/clip` now appear in the model pickers. Before, ComfyUI left them out of its lists, so a Krea 2 Turbo GGUF (or any other GGUF) could never be picked. They need the ComfyUI-GGUF nodes, which MooshieUI installs during ComfyUI setup.
+- **Turbo step picker**: Krea 2 Turbo models get a **Krea 2 Turbo steps** picker in the sampler settings with **8 steps**, **4 steps** and **2 steps**. Picking 4 or 2 downloads the matching community speed LoRA (418 MB) and sets euler / simple, CFG 1 and the step count. Picking 8 goes back to stock Turbo. The 2-step LoRA is a preview and can smear small faces and wide scenes.
+- **Wulver**: Wulver, a Krea 2 fine-tune, is now detected as Krea 2 Turbo and gets the Turbo defaults (8 steps, CFG 1, euler / simple). Its `non_turbo` files get the normal Krea 2 defaults. The v0.5 FP8 Turbo file (12.8 GB) is a quick link in the Models Hub.
+
+### Prompt Assistant
+- **Prose for natural-language models**: Enhance and Compose now write full sentences for Krea 2, Flux, Z-Image, Chroma, Qwen-Image and similar models instead of danbooru tags, keeping names, counts and left/right placement. Tag upsamplers still write tags.
+
+### Anima
+- **Painterly textures**: the Anima recommended settings get a **Painterly textures (beta57)** toggle when the RES4LYF node pack is installed. It only changes the scheduler, so steps and CFG stay as they are.
+
+### Gallery
+- **Recycle bin**: deleting an image or video from the gallery now sends it to the Recycle Bin on Windows, the Trash on macOS, or the desktop trash on Linux instead of deleting it for good. If there's no usable bin, it falls back to a permanent delete.
+
+---
+
 ## What's New in v2.3.11
 
 ### Gallery
