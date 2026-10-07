@@ -27,6 +27,7 @@ import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import { BETA57_SCHEDULER, GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
+import { pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
   NOVELAI_DEFAULTS,
   findNovelAiModel,
@@ -816,6 +817,9 @@ class GenerationStore {
   int8FastEnabled = $state(false);
   /** Enable ConvRot within the INT8-Fast loader (default true). */
   int8FastConvrot = $state(true);
+  /** Krea 2: prefer an installed abliterated (uncensored) Qwen3-VL-4B text
+   *  encoder over the stock one. See utils/krea2Encoder.ts. */
+  krea2UncensoredEncoder = $state(false);
   useSplitModel = $state(false);
   diffusionModel = $state<string | null>(null);
   /**
@@ -1766,6 +1770,21 @@ class GenerationStore {
 
     const currentModel = this.clipModel?.trim() ?? "";
     const currentType = this.clipType?.trim() ?? "";
+
+    // Krea 2 has a stock and an uncensored encoder; honour the user's choice
+    // over the backend's first filename match. Null (none installed, or the
+    // inventory not loaded) falls through to the generic handling below.
+    if (recommendedType === "krea2") {
+      const picked = pickKrea2Encoder(encoders, this.clipModel, this.krea2UncensoredEncoder);
+      if (picked) {
+        if (currentModel !== picked || currentType !== recommendedType) {
+          this.clipModel = picked;
+          this.clipType = recommendedType;
+          if (save) this.saveSettings();
+        }
+        return;
+      }
+    }
 
     // The backend knows the family's loader type but found no installed encoder
     // whose filename it recognizes. Strict families (Anima, Z-Image, Krea 2,
@@ -2805,6 +2824,7 @@ class GenerationStore {
         if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.int8FastEnabled !== undefined) this.int8FastEnabled = saved.int8FastEnabled;
         if (saved.int8FastConvrot !== undefined) this.int8FastConvrot = saved.int8FastConvrot;
+        if (saved.krea2UncensoredEncoder !== undefined) this.krea2UncensoredEncoder = saved.krea2UncensoredEncoder;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
         if (saved.modelSourceCategory !== undefined)
@@ -3089,6 +3109,7 @@ class GenerationStore {
         fluxGuidance: this.fluxGuidance,
         int8FastEnabled: this.int8FastEnabled,
         int8FastConvrot: this.int8FastConvrot,
+        krea2UncensoredEncoder: this.krea2UncensoredEncoder,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
         modelSourceCategory: this.modelSourceCategory,
@@ -3255,6 +3276,7 @@ class GenerationStore {
       fluxGuidance: this.fluxGuidance,
       int8FastEnabled: this.int8FastEnabled,
       int8FastConvrot: this.int8FastConvrot,
+      krea2UncensoredEncoder: this.krea2UncensoredEncoder,
       useSplitModel: this.useSplitModel,
       diffusionModel: this.diffusionModel,
       modelSourceCategory: this.modelSourceCategory,

@@ -1,3 +1,10 @@
+## What's New in v2.3.16
+
+### Krea 2
+- **Uncensored text encoder**: when a Krea 2 model is selected, an **Uncensored text encoder** panel appears under the Text Encoder picker. Krea 2 reads prompts through Qwen3-VL-4B, a chat model trained to refuse some requests, which can weaken or drop concepts in the image, not only NSFW ones. **Download and use** fetches an abliterated (Heretic) copy of the same encoder at the same fp8 precision (4.8 GB, DreamFast/Qwen3-VL-4b-Heretic-ComfyUI) and switches to it. Once installed, **Use uncensored encoder** and **Use standard encoder** switch between the two, and the choice is remembered across models and restarts. It cannot add concepts the image model itself never learned.
+
+---
+
 ## What's New in v2.3.15
 
 ### Fixes and maintenance

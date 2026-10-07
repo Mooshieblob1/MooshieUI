@@ -14,6 +14,7 @@
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { resolveAvailableModel } from "../../utils/modelAvailability.js";
+  import { KREA2_UNCENSORED_ENCODER, isKrea2Encoder, isKrea2UncensoredEncoder, pickKrea2Encoder } from "../../utils/krea2Encoder.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
@@ -608,11 +609,7 @@
     generation.invalidateModelMetadataCache();
   }
 
-  // Krea 2 only works with the Qwen3-VL 4B text encoder (12x2560 = 30720-dim
-  // conditioning); any other encoder fails deep inside ComfyUI sampling with a
-  // cryptic feature-count error. Marker list mirrors KREA2_TEXT_ENCODER_MARKERS
-  // in src-tauri/src/commands/api.rs.
-  const KREA2_ENCODER_MARKERS = ["qwen3vl-4b", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b", "qwen3vl4b"];
+  // Krea 2 only works with the Qwen3-VL 4B text encoder (see utils/krea2Encoder.ts).
   const KREA2_ENCODER_FILE: ModelFile = {
     filename: "qwen3vl_4b_fp8_scaled.safetensors",
     url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
@@ -623,12 +620,6 @@
     url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors",
     category: "vae",
   };
-
-  function isKrea2Encoder(filename: string | null | undefined): boolean {
-    if (!filename) return false;
-    const lower = filename.toLowerCase();
-    return KREA2_ENCODER_MARKERS.some((marker) => lower.includes(marker));
-  }
 
   function isZImageEncoder(filename: string | null | undefined): boolean {
     if (!filename) return false;
@@ -697,9 +688,11 @@
 
     const current = generation.clipModel;
     const existing =
-      current && req.isEncoder(current) && models.textEncoders.includes(current)
-        ? current
-        : models.textEncoders.find((f) => req.isEncoder(f));
+      req === REQUIRED_SPLIT_ENCODERS.krea2
+        ? pickKrea2Encoder(models.textEncoders, current, generation.krea2UncensoredEncoder)
+        : current && req.isEncoder(current) && models.textEncoders.includes(current)
+          ? current
+          : models.textEncoders.find((f) => req.isEncoder(f));
     if (existing) {
       if (generation.clipModel !== existing || generation.clipType !== req.clipType) {
         generation.clipModel = existing;
@@ -813,6 +806,57 @@
       generation.modelFamily === "krea2" &&
       !isKrea2Encoder(generation.clipModel)
   );
+
+  // Uncensored (abliterated) Krea 2 text encoder: offered whenever a Krea 2
+  // model is detected, downloaded on request and applied straight away.
+  const showKrea2Uncensored = $derived(generation.useSplitModel && generation.modelFamily === "krea2");
+  const krea2UncensoredInstalled = $derived(models.textEncoders.find(isKrea2UncensoredEncoder) ?? null);
+  const krea2StandardInstalled = $derived(
+    models.textEncoders.find((f) => isKrea2Encoder(f) && !isKrea2UncensoredEncoder(f)) ?? null,
+  );
+  const usingKrea2Uncensored = $derived(isKrea2UncensoredEncoder(generation.clipModel));
+
+  function useKrea2Encoder(filename: string) {
+    generation.krea2UncensoredEncoder = isKrea2UncensoredEncoder(filename);
+    generation.clipModel = filename;
+    generation.clipType = "krea2";
+    generation.saveSettings();
+  }
+
+  async function downloadKrea2UncensoredEncoder() {
+    if (downloading !== null || models.remote) return;
+    const file: ModelFile = KREA2_UNCENSORED_ENCODER;
+    downloading = file.filename;
+    downloadError = "";
+    dlEntries = {
+      [file.filename]: {
+        filename: file.filename,
+        label: locale.t("generation.model.downloading_uncensored_encoder"),
+        downloaded: 0,
+        total: KREA2_UNCENSORED_ENCODER.bytes,
+        done: false,
+      },
+    };
+    dlOrder = [file.filename];
+    try {
+      await downloadModel(file.url, file.category, file.filename);
+      await cacheHashAfterDownload(file);
+      await models.refresh();
+      useKrea2Encoder(file.filename);
+      downloading = null;
+      dlEntries = {};
+      dlOrder = [];
+    } catch (e) {
+      console.error("Failed to download the uncensored Krea 2 text encoder:", e);
+      downloadError = `Download failed: ${e}`;
+      setTimeout(() => {
+        downloading = null;
+        downloadError = "";
+        dlEntries = {};
+        dlOrder = [];
+      }, 4000);
+    }
+  }
 
   // INT8-Fast (ComfyUI-INT8-Fast) node availability probe.
   // null = not yet probed / disconnected; false = installed but node absent;
@@ -1951,7 +1995,14 @@
       <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.text_encoder')}<InfoTip text={locale.t('generation.model.text_encoder_tip')} /></label>
       <select
         bind:value={generation.clipModel}
-        onchange={() => generation.saveSettings()}
+        onchange={() => {
+          // A manual Krea 2 pick sets the uncensored preference too, so the
+          // auto-selection never swaps it back.
+          if (generation.modelFamily === "krea2" && isKrea2Encoder(generation.clipModel)) {
+            generation.krea2UncensoredEncoder = isKrea2UncensoredEncoder(generation.clipModel);
+          }
+          generation.saveSettings();
+        }}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
       >
         <option value={null}>{locale.t('generation.model.text_encoder_none')}</option>
@@ -1962,6 +2013,52 @@
       {#if showKrea2EncoderWarning}
         <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
           {locale.t('generation.model.krea2_encoder_warning')}
+        </div>
+      {/if}
+      {#if showKrea2Uncensored}
+        {@const uncensoredEntry = dlEntries[KREA2_UNCENSORED_ENCODER.filename]}
+        <div class="mt-2 rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-2 space-y-1.5">
+          <div class="flex items-center justify-between gap-2 text-[11px]">
+            <span class="text-neutral-300">
+              {locale.t('generation.model.krea2_uncensored_title')}
+              <InfoTip text={locale.t('generation.model.krea2_uncensored_tip')} />
+            </span>
+            {#if usingKrea2Uncensored}
+              <span class="text-emerald-400 shrink-0">{locale.t('generation.model.krea2_uncensored_active')}</span>
+            {/if}
+          </div>
+          {#if usingKrea2Uncensored}
+            {#if krea2StandardInstalled}
+              <button
+                type="button"
+                class="w-full rounded-md border border-neutral-600 px-2 py-1 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors"
+                onclick={() => useKrea2Encoder(krea2StandardInstalled)}
+              >
+                {locale.t('generation.model.krea2_uncensored_use_standard')}
+              </button>
+            {/if}
+          {:else if krea2UncensoredInstalled}
+            <button
+              type="button"
+              class="w-full rounded-md bg-indigo-600 px-2 py-1 text-[11px] text-white hover:bg-indigo-500 transition-colors"
+              onclick={() => useKrea2Encoder(krea2UncensoredInstalled)}
+            >
+              {locale.t('generation.model.krea2_uncensored_use')}
+            </button>
+          {:else if !models.remote}
+            <button
+              type="button"
+              class="w-full rounded-md bg-indigo-600 px-2 py-1 text-[11px] text-white hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              disabled={downloading !== null}
+              onclick={downloadKrea2UncensoredEncoder}
+            >
+              {#if uncensoredEntry}
+                {locale.t('generation.model.downloading_uncensored_encoder')} ({dlPercent(uncensoredEntry)}%)
+              {:else}
+                {locale.t('generation.model.krea2_uncensored_download', { size: locale.formatBytes(KREA2_UNCENSORED_ENCODER.bytes) })}
+              {/if}
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
