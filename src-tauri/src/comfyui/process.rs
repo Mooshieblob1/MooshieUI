@@ -1146,6 +1146,12 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // Reuse a keep-alive instance only when its saved OS identity still matches.
     // A compatible ComfyUI found on a port may belong to another application.
     if let Some(owned) = ManagedProcess::load(&config, None) {
+        if !owned.spawned_by_this_version() {
+            log::info!("Restarting ComfyUI left running by another app version");
+            stop_owned_process(&state.comfyui_process, &config, None).await?;
+        }
+    }
+    if let Some(owned) = ManagedProcess::load(&config, None) {
         set_managed_endpoint(state, None, owned.port).await;
         config = state.config.read().await.clone();
         let health_url = format!("{}/system_stats", config.server_url);
@@ -1650,6 +1656,15 @@ pub async fn start_worker_process(
         return Ok(());
     }
 
+    if let Some(owned) = ManagedProcess::load(&config, Some(worker.id)) {
+        if !owned.spawned_by_this_version() {
+            log::info!(
+                "Worker {}: restarting ComfyUI left running by another app version",
+                worker.id
+            );
+            stop_owned_process(&worker.process, &config, Some(worker.id)).await?;
+        }
+    }
     if let Some(owned) = ManagedProcess::load(&config, Some(worker.id)) {
         set_managed_endpoint(state, Some(worker.id), owned.port).await;
         let base_url = worker.base_url();

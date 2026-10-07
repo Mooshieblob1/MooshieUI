@@ -148,7 +148,15 @@ pub(crate) struct ManagedProcess {
     identity: ProcessIdentity,
     comfyui_path: PathBuf,
     pub port: u16,
+    /// App version that spawned the process. A ComfyUI that outlived an update
+    /// still runs the previous build's custom nodes (redeployed on disk, never
+    /// re-imported), so only a process started by this version is reusable.
+    /// Absent in records written before this field existed.
+    #[serde(default)]
+    app_version: Option<String>,
 }
+
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn record_path(config: &AppConfig, worker_id: Option<u32>) -> Option<PathBuf> {
     if config.venv_path.is_empty() {
@@ -172,6 +180,7 @@ impl ManagedProcess {
             identity,
             comfyui_path: PathBuf::new(),
             port: 0,
+            app_version: None,
         })
     }
 
@@ -179,7 +188,14 @@ impl ManagedProcess {
         let mut owned = Self::from_child(pid)?;
         owned.comfyui_path = std::fs::canonicalize(&config.comfyui_path)?;
         owned.port = port;
+        owned.app_version = Some(APP_VERSION.to_string());
         Ok(owned)
+    }
+
+    /// Whether this process was spawned by the running app version, and so
+    /// has the custom nodes this version deployed loaded.
+    pub fn spawned_by_this_version(&self) -> bool {
+        self.app_version.as_deref() == Some(APP_VERSION)
     }
 
     pub fn save(&self, config: &AppConfig, worker_id: Option<u32>) -> Result<(), AppError> {
@@ -310,6 +326,24 @@ mod tests {
         assert!(!unrelated.matches(process));
     }
 
+    /// A ComfyUI that survived an app update keeps the old build's custom nodes
+    /// in memory. Records from before the version stamp must still parse (so
+    /// the process can be stopped) but never count as reusable.
+    #[test]
+    fn only_a_process_spawned_by_this_version_is_reusable() {
+        let mut owned = ManagedProcess::from_child(std::process::id()).unwrap();
+        owned.app_version = Some(APP_VERSION.to_string());
+        assert!(owned.spawned_by_this_version());
+
+        let mut legacy = serde_json::to_value(&owned).unwrap();
+        legacy.as_object_mut().unwrap().remove("app_version");
+        let legacy: ManagedProcess = serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.spawned_by_this_version());
+
+        owned.app_version = Some("0.0.0-previous".to_string());
+        assert!(!owned.spawned_by_this_version());
+    }
+
     struct TestChild(std::process::Child);
 
     impl TestChild {
@@ -366,7 +400,9 @@ mod tests {
         let mut external_child = TestChild::spawn();
         let owned = ManagedProcess::capture(&config, owned_child.0.id(), 18288).unwrap();
         owned.save(&config, None).unwrap();
-        assert_eq!(ManagedProcess::load(&config, None).unwrap().port, 18288);
+        let loaded = ManagedProcess::load(&config, None).unwrap();
+        assert_eq!(loaded.port, 18288);
+        assert!(loaded.spawned_by_this_version());
 
         let mut stale = owned.clone();
         stale.identity.started += 1;

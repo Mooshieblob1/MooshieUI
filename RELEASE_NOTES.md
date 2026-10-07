@@ -1,3 +1,11 @@
+## What's New in v2.3.15
+
+### Fixes and maintenance
+- **Updates restart ComfyUI**: after an update, MooshieUI could reconnect to the ComfyUI still running from the previous version instead of starting a new one, so fixes to MooshieUI's own ComfyUI nodes only took effect after a manual restart. This is why the Krea 2 GGUF fix in v2.3.14 kept showing "Unexpected architecture type in GGUF file: 'krea2'" for some people. MooshieUI now restarts a ComfyUI left running by a different version.
+- **Int8 Krea 2 GGUF files**: some Krea 2 GGUF files (for example the Civitai "int8" Turbo GGUF conversion) store raw int8 weights with separate scales, which failed with "Dequantization for I8 is not yet implemented". MooshieUI now converts these to the standard Q8_0 format when loading, at the same size. Files whose scales cannot be converted exactly still show the error; a standard Q8_0 Krea 2 GGUF works in that case.
+
+---
+
 ## What's New in v2.3.14
 
 v2.3.13 was tagged but never published (its macOS build failed), so this release carries its fix.
