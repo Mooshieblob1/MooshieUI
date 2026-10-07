@@ -11,8 +11,10 @@ fn is_optional_model_category(category: &str) -> bool {
         category,
         "diffusion_models"
             | "unet"
+            | "unet_gguf"
             | "text_encoders"
             | "clip"
+            | "clip_gguf"
             | "controlnet"
             | "ultralytics"
             | "model_patches"

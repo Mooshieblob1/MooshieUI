@@ -5880,10 +5880,13 @@ pub(crate) async fn read_modelspec_internal(
             .get_models_list("text_encoders")
             .await
             .unwrap_or_default();
-        if let Ok(legacy) = state.get_models_list("clip").await {
-            for encoder in legacy {
-                if !encoders.contains(&encoder) {
-                    encoders.push(encoder);
+        // `.gguf` encoders are only listed under ComfyUI-GGUF's `clip_gguf`.
+        for extra in ["clip", "clip_gguf"] {
+            if let Ok(more) = state.get_models_list(extra).await {
+                for encoder in more {
+                    if !encoders.contains(&encoder) {
+                        encoders.push(encoder);
+                    }
                 }
             }
         }

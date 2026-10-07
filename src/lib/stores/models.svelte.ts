@@ -56,7 +56,11 @@ class ModelsStore {
       // layout) or `clip/` (legacy ComfyUI / Forge layout). Fetch both and
       // merge so the picker doesn't miss encoders in the legacy directory
       // (e.g. `qwen_3_8b_fp4mixed.safetensors` placed under `clip/`).
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, textEncoders, clipEncoders, controlnetModels, ultralyticsModels, modelPatches] =
+      // ComfyUI lists only its standard weight extensions per folder, so .gguf
+      // files are invisible under `diffusion_models`/`text_encoders`. The
+      // ComfyUI-GGUF pack exposes them as `unet_gguf`/`clip_gguf` (same folders,
+      // same relative names); those categories 404 when the pack is missing.
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, ggufDiffusionModels, textEncoders, clipEncoders, ggufEncoders, controlnetModels, ultralyticsModels, modelPatches] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -66,8 +70,10 @@ class ModelsStore {
           getModels("upscale_models"),
           getModels("diffusion_models").catch(() => [] as string[]),
           getModels("unet").catch(() => [] as string[]),
+          getModels("unet_gguf").catch(() => [] as string[]),
           getModels("text_encoders").catch(() => [] as string[]),
           getModels("clip").catch(() => [] as string[]),
+          getModels("clip_gguf").catch(() => [] as string[]),
           getModels("controlnet").catch(() => [] as string[]),
           getModels("ultralytics").catch(() => [] as string[]),
           getModels("model_patches").catch(() => [] as string[]),
@@ -76,8 +82,8 @@ class ModelsStore {
       console.log("ModelsStore: got checkpoints:", checkpoints);
       console.log("ModelsStore: got samplers:", samplerInfo);
 
-      const mergedEncoders = Array.from(new Set([...(textEncoders ?? []), ...(clipEncoders ?? [])]));
-      const mergedDiffusionModels = Array.from(new Set([...(diffusionModels ?? []), ...(unetModels ?? [])]));
+      const mergedEncoders = Array.from(new Set([...(textEncoders ?? []), ...(clipEncoders ?? []), ...(ggufEncoders ?? [])]));
+      const mergedDiffusionModels = Array.from(new Set([...(diffusionModels ?? []), ...(unetModels ?? []), ...(ggufDiffusionModels ?? [])]));
       const inventory: Record<string, string[]> = {
         checkpoints: checkpoints ?? [], vae: vaes ?? [], loras: loras ?? [],
         embeddings: embeddings ?? [], upscale_models: upscaleModels ?? [],
