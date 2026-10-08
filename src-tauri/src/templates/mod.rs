@@ -2619,6 +2619,23 @@ mod tests {
     }
 
     #[test]
+    fn style_transfer_rf_inversion_sends_otip_inputs() {
+        let mut params = pausable_params();
+        params.model_architecture = "anima".to_string();
+        params.is_sdxl_like = false;
+        params.style_transfer_enabled = true;
+        params.style_reference_image = Some("ref.png".to_string());
+
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        let rf = nodes_of_class(workflow, "RFInversion");
+        assert_eq!(rf.len(), 1);
+        let inputs = &rf[0].1["inputs"];
+        assert_eq!(inputs["otip_strength"], 0.0);
+        assert_eq!(inputs["otip_clip_norm"], 20.0);
+    }
+
+    #[test]
     fn full_run_without_pause_still_uses_plain_ksampler() {
         let params = pausable_params();
         let workflow = build_workflow(&params, 42, false);
