@@ -551,6 +551,7 @@ export interface CivitaiModel {
     id: number;
     name: string;
     baseModel?: string;
+    publishedAt?: string;
     files: CivitaiModelFile[];
     images: Array<{ url: string; nsfw?: string; width?: number; height?: number }>;
   }>;

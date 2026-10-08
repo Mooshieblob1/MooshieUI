@@ -57,7 +57,7 @@ pub struct GalleryImageEntry {
     pub fps: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct CivitaiSearchParams {
     pub query: Option<String>,
     #[serde(rename = "type")]
@@ -5348,58 +5348,73 @@ pub(crate) async fn civitai_key_with_fallback(
     effective_civitai_key(client_key, configured)
 }
 
-/// Search CivitAI models. Shared by the Tauri command and the LAN web server route.
-pub async fn civitai_search_models_internal(
-    state: &Arc<AppState>,
-    params: CivitaiSearchParams,
-) -> Result<Value, AppError> {
-    // Build query string manually because reqwest percent-encodes brackets in
-    // parameter names (baseModels[] → baseModels%5B%5D) which CivitAI ignores.
+/// Query string for a CivitAI model search.
+///
+/// Built by hand rather than with reqwest's `query()`, so array filters go
+/// out as repeated plain keys (`types=LORA`). CivitAI silently ignores the
+/// bracketed `types[]=` form, and rejects a lone `fileFormats=X` because that
+/// field must parse as an array, so the file format is sent twice.
+fn civitai_search_query(params: &CivitaiSearchParams) -> String {
     let encode_val =
         |v: &str| -> String { url::form_urlencoded::byte_serialize(v.as_bytes()).collect() };
+    let non_empty = |v: &Option<String>| -> Option<String> {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
 
     let mut parts: Vec<String> = vec![
         format!(
             "sort={}",
-            encode_val(&params.sort.unwrap_or_else(|| "Most Downloaded".to_string()))
+            encode_val(params.sort.as_deref().unwrap_or("Most Downloaded"))
         ),
         format!(
             "period={}",
-            encode_val(&params.period.unwrap_or_else(|| "AllTime".to_string()))
+            encode_val(params.period.as_deref().unwrap_or("AllTime"))
         ),
         format!("nsfw={}", params.nsfw.unwrap_or(false)),
         format!("limit={}", params.limit.unwrap_or(20)),
     ];
 
-    let has_query = params
-        .query
-        .as_ref()
-        .filter(|v| !v.trim().is_empty())
-        .is_some();
+    let query = non_empty(&params.query);
 
-    if !has_query {
+    // CivitAI refuses `page` on a text search; it pages by cursor only.
+    if query.is_none() {
         parts.push(format!("page={}", params.page.unwrap_or(1)));
     }
 
-    if let Some(cursor) = params.cursor.filter(|v| !v.trim().is_empty()) {
+    if let Some(cursor) = non_empty(&params.cursor) {
         parts.push(format!("cursor={}", encode_val(&cursor)));
     }
 
-    if let Some(q) = params.query.filter(|v| !v.trim().is_empty()) {
+    if let Some(q) = query {
         parts.push(format!("query={}", encode_val(&q)));
     }
-    if let Some(t) = params.model_type.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("types[]={}", encode_val(&t)));
+    if let Some(t) = non_empty(&params.model_type) {
+        parts.push(format!("types={}", encode_val(&t)));
     }
-    if let Some(base_model) = params.base_model.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("baseModels[]={}", encode_val(&base_model)));
+    if let Some(base_model) = non_empty(&params.base_model) {
+        parts.push(format!("baseModels={}", encode_val(&base_model)));
     }
-    if let Some(file_format) = params.file_format.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("fileFormats[]={}", encode_val(&file_format)));
+    if let Some(file_format) = non_empty(&params.file_format) {
+        let encoded = encode_val(&file_format);
+        parts.push(format!("fileFormats={encoded}&fileFormats={encoded}"));
     }
     // Note: CivitAI public API does not support a "status" query parameter.
 
-    let url = format!("https://civitai.com/api/v1/models?{}", parts.join("&"));
+    parts.join("&")
+}
+
+/// Search CivitAI models. Shared by the Tauri command and the LAN web server route.
+pub async fn civitai_search_models_internal(
+    state: &Arc<AppState>,
+    params: CivitaiSearchParams,
+) -> Result<Value, AppError> {
+    let url = format!(
+        "https://civitai.com/api/v1/models?{}",
+        civitai_search_query(&params)
+    );
     log::debug!("CivitAI search URL: {}", url);
 
     let mut req = state
@@ -5438,6 +5453,66 @@ pub async fn civitai_search_models(
     params: CivitaiSearchParams,
 ) -> Result<Value, AppError> {
     civitai_search_models_internal(&state, params).await
+}
+
+#[cfg(test)]
+mod civitai_search_query_tests {
+    use super::*;
+
+    #[test]
+    fn filters_use_plain_repeated_keys() {
+        let qs = civitai_search_query(&CivitaiSearchParams {
+            model_type: Some("LORA".into()),
+            base_model: Some("Flux.1 D".into()),
+            file_format: Some("GGUF".into()),
+            ..Default::default()
+        });
+        assert!(qs.contains("&types=LORA"));
+        assert!(qs.contains("&baseModels=Flux.1+D"));
+        assert!(qs.contains("&fileFormats=GGUF&fileFormats=GGUF"));
+        assert!(!qs.contains("[]"));
+    }
+
+    #[test]
+    fn sort_and_period_default_and_encode() {
+        let qs = civitai_search_query(&CivitaiSearchParams::default());
+        assert!(qs.starts_with("sort=Most+Downloaded&period=AllTime&nsfw=false&limit=20&page=1"));
+
+        let qs = civitai_search_query(&CivitaiSearchParams {
+            sort: Some("Highest Rated".into()),
+            period: Some("Week".into()),
+            ..Default::default()
+        });
+        assert!(qs.starts_with("sort=Highest+Rated&period=Week&"));
+    }
+
+    #[test]
+    fn text_search_pages_by_cursor_only() {
+        let qs = civitai_search_query(&CivitaiSearchParams {
+            query: Some("  anime  ".into()),
+            page: Some(3),
+            cursor: Some("30".into()),
+            ..Default::default()
+        });
+        assert!(!qs.contains("page="));
+        assert!(qs.contains("&cursor=30"));
+        assert!(qs.contains("&query=anime"));
+    }
+
+    #[test]
+    fn blank_filters_are_dropped() {
+        let qs = civitai_search_query(&CivitaiSearchParams {
+            query: Some("   ".into()),
+            model_type: Some("".into()),
+            base_model: Some(" ".into()),
+            file_format: Some("".into()),
+            ..Default::default()
+        });
+        assert!(qs.contains("page=1"));
+        for key in ["query=", "types=", "baseModels=", "fileFormats="] {
+            assert!(!qs.contains(key), "{key} in {qs}");
+        }
+    }
 }
 
 /// Fetch a single CivitAI model (all versions and files) by numeric ID.
