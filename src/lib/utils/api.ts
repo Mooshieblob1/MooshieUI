@@ -865,6 +865,13 @@ export async function readModelSpec(
   return ipcInvoke("read_modelspec", { category, filename });
 }
 
+/** What a model file structurally is, from its header alone (never hashed). */
+export type ModelKind = "checkpoint" | "diffusion_model" | "text_encoder" | "vae";
+
+export async function detectModelKind(category: string, filename: string): Promise<ModelKind | null> {
+  return ipcInvoke("detect_model_kind", { category, filename });
+}
+
 export interface LoraCivitaiImage {
   url: string;
   width?: number;

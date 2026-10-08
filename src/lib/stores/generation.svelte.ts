@@ -23,7 +23,8 @@ import {
   familyIsSdxlLike,
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
-import { readModelSpec, type ModelSpec } from "../utils/api.js";
+import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "../utils/api.js";
+import { locale } from "./locale.svelte.js";
 import { BETA57_SCHEDULER, GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
@@ -833,6 +834,16 @@ class GenerationStore {
    * loaders only accept filenames from their own folder listing).
    */
   modelSourceCategory = $state<string | null>(null);
+  /**
+   * Picks holding the wrong kind of file, from the files' own tensor layout:
+   * a text encoder or VAE chosen as the model, or a text encoder / model chosen
+   * as the VAE, and so on. Null when the pick fits or its kind is unknown.
+   * Not persisted: re-derived from the files on every pick.
+   */
+  mainModelWrongKind = $state<ModelKind | null>(null);
+  vaeWrongKind = $state<ModelKind | null>(null);
+  clipWrongKind = $state<ModelKind | null>(null);
+  private componentKindCache = new Map<string, ModelKind | null>();
   clipModel = $state<string | null>(null);
   clipType = $state<string | null>(null);
   stylePreset = $state<StylePresetId>("none");
@@ -1623,6 +1634,7 @@ class GenerationStore {
     this.modelSpec = null;
     this.modelSpecUnavailable = false;
     this.modelSourceCategory = null;
+    this.mainModelWrongKind = null;
     this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
   }
 
@@ -1678,6 +1690,7 @@ class GenerationStore {
 
     const requestId = ++this._latestModelMetadataRequestId;
     this.isModelMetadataLoading = true;
+    this.mainModelWrongKind = null;
     try {
       const spec = await readModelSpec(category, filename);
       if (requestId !== this._latestModelMetadataRequestId) return;
@@ -1732,6 +1745,14 @@ class GenerationStore {
     filename: string,
     modelKind: string | null,
   ): void {
+    // A text encoder or VAE picked as the model cannot load as one; the model
+    // panel and toParams() say so instead of letting ComfyUI fail on it.
+    this.mainModelWrongKind = modelKind === "text_encoder" || modelKind === "vae" ? modelKind : null;
+    if (this.mainModelWrongKind) {
+      this.modelSourceCategory = null;
+      return;
+    }
+
     // GGUF stays on the existing error path: UnetLoaderGGUF is a third-party node
     // with no absolute-path input, so a misplaced .gguf can't be loaded anyway.
     if (!modelKind || filename.toLowerCase().endsWith(".gguf")) {
@@ -3580,11 +3601,75 @@ class GenerationStore {
       : loras;
   }
 
+  /**
+   * Re-check what the selected VAE and text encoder files really are. Run from
+   * an App-level effect on every pick; results are cached per file, and a
+   * result that lands after the pick changed again is dropped.
+   */
+  async checkComponentKinds(): Promise<void> {
+    const vae = this.vae || null;
+    const clip = this.useSplitModel ? this.clipModel || null : null;
+    const [vaeKind, clipKind] = await Promise.all([
+      vae ? this.cachedModelKind("vae", vae) : null,
+      clip ? this.cachedModelKind("text_encoders", clip) : null,
+    ]);
+    if ((this.vae || null) === vae) {
+      this.vaeWrongKind = vaeKind && vaeKind !== "vae" ? vaeKind : null;
+    }
+    if ((this.useSplitModel ? this.clipModel || null : null) === clip) {
+      this.clipWrongKind = clipKind && clipKind !== "text_encoder" ? clipKind : null;
+    }
+  }
+
+  private async cachedModelKind(category: string, filename: string): Promise<ModelKind | null> {
+    const key = `${category}::${filename}`;
+    if (this.componentKindCache.has(key)) return this.componentKindCache.get(key) ?? null;
+    let kind: ModelKind | null = null;
+    try {
+      kind = await detectModelKind(category, filename);
+    } catch {
+      // Unreadable or remote: no evidence of a wrong pick, so stay silent.
+    }
+    this.componentKindCache.set(key, kind);
+    return kind;
+  }
+
+  /** What is wrong with a pick of the wrong kind of file, or null when it fits. */
+  wrongKindMessage(slot: "model" | "vae" | "clip"): string | null {
+    const file =
+      slot === "vae"
+        ? this.vae
+        : slot === "clip"
+          ? this.clipModel
+          : this.useSplitModel
+            ? this.diffusionModel
+            : this.checkpoint;
+    const kind =
+      slot === "vae" ? this.vaeWrongKind : slot === "clip" ? this.clipWrongKind : this.mainModelWrongKind;
+    if (!kind || !file) return null;
+    const isModel = kind === "checkpoint" || kind === "diffusion_model";
+    const key =
+      slot === "model"
+        ? `generation.model.wrong_kind.model_is_${kind}`
+        : `generation.model.wrong_kind.${slot}_is_${isModel ? "model" : kind}`;
+    return locale.t(key, { file });
+  }
+
   toParams(options: GenerationToParamsOptions = {}) {
     // Video mode loads its own UNet/CLIP/VAE trio from the `video_*` fields and
     // never touches `checkpoint`, so the image-pipeline model guards below would
     // block generation over state video does not use.
     const isVideo = this._mode === "video";
+
+    // A text encoder, VAE or model in the wrong picker fails deep in ComfyUI
+    // with an error that names neither file; say which pick is wrong instead.
+    // NovelAI renders remotely and ignores these pickers entirely.
+    if (!isVideo && !this.isNovelAi) {
+      for (const slot of ["model", "vae", "clip"] as const) {
+        const message = this.wrongKindMessage(slot);
+        if (message) throw new Error(message);
+      }
+    }
 
     if (!isVideo && this.useSplitModel) {
       if (!this.diffusionModel) {

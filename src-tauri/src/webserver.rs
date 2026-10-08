@@ -4654,6 +4654,21 @@ async fn dispatch_command(
                     .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
+        "detect_model_kind" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let result =
+                crate::commands::api::detect_model_kind_internal(&state, &category, &filename)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
 
         // --- CivitAI ---
         "civitai_search_models" => {

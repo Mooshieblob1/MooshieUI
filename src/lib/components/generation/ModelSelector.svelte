@@ -1704,6 +1704,11 @@
     {#if unavailableSelection.length > 0}
       <p class="mt-2 text-[11px] text-amber-300">{locale.t("generation.model.unavailable_server")}: {unavailableSelection.join(", ")}</p>
     {/if}
+    {#if !generation.isNovelAi && generation.wrongKindMessage("model")}
+      <p role="alert" class="mt-2 rounded-lg border border-red-600/30 bg-red-600/10 px-3 py-2 text-[11px] text-red-300">
+        {generation.wrongKindMessage("model")}
+      </p>
+    {/if}
     {#if downloadError}
       <p role="alert" class="mt-2 text-[11px] text-amber-300">{downloadError}</p>
     {/if}
@@ -2001,6 +2006,11 @@
         <option value={vae}>{vae}</option>
       {/each}
     </select>
+    {#if generation.wrongKindMessage("vae")}
+      <p role="alert" class="mt-2 rounded-lg border border-red-600/30 bg-red-600/10 px-3 py-2 text-[11px] text-red-300">
+        {generation.wrongKindMessage("vae")}
+      </p>
+    {/if}
   </div>
   {/if}
 
@@ -2026,6 +2036,11 @@
           <option value={encoder}>{encoder}</option>
         {/each}
       </select>
+      {#if generation.wrongKindMessage("clip")}
+        <p role="alert" class="mt-2 rounded-lg border border-red-600/30 bg-red-600/10 px-3 py-2 text-[11px] text-red-300">
+          {generation.wrongKindMessage("clip")}
+        </p>
+      {/if}
       {#if showKrea2EncoderWarning}
         <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
           {locale.t('generation.model.krea2_encoder_warning')}

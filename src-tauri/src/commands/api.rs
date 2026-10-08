@@ -6002,6 +6002,76 @@ pub async fn read_modelspec(
     read_modelspec_internal(state.inner(), &category, &filename).await
 }
 
+/// What a model file structurally is (`checkpoint`, `diffusion_model`,
+/// `text_encoder`, `vae`), from its header alone.
+///
+/// Used to warn when a picker holds the wrong kind of file, e.g. a text encoder
+/// chosen as the VAE. Unlike [`read_modelspec_internal`] this never hashes the
+/// file or asks CivitAI, so it is cheap enough to run on every pick of a
+/// multi-gigabyte encoder. `text_encoders` also searches `clip/`, since the
+/// text encoder picker lists both folders. `None` when the file is missing,
+/// unreadable or carries no recognised signature: the caller must then stay
+/// silent rather than guess.
+pub(crate) async fn detect_model_kind_internal(
+    state: &Arc<AppState>,
+    category: &str,
+    filename: &str,
+) -> Result<Option<String>, AppError> {
+    if !is_safe_path_component(category) || !is_safe_relative_model_path(filename) {
+        return Err(AppError::Other("Invalid model path".into()));
+    }
+    let lower = filename.to_ascii_lowercase();
+    let is_gguf = lower.ends_with(".gguf");
+    if !is_gguf && !lower.ends_with(".safetensors") {
+        return Ok(None);
+    }
+
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+    if comfyui_path.is_empty() {
+        return Ok(None);
+    }
+
+    let categories: &[&str] = if category == "text_encoders" {
+        &["text_encoders", "clip"]
+    } else {
+        std::slice::from_ref(&category)
+    };
+    let Some(path) = categories
+        .iter()
+        .find_map(|c| resolve_model_path(&comfyui_path, extra_model_paths.as_deref(), c, filename))
+    else {
+        return Ok(None);
+    };
+
+    let meta = tokio::task::spawn_blocking(move || {
+        if is_gguf {
+            read_gguf_architecture_meta(&path)
+        } else {
+            read_safetensors_modelspec(&path)
+        }
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model inspection failed: {e}")))?;
+    // A file that cannot be parsed is not evidence of a wrong pick.
+    Ok(meta
+        .ok()
+        .flatten()
+        .and_then(|m| m.get("model_kind").cloned()))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn detect_model_kind(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+) -> Result<Option<String>, AppError> {
+    detect_model_kind_internal(state.inner(), &category, &filename).await
+}
+
 /// Parse the safetensors JSON header and extract only the prediction-related
 /// fields used by the frontend runtime path.
 pub(crate) fn read_safetensors_runtime_metadata(
@@ -6374,11 +6444,16 @@ fn read_gguf_architecture_meta_inner(
     });
 
     let mut result = std::collections::HashMap::new();
-    // GGUF quantisation is only ever applied to a single component, so a GGUF in
-    // a model folder is always a bare diffusion model — there is no such thing as
-    // a GGUF full checkpoint with baked CLIP and VAE. Recorded even when the
+    // GGUF quantisation is only ever applied to a single component, so there is
+    // no such thing as a GGUF full checkpoint with baked CLIP and VAE: a GGUF is
+    // either a text encoder or a bare diffusion model. Recorded even when the
     // architecture is unknown, since the kind is certain either way.
-    result.insert("model_kind".to_string(), "diffusion_model".to_string());
+    let kind = if gguf_is_text_model(general_arch.as_deref(), &name_refs) {
+        "text_encoder"
+    } else {
+        "diffusion_model"
+    };
+    result.insert("model_kind".to_string(), kind.to_string());
     result.insert("model_kind_source".to_string(), "gguf".to_string());
     if let Some(architecture) = architecture {
         result.insert("architecture".to_string(), architecture);
@@ -6555,6 +6630,34 @@ const DIFFUSION_KEY_PREFIXES: [&str; 7] = [
 /// [`dominant_tensor_key_prefix`].
 const MIN_TENSOR_TREE_KEYS: usize = 5;
 
+/// Standalone text encoders, after ComfyUI's `detect_te_model`: CLIP
+/// (`text_model.encoder.`), T5 (`encoder.block.`), T5Gemma/Jina
+/// (`model.encoder.layers.`) and multimodal LLMs that nest their decoder
+/// (`model.language_model.` for Qwen3.5, `language_model.model.` for Gemma 3).
+const TEXT_ENCODER_KEY_PREFIXES: [&str; 5] = [
+    "text_model.encoder.",
+    "encoder.block.",
+    "model.encoder.layers.",
+    "model.language_model.layers.",
+    "language_model.model.layers.",
+];
+
+/// Plain LLM encoders (Qwen, Llama, Gemma, Mistral) keep their layers under
+/// `model.layers.`. That prefix alone is too generic to trust, so it only
+/// counts beside the LLM's token-embedding table. (Z-Image's DiT uses a bare
+/// `layers.`, so it never matches.)
+const LLM_LAYER_PREFIX: &str = "model.layers.";
+const LLM_EMBEDDING_KEYS: [&str; 2] = [
+    "model.embed_tokens.weight",
+    "model.language_model.embed_tokens.weight",
+];
+
+/// Every image VAE ComfyUI loads has a `decoder.` tree (LDM `decoder.up.`,
+/// Wan/Qwen-Image `decoder.upsamples.`, diffusers `decoder.up_blocks.`). Only
+/// consulted once checkpoint, diffusion and text-encoder signatures are absent:
+/// inside a full checkpoint the VAE sits under `first_stage_model.` instead.
+const VAE_KEY_PREFIX: &str = "decoder.";
+
 /// Infer whether a file is a full checkpoint or a bare diffusion model from its
 /// tensor names.
 ///
@@ -6564,7 +6667,12 @@ const MIN_TENSOR_TREE_KEYS: usize = 5;
 /// `diffusion_models/` both load wrong (or not at all) on the folder-based guess,
 /// and the weights themselves are the only signal that cannot be renamed away.
 ///
-/// Returns `None` when neither signature is present (a LoRA, an embedding, an
+/// It also recognises the two components people most often load as a model by
+/// mistake, `text_encoder` and `vae`, so the UI can say what the file is
+/// instead of ComfyUI failing on it. Those are checked last: a file that
+/// carries checkpoint or diffusion signatures is never reclassified.
+///
+/// Returns `None` when no signature is present (a LoRA, an embedding, an
 /// unrecognised container) so callers keep their folder-based default rather than
 /// acting on a coin flip.
 fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
@@ -6577,7 +6685,44 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
     if DIFFUSION_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("diffusion_model");
     }
+    let is_llm = has_tree(LLM_LAYER_PREFIX) && names.iter().any(|k| LLM_EMBEDDING_KEYS.contains(k));
+    if is_llm || TEXT_ENCODER_KEY_PREFIXES.iter().copied().any(has_tree) {
+        return Some("text_encoder");
+    }
+    if has_tree(VAE_KEY_PREFIX) {
+        return Some("vae");
+    }
     None
+}
+
+/// llama.cpp text-model architectures that ship as GGUF text encoders, after
+/// ComfyUI-GGUF's `TXT_ARCH_LIST` plus the plain LLM families encoders are cut
+/// from. An unlisted architecture keeps the diffusion-model default, so a new
+/// image architecture can never be mistaken for an encoder.
+const GGUF_TEXT_ARCHITECTURES: [&str; 13] = [
+    "t5",
+    "t5encoder",
+    "umt5",
+    "llama",
+    "mistral",
+    "qwen2",
+    "qwen2vl",
+    "qwen3",
+    "qwen3vl",
+    "qwen3moe",
+    "gemma",
+    "gemma2",
+    "gemma3",
+];
+
+/// Whether a GGUF holds a text model rather than diffusion weights: a known
+/// text architecture, or llama.cpp's `token_embd.weight` token table, which
+/// every llama.cpp-converted text model has and no image GGUF does.
+fn gguf_is_text_model(general_arch: Option<&str>, names: &[&str]) -> bool {
+    names.contains(&"token_embd.weight")
+        || general_arch.is_some_and(|arch| {
+            GGUF_TEXT_ARCHITECTURES.contains(&arch.to_ascii_lowercase().as_str())
+        })
 }
 
 /// Map a structurally inferred architecture onto the app's model family.
@@ -9920,5 +10065,565 @@ mod lan_command_hardening_tests {
         assert!(!is_model_sidecar_target(&dir.join("folder.safetensors")));
         assert!(!is_model_sidecar_target(&dir.join("missing.ckpt")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod model_kind_tests {
+    use super::*;
+
+    // Tensor names sampled from real files (up to six per tensor group), so the
+    // signatures are tested against actual layouts rather than invented keys.
+    const FIXTURES: &[(&str, Option<&str>, &str)] = &[
+        // Comfy-Org/z_image_turbo qwen_3_4b (Flux 2 Klein / Z-Image encoder)
+        (
+            "te_qwen3_4b",
+            Some("text_encoder"),
+            r#"
+model.embed_tokens.weight
+model.layers.0.input_layernorm.weight
+model.layers.0.mlp.down_proj.weight
+model.layers.0.mlp.gate_proj.weight
+model.layers.0.mlp.up_proj.weight
+model.layers.0.post_attention_layernorm.weight
+model.layers.0.self_attn.k_norm.weight
+model.layers.1.input_layernorm.weight
+model.layers.1.mlp.down_proj.weight
+model.layers.1.mlp.gate_proj.weight
+model.layers.1.mlp.up_proj.weight
+model.layers.1.post_attention_layernorm.weight
+model.layers.1.self_attn.k_norm.weight
+model.layers.10.input_layernorm.weight
+model.layers.10.mlp.down_proj.weight
+model.layers.10.mlp.gate_proj.weight
+model.layers.10.mlp.up_proj.weight
+model.layers.10.post_attention_layernorm.weight
+model.layers.10.self_attn.k_norm.weight
+model.layers.11.input_layernorm.weight
+model.layers.11.mlp.down_proj.weight
+model.layers.11.mlp.gate_proj.weight
+model.layers.11.mlp.up_proj.weight
+model.layers.11.post_attention_layernorm.weight
+model.layers.11.self_attn.k_norm.weight
+model.layers.12.input_layernorm.weight
+model.layers.12.mlp.down_proj.weight
+model.layers.12.mlp.gate_proj.weight
+model.layers.12.mlp.up_proj.weight
+model.layers.12.post_attention_layernorm.weight
+model.layers.12.self_attn.k_norm.weight
+model.layers.13.input_layernorm.weight
+model.layers.13.mlp.down_proj.weight
+model.layers.13.mlp.gate_proj.weight
+model.layers.13.mlp.up_proj.weight
+model.layers.13.post_attention_layernorm.weight
+model.layers.13.self_attn.k_norm.weight
+model.layers.14.input_layernorm.weight
+model.layers.14.mlp.down_proj.weight
+model.layers.14.mlp.gate_proj.weight
+model.layers.14.mlp.up_proj.weight
+model.layers.14.post_attention_layernorm.weight
+model.layers.14.self_attn.k_norm.weight
+model.layers.15.input_layernorm.weight
+model.layers.15.mlp.down_proj.weight
+model.layers.15.mlp.gate_proj.weight
+model.layers.15.mlp.up_proj.weight
+model.layers.15.post_attention_layernorm.weight
+model.layers.15.self_attn.k_norm.weight
+model.layers.16.input_layernorm.weight
+model.layers.16.mlp.down_proj.weight
+model.layers.16.mlp.gate_proj.weight
+model.layers.16.mlp.up_proj.weight
+model.layers.16.post_attention_layernorm.weight
+model.layers.16.self_attn.k_norm.weight
+model.layers.17.input_layernorm.weight
+model.layers.17.mlp.down_proj.weight
+model.layers.17.mlp.gate_proj.weight
+model.layers.17.mlp.up_proj.weight
+model.layers.17.post_attention_layernorm.weight
+model.layers.17.self_attn.k_norm.weight
+model.layers.18.input_layernorm.weight
+model.layers.18.mlp.down_proj.weight
+model.layers.18.mlp.gate_proj.weight
+model.layers.18.mlp.up_proj.weight
+model.layers.18.post_attention_layernorm.weight
+model.layers.18.self_attn.k_norm.weight
+"#,
+        ),
+        // Comfy-Org/Krea-2 qwen3vl_4b_fp8_scaled
+        (
+            "te_qwen3vl_4b",
+            Some("text_encoder"),
+            r#"
+model.embed_tokens.weight
+model.layers.0.input_layernorm.weight
+model.layers.0.mlp.down_proj.comfy_quant
+model.layers.0.mlp.down_proj.weight
+model.layers.0.mlp.down_proj.weight_scale
+model.layers.0.mlp.gate_proj.comfy_quant
+model.layers.0.mlp.gate_proj.weight
+model.layers.1.input_layernorm.weight
+model.layers.1.mlp.down_proj.comfy_quant
+model.layers.1.mlp.down_proj.weight
+model.layers.1.mlp.down_proj.weight_scale
+model.layers.1.mlp.gate_proj.comfy_quant
+model.layers.1.mlp.gate_proj.weight
+model.layers.10.input_layernorm.weight
+model.layers.10.mlp.down_proj.comfy_quant
+model.layers.10.mlp.down_proj.weight
+model.layers.10.mlp.down_proj.weight_scale
+model.layers.10.mlp.gate_proj.comfy_quant
+model.layers.10.mlp.gate_proj.weight
+model.layers.11.input_layernorm.weight
+model.layers.11.mlp.down_proj.comfy_quant
+model.layers.11.mlp.down_proj.weight
+model.layers.11.mlp.down_proj.weight_scale
+model.layers.11.mlp.gate_proj.comfy_quant
+model.layers.11.mlp.gate_proj.weight
+model.layers.12.input_layernorm.weight
+model.layers.12.mlp.down_proj.comfy_quant
+model.layers.12.mlp.down_proj.weight
+model.layers.12.mlp.down_proj.weight_scale
+model.layers.12.mlp.gate_proj.comfy_quant
+model.layers.12.mlp.gate_proj.weight
+model.layers.13.input_layernorm.weight
+model.layers.13.mlp.down_proj.comfy_quant
+model.layers.13.mlp.down_proj.weight
+model.layers.13.mlp.down_proj.weight_scale
+model.layers.13.mlp.gate_proj.comfy_quant
+model.layers.13.mlp.gate_proj.weight
+model.layers.14.input_layernorm.weight
+model.layers.14.mlp.down_proj.comfy_quant
+model.layers.14.mlp.down_proj.weight
+model.layers.14.mlp.down_proj.weight_scale
+model.layers.14.mlp.gate_proj.comfy_quant
+model.layers.14.mlp.gate_proj.weight
+model.layers.15.input_layernorm.weight
+model.layers.15.mlp.down_proj.comfy_quant
+model.layers.15.mlp.down_proj.weight
+model.layers.15.mlp.down_proj.weight_scale
+model.layers.15.mlp.gate_proj.comfy_quant
+model.layers.15.mlp.gate_proj.weight
+model.layers.16.input_layernorm.weight
+model.layers.16.mlp.down_proj.comfy_quant
+model.layers.16.mlp.down_proj.weight
+model.layers.16.mlp.down_proj.weight_scale
+model.layers.16.mlp.gate_proj.comfy_quant
+model.layers.16.mlp.gate_proj.weight
+model.layers.17.input_layernorm.weight
+model.layers.17.mlp.down_proj.comfy_quant
+model.layers.17.mlp.down_proj.weight
+model.layers.17.mlp.down_proj.weight_scale
+model.layers.17.mlp.gate_proj.comfy_quant
+model.layers.17.mlp.gate_proj.weight
+model.layers.18.input_layernorm.weight
+model.layers.18.mlp.down_proj.comfy_quant
+model.layers.18.mlp.down_proj.weight
+model.layers.18.mlp.down_proj.weight_scale
+model.layers.18.mlp.gate_proj.comfy_quant
+model.layers.18.mlp.gate_proj.weight
+"#,
+        ),
+        // comfyanonymous/flux_text_encoders t5xxl_fp8_e4m3fn
+        (
+            "te_t5xxl",
+            Some("text_encoder"),
+            r#"
+encoder.block.0.layer.0.SelfAttention.k.weight
+encoder.block.0.layer.0.SelfAttention.o.weight
+encoder.block.0.layer.0.SelfAttention.q.weight
+encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight
+encoder.block.0.layer.0.SelfAttention.v.weight
+encoder.block.0.layer.0.layer_norm.weight
+encoder.block.1.layer.0.SelfAttention.k.weight
+encoder.block.1.layer.0.SelfAttention.o.weight
+encoder.block.1.layer.0.SelfAttention.q.weight
+encoder.block.1.layer.0.SelfAttention.v.weight
+encoder.block.1.layer.0.layer_norm.weight
+encoder.block.1.layer.1.DenseReluDense.wi_0.weight
+encoder.block.10.layer.0.SelfAttention.k.weight
+encoder.block.10.layer.0.SelfAttention.o.weight
+encoder.block.10.layer.0.SelfAttention.q.weight
+encoder.block.10.layer.0.SelfAttention.v.weight
+encoder.block.10.layer.0.layer_norm.weight
+encoder.block.10.layer.1.DenseReluDense.wi_0.weight
+encoder.block.11.layer.0.SelfAttention.k.weight
+encoder.block.11.layer.0.SelfAttention.o.weight
+encoder.block.11.layer.0.SelfAttention.q.weight
+encoder.block.11.layer.0.SelfAttention.v.weight
+encoder.block.11.layer.0.layer_norm.weight
+encoder.block.11.layer.1.DenseReluDense.wi_0.weight
+encoder.block.12.layer.0.SelfAttention.k.weight
+encoder.block.12.layer.0.SelfAttention.o.weight
+encoder.block.12.layer.0.SelfAttention.q.weight
+encoder.block.12.layer.0.SelfAttention.v.weight
+encoder.block.12.layer.0.layer_norm.weight
+encoder.block.12.layer.1.DenseReluDense.wi_0.weight
+encoder.block.13.layer.0.SelfAttention.k.weight
+encoder.block.13.layer.0.SelfAttention.o.weight
+encoder.block.13.layer.0.SelfAttention.q.weight
+encoder.block.13.layer.0.SelfAttention.v.weight
+encoder.block.13.layer.0.layer_norm.weight
+encoder.block.13.layer.1.DenseReluDense.wi_0.weight
+encoder.block.14.layer.0.SelfAttention.k.weight
+encoder.block.14.layer.0.SelfAttention.o.weight
+encoder.block.14.layer.0.SelfAttention.q.weight
+encoder.block.14.layer.0.SelfAttention.v.weight
+encoder.block.14.layer.0.layer_norm.weight
+encoder.block.14.layer.1.DenseReluDense.wi_0.weight
+encoder.block.15.layer.0.SelfAttention.k.weight
+encoder.block.15.layer.0.SelfAttention.o.weight
+encoder.block.15.layer.0.SelfAttention.q.weight
+encoder.block.15.layer.0.SelfAttention.v.weight
+encoder.block.15.layer.0.layer_norm.weight
+encoder.block.15.layer.1.DenseReluDense.wi_0.weight
+encoder.block.16.layer.0.SelfAttention.k.weight
+encoder.block.16.layer.0.SelfAttention.o.weight
+encoder.block.16.layer.0.SelfAttention.q.weight
+encoder.block.16.layer.0.SelfAttention.v.weight
+encoder.block.16.layer.0.layer_norm.weight
+encoder.block.16.layer.1.DenseReluDense.wi_0.weight
+encoder.block.17.layer.0.SelfAttention.k.weight
+encoder.block.17.layer.0.SelfAttention.o.weight
+encoder.block.17.layer.0.SelfAttention.q.weight
+encoder.block.17.layer.0.SelfAttention.v.weight
+encoder.block.17.layer.0.layer_norm.weight
+encoder.block.17.layer.1.DenseReluDense.wi_0.weight
+encoder.block.18.layer.0.SelfAttention.k.weight
+encoder.block.18.layer.0.SelfAttention.o.weight
+encoder.block.18.layer.0.SelfAttention.q.weight
+encoder.block.18.layer.0.SelfAttention.v.weight
+encoder.block.18.layer.0.layer_norm.weight
+encoder.block.18.layer.1.DenseReluDense.wi_0.weight
+encoder.block.19.layer.0.SelfAttention.k.weight
+encoder.block.19.layer.0.SelfAttention.o.weight
+encoder.block.19.layer.0.SelfAttention.q.weight
+encoder.block.19.layer.0.SelfAttention.v.weight
+encoder.block.19.layer.0.layer_norm.weight
+encoder.block.19.layer.1.DenseReluDense.wi_0.weight
+shared.weight
+"#,
+        ),
+        // comfyanonymous/flux_text_encoders clip_l
+        (
+            "te_clip_l",
+            Some("text_encoder"),
+            r#"
+text_model.embeddings.position_embedding.weight
+text_model.embeddings.token_embedding.weight
+text_model.encoder.layers.0.layer_norm1.bias
+text_model.encoder.layers.0.layer_norm1.weight
+text_model.encoder.layers.0.layer_norm2.bias
+text_model.encoder.layers.0.layer_norm2.weight
+text_model.encoder.layers.0.mlp.fc1.bias
+text_model.encoder.layers.0.mlp.fc1.weight
+text_model.final_layer_norm.bias
+text_model.final_layer_norm.weight
+"#,
+        ),
+        // Comfy-Org/Krea-2 qwen_image_vae
+        (
+            "vae_qwen_image",
+            Some("vae"),
+            r#"
+conv1.bias
+conv1.weight
+conv2.bias
+conv2.weight
+decoder.conv1.bias
+decoder.conv1.weight
+decoder.head.0.gamma
+decoder.head.2.bias
+decoder.head.2.weight
+decoder.middle.0.residual.0.gamma
+decoder.middle.0.residual.2.bias
+decoder.middle.0.residual.2.weight
+decoder.middle.0.residual.3.gamma
+decoder.middle.0.residual.6.bias
+decoder.middle.0.residual.6.weight
+decoder.middle.1.norm.gamma
+decoder.middle.1.proj.bias
+decoder.middle.1.proj.weight
+decoder.middle.1.to_qkv.bias
+decoder.middle.1.to_qkv.weight
+decoder.middle.2.residual.0.gamma
+decoder.middle.2.residual.2.bias
+decoder.middle.2.residual.2.weight
+decoder.middle.2.residual.3.gamma
+decoder.middle.2.residual.6.bias
+decoder.middle.2.residual.6.weight
+decoder.upsamples.0.residual.0.gamma
+decoder.upsamples.0.residual.2.bias
+decoder.upsamples.0.residual.2.weight
+decoder.upsamples.0.residual.3.gamma
+decoder.upsamples.0.residual.6.bias
+decoder.upsamples.0.residual.6.weight
+"#,
+        ),
+        // Comfy-Org/z_image_turbo ae (Flux VAE)
+        (
+            "vae_flux_ae",
+            Some("vae"),
+            r#"
+decoder.conv_in.bias
+decoder.conv_in.weight
+decoder.conv_out.bias
+decoder.conv_out.weight
+decoder.mid.attn_1.k.bias
+decoder.mid.attn_1.k.weight
+decoder.mid.attn_1.norm.bias
+decoder.mid.attn_1.norm.weight
+decoder.mid.attn_1.proj_out.bias
+decoder.mid.attn_1.proj_out.weight
+decoder.mid.block_1.conv1.bias
+decoder.mid.block_1.conv1.weight
+decoder.mid.block_1.conv2.bias
+decoder.mid.block_1.conv2.weight
+decoder.mid.block_1.norm1.bias
+decoder.mid.block_1.norm1.weight
+decoder.mid.block_2.conv1.bias
+decoder.mid.block_2.conv1.weight
+decoder.mid.block_2.conv2.bias
+decoder.mid.block_2.conv2.weight
+decoder.mid.block_2.norm1.bias
+decoder.mid.block_2.norm1.weight
+decoder.norm_out.bias
+decoder.norm_out.weight
+decoder.up.0.block.0.conv1.bias
+decoder.up.0.block.0.conv1.weight
+decoder.up.0.block.0.conv2.bias
+decoder.up.0.block.0.conv2.weight
+decoder.up.0.block.0.nin_shortcut.bias
+decoder.up.0.block.0.nin_shortcut.weight
+decoder.up.1.block.0.conv1.bias
+decoder.up.1.block.0.conv1.weight
+decoder.up.1.block.0.conv2.bias
+decoder.up.1.block.0.conv2.weight
+decoder.up.1.block.0.nin_shortcut.bias
+decoder.up.1.block.0.nin_shortcut.weight
+decoder.up.2.block.0.conv1.bias
+decoder.up.2.block.0.conv1.weight
+decoder.up.2.block.0.conv2.bias
+decoder.up.2.block.0.conv2.weight
+decoder.up.2.block.0.norm1.bias
+decoder.up.2.block.0.norm1.weight
+"#,
+        ),
+        // stabilityai/sdxl-vae sdxl_vae
+        (
+            "vae_sdxl",
+            Some("vae"),
+            r#"
+decoder.conv_in.bias
+decoder.conv_in.weight
+decoder.conv_out.bias
+decoder.conv_out.weight
+decoder.mid.attn_1.k.bias
+decoder.mid.attn_1.k.weight
+decoder.mid.attn_1.norm.bias
+decoder.mid.attn_1.norm.weight
+decoder.mid.attn_1.proj_out.bias
+decoder.mid.attn_1.proj_out.weight
+decoder.mid.block_1.conv1.bias
+decoder.mid.block_1.conv1.weight
+decoder.mid.block_1.conv2.bias
+decoder.mid.block_1.conv2.weight
+decoder.mid.block_1.norm1.bias
+decoder.mid.block_1.norm1.weight
+decoder.mid.block_2.conv1.bias
+decoder.mid.block_2.conv1.weight
+decoder.mid.block_2.conv2.bias
+decoder.mid.block_2.conv2.weight
+decoder.mid.block_2.norm1.bias
+decoder.mid.block_2.norm1.weight
+decoder.norm_out.bias
+decoder.norm_out.weight
+decoder.up.0.block.0.conv1.bias
+decoder.up.0.block.0.conv1.weight
+decoder.up.0.block.0.conv2.bias
+decoder.up.0.block.0.conv2.weight
+decoder.up.0.block.0.nin_shortcut.bias
+decoder.up.0.block.0.nin_shortcut.weight
+decoder.up.1.block.0.conv1.bias
+decoder.up.1.block.0.conv1.weight
+decoder.up.1.block.0.conv2.bias
+decoder.up.1.block.0.conv2.weight
+decoder.up.1.block.0.nin_shortcut.bias
+decoder.up.1.block.0.nin_shortcut.weight
+decoder.up.2.block.0.conv1.bias
+decoder.up.2.block.0.conv1.weight
+decoder.up.2.block.0.conv2.bias
+decoder.up.2.block.0.conv2.weight
+decoder.up.2.block.0.norm1.bias
+decoder.up.2.block.0.norm1.weight
+"#,
+        ),
+        // Comfy-Org/z_image_turbo z_image_turbo_bf16 (bare `layers.`)
+        (
+            "dm_z_image",
+            None,
+            r#"
+cap_embedder.0.weight
+cap_embedder.1.bias
+cap_embedder.1.weight
+cap_pad_token
+context_refiner.0.attention.k_norm.weight
+context_refiner.0.attention.out.weight
+context_refiner.0.attention.q_norm.weight
+context_refiner.0.attention.qkv.weight
+context_refiner.0.attention_norm1.weight
+context_refiner.0.attention_norm2.weight
+context_refiner.0.feed_forward.w1.weight
+context_refiner.0.feed_forward.w2.weight
+context_refiner.0.feed_forward.w3.weight
+context_refiner.0.ffn_norm1.weight
+context_refiner.0.ffn_norm2.weight
+context_refiner.1.attention.k_norm.weight
+context_refiner.1.attention.out.weight
+context_refiner.1.attention.q_norm.weight
+context_refiner.1.attention.qkv.weight
+context_refiner.1.attention_norm1.weight
+"#,
+        ),
+        // Comfy-Org/Krea-2 krea2_turbo_fp8_scaled (`blocks.`/`txtfusion.`)
+        (
+            "dm_krea2",
+            None,
+            r#"
+blocks.0.attn.gate.weight
+blocks.0.attn.gate.weight_scale
+blocks.0.attn.qknorm.knorm.scale
+blocks.0.attn.qknorm.qnorm.scale
+blocks.0.attn.wk.weight
+blocks.0.attn.wk.weight_scale
+blocks.0.mlp.down.weight
+blocks.0.mlp.down.weight_scale
+blocks.0.mlp.gate.weight
+blocks.0.mlp.gate.weight_scale
+blocks.0.mlp.up.weight
+blocks.0.mlp.up.weight_scale
+blocks.0.mod.lin
+blocks.0.postnorm.scale
+blocks.0.prenorm.scale
+blocks.1.attn.gate.weight
+blocks.1.attn.gate.weight_scale
+blocks.1.attn.qknorm.knorm.scale
+blocks.1.attn.qknorm.qnorm.scale
+blocks.1.attn.wk.weight
+blocks.1.attn.wk.weight_scale
+blocks.1.mlp.down.weight
+blocks.1.mlp.down.weight_scale
+blocks.1.mlp.gate.weight
+blocks.1.mlp.gate.weight_scale
+blocks.1.mlp.up.weight
+blocks.1.mlp.up.weight_scale
+blocks.1.mod.lin
+blocks.1.postnorm.scale
+blocks.1.prenorm.scale
+blocks.10.attn.gate.weight
+blocks.10.attn.gate.weight_scale
+blocks.10.attn.qknorm.knorm.scale
+blocks.10.attn.qknorm.qnorm.scale
+blocks.10.attn.wk.weight
+blocks.10.attn.wk.weight_scale
+blocks.10.mlp.down.weight
+blocks.10.mlp.down.weight_scale
+blocks.10.mlp.gate.weight
+blocks.10.mlp.gate.weight_scale
+blocks.10.mlp.up.weight
+blocks.10.mlp.up.weight_scale
+"#,
+        ),
+        // stabilityai sd_xl_base_1.0
+        (
+            "ckpt_sdxl",
+            Some("checkpoint"),
+            r#"
+conditioner.embedders.0.transformer.text_model.embeddings.position_embedding.weight
+conditioner.embedders.0.transformer.text_model.embeddings.position_ids
+conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight
+conditioner.embedders.0.transformer.text_model.encoder.layers.0.layer_norm1.bias
+conditioner.embedders.0.transformer.text_model.encoder.layers.0.layer_norm1.weight
+conditioner.embedders.0.transformer.text_model.encoder.layers.0.layer_norm2.bias
+conditioner.embedders.1.model.ln_final.bias
+conditioner.embedders.1.model.ln_final.weight
+conditioner.embedders.1.model.logit_scale
+conditioner.embedders.1.model.positional_embedding
+conditioner.embedders.1.model.text_projection
+conditioner.embedders.1.model.token_embedding.weight
+first_stage_model.decoder.conv_in.bias
+first_stage_model.decoder.conv_in.weight
+first_stage_model.decoder.conv_out.bias
+first_stage_model.decoder.conv_out.weight
+first_stage_model.decoder.mid.attn_1.k.bias
+first_stage_model.decoder.mid.attn_1.k.weight
+first_stage_model.decoder.mid.attn_1.norm.bias
+first_stage_model.decoder.mid.attn_1.norm.weight
+first_stage_model.decoder.mid.attn_1.proj_out.bias
+first_stage_model.decoder.mid.attn_1.proj_out.weight
+first_stage_model.decoder.norm_out.bias
+first_stage_model.decoder.norm_out.weight
+first_stage_model.decoder.up.0.block.0.conv1.bias
+first_stage_model.decoder.up.0.block.0.conv1.weight
+first_stage_model.decoder.up.0.block.0.conv2.bias
+first_stage_model.decoder.up.0.block.0.conv2.weight
+first_stage_model.decoder.up.0.block.0.nin_shortcut.bias
+first_stage_model.decoder.up.0.block.0.nin_shortcut.weight
+first_stage_model.encoder.conv_in.bias
+first_stage_model.encoder.conv_in.weight
+first_stage_model.encoder.conv_out.bias
+first_stage_model.encoder.conv_out.weight
+first_stage_model.encoder.down.0.block.0.conv1.bias
+first_stage_model.encoder.down.0.block.0.conv1.weight
+first_stage_model.encoder.down.0.block.0.conv2.bias
+first_stage_model.encoder.down.0.block.0.conv2.weight
+first_stage_model.encoder.down.0.block.0.norm1.bias
+first_stage_model.encoder.down.0.block.0.norm1.weight
+first_stage_model.encoder.mid.attn_1.k.bias
+first_stage_model.encoder.mid.attn_1.k.weight
+first_stage_model.encoder.mid.attn_1.norm.bias
+first_stage_model.encoder.mid.attn_1.norm.weight
+first_stage_model.encoder.mid.attn_1.proj_out.bias
+first_stage_model.encoder.mid.attn_1.proj_out.weight
+first_stage_model.encoder.norm_out.bias
+first_stage_model.encoder.norm_out.weight
+"#,
+        ),
+    ];
+
+    #[test]
+    fn real_files_classify_by_their_tensor_names() {
+        for (name, expected, keys) in FIXTURES {
+            let names: Vec<&str> = keys.lines().filter(|l| !l.is_empty()).collect();
+            assert_eq!(infer_model_kind_from_key_names(&names), *expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn model_layers_alone_is_not_an_llm() {
+        // Without the token-embedding table, `model.layers.` is too generic.
+        let names: Vec<String> = (0..8).map(|i| format!("model.layers.{i}.weight")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert_eq!(infer_model_kind_from_key_names(&refs), None);
+    }
+
+    #[test]
+    fn gguf_text_models_are_told_apart_from_diffusion_ggufs() {
+        // llama.cpp text model (e.g. a Qwen3-4B Flux 2 Klein encoder GGUF).
+        assert!(gguf_is_text_model(Some("qwen3"), &["blk.0.attn_q.weight"]));
+        assert!(gguf_is_text_model(
+            None,
+            &["token_embd.weight", "blk.0.attn_q.weight"]
+        ));
+        assert!(gguf_is_text_model(Some("T5Encoder"), &[]));
+        // Image GGUFs, including sd.cpp "pig" files and unknown architectures.
+        assert!(!gguf_is_text_model(
+            Some("krea2"),
+            &["blocks.0.attn.wq.weight"]
+        ));
+        assert!(!gguf_is_text_model(Some("pig"), &["first.weight"]));
+        assert!(!gguf_is_text_model(
+            Some("some_future_dit"),
+            &["blocks.0.weight"]
+        ));
     }
 }

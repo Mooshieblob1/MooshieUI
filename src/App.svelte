@@ -164,6 +164,15 @@
     });
   }
 
+  // Re-check what the picked VAE and text encoder files really are whenever a
+  // pick changes, so the model panel can flag e.g. a text encoder chosen as VAE.
+  $effect(() => {
+    void generation.vae;
+    void generation.clipModel;
+    void generation.useSplitModel;
+    untrack(() => void generation.checkComponentKinds());
+  });
+
   // Users who set up Krea 2 uncensored mode before the refusal-reduction LoRA
   // joined it have the encoder but not the LoRA: tell them once. Waits for a
   // loaded inventory so an empty list never reads as "LoRA missing".

@@ -644,6 +644,7 @@ pub fn run() {
             commands::api::civitai_get_model,
             commands::api::civitai_list_architectures,
             commands::api::read_modelspec,
+            commands::api::detect_model_kind,
             commands::api::get_lora_civitai_info,
             commands::api::get_checkpoint_civitai_info,
             commands::api::read_image_metadata,
