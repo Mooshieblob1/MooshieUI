@@ -3059,6 +3059,12 @@ const ru: Record<string, string> = {
   "settings.models.folder_created": "{name} создано",
   "notifications.read_more": "Читать далее",
   "notifications.open_settings": "Открыть настройки",
+  "notifications.krea2_refusal_lora.title": "Режим без цензуры в Krea 2 получил обновление",
+  "notifications.krea2_refusal_lora.body": "Режим без цензуры теперь сочетает уже установленный у вас текстовый энкодер без цензуры с LoRA снижения отказов для слоёв TextFusion в Krea 2, чтобы запрошенные понятия меньше ослаблялись. Скачайте её ({size}), чтобы завершить настройку. Она автоматически применяется к генерациям Krea 2.",
+  "notifications.krea2_refusal_lora.download": "Скачать и включить",
+  "notifications.krea2_refusal_lora.downloading": "Скачивание...",
+  "notifications.krea2_refusal_lora.failed_title": "Не удалось скачать LoRA снижения отказов",
+  "notifications.krea2_refusal_lora.failed_body": "LoRA снижения отказов для Krea 2 не скачалась: {error}. Можно повторить попытку в режиме без цензуры под выбором текстового энкодера.",
   "notifications.title": "Уведомления",
 
   "notifications.mark_all_read": "Отметить все прочитанными",

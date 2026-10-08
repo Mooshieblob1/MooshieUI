@@ -396,6 +396,12 @@ const en: Record<string, string> = {
   // ── Notifications ─────────────────────────────────────
   "notifications.read_more": "Read more",
   "notifications.open_settings": "Open Settings",
+  "notifications.krea2_refusal_lora.title": "Krea 2 uncensored mode has an upgrade",
+  "notifications.krea2_refusal_lora.body": "Uncensored mode now pairs the uncensored text encoder you already have with a refusal-reduction LoRA for Krea 2's TextFusion layers, so requested concepts get toned down less. Download it ({size}) to finish setting it up. It is applied to Krea 2 generations automatically.",
+  "notifications.krea2_refusal_lora.download": "Download and turn on",
+  "notifications.krea2_refusal_lora.downloading": "Downloading...",
+  "notifications.krea2_refusal_lora.failed_title": "Could not download the refusal-reduction LoRA",
+  "notifications.krea2_refusal_lora.failed_body": "The Krea 2 refusal-reduction LoRA did not download: {error}. You can retry from Uncensored mode under the Text Encoder picker.",
   "notifications.title": "Notifications",
   "notifications.mark_all_read": "Mark all read",
   "notifications.clear_all": "Clear all",

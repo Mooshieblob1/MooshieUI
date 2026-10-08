@@ -3084,6 +3084,12 @@ const ja: Record<string, string> = {
   "settings.models.folder_created": "{name} を作成しました",
   "notifications.read_more": "続きを読む",
   "notifications.open_settings": "設定を開く",
+  "notifications.krea2_refusal_lora.title": "Krea 2 の無検閲モードがアップグレードされました",
+  "notifications.krea2_refusal_lora.body": "無検閲モードは、すでにお持ちの無検閲テキストエンコーダーに、Krea 2 の TextFusion 層向けの拒否軽減 LoRA を組み合わせるようになり、要求した概念が弱められにくくなりました。ダウンロード（{size}）してセットアップを完了してください。Krea 2 の生成に自動で適用されます。",
+  "notifications.krea2_refusal_lora.download": "ダウンロードしてオンにする",
+  "notifications.krea2_refusal_lora.downloading": "ダウンロード中...",
+  "notifications.krea2_refusal_lora.failed_title": "拒否軽減 LoRA をダウンロードできませんでした",
+  "notifications.krea2_refusal_lora.failed_body": "Krea 2 の拒否軽減 LoRA をダウンロードできませんでした: {error}。テキストエンコーダーの選択欄の下にある無検閲モードから再試行できます。",
   "notifications.title": "通知",
 
   "notifications.mark_all_read": "すべて既読",

@@ -3062,6 +3062,12 @@ const de: Record<string, string> = {
   "settings.sections.app_mode": "App-Modus",
   "notifications.read_more": "Mehr lesen",
   "notifications.open_settings": "Einstellungen öffnen",
+  "notifications.krea2_refusal_lora.title": "Der unzensierte Modus von Krea 2 hat ein Upgrade",
+  "notifications.krea2_refusal_lora.body": "Der unzensierte Modus kombiniert den unzensierten Text-Encoder, den du bereits hast, jetzt mit einer LoRA zur Ablehnungsreduktion für die TextFusion-Schichten von Krea 2, damit angefragte Konzepte weniger abgeschwächt werden. Lade sie herunter ({size}), um die Einrichtung abzuschließen. Sie wird automatisch bei Krea-2-Generierungen angewendet.",
+  "notifications.krea2_refusal_lora.download": "Herunterladen und einschalten",
+  "notifications.krea2_refusal_lora.downloading": "Wird heruntergeladen...",
+  "notifications.krea2_refusal_lora.failed_title": "Die LoRA zur Ablehnungsreduktion konnte nicht heruntergeladen werden",
+  "notifications.krea2_refusal_lora.failed_body": "Die Krea-2-LoRA zur Ablehnungsreduktion wurde nicht heruntergeladen: {error}. Du kannst es im unzensierten Modus unter der Text-Encoder-Auswahl erneut versuchen.",
   "notifications.title": "Benachrichtigungen",
 
   "notifications.mark_all_read": "Alle als gelesen markieren",

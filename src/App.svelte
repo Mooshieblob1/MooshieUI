@@ -19,6 +19,8 @@
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
+  import { needsKrea2RefusalLora } from "./lib/utils/krea2Encoder.js";
+  import { notifyKrea2RefusalLoraMissing } from "./lib/utils/krea2UncensoredSetup.js";
   import { BETA57_SCHEDULER } from "./lib/utils/samplingRecommendation.js";
   import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
@@ -161,6 +163,14 @@
       kind: "warning",
     });
   }
+
+  // Users who set up Krea 2 uncensored mode before the refusal-reduction LoRA
+  // joined it have the encoder but not the LoRA: tell them once. Waits for a
+  // loaded inventory so an empty list never reads as "LoRA missing".
+  $effect(() => {
+    if (models.remote || models.loading || !Object.keys(models.serverModels).length) return;
+    if (needsKrea2RefusalLora(models.textEncoders, models.loras)) untrack(notifyKrea2RefusalLoraMissing);
+  });
 
   const visionSimClass = $derived(
     accessibility.visionSimulatorMode === "none"

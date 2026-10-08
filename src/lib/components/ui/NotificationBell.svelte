@@ -2,6 +2,12 @@
   import { notifications } from "../../stores/notifications.svelte.js";
   import type { Notification } from "../../stores/notifications.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { models } from "../../stores/models.svelte.js";
+  import {
+    KREA2_REFUSAL_LORA_NOTIF_TITLE,
+    installKrea2Uncensored,
+    missingKrea2UncensoredFiles,
+  } from "../../utils/krea2UncensoredSetup.js";
   import {
     formatNotificationTime,
     notificationBody,
@@ -30,6 +36,34 @@
 
   function isComfyuiOutdated(notif: Notification): boolean {
     return notif.i18n === true && notif.title === "notifications.comfyui_outdated.title";
+  }
+
+  function isKrea2RefusalLoraMissing(notif: Notification): boolean {
+    return notif.i18n === true && notif.title === KREA2_REFUSAL_LORA_NOTIF_TITLE;
+  }
+
+  // Progress shows in the global download banner; this only guards the button.
+  let krea2Installing = $state(false);
+
+  async function installKrea2RefusalLora() {
+    if (krea2Installing) return;
+    krea2Installing = true;
+    openedNotification = null;
+    notifications.panelOpen = false;
+    try {
+      await installKrea2Uncensored();
+    } catch (e) {
+      console.error("Failed to install the Krea 2 refusal-reduction LoRA:", e);
+      notifications.addLocalNotification({
+        i18n: true,
+        title: "notifications.krea2_refusal_lora.failed_title",
+        body: "notifications.krea2_refusal_lora.failed_body",
+        params: { error: String(e) },
+        kind: "warning",
+      });
+    } finally {
+      krea2Installing = false;
+    }
   }
 
   function kindIcon(kind: string): string {
@@ -194,6 +228,15 @@
               }}
             >
               {locale.t("notifications.open_settings")}
+            </button>
+          {/if}
+          {#if isKrea2RefusalLoraMissing(notif) && !models.remote && missingKrea2UncensoredFiles().length}
+            <button
+              class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={krea2Installing}
+              onclick={installKrea2RefusalLora}
+            >
+              {locale.t(krea2Installing ? "notifications.krea2_refusal_lora.downloading" : "notifications.krea2_refusal_lora.download")}
             </button>
           {/if}
           <button

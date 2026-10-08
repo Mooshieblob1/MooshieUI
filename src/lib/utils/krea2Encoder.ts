@@ -59,6 +59,14 @@ export function installedKrea2RefusalLora(installed: readonly string[]): string 
 }
 
 /**
+ * Whether this install has the uncensored encoder but not the refusal-reduction
+ * LoRA: what a user who set up uncensored mode before the LoRA joined it has.
+ */
+export function needsKrea2RefusalLora(encoders: readonly string[], loras: readonly string[]): boolean {
+  return encoders.some(isKrea2UncensoredEncoder) && installedKrea2RefusalLora(loras) === null;
+}
+
+/**
  * The refusal-reduction LoRA to add to an outgoing generation, or null.
  * Only for Krea 2 with uncensored mode on and the file installed, and never
  * when the user already has a version of it in their own enabled LoRA list,

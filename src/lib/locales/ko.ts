@@ -3059,6 +3059,12 @@ const ko: Record<string, string> = {
   "settings.models.folder_created": "{name} 생성됨",
   "notifications.read_more": "더 보기",
   "notifications.open_settings": "설정 열기",
+  "notifications.krea2_refusal_lora.title": "Krea 2 검열 해제 모드가 업그레이드되었습니다",
+  "notifications.krea2_refusal_lora.body": "검열 해제 모드는 이제 이미 가지고 있는 검열 해제 텍스트 인코더에 Krea 2 TextFusion 레이어용 거부 감소 LoRA를 함께 사용하여, 요청한 개념이 덜 약해집니다. 다운로드({size})하여 설정을 완료하세요. Krea 2 생성에 자동으로 적용됩니다.",
+  "notifications.krea2_refusal_lora.download": "다운로드 후 켜기",
+  "notifications.krea2_refusal_lora.downloading": "다운로드 중...",
+  "notifications.krea2_refusal_lora.failed_title": "거부 감소 LoRA를 다운로드하지 못했습니다",
+  "notifications.krea2_refusal_lora.failed_body": "Krea 2 거부 감소 LoRA를 다운로드하지 못했습니다: {error}. 텍스트 인코더 선택 아래의 검열 해제 모드에서 다시 시도할 수 있습니다.",
   "notifications.title": "알림",
 
   "notifications.mark_all_read": "모두 읽음으로 표시",

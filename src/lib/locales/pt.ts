@@ -3060,6 +3060,12 @@ const pt: Record<string, string> = {
   "settings.models.folder_created": "{name} criado",
   "notifications.read_more": "Ler mais",
   "notifications.open_settings": "Abrir Configurações",
+  "notifications.krea2_refusal_lora.title": "O modo sem censura do Krea 2 tem uma melhoria",
+  "notifications.krea2_refusal_lora.body": "O modo sem censura agora combina o codificador de texto sem censura que você já tem com uma LoRA de redução de recusas para as camadas TextFusion do Krea 2, para que os conceitos pedidos sejam menos suavizados. Baixe-a ({size}) para concluir a configuração. Ela é aplicada automaticamente às gerações do Krea 2.",
+  "notifications.krea2_refusal_lora.download": "Baixar e ativar",
+  "notifications.krea2_refusal_lora.downloading": "Baixando...",
+  "notifications.krea2_refusal_lora.failed_title": "Não foi possível baixar a LoRA de redução de recusas",
+  "notifications.krea2_refusal_lora.failed_body": "A LoRA de redução de recusas do Krea 2 não foi baixada: {error}. Você pode tentar de novo no modo sem censura, abaixo do seletor de codificador de texto.",
   "notifications.title": "Notificações",
 
   "notifications.mark_all_read": "Marcar tudo como lido",

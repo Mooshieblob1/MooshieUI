@@ -3059,6 +3059,12 @@ const it: Record<string, string> = {
   "settings.models.folder_created": "{name} creato",
   "notifications.read_more": "Leggi di più",
   "notifications.open_settings": "Apri Impostazioni",
+  "notifications.krea2_refusal_lora.title": "La modalità senza censura di Krea 2 ha un aggiornamento",
+  "notifications.krea2_refusal_lora.body": "La modalità senza censura ora abbina l'encoder di testo senza censura che hai già a una LoRA di riduzione dei rifiuti per i livelli TextFusion di Krea 2, così i concetti richiesti vengono attenuati meno. Scaricala ({size}) per completare la configurazione. Viene applicata automaticamente alle generazioni Krea 2.",
+  "notifications.krea2_refusal_lora.download": "Scarica e attiva",
+  "notifications.krea2_refusal_lora.downloading": "Download in corso...",
+  "notifications.krea2_refusal_lora.failed_title": "Impossibile scaricare la LoRA di riduzione dei rifiuti",
+  "notifications.krea2_refusal_lora.failed_body": "La LoRA di riduzione dei rifiuti di Krea 2 non è stata scaricata: {error}. Puoi riprovare dalla modalità senza censura sotto il selettore dell'encoder di testo.",
   "notifications.title": "Notifiche",
 
   "notifications.mark_all_read": "Segna tutto come letto",

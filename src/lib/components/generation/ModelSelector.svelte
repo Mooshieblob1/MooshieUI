@@ -22,6 +22,7 @@
     isKrea2UncensoredEncoder,
     pickKrea2Encoder,
   } from "../../utils/krea2Encoder.js";
+  import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
@@ -843,18 +844,6 @@
   });
 
   /** Switch uncensored mode, selecting the matching installed encoder. */
-  function setKrea2Uncensored(on: boolean) {
-    generation.krea2UncensoredEncoder = on;
-    const encoder = models.textEncoders.find((f) =>
-      isKrea2Encoder(f) && isKrea2UncensoredEncoder(f) === on,
-    );
-    if (encoder) {
-      generation.clipModel = encoder;
-      generation.clipType = "krea2";
-    }
-    generation.saveSettings();
-  }
-
   /** Download whatever uncensored mode is missing, then turn it on. */
   async function downloadKrea2Uncensored() {
     const missing = krea2UncensoredMissing;
@@ -869,14 +858,7 @@
     );
     dlOrder = missing.map(({ file }) => file.filename);
     try {
-      await Promise.all(
-        missing.map(async ({ file }) => {
-          await downloadModel(file.url, file.category, file.filename);
-          await cacheHashAfterDownload(file);
-        }),
-      );
-      await models.refresh();
-      setKrea2Uncensored(true);
+      await installKrea2Uncensored((file) => cacheHashAfterDownload(file));
       downloading = null;
       dlEntries = {};
       dlOrder = [];

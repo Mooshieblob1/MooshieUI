@@ -3101,6 +3101,12 @@ const zh: Record<string, string> = {
   "settings.models.folder_created": "已创建 {name}",
   "notifications.read_more": "阅读全文",
   "notifications.open_settings": "打开设置",
+  "notifications.krea2_refusal_lora.title": "Krea 2 无审查模式已升级",
+  "notifications.krea2_refusal_lora.body": "无审查模式现在会将你已有的无审查文本编码器与一个针对 Krea 2 TextFusion 层的拒绝削减 LoRA 搭配使用，让所请求的概念更少被弱化。下载它（{size}）即可完成设置。它会在 Krea 2 生成时自动应用。",
+  "notifications.krea2_refusal_lora.download": "下载并开启",
+  "notifications.krea2_refusal_lora.downloading": "正在下载...",
+  "notifications.krea2_refusal_lora.failed_title": "无法下载拒绝削减 LoRA",
+  "notifications.krea2_refusal_lora.failed_body": "Krea 2 拒绝削减 LoRA 下载失败：{error}。你可以在文本编码器选择框下方的无审查模式中重试。",
   "notifications.title": "通知",
 
   "notifications.mark_all_read": "全部标为已读",

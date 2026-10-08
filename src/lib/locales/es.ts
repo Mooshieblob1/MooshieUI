@@ -393,6 +393,12 @@ const es: Record<string, string> = {
   // ── Notifications ─────────────────────────────────────
   "notifications.read_more": "Leer más",
   "notifications.open_settings": "Abrir Ajustes",
+  "notifications.krea2_refusal_lora.title": "El modo sin censura de Krea 2 tiene una mejora",
+  "notifications.krea2_refusal_lora.body": "El modo sin censura ahora combina el codificador de texto sin censura que ya tienes con una LoRA de reducción de rechazos para las capas TextFusion de Krea 2, para que los conceptos pedidos se suavicen menos. Descárgala ({size}) para terminar la configuración. Se aplica automáticamente a las generaciones de Krea 2.",
+  "notifications.krea2_refusal_lora.download": "Descargar y activar",
+  "notifications.krea2_refusal_lora.downloading": "Descargando...",
+  "notifications.krea2_refusal_lora.failed_title": "No se pudo descargar la LoRA de reducción de rechazos",
+  "notifications.krea2_refusal_lora.failed_body": "La LoRA de reducción de rechazos de Krea 2 no se descargó: {error}. Puedes reintentarlo desde el modo sin censura bajo el selector de codificador de texto.",
   "notifications.title": "Notificaciones",
   "notifications.mark_all_read": "Marcar todo como leído",
   "notifications.clear_all": "Borrar todo",

@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v2.3.18
+
+### Krea 2
+- **Uncensored mode with the refusal-reduction LoRA**: the uncensored text encoder panel under the Text Encoder picker is now **Uncensored mode**. Besides the abliterated (Heretic) encoder it adds Capitan01R's TextFusion refusal-reduction LoRA (v2.0 full rank, 2.6 GB) at strength 1.0. The encoder changes what Qwen3-VL-4B reads from your prompt; the LoRA retrains the TextFusion layers that pass it to the image model, so requested concepts get toned down less. The LoRA is applied automatically to Krea 2 generations only, never appears in your LoRA list, is skipped if you already have it enabled yourself, and is recorded in image metadata. **Download and turn on** fetches whatever is missing, and **Turn on** / **Turn off** switch the mode.
+- **Upgrade notice**: if you set up the uncensored encoder in v2.3.16, a one-time notification offers **Download and turn on** for the LoRA. Progress shows in the download banner.
+
+### NovelAI
+- **Upscale works again, now 2x**: NovelAI retired the upscaler on its old API host, so upscaling failed with "API error (404): Cannot POST /ai/upscale". Upscale now goes to the image host with the same request NovelAI's own site sends. NovelAI's upscaler is now a V5 model that enlarges by **2x** instead of 4x, so the tab reads **Upscale 2x**. Prices and the 3MP input limit are unchanged.
+
+---
+
 ## What's New in v2.3.17
 
 ### Model Hub

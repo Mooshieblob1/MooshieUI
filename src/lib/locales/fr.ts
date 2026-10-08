@@ -3085,6 +3085,12 @@ const fr: Record<string, string> = {
   "settings.models.folder_created": "{name} créé",
   "notifications.read_more": "Lire la suite",
   "notifications.open_settings": "Ouvrir les paramètres",
+  "notifications.krea2_refusal_lora.title": "Le mode non censuré de Krea 2 a une mise à niveau",
+  "notifications.krea2_refusal_lora.body": "Le mode non censuré associe désormais l'encodeur de texte non censuré que vous avez déjà à une LoRA de réduction des refus pour les couches TextFusion de Krea 2, afin que les concepts demandés soient moins atténués. Téléchargez-la ({size}) pour terminer la configuration. Elle est appliquée automatiquement aux générations Krea 2.",
+  "notifications.krea2_refusal_lora.download": "Télécharger et activer",
+  "notifications.krea2_refusal_lora.downloading": "Téléchargement...",
+  "notifications.krea2_refusal_lora.failed_title": "Impossible de télécharger la LoRA de réduction des refus",
+  "notifications.krea2_refusal_lora.failed_body": "La LoRA de réduction des refus de Krea 2 n'a pas été téléchargée : {error}. Vous pouvez réessayer depuis le mode non censuré sous le sélecteur d'encodeur de texte.",
   "notifications.title": "Notifications",
 
   "notifications.mark_all_read": "Tout marquer comme lu",

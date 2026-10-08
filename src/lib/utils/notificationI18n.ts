@@ -25,6 +25,10 @@ function paramsRecord(
   if (out.deadline != null) {
     out.deadline = formatDeadlineParam(String(out.deadline));
   }
+  // Formatted at render time so the size follows the current locale.
+  if (out.size_bytes != null) {
+    out.size = locale.formatBytes(Number(out.size_bytes));
+  }
   return out;
 }
 

@@ -395,6 +395,12 @@ const pl: Record<string, string> = {
   // ── Notifications ─────────────────────────────────────
   "notifications.read_more": "Czytaj więcej",
   "notifications.open_settings": "Otwórz ustawienia",
+  "notifications.krea2_refusal_lora.title": "Tryb bez cenzury w Krea 2 został ulepszony",
+  "notifications.krea2_refusal_lora.body": "Tryb bez cenzury łączy teraz nieocenzurowany enkoder tekstu, który już masz, z LoRA redukcji odmów dla warstw TextFusion w Krea 2, dzięki czemu żądane pojęcia są mniej osłabiane. Pobierz ją ({size}), aby dokończyć konfigurację. Jest stosowana automatycznie przy generowaniu w Krea 2.",
+  "notifications.krea2_refusal_lora.download": "Pobierz i włącz",
+  "notifications.krea2_refusal_lora.downloading": "Pobieranie...",
+  "notifications.krea2_refusal_lora.failed_title": "Nie udało się pobrać LoRA redukcji odmów",
+  "notifications.krea2_refusal_lora.failed_body": "Nie pobrano LoRA redukcji odmów dla Krea 2: {error}. Możesz spróbować ponownie w trybie bez cenzury pod wyborem enkodera tekstu.",
   "notifications.title": "Powiadomienia",
   "notifications.mark_all_read": "Oznacz wszystkie jako przeczytane",
   "notifications.clear_all": "Wyczyść wszystkie",
