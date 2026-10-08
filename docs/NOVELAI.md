@@ -66,11 +66,11 @@ Endpoints used by the integration include:
 - `https://image.novelai.net/ai/generate-image-stream`
 - `https://image.novelai.net/user/subscription`
 - `https://image.novelai.net/ai/encode-vibe`
-- `https://api.novelai.net/ai/upscale`
+- `https://image.novelai.net/ai/upscale`
 - `https://image.novelai.net/ai/augment-image`
 
-Generation, subscription, vibe encoding and Director Tools use the image host;
-the dedicated upscaler still uses `api.novelai.net`. The subscription record used to be served
+Generation, subscription, vibe encoding, Director Tools and (since 2026-10) the
+upscaler use the image host; `api.novelai.net` now answers `/ai/upscale` with 404. The subscription record used to be served
 from `api.novelai.net`, which now answers with 400 "Please refresh
 NovelAI.net. If using a third-party tool, update to the image URL."
 
@@ -412,11 +412,14 @@ Enhance's neighbours in the same modal go two different ways, and which way
 each goes is decided by NovelAI, not by us.
 
 **Upscale is the one thing here that is its own endpoint.** `POST
-{IMAGE_BASE}/ai/upscale` takes `{image, width, height, scale}` and returns the
-same ZIP of PNGs every other image call returns, so `response::unpack_images`
-handles it unchanged. It is a fixed 4x model with no diffusion in it: no
-prompt, no seed, no steps, no sampler. `NovelAiClient::upscale()` in
-`novelai/client.rs` is the whole client side.
+{IMAGE_BASE}/ai/upscale` takes `{image, model: "nai-diffusion-5-curated",
+declared_blur_sigma: 0}`, the body NovelAI's own web client sends, and returns
+the same ZIP of PNGs every other image call returns, so
+`response::unpack_images` handles it unchanged. It enlarges by a fixed 2x and
+takes no prompt, seed, steps, sampler, size or factor. `NovelAiClient::upscale()`
+in `novelai/client.rs` is the whole client side. (Until 2026-10 it was a 4x
+route on `api.novelai.net` taking `{image, width, height, scale}`; see the
+2026-10-07 entry in section 7.)
 
 It still does **not** get a Tauri command of its own. `novelai_generate`
 already owns the queue, the synthetic `nai-` prompt id, `deliver_image`, the
@@ -877,6 +880,41 @@ The following dated entries preserve implementation notes and proposed manual
 checks. They are not evidence that every listed check was run, and some describe
 behavior that later releases changed. Use sections 1–6 and the wiki for current
 behavior. Automated tests cover local logic, not live NovelAI account requests.
+
+### 2026-10-07 - Upscale moved to the image host as a 2x V5 upscale
+
+**Reported by:** the user: "Generation failed: API error (404): Cannot POST
+/ai/upscale".
+
+**Root cause.** NovelAI retired the standalone upscaler on `api.novelai.net`.
+Unauthenticated probes show the API host still serving its other routes (for
+example `/ai/generate-image` answers 400 for an empty body) but `/ai/upscale`
+answers 404 "Cannot POST /ai/upscale", the generic missing-route reply. The
+image host answers the same path with 401, so the route lives there now.
+SillyTavern and `novelai-python` still post to the API host, so they are no
+reference this time; NovelAI's own web client is. Its bundle defines
+`UpscaleImage` as `ImageBackendUrl + "/ai/upscale"` and posts
+`{image, model, declared_blur_sigma}` with `model = "nai-diffusion-5-curated"`
+and `declared_blur_sigma = 0` (JSON when its legacy-request debug flag is on,
+multipart otherwise; the image is base64 either way). It records the result as
+`width * 2` by `height * 2`, so the factor dropped from 4x to 2x. The upscale
+price table and the 3,145,728-pixel input limit are unchanged.
+
+This also explains the 2026-08-25 entry: the image host's route at this path
+was already the new upscaler, which is why it asked for a `model`.
+
+**The fix.** `upscale()` posts to `IMAGE_BASE` with the web client's body,
+built by `upscale_body()`; `API_BASE` is gone. `UPSCALE_SCALE` and the
+frontend's `UPSCALE_FACTOR` are 2, and the upscale tab, subtitle and note take
+the factor as `{factor}` instead of hard-coding 4. The subtitle and note no
+longer promise that nothing is redrawn, since the upscaler is now a V5 model.
+
+**Test.** `upscale_body_matches_the_web_client` pins the body. The live call
+needs a NovelAI key, so it is covered by the manual check below.
+
+**Manual check.** With a NovelAI key, open an image's NovelAI Enhance modal,
+choose **Upscale 2x** and run it. Expect a new image at twice the width and
+height, and the quoted Anlas price to match what NovelAI charges.
 
 ### 2026-09-10 - Per-account NovelAI keys
 

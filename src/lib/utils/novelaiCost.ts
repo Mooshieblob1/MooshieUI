@@ -142,7 +142,7 @@ export const UPSCALE_COST_TIERS: ReadonlyArray<readonly [pixels: number, anlas: 
   [3145728, 4],
 ];
 
-/** Anlas a 4x upscale of an image this size is expected to cost. */
+/** Anlas an upscale of an image this size is expected to cost. */
 export function novelAiUpscaleCost(width: number, height: number): number {
   if (!(width > 0 && height > 0)) return 0;
   const pixels = width * height;

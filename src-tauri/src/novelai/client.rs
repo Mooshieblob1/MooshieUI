@@ -21,15 +21,18 @@ use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 // request with 400 "Please refresh NovelAI.net. If using a third-party tool,
 // update to the image URL."
 //
-// The standalone upscaler did not move. It is still served by the old API
-// host, and the image host answers the same path with a *different* route
-// that validates against the generation schema -- so posting the documented
-// upscale body there fails with 400 "Validation error: model doesn't exist",
-// naming a field an upscale request has never carried. The path existing on
-// both hosts is what makes this hard to spot: the image host returns 401 for
-// it, not 404, so it looks like the right endpoint behind a bad key.
+// The standalone upscaler followed later (by 2026-10): api.novelai.net now
+// answers /ai/upscale with 404 "Cannot POST /ai/upscale", and NovelAI's own
+// web client posts it to the image host as a V5 diffusion upscale. Until then
+// the image host's route at that path already validated against the
+// generation schema, which is why the old {image, width, height, scale} body
+// failed there with "model doesn't exist". See `upscale` for the current body.
 const IMAGE_BASE: &str = "https://image.novelai.net";
-const API_BASE: &str = "https://api.novelai.net";
+
+/// Model the upscale endpoint runs, as NovelAI's web client sends it.
+const UPSCALE_MODEL: &str = "nai-diffusion-5-curated";
+/// Blur NovelAI's web client declares for an upscale source: none.
+const UPSCALE_DECLARED_BLUR_SIGMA: u32 = 0;
 
 // Per-call deadlines. The shared client sets none, so without these a stalled
 // connection would hold its task, and the queue entry behind it, forever.
@@ -77,34 +80,21 @@ impl<'a> NovelAiClient<'a> {
         response::unpack_images(&bytes).map_err(AppError::Other)
     }
 
-    /// Enlarge an image with NovelAI's dedicated upscaler.
+    /// Enlarge an image with NovelAI's upscaler.
     ///
-    /// Not a diffusion pass and not a second generation: a fixed model runs
-    /// over the image and hands it back larger, so there is no prompt, seed,
-    /// sampler or step count to send. `width` and `height` are the *source's*
-    /// size, which is what NovelAI scales from. The response is the same
-    /// zip-of-PNGs `generate` returns, so it unpacks identically.
-    ///
-    /// Note the host: this is the one call that goes to `API_BASE` rather than
-    /// the image host. See the comment on those constants.
-    pub async fn upscale(
-        &self,
-        image: &str,
-        width: u32,
-        height: u32,
-        scale: u32,
-    ) -> Result<Vec<Vec<u8>>, AppError> {
+    /// The body mirrors NovelAI's own web client: the base64 image, the V5
+    /// model and a declared blur of zero. There is no prompt, seed, sampler or
+    /// step count, and no size or factor: the endpoint reads the size from the
+    /// image and always returns it at `super::UPSCALE_SCALE` times. The
+    /// response is the same zip-of-PNGs `generate` returns, so it unpacks
+    /// identically.
+    pub async fn upscale(&self, image: &str) -> Result<Vec<Vec<u8>>, AppError> {
         let res = self
             .http
-            .post(format!("{API_BASE}/ai/upscale"))
+            .post(format!("{IMAGE_BASE}/ai/upscale"))
             .bearer_auth(self.api_key)
             .timeout(GENERATION_TIMEOUT)
-            .json(&serde_json::json!({
-                "image": image,
-                "width": width,
-                "height": height,
-                "scale": scale,
-            }))
+            .json(&upscale_body(image))
             .send()
             .await?;
 
@@ -309,6 +299,16 @@ async fn next_chunk<T>(
     }
 }
 
+/// The `/ai/upscale` request body, field for field what NovelAI's web client
+/// sends. Size and factor are deliberately absent: the endpoint takes neither.
+fn upscale_body(image: &str) -> Value {
+    serde_json::json!({
+        "image": image,
+        "model": UPSCALE_MODEL,
+        "declared_blur_sigma": UPSCALE_DECLARED_BLUR_SIGMA,
+    })
+}
+
 /// Turn a non-2xx response into an `AppError` carrying NovelAI's own message.
 ///
 /// NovelAI's status codes map onto user-fixable problems, so each gets wording
@@ -358,6 +358,22 @@ mod tests {
             panic!("a blank key must be rejected");
         };
         assert!(err.to_string().contains("No NovelAI API key"));
+    }
+
+    /// The old body ({image, width, height, scale}) is what the image host
+    /// rejected with "model doesn't exist", and api.novelai.net no longer
+    /// serves the route at all. Pin the body NovelAI's web client sends.
+    #[test]
+    fn upscale_body_matches_the_web_client() {
+        let body = upscale_body("aGVsbG8=");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "image": "aGVsbG8=",
+                "model": "nai-diffusion-5-curated",
+                "declared_blur_sigma": 0,
+            })
+        );
     }
 }
 

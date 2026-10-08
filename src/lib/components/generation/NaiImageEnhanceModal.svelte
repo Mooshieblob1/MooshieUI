@@ -396,7 +396,7 @@
             {locale.t(headerKey)}
           </h2>
           <p class="mt-1 text-sm text-neutral-400">
-            {locale.t(subtitleKey)}
+            {locale.t(subtitleKey, { factor: UPSCALE_FACTOR })}
           </p>
         </div>
         <!-- Sized to a comfortable pointer target rather than to the glyph: this
@@ -422,7 +422,7 @@
             disabled={naiImageEnhance.busy}
             onclick={() => naiImageEnhance.setAction(tab.action)}
           >
-            {locale.t(tab.label)}
+            {locale.t(tab.label, { factor: UPSCALE_FACTOR })}
           </button>
         {/each}
       </div>
@@ -735,7 +735,7 @@
               <span class="inline-block animate-spin">⟳</span>
               {locale.t("novelai.enhance.running")}
             {:else}
-              {locale.t(runKey)}
+              {locale.t(runKey, { factor: UPSCALE_FACTOR })}
             {/if}
           </button>
         </div>

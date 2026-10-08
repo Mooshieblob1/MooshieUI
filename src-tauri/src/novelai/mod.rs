@@ -476,9 +476,11 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
 /// for it.
 pub const UPSCALE_ACTION: &str = "upscale";
 
-/// NovelAI's upscaler is a fixed 4x model. The endpoint takes the factor as a
-/// field but accepts no other value.
-pub const UPSCALE_SCALE: u32 = 4;
+/// NovelAI's upscaler enlarges by a fixed 2x. Not sent: the endpoint takes no
+/// factor, and NovelAI's web client records an upscale as twice the source
+/// size. (It was 4x on the old api.novelai.net route.) Mirrored by
+/// `UPSCALE_FACTOR` in `novelaiEnhance.ts`.
+pub const UPSCALE_SCALE: u32 = 2;
 
 /// The largest input the upscaler accepts.
 ///
@@ -936,9 +938,7 @@ async fn run_upscale(
         serde_json::json!({ "prompt_id": prompt_id, "value": 0, "max": 1, "node": "NovelAI" }),
     );
 
-    let images = client
-        .upscale(&input.image, input.width, input.height, UPSCALE_SCALE)
-        .await?;
+    let images = client.upscale(&input.image).await?;
 
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);

@@ -46,12 +46,13 @@ export const ENHANCE_MID_SCALE = 1.5;
 export const UPSCALE_ACTION = "upscale";
 
 /**
- * That upscaler is a fixed 4x model. Mirrors `UPSCALE_SCALE`.
+ * That upscaler enlarges by a fixed 2x. Mirrors `UPSCALE_SCALE`.
  *
- * Nothing in the UI can change it: the endpoint takes the factor as a field and
- * accepts no other value.
+ * Nothing in the UI can change it: the endpoint takes no factor at all. It was
+ * 4x on the old api.novelai.net route, before NovelAI moved upscaling to the
+ * image host as a V5 model.
  */
-export const UPSCALE_FACTOR = 4;
+export const UPSCALE_FACTOR = 2;
 
 /**
  * The largest image the upscaler accepts. Mirrors `UPSCALE_MAX_PIXELS`.
@@ -72,11 +73,10 @@ export function upscaleFits(width: number, height: number): boolean {
 }
 
 /**
- * What a 4x upscale comes back as.
+ * What an upscale comes back as: `UPSCALE_FACTOR` times the source.
  *
- * Deliberately not snapped to the 64px grid. The upscaler is not a generation
- * and never sees that grid: it returns exactly four times the source, odd
- * dimensions included.
+ * Deliberately not snapped to the 64px grid, matching NovelAI's own client,
+ * which records an upscale as exactly the factor times the source size.
  */
 export function upscaleTargetSize(
   width: number,
