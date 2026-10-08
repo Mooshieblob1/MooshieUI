@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v2.3.17
+
+### Model Hub
+- **Sorting and filters work again**: sorting a CivitAI search by Most Downloaded, Highest Rated or Newest now actually reorders the results (CivitAI's text search ignored the sort, so results are now sorted in the app). The type, base model and format filters apply again, and a slow earlier search can no longer replace the results of a newer one.
+- **Install location picker shows on top**: choosing where to install a model from the model details card opened the location picker behind the card, so it looked like nothing happened. It now opens above it.
+
+### Style Transfer
+- **Style Transfer runs again**: Style Transfer failed with a prompt validation error on current installs because the RFInversion node now requires two extra inputs. MooshieUI sends them with guidance left off, so results look the same as before (#763).
+
+---
+
 ## What's New in v2.3.16
 
 ### Krea 2
