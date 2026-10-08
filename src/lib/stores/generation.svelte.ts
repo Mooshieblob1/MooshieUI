@@ -27,7 +27,7 @@ import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import { BETA57_SCHEDULER, GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
-import { pickKrea2Encoder } from "../utils/krea2Encoder.js";
+import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
   NOVELAI_DEFAULTS,
   findNovelAiModel,
@@ -3552,6 +3552,34 @@ class GenerationStore {
     this.pausedEditArmed = false;
   }
 
+  /**
+   * LoRAs sent with a generation: the enabled list, plus Krea 2's
+   * refusal-reduction LoRA while uncensored mode is on. Added here rather than
+   * to `loras` so it follows the model family instead of lingering in the list
+   * after a switch to another architecture.
+   */
+  private outgoingLoras(): { name: string; strength_model: number; strength_clip: number }[] {
+    const loras = this.loras
+      .filter((l) => l.enabled && l.name)
+      .map(({ name, strength_model, strength_clip }) => ({ name, strength_model, strength_clip }));
+    const refusalLora = krea2RefusalLoraToApply(
+      this.modelFamily,
+      this.krea2UncensoredEncoder,
+      models.loras,
+      loras.map((l) => l.name),
+    );
+    return refusalLora
+      ? [
+          ...loras,
+          {
+            name: refusalLora,
+            strength_model: KREA2_REFUSAL_LORA_STRENGTH,
+            strength_clip: KREA2_REFUSAL_LORA_STRENGTH,
+          },
+        ]
+      : loras;
+  }
+
   toParams(options: GenerationToParamsOptions = {}) {
     // Video mode loads its own UNet/CLIP/VAE trio from the `video_*` fields and
     // never touches `checkpoint`, so the image-pipeline model guards below would
@@ -3876,13 +3904,7 @@ class GenerationStore {
       positive_regions: builtRegions,
       checkpoint: this.checkpoint,
       vae: this.vae || null,
-      loras: this.loras
-        .filter((l) => l.enabled && l.name)
-        .map(({ name, strength_model, strength_clip }) => ({
-          name,
-          strength_model,
-          strength_clip,
-        })),
+      loras: this.outgoingLoras(),
       sampler_name: this.samplerName,
       scheduler: this.scheduler,
       steps: this.steps,

@@ -25,6 +25,56 @@ export const KREA2_UNCENSORED_ENCODER = {
   bytes: 4_831_492_476,
 };
 
+/**
+ * Capitan01R's Krea 2 TextFusion refusal-reduction LoRA, v2.0 full rank
+ * (Civitai model 2775340, version 3359022). It retrains only the TextFusion
+ * path (layerwise/refiner blocks, the 12-layer projector, txtmlp) so the DiT
+ * suppresses requested concepts less: the uncensored encoder changes what the
+ * text says, this changes how Krea 2 listens to it. Every key maps onto
+ * Krea 2 through ComfyUI's stock LoraLoader, norm scales included.
+ *
+ * Civitai needs a login to download it, so this is the byte-identical public
+ * Hugging Face copy (SHA256 999c6bc1..., matching Civitai's), pinned to a
+ * commit. The rank-64 v2 is only mirrored in a gated repo.
+ */
+export const KREA2_REFUSAL_LORA = {
+  filename: "refusal_reduction_v2_full_rank.safetensors",
+  url: "https://huggingface.co/yannikrhl/Krea2_TextFusion_Refusal-Reduction_LoRA/resolve/fd1b55fe70b5513dd8e00c517f1b2e7fc277eb77/refusal_reduction_v2_full_rank.safetensors",
+  category: "loras",
+  bytes: 2_603_651_944,
+};
+
+/** Upstream recommendation: strength 1.0. */
+export const KREA2_REFUSAL_LORA_STRENGTH = 1.0;
+
+/** Any version of the refusal-reduction LoRA, under its upstream names. */
+export function isKrea2RefusalLora(name: string): boolean {
+  return /refusal_reduction|textfusion_refusal/i.test(name);
+}
+
+/** The installed copy of the pinned LoRA, preferring the exact filename. */
+export function installedKrea2RefusalLora(installed: readonly string[]): string | null {
+  const basename = (n: string) => n.split(/[\\/]/).pop();
+  return installed.find((n) => basename(n) === KREA2_REFUSAL_LORA.filename) ?? null;
+}
+
+/**
+ * The refusal-reduction LoRA to add to an outgoing generation, or null.
+ * Only for Krea 2 with uncensored mode on and the file installed, and never
+ * when the user already has a version of it in their own enabled LoRA list,
+ * so it cannot leak into another model family or apply twice.
+ */
+export function krea2RefusalLoraToApply(
+  family: string,
+  uncensored: boolean,
+  installed: readonly string[],
+  enabledLoras: readonly string[],
+): string | null {
+  if (family !== "krea2" || !uncensored) return null;
+  if (enabledLoras.some(isKrea2RefusalLora)) return null;
+  return installedKrea2RefusalLora(installed);
+}
+
 export function isKrea2Encoder(filename: string | null | undefined): boolean {
   if (!filename) return false;
   const lower = filename.toLowerCase();
