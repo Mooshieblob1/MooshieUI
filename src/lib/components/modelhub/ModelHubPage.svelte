@@ -1647,8 +1647,11 @@
 
 {#if dirPickerOpen}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- Portaled and raised above the detail modal (also portaled, z-50), which
+       opens this picker from its install button. -->
   <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+    use:portal
+    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60"
     onkeydown={(e) => { if (e.key === "Escape") confirmDirPick(null); }}
   >
     <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-5 w-105 max-w-[92vw] space-y-3">
