@@ -85,7 +85,10 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
-    // RF inversion — target prompt as ref_conditioning (per upstream recommendation)
+    // RF inversion — target prompt as ref_conditioning (per upstream recommendation).
+    // otip_strength/otip_clip_norm are required by the pinned node rev; 0.0
+    // keeps OTIP guidance off. Older revs without them ignore the extra inputs,
+    // as they now ignore gamma_curve/norm_strength.
     let rf_id = next_id.to_string();
     workflow.insert(
         rf_id.clone(),
@@ -100,6 +103,8 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "gamma_curve": params.style_transfer_gamma_curve,
                 "norm_strength": params.style_transfer_norm_strength,
                 "pmi_alpha": params.style_transfer_pmi_alpha,
+                "otip_strength": 0.0,
+                "otip_clip_norm": 20.0,
                 "verbose": false
             }
         }),
