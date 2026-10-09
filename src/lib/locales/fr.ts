@@ -845,6 +845,11 @@ const fr: Record<string, string> = {
   "generation.mode.inpainting": "Inpainting",
   "generation.mode.image_edit": "Édition d'image",
   "generation.mode.video": "Vidéo",
+  "generation.tabs.label": "Onglets de réglages",
+  "generation.tabs.new": "Nouvel onglet",
+  "generation.tabs.new_hint": "Nouvel onglet avec une copie de ces réglages",
+  "generation.tabs.close": "Fermer l'onglet",
+  "generation.tabs.empty_prompt": "Prompt vide",
 
   // Prompts
   "generation.prompts.title": "Prompts",

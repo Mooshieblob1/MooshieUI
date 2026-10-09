@@ -836,6 +836,11 @@ const zh: Record<string, string> = {
   "generation.mode.inpainting": "局部重绘",
   "generation.mode.image_edit": "图像编辑",
   "generation.mode.video": "视频",
+  "generation.tabs.label": "设置标签页",
+  "generation.tabs.new": "新标签页",
+  "generation.tabs.new_hint": "以当前设置复制新标签页",
+  "generation.tabs.close": "关闭标签页",
+  "generation.tabs.empty_prompt": "空提示词",
 
   "generation.prompts.title": "提示词",
   "generation.prompts.positive": "正面提示词",

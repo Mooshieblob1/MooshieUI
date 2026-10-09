@@ -836,6 +836,11 @@ const zhTw: Record<string, string> = {
   "generation.mode.inpainting": "局部重繪",
   "generation.mode.image_edit": "圖像編輯",
   "generation.mode.video": "影片",
+  "generation.tabs.label": "設定分頁",
+  "generation.tabs.new": "新分頁",
+  "generation.tabs.new_hint": "以目前設定複製新分頁",
+  "generation.tabs.close": "關閉分頁",
+  "generation.tabs.empty_prompt": "空白提示詞",
 
   "generation.prompts.title": "提示詞",
   "generation.prompts.positive": "正面提示詞",

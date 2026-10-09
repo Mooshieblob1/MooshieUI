@@ -845,6 +845,11 @@ const ja: Record<string, string> = {
   "generation.mode.inpainting": "インペインティング",
   "generation.mode.image_edit": "画像編集",
   "generation.mode.video": "動画",
+  "generation.tabs.label": "設定タブ",
+  "generation.tabs.new": "新しいタブ",
+  "generation.tabs.new_hint": "この設定をコピーした新しいタブ",
+  "generation.tabs.close": "タブを閉じる",
+  "generation.tabs.empty_prompt": "空のプロンプト",
 
   // プロンプト
   "generation.prompts.title": "プロンプト",

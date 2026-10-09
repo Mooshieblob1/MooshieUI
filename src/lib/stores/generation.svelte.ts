@@ -2805,279 +2805,7 @@ class GenerationStore {
     try {
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
-        const savedMode = isGenerationMode(saved.mode) ? saved.mode : this._mode;
-        if (saved.checkpoint) this.checkpoint = saved.checkpoint;
-        if (saved.modelPresetAppliedKey !== undefined) this.modelPresetAppliedKey = saved.modelPresetAppliedKey;
-        if (saved.vae !== undefined) this.vae = saved.vae;
-        if (saved.samplerName) this.samplerName = saved.samplerName;
-        if (saved.scheduler) this.scheduler = saved.scheduler;
-        if (saved.steps) this.steps = saved.steps;
-        if (saved.cfg !== undefined) this.cfg = saved.cfg;
-        // String(...) coerces seeds persisted as numbers by older versions.
-        if (saved.seed !== undefined) this.seed = String(saved.seed);
-        if (saved.width) this.width = saved.width;
-        if (saved.height) this.height = saved.height;
-        if (saved.batchSize) this.batchSize = saved.batchSize;
-        if (saved.denoise !== undefined) this.denoise = saved.denoise;
-        if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
-        // The parked bucket. The active one is loaded from the flat fields below,
-        // which also carries a pre-split store forward: its single prompt lands
-        // on whichever side the saved mode was on, and the other starts empty.
-        if (saved.promptBuckets) this.promptBuckets = normalizePromptBuckets(saved.promptBuckets);
-        if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
-        if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
-        if (Array.isArray(saved.extraPositiveBoxes)) {
-          this.extraPositiveBoxes = sanitizePromptBoxes(saved.extraPositiveBoxes);
-        }
-        if (Array.isArray(saved.extraNegativeBoxes)) {
-          this.extraNegativeBoxes = sanitizePromptBoxes(saved.extraNegativeBoxes);
-        }
-        if (Array.isArray(saved.loras)) {
-          this.loras = saved.loras.map((l: any) => ({
-            name: l.name || "",
-            strength_model: l.strength_model ?? 1.0,
-            strength_clip: l.strength_clip ?? 1.0,
-            enabled: l.enabled ?? true,
-          }));
-        }
-        if (saved.upscaleEnabled !== undefined) this.upscaleEnabled = saved.upscaleEnabled;
-        if (saved.upscaleMethod) this.upscaleMethod = saved.upscaleMethod;
-        if (saved.upscaleModel !== undefined) this.upscaleModel = saved.upscaleModel;
-        if (saved.upscaleScale !== undefined) this.upscaleScale = saved.upscaleScale;
-        if (saved.upscaleTargetScaleEnabled !== undefined)
-          this.upscaleTargetScaleEnabled = saved.upscaleTargetScaleEnabled;
-        if (saved.upscaleTargetScale !== undefined) this.upscaleTargetScale = saved.upscaleTargetScale;
-        if (saved.upscaleDenoise !== undefined) this.upscaleDenoise = saved.upscaleDenoise;
-        if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
-        if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
-        if (saved.upscaleTiling !== undefined) this.upscaleTiling = saved.upscaleTiling;
-        if (saved.upscaleFastRefine !== undefined) this.upscaleFastRefine = saved.upscaleFastRefine;
-        if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
-        if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
-        if (saved.refineOnly !== undefined) this.refineOnly = saved.refineOnly;
-        if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
-        if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
-        if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
-        if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
-        if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
-        if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
-        if (saved.apgEnabled !== undefined) this.apgEnabled = saved.apgEnabled;
-        if (saved.apgEta !== undefined) this.apgEta = saved.apgEta;
-        if (saved.apgNormThreshold !== undefined) this.apgNormThreshold = saved.apgNormThreshold;
-        if (saved.apgMomentum !== undefined) this.apgMomentum = saved.apgMomentum;
-        if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
-        if (saved.int8FastEnabled !== undefined) this.int8FastEnabled = saved.int8FastEnabled;
-        if (saved.int8FastConvrot !== undefined) this.int8FastConvrot = saved.int8FastConvrot;
-        if (saved.krea2UncensoredEncoder !== undefined) this.krea2UncensoredEncoder = saved.krea2UncensoredEncoder;
-        if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
-        if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
-        if (saved.modelSourceCategory !== undefined)
-          this.modelSourceCategory = saved.modelSourceCategory;
-        if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
-        if (saved.clipType !== undefined) this.clipType = saved.clipType;
-        if (saved.stylePreset !== undefined) this.stylePreset = saved.stylePreset;
-        if (saved.stylePresetsEnabled !== undefined) this.stylePresetsEnabled = !!saved.stylePresetsEnabled;
-        if (saved.controlnetEnabled !== undefined) this.controlnetEnabled = saved.controlnetEnabled;
-        if (saved.controlnetMode) this.controlnetMode = saved.controlnetMode;
-        if (saved.controlnetPreset !== undefined) this.controlnetPreset = saved.controlnetPreset;
-        if (saved.controlnetModel !== undefined) this.controlnetModel = saved.controlnetModel;
-        if (saved.controlnetPreprocessor !== undefined) this.controlnetPreprocessor = saved.controlnetPreprocessor;
-        if (saved.controlnetStrength !== undefined) this.controlnetStrength = saved.controlnetStrength;
-        if (saved.controlnetStartPercent !== undefined) this.controlnetStartPercent = saved.controlnetStartPercent;
-        if (saved.controlnetEndPercent !== undefined) this.controlnetEndPercent = saved.controlnetEndPercent;
-        if (saved.styleTransferEnabled !== undefined) this.styleTransferEnabled = saved.styleTransferEnabled;
-        if (saved.styleReferenceImage !== undefined) this.styleReferenceImage = saved.styleReferenceImage;
-        if (Array.isArray(saved.editReferenceImages)) {
-          const slots = saved.editReferenceImages
-            .slice(0, 3)
-            .map((v: unknown) => (typeof v === "string" && v ? v : null));
-          while (slots.length < 3) slots.push(null);
-          this.editReferenceImages = slots;
-        }
-        if (saved.editReferenceStrength !== undefined)
-          this.editReferenceStrength = saved.editReferenceStrength;
-        if (saved.editSplitScreen !== undefined)
-          this.editSplitScreen = saved.editSplitScreen;
-        if (saved.videoVariant === "fl2va" || saved.videoVariant === "ref2va")
-          this.videoVariant = saved.videoVariant;
-        if (saved.videoDurationSeconds !== undefined)
-          this.videoDurationSeconds = saved.videoDurationSeconds;
-        // Clamped rather than taken as-is: settings written before the pixel
-        // budget became a slider can hold values off the current range/step.
-        if (saved.videoMegapixels !== undefined)
-          this.videoMegapixels = clampH3Megapixels(saved.videoMegapixels);
-        if (saved.videoAspectRatio !== undefined) this.videoAspectRatio = saved.videoAspectRatio;
-        if (saved.videoFirstFrame !== undefined) this.videoFirstFrame = saved.videoFirstFrame;
-        if (saved.videoLastFrame !== undefined) this.videoLastFrame = saved.videoLastFrame;
-        if (saved.videoFirstFrameAspect !== undefined)
-          this.videoFirstFrameAspect = saved.videoFirstFrameAspect;
-        if (saved.videoLastFrameAspect !== undefined)
-          this.videoLastFrameAspect = saved.videoLastFrameAspect;
-        if (saved.videoFirstFrameAsLast !== undefined)
-          this.videoFirstFrameAsLast = saved.videoFirstFrameAsLast;
-        if (Array.isArray(saved.videoRefImages)) {
-          const slots = saved.videoRefImages
-            .slice(0, H3_MAX_REF_IMAGES)
-            .map((v: unknown) => (typeof v === "string" && v ? v : null));
-          while (slots.length < H3_MAX_REF_IMAGES) slots.push(null);
-          this.videoRefImages = slots;
-        }
-        if (saved.videoRifeEnabled !== undefined) this.videoRifeEnabled = saved.videoRifeEnabled;
-        if (saved.videoRifeMultiplier !== undefined)
-          this.videoRifeMultiplier = saved.videoRifeMultiplier;
-        if (saved.videoRifeScaleFactor !== undefined)
-          this.videoRifeScaleFactor = saved.videoRifeScaleFactor;
-        if (saved.videoRifeFastMode !== undefined) this.videoRifeFastMode = saved.videoRifeFastMode;
-        if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
-        if (saved.videoInterpEngine !== undefined) this.videoInterpEngine = saved.videoInterpEngine;
-        this.videoAcceleration = resolveVideoAcceleration(saved.videoAcceleration, saved.videoTurboEnabled);
-        this.videoTurboPreset = h3TurboPreset(saved.videoTurboPreset, this.videoVariant).id;
-        this.videoVdnPrecision = saved.videoVdnPrecision === "int8" ? "int8" : "bf16";
-        this.videoSaveDraft = saved.videoSaveDraft === true;
-        if (saved.videoTeacacheEnabled !== undefined)
-          this.videoTeacacheEnabled = saved.videoTeacacheEnabled;
-        if (saved.videoLivePreview !== undefined)
-          this.videoLivePreview = saved.videoLivePreview;
-        if (saved.videoTurboSteps !== undefined)
-          this.videoTurboSteps = Math.min(
-            H3_TURBO_MAX_STEPS,
-            Math.max(H3_TURBO_MIN_STEPS, Math.round(saved.videoTurboSteps)),
-          );
-        if (saved.videoModelTier !== undefined) this.videoModelTier = saved.videoModelTier;
-        if (saved.videoTurboLora !== undefined) this.videoTurboLora = saved.videoTurboLora;
-        if (saved.videoSampler !== undefined) this.videoSampler = saved.videoSampler;
-        if (saved.videoScheduler !== undefined) this.videoScheduler = saved.videoScheduler;
-        if (saved.videoDiffusionModel !== undefined)
-          this.videoDiffusionModel = saved.videoDiffusionModel;
-        if (saved.videoClipModel !== undefined) this.videoClipModel = saved.videoClipModel;
-        if (saved.videoVaeModel !== undefined) this.videoVaeModel = saved.videoVaeModel;
-        if (saved.videoAudioVaeModel !== undefined)
-          this.videoAudioVaeModel = saved.videoAudioVaeModel;
-        // Merged over the defaults rather than assigned, so a settings blob
-        // written by an older build still gets every field NovelAI now needs.
-        if (saved.novelaiSettings !== undefined) {
-          const merged = {
-            ...createDefaultNovelAiSettings(),
-            ...(saved.novelaiSettings as Partial<NovelAiSettings>),
-          };
-          // The merge above is shallow, so references saved before Fidelity
-          // existed arrive without it and would render as `undefined` on the
-          // slider. Full strength is what those builds effectively sent.
-          this.novelaiSettings = {
-            ...merged,
-            // Same shallow-merge problem one level down: a blob written before
-            // a face-detail field existed would leave that field undefined.
-            face_detail: {
-              ...createDefaultNovelAiFaceDetail(),
-              ...(merged.face_detail ?? {}),
-            },
-            director_references: (merged.director_references ?? []).map((reference) => ({
-              ...reference,
-              strength: reference.strength ?? 1.0,
-              fidelity: reference.fidelity ?? 1.0,
-            })),
-          };
-        }
-        if (saved.showNovelaiUsage !== undefined)
-          this.showNovelaiUsage = saved.showNovelaiUsage;
-        if (saved.naiEnhanceLanguage !== undefined)
-          this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
-        if (saved.naiEnhanceIncludeExisting !== undefined)
-          this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
-        if (isEnhanceScaleChoice(saved.naiEnhanceScaleChoice))
-          this.naiEnhanceScaleChoice = saved.naiEnhanceScaleChoice;
-        if (typeof saved.naiEnhanceMagnitude === "number")
-          this.naiEnhanceMagnitude = clampMagnitude(saved.naiEnhanceMagnitude);
-        if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
-        if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
-        if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
-        if (saved.styleTransferAdainStrength !== undefined) this.styleTransferAdainStrength = saved.styleTransferAdainStrength;
-        if (saved.styleTransferRfMode !== undefined) this.styleTransferRfMode = saved.styleTransferRfMode;
-        if (saved.styleTransferGamma !== undefined) this.styleTransferGamma = saved.styleTransferGamma;
-        if (saved.styleTransferGammaCurve !== undefined) this.styleTransferGammaCurve = saved.styleTransferGammaCurve;
-        if (saved.styleTransferNormStrength !== undefined) this.styleTransferNormStrength = saved.styleTransferNormStrength;
-        if (saved.styleTransferPmiAlpha !== undefined) this.styleTransferPmiAlpha = saved.styleTransferPmiAlpha;
-        if (saved.styleTransferMegapixels !== undefined) this.styleTransferMegapixels = saved.styleTransferMegapixels;
-        if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
-        if (saved.animaTeacacheEnabled !== undefined)
-          this.animaTeacacheEnabled = saved.animaTeacacheEnabled;
-        if (saved.styleRefEnabled !== undefined) this.styleRefEnabled = saved.styleRefEnabled;
-        if (saved.styleRefImage !== undefined) this.styleRefImage = saved.styleRefImage;
-        if (saved.styleRefStrength !== undefined) this.styleRefStrength = saved.styleRefStrength;
-        if (saved.styleRefWeightType) this.styleRefWeightType = saved.styleRefWeightType;
-        if (saved.styleRefStart !== undefined) this.styleRefStart = saved.styleRefStart;
-        if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
-        if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
-        if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
-        if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
-        if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
-        if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
-        if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
-        if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
-        if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
-        if (saved.facefixAutoPrompt !== undefined) this.facefixAutoPrompt = saved.facefixAutoPrompt;
-        if (saved.modeToggles !== undefined) {
-          this.modeToggles = normalizeModeToggles(saved.modeToggles);
-        } else {
-          this.modeToggles = {
-            ...createDefaultModeToggles(),
-            [savedMode]: this.readModeToggleState(),
-          };
-        }
-        this._mode = savedMode;
-        if (savedMode !== "video") this.lastImageMode = savedMode;
-        this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
-        if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
-        if (saved.outputFormat === "png" || saved.outputFormat === "jxl" || saved.outputFormat === "webp") this.outputFormat = saved.outputFormat;
-        if (saved.metadataMode) this.metadataMode = saved.metadataMode;
-        if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
-        if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;
-        if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
-        if (saved.customAnimaNegativeQuality !== undefined) this.customAnimaNegativeQuality = saved.customAnimaNegativeQuality;
-        if (saved.customIllustriousPositiveQuality !== undefined) this.customIllustriousPositiveQuality = saved.customIllustriousPositiveQuality;
-        if (saved.customIllustriousNegativeQuality !== undefined) this.customIllustriousNegativeQuality = saved.customIllustriousNegativeQuality;
-        if (saved.customPonyPositiveQuality !== undefined) this.customPonyPositiveQuality = saved.customPonyPositiveQuality;
-        if (saved.customPonyNegativeQuality !== undefined) this.customPonyNegativeQuality = saved.customPonyNegativeQuality;
-        if (saved.customNanosaurPositiveQuality !== undefined) this.customNanosaurPositiveQuality = saved.customNanosaurPositiveQuality;
-        if (saved.customNanosaurNegativeQuality !== undefined) this.customNanosaurNegativeQuality = saved.customNanosaurNegativeQuality;
-        if (saved.modelFamilyOverrides && typeof saved.modelFamilyOverrides === "object") {
-          this.modelFamilyOverrides = Object.fromEntries(
-            Object.entries(saved.modelFamilyOverrides as Record<string, unknown>).filter(
-              ([key, value]) => !!key && isModelFamily(value) && value !== "unknown",
-            ),
-          ) as Record<string, ModelFamily>;
-        }
-        if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
-        if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
-        if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
-        if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
-        if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
-        if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
-        if (saved.regionalPromptStrategy === "conditioning" || saved.regionalPromptStrategy === "inpaint_chain") {
-          this.regionalPromptStrategy = saved.regionalPromptStrategy;
-        }
-        if (Array.isArray(saved.regionalPrompts)) {
-          this.regionalPrompts = saved.regionalPrompts
-            .filter((item: unknown) => !!item && typeof item === "object")
-            .map((item: any) => ({
-              id: typeof item.id === "string" && item.id ? item.id : (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`),
-              shape: item.shape === "circle" || item.shape === "lasso" ? item.shape : "box",
-              text: typeof item.text === "string" ? item.text : "",
-              strength: typeof item.strength === "number" ? item.strength : 1.0,
-              x: typeof item.x === "number" ? item.x : 0,
-              y: typeof item.y === "number" ? item.y : 0,
-              width: typeof item.width === "number" ? item.width : 0,
-              height: typeof item.height === "number" ? item.height : 0,
-              points: Array.isArray(item.points)
-                ? item.points
-                    .filter((point: unknown) => !!point && typeof point === "object")
-                    .map((point: any) => ({
-                      x: typeof point.x === "number" ? point.x : 0,
-                      y: typeof point.y === "number" ? point.y : 0,
-                    }))
-                : undefined,
-            }));
-        }
+        this.applySettingsSnapshot(saved);
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
         if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
           this.metadataMode = "both";
@@ -3094,6 +2822,290 @@ class GenerationStore {
       // flips, so a keystroke during startup can't persist defaults over the
       // restored values. Set on the error path too, or saves break for good.
       this._storeReady = true;
+    }
+  }
+
+  /**
+   * Write a settings blob onto the live fields. Shared by the startup load and
+   * by generation tabs, which swap whole snapshots in and out. A key missing
+   * from `saved` leaves its field untouched, which is how tabs keep app-wide
+   * preferences out of their snapshots.
+   */
+  applySettingsSnapshot(saved: Record<string, any>) {
+    const savedMode = isGenerationMode(saved.mode) ? saved.mode : this._mode;
+    // typeof rather than truthiness so a tab with no model or an empty prompt
+    // clears the field instead of keeping the previous tab's value.
+    if (typeof saved.checkpoint === "string") this.checkpoint = saved.checkpoint;
+    if (saved.modelPresetAppliedKey !== undefined) this.modelPresetAppliedKey = saved.modelPresetAppliedKey;
+    if (saved.vae !== undefined) this.vae = saved.vae;
+    if (saved.samplerName) this.samplerName = saved.samplerName;
+    if (saved.scheduler) this.scheduler = saved.scheduler;
+    if (saved.steps) this.steps = saved.steps;
+    if (saved.cfg !== undefined) this.cfg = saved.cfg;
+    // String(...) coerces seeds persisted as numbers by older versions.
+    if (saved.seed !== undefined) this.seed = String(saved.seed);
+    if (saved.width) this.width = saved.width;
+    if (saved.height) this.height = saved.height;
+    if (saved.batchSize) this.batchSize = saved.batchSize;
+    if (saved.denoise !== undefined) this.denoise = saved.denoise;
+    if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
+    // The parked bucket. The active one is loaded from the flat fields below,
+    // which also carries a pre-split store forward: its single prompt lands
+    // on whichever side the saved mode was on, and the other starts empty.
+    if (saved.promptBuckets) this.promptBuckets = normalizePromptBuckets(saved.promptBuckets);
+    if (typeof saved.positivePrompt === "string") this.positivePrompt = saved.positivePrompt;
+    if (typeof saved.negativePrompt === "string") this.negativePrompt = saved.negativePrompt;
+    if (Array.isArray(saved.extraPositiveBoxes)) {
+      this.extraPositiveBoxes = sanitizePromptBoxes(saved.extraPositiveBoxes);
+    }
+    if (Array.isArray(saved.extraNegativeBoxes)) {
+      this.extraNegativeBoxes = sanitizePromptBoxes(saved.extraNegativeBoxes);
+    }
+    if (Array.isArray(saved.loras)) {
+      this.loras = saved.loras.map((l: any) => ({
+        name: l.name || "",
+        strength_model: l.strength_model ?? 1.0,
+        strength_clip: l.strength_clip ?? 1.0,
+        enabled: l.enabled ?? true,
+      }));
+    }
+    if (saved.upscaleEnabled !== undefined) this.upscaleEnabled = saved.upscaleEnabled;
+    if (saved.upscaleMethod) this.upscaleMethod = saved.upscaleMethod;
+    if (saved.upscaleModel !== undefined) this.upscaleModel = saved.upscaleModel;
+    if (saved.upscaleScale !== undefined) this.upscaleScale = saved.upscaleScale;
+    if (saved.upscaleTargetScaleEnabled !== undefined)
+      this.upscaleTargetScaleEnabled = saved.upscaleTargetScaleEnabled;
+    if (saved.upscaleTargetScale !== undefined) this.upscaleTargetScale = saved.upscaleTargetScale;
+    if (saved.upscaleDenoise !== undefined) this.upscaleDenoise = saved.upscaleDenoise;
+    if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
+    if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
+    if (saved.upscaleTiling !== undefined) this.upscaleTiling = saved.upscaleTiling;
+    if (saved.upscaleFastRefine !== undefined) this.upscaleFastRefine = saved.upscaleFastRefine;
+    if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
+    if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
+    if (saved.refineOnly !== undefined) this.refineOnly = saved.refineOnly;
+    if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
+    if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
+    if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
+    if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
+    if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
+    if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
+    if (saved.apgEnabled !== undefined) this.apgEnabled = saved.apgEnabled;
+    if (saved.apgEta !== undefined) this.apgEta = saved.apgEta;
+    if (saved.apgNormThreshold !== undefined) this.apgNormThreshold = saved.apgNormThreshold;
+    if (saved.apgMomentum !== undefined) this.apgMomentum = saved.apgMomentum;
+    if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
+    if (saved.int8FastEnabled !== undefined) this.int8FastEnabled = saved.int8FastEnabled;
+    if (saved.int8FastConvrot !== undefined) this.int8FastConvrot = saved.int8FastConvrot;
+    if (saved.krea2UncensoredEncoder !== undefined) this.krea2UncensoredEncoder = saved.krea2UncensoredEncoder;
+    if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
+    if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
+    if (saved.modelSourceCategory !== undefined)
+      this.modelSourceCategory = saved.modelSourceCategory;
+    if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
+    if (saved.clipType !== undefined) this.clipType = saved.clipType;
+    if (saved.stylePreset !== undefined) this.stylePreset = saved.stylePreset;
+    if (saved.stylePresetsEnabled !== undefined) this.stylePresetsEnabled = !!saved.stylePresetsEnabled;
+    if (saved.controlnetEnabled !== undefined) this.controlnetEnabled = saved.controlnetEnabled;
+    if (saved.controlnetMode) this.controlnetMode = saved.controlnetMode;
+    if (saved.controlnetPreset !== undefined) this.controlnetPreset = saved.controlnetPreset;
+    if (saved.controlnetModel !== undefined) this.controlnetModel = saved.controlnetModel;
+    if (saved.controlnetPreprocessor !== undefined) this.controlnetPreprocessor = saved.controlnetPreprocessor;
+    if (saved.controlnetStrength !== undefined) this.controlnetStrength = saved.controlnetStrength;
+    if (saved.controlnetStartPercent !== undefined) this.controlnetStartPercent = saved.controlnetStartPercent;
+    if (saved.controlnetEndPercent !== undefined) this.controlnetEndPercent = saved.controlnetEndPercent;
+    if (saved.styleTransferEnabled !== undefined) this.styleTransferEnabled = saved.styleTransferEnabled;
+    if (saved.styleReferenceImage !== undefined) this.styleReferenceImage = saved.styleReferenceImage;
+    if (Array.isArray(saved.editReferenceImages)) {
+      const slots = saved.editReferenceImages
+        .slice(0, 3)
+        .map((v: unknown) => (typeof v === "string" && v ? v : null));
+      while (slots.length < 3) slots.push(null);
+      this.editReferenceImages = slots;
+    }
+    if (saved.editReferenceStrength !== undefined)
+      this.editReferenceStrength = saved.editReferenceStrength;
+    if (saved.editSplitScreen !== undefined)
+      this.editSplitScreen = saved.editSplitScreen;
+    if (saved.videoVariant === "fl2va" || saved.videoVariant === "ref2va")
+      this.videoVariant = saved.videoVariant;
+    if (saved.videoDurationSeconds !== undefined)
+      this.videoDurationSeconds = saved.videoDurationSeconds;
+    // Clamped rather than taken as-is: settings written before the pixel
+    // budget became a slider can hold values off the current range/step.
+    if (saved.videoMegapixels !== undefined)
+      this.videoMegapixels = clampH3Megapixels(saved.videoMegapixels);
+    if (saved.videoAspectRatio !== undefined) this.videoAspectRatio = saved.videoAspectRatio;
+    if (saved.videoFirstFrame !== undefined) this.videoFirstFrame = saved.videoFirstFrame;
+    if (saved.videoLastFrame !== undefined) this.videoLastFrame = saved.videoLastFrame;
+    if (saved.videoFirstFrameAspect !== undefined)
+      this.videoFirstFrameAspect = saved.videoFirstFrameAspect;
+    if (saved.videoLastFrameAspect !== undefined)
+      this.videoLastFrameAspect = saved.videoLastFrameAspect;
+    if (saved.videoFirstFrameAsLast !== undefined)
+      this.videoFirstFrameAsLast = saved.videoFirstFrameAsLast;
+    if (Array.isArray(saved.videoRefImages)) {
+      const slots = saved.videoRefImages
+        .slice(0, H3_MAX_REF_IMAGES)
+        .map((v: unknown) => (typeof v === "string" && v ? v : null));
+      while (slots.length < H3_MAX_REF_IMAGES) slots.push(null);
+      this.videoRefImages = slots;
+    }
+    if (saved.videoRifeEnabled !== undefined) this.videoRifeEnabled = saved.videoRifeEnabled;
+    if (saved.videoRifeMultiplier !== undefined)
+      this.videoRifeMultiplier = saved.videoRifeMultiplier;
+    if (saved.videoRifeScaleFactor !== undefined)
+      this.videoRifeScaleFactor = saved.videoRifeScaleFactor;
+    if (saved.videoRifeFastMode !== undefined) this.videoRifeFastMode = saved.videoRifeFastMode;
+    if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
+    if (saved.videoInterpEngine !== undefined) this.videoInterpEngine = saved.videoInterpEngine;
+    this.videoAcceleration = resolveVideoAcceleration(saved.videoAcceleration, saved.videoTurboEnabled);
+    this.videoTurboPreset = h3TurboPreset(saved.videoTurboPreset, this.videoVariant).id;
+    this.videoVdnPrecision = saved.videoVdnPrecision === "int8" ? "int8" : "bf16";
+    this.videoSaveDraft = saved.videoSaveDraft === true;
+    if (saved.videoTeacacheEnabled !== undefined)
+      this.videoTeacacheEnabled = saved.videoTeacacheEnabled;
+    if (saved.videoLivePreview !== undefined)
+      this.videoLivePreview = saved.videoLivePreview;
+    if (saved.videoTurboSteps !== undefined)
+      this.videoTurboSteps = Math.min(
+        H3_TURBO_MAX_STEPS,
+        Math.max(H3_TURBO_MIN_STEPS, Math.round(saved.videoTurboSteps)),
+      );
+    if (saved.videoModelTier !== undefined) this.videoModelTier = saved.videoModelTier;
+    if (saved.videoTurboLora !== undefined) this.videoTurboLora = saved.videoTurboLora;
+    if (saved.videoSampler !== undefined) this.videoSampler = saved.videoSampler;
+    if (saved.videoScheduler !== undefined) this.videoScheduler = saved.videoScheduler;
+    if (saved.videoDiffusionModel !== undefined)
+      this.videoDiffusionModel = saved.videoDiffusionModel;
+    if (saved.videoClipModel !== undefined) this.videoClipModel = saved.videoClipModel;
+    if (saved.videoVaeModel !== undefined) this.videoVaeModel = saved.videoVaeModel;
+    if (saved.videoAudioVaeModel !== undefined)
+      this.videoAudioVaeModel = saved.videoAudioVaeModel;
+    // Merged over the defaults rather than assigned, so a settings blob
+    // written by an older build still gets every field NovelAI now needs.
+    if (saved.novelaiSettings !== undefined) {
+      const merged = {
+        ...createDefaultNovelAiSettings(),
+        ...(saved.novelaiSettings as Partial<NovelAiSettings>),
+      };
+      // The merge above is shallow, so references saved before Fidelity
+      // existed arrive without it and would render as `undefined` on the
+      // slider. Full strength is what those builds effectively sent.
+      this.novelaiSettings = {
+        ...merged,
+        // Same shallow-merge problem one level down: a blob written before
+        // a face-detail field existed would leave that field undefined.
+        face_detail: {
+          ...createDefaultNovelAiFaceDetail(),
+          ...(merged.face_detail ?? {}),
+        },
+        director_references: (merged.director_references ?? []).map((reference) => ({
+          ...reference,
+          strength: reference.strength ?? 1.0,
+          fidelity: reference.fidelity ?? 1.0,
+        })),
+      };
+    }
+    if (saved.showNovelaiUsage !== undefined)
+      this.showNovelaiUsage = saved.showNovelaiUsage;
+    if (saved.naiEnhanceLanguage !== undefined)
+      this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
+    if (saved.naiEnhanceIncludeExisting !== undefined)
+      this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
+    if (isEnhanceScaleChoice(saved.naiEnhanceScaleChoice))
+      this.naiEnhanceScaleChoice = saved.naiEnhanceScaleChoice;
+    if (typeof saved.naiEnhanceMagnitude === "number")
+      this.naiEnhanceMagnitude = clampMagnitude(saved.naiEnhanceMagnitude);
+    if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
+    if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
+    if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
+    if (saved.styleTransferAdainStrength !== undefined) this.styleTransferAdainStrength = saved.styleTransferAdainStrength;
+    if (saved.styleTransferRfMode !== undefined) this.styleTransferRfMode = saved.styleTransferRfMode;
+    if (saved.styleTransferGamma !== undefined) this.styleTransferGamma = saved.styleTransferGamma;
+    if (saved.styleTransferGammaCurve !== undefined) this.styleTransferGammaCurve = saved.styleTransferGammaCurve;
+    if (saved.styleTransferNormStrength !== undefined) this.styleTransferNormStrength = saved.styleTransferNormStrength;
+    if (saved.styleTransferPmiAlpha !== undefined) this.styleTransferPmiAlpha = saved.styleTransferPmiAlpha;
+    if (saved.styleTransferMegapixels !== undefined) this.styleTransferMegapixels = saved.styleTransferMegapixels;
+    if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
+    if (saved.animaTeacacheEnabled !== undefined)
+      this.animaTeacacheEnabled = saved.animaTeacacheEnabled;
+    if (saved.styleRefEnabled !== undefined) this.styleRefEnabled = saved.styleRefEnabled;
+    if (saved.styleRefImage !== undefined) this.styleRefImage = saved.styleRefImage;
+    if (saved.styleRefStrength !== undefined) this.styleRefStrength = saved.styleRefStrength;
+    if (saved.styleRefWeightType) this.styleRefWeightType = saved.styleRefWeightType;
+    if (saved.styleRefStart !== undefined) this.styleRefStart = saved.styleRefStart;
+    if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
+    if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
+    if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
+    if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
+    if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
+    if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
+    if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
+    if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
+    if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
+    if (saved.facefixAutoPrompt !== undefined) this.facefixAutoPrompt = saved.facefixAutoPrompt;
+    if (saved.modeToggles !== undefined) {
+      this.modeToggles = normalizeModeToggles(saved.modeToggles);
+    } else {
+      this.modeToggles = {
+        ...createDefaultModeToggles(),
+        [savedMode]: this.readModeToggleState(),
+      };
+    }
+    this._mode = savedMode;
+    if (savedMode !== "video") this.lastImageMode = savedMode;
+    this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
+    if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
+    if (saved.outputFormat === "png" || saved.outputFormat === "jxl" || saved.outputFormat === "webp") this.outputFormat = saved.outputFormat;
+    if (saved.metadataMode) this.metadataMode = saved.metadataMode;
+    if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
+    if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;
+    if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
+    if (saved.customAnimaNegativeQuality !== undefined) this.customAnimaNegativeQuality = saved.customAnimaNegativeQuality;
+    if (saved.customIllustriousPositiveQuality !== undefined) this.customIllustriousPositiveQuality = saved.customIllustriousPositiveQuality;
+    if (saved.customIllustriousNegativeQuality !== undefined) this.customIllustriousNegativeQuality = saved.customIllustriousNegativeQuality;
+    if (saved.customPonyPositiveQuality !== undefined) this.customPonyPositiveQuality = saved.customPonyPositiveQuality;
+    if (saved.customPonyNegativeQuality !== undefined) this.customPonyNegativeQuality = saved.customPonyNegativeQuality;
+    if (saved.customNanosaurPositiveQuality !== undefined) this.customNanosaurPositiveQuality = saved.customNanosaurPositiveQuality;
+    if (saved.customNanosaurNegativeQuality !== undefined) this.customNanosaurNegativeQuality = saved.customNanosaurNegativeQuality;
+    if (saved.modelFamilyOverrides && typeof saved.modelFamilyOverrides === "object") {
+      this.modelFamilyOverrides = Object.fromEntries(
+        Object.entries(saved.modelFamilyOverrides as Record<string, unknown>).filter(
+          ([key, value]) => !!key && isModelFamily(value) && value !== "unknown",
+        ),
+      ) as Record<string, ModelFamily>;
+    }
+    if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
+    if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
+    if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
+    if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
+    if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
+    if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
+    if (saved.regionalPromptStrategy === "conditioning" || saved.regionalPromptStrategy === "inpaint_chain") {
+      this.regionalPromptStrategy = saved.regionalPromptStrategy;
+    }
+    if (Array.isArray(saved.regionalPrompts)) {
+      this.regionalPrompts = saved.regionalPrompts
+        .filter((item: unknown) => !!item && typeof item === "object")
+        .map((item: any) => ({
+          id: typeof item.id === "string" && item.id ? item.id : (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+          shape: item.shape === "circle" || item.shape === "lasso" ? item.shape : "box",
+          text: typeof item.text === "string" ? item.text : "",
+          strength: typeof item.strength === "number" ? item.strength : 1.0,
+          x: typeof item.x === "number" ? item.x : 0,
+          y: typeof item.y === "number" ? item.y : 0,
+          width: typeof item.width === "number" ? item.width : 0,
+          height: typeof item.height === "number" ? item.height : 0,
+          points: Array.isArray(item.points)
+            ? item.points
+                .filter((point: unknown) => !!point && typeof point === "object")
+                .map((point: any) => ({
+                  x: typeof point.x === "number" ? point.x : 0,
+                  y: typeof point.y === "number" ? point.y : 0,
+                }))
+            : undefined,
+        }));
     }
   }
 
