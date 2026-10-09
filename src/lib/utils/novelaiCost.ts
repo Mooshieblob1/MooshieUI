@@ -32,6 +32,12 @@ export interface NovelAiCostInput {
   opusExhausted?: boolean;
   /** Vibes with no cached encoding, each of which is billed an encode. */
   vibeEncodes: number;
+  /**
+   * The request runs on V5 Full's Medium effort checkpoint, whose steps are
+   * billed cheaper. Pass the 14 steps it is pinned to as `steps`. Defaults to
+   * false.
+   */
+  mediumEffort?: boolean;
 }
 
 /** Per-vibe encode charge on V4 and later. Cached `.naiv4vibe` files are free. */
@@ -51,6 +57,14 @@ const MIN_BILLED_PIXELS = 65536;
 /** NovelAI's own per-pixel and per-pixel-per-step coefficients. */
 const PIXEL_COEFFICIENT = 2951823174884865e-21;
 const PIXEL_STEP_COEFFICIENT = 5.753298233447344e-7;
+
+/**
+ * Medium effort's discount on the per-step term, from the cost function
+ * NovelAI's client ships (a multiplier of `1 / 1.06521739` on the medium
+ * checkpoints). With its 14 steps against High's default 23 that comes to the
+ * roughly 42% NovelAI's announcement quotes.
+ */
+const MEDIUM_EFFORT_STEP_FACTOR = 1 / 1.06521739;
 
 /** A generation is never billed less than this per sample. */
 const MIN_PER_SAMPLE = 2;
@@ -107,12 +121,13 @@ export function novelAiCostPerSample(input: NovelAiCostInput): number {
   if (rawPixels === 0) return 0;
   const pixels = Math.max(MIN_BILLED_PIXELS, rawPixels);
   const steps = Math.max(1, Math.floor(input.steps));
+  const stepFactor = input.mediumEffort ? MEDIUM_EFFORT_STEP_FACTOR : 1;
 
   // Rounded first, then surcharged, then rounded again. Collapsing the two
   // roundings into one is off by an Anlas on both of the confirmed charges.
   let perSample =
     Math.ceil(
-      PIXEL_COEFFICIENT * pixels + PIXEL_STEP_COEFFICIENT * pixels * steps,
+      PIXEL_COEFFICIENT * pixels + PIXEL_STEP_COEFFICIENT * pixels * steps * stepFactor,
     ) * COST_FACTOR;
   // Strength only shortens an img2img run, so it scales the sampling cost.
   const strength = Math.min(1, Math.max(0, input.strength));

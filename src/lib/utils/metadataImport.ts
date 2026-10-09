@@ -7,7 +7,7 @@ import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
 import type { NovelAiCharacter } from "../types/index.js";
-import { novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
+import { NAI_EFFORT_HIGH, NAI_EFFORT_MEDIUM, novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
 import { NAI_QUALITY_FILLER } from "./naiPrompt.js";
 import type {
@@ -217,6 +217,8 @@ function applyNovelAiSettings(meta: Record<string, string>, withCharacters = tru
   const patch: Partial<NovelAiSettings> = {};
   if (meta.sampler) patch.sampler = meta.sampler;
   if (meta.scheduler) patch.noise_schedule = meta.scheduler;
+  const effort = meta.mooshie_novelai_effort?.trim().toLowerCase();
+  if (effort === NAI_EFFORT_MEDIUM || effort === NAI_EFFORT_HIGH) patch.effort = effort;
 
   const numbers: [string, keyof NovelAiSettings][] = [
     ["mooshie_novelai_cfg_rescale", "cfg_rescale"],

@@ -209,6 +209,13 @@ pub struct NovelAiParams {
     /// `generate`, `img2img` or `infill`. Defaults to `generate`.
     #[serde(default = "default_action")]
     pub action: String,
+    /// `high` or `medium`, NovelAI's effort toggle. Medium swaps in V5 Full's
+    /// distilled checkpoint, which costs about 40% less and fixes the steps,
+    /// sampler and UC. Ignored on a model without one, and anything other than
+    /// `medium` (an empty string from an older client included) is High. See
+    /// `models::uses_medium_effort`.
+    #[serde(default = "default_effort")]
+    pub effort: String,
     /// NovelAI sampler name, e.g. `k_euler_ancestral`.
     ///
     /// Held here rather than reusing `GenerationParams::sampler_name` because
@@ -355,6 +362,10 @@ fn default_true() -> bool {
 
 fn default_action() -> String {
     "generate".to_string()
+}
+
+fn default_effort() -> String {
+    super::models::EFFORT_HIGH.to_string()
 }
 
 fn default_sampler() -> String {

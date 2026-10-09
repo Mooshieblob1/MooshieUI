@@ -248,7 +248,7 @@
       return free;
     for (const p of presets) {
       const dims = dimsForAspect(p.w, p.h, sideLength);
-      if (novelAiOpusCovers(dims.w, dims.h, generation.steps, true))
+      if (novelAiOpusCovers(dims.w, dims.h, generation.novelAiSteps, true))
         free.add(p.label);
     }
     return free;

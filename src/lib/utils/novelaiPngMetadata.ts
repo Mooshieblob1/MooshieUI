@@ -83,6 +83,18 @@ function modelIdFromSource(source: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Weights checksums NovelAI's client reads as V5 Full on Medium effort. The
+ * distilled checkpoint has no id of its own in `Source`, only these. Mirrored
+ * in `novelai/metadata.rs`.
+ */
+const MEDIUM_EFFORT_SOURCE_HASHES = ["93F4BD30", "70AB5786"];
+
+function isMediumEffortSource(source: string): boolean {
+  const upper = source.toUpperCase();
+  return upper.includes("V5") && MEDIUM_EFFORT_SOURCE_HASHES.some((hash) => upper.includes(hash));
+}
+
 /** Rebuild the app's character list from the two parallel V4 prompt blocks. */
 function parseCharacters(comment: any): string | undefined {
   const positives = comment?.v4_prompt?.caption?.char_captions;
@@ -236,6 +248,10 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
     // An unrecognised version leaves `model` unset, so the panel keeps the
     // checkpoint already selected rather than being pointed at nothing.
     if (model) params.model = model;
+    // Only V5 Full has an effort toggle, so only its images say which side of
+    // it they came from.
+    if (isMediumEffortSource(chunks.Source)) params.mooshie_novelai_effort = "medium";
+    else if (model === "nai-diffusion-5-full") params.mooshie_novelai_effort = "high";
   }
   if (chunks["Generation time"]) {
     params.mooshie_novelai_generation_time = chunks["Generation time"];
