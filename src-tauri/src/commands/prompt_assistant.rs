@@ -24,6 +24,13 @@ pub struct PromptAssistantOpts {
     pub length: Option<String>,
     #[serde(default)]
     pub include_artists: bool,
+    /// The change to apply to the prompt. Non-empty turns an Enhance into an
+    /// Edit, which may remove or swap what the prompt says.
+    #[serde(default)]
+    pub instruction: Option<String>,
+    /// One optional label per image in `image_data`, in the same order.
+    #[serde(default)]
+    pub reference_labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -210,6 +217,8 @@ async fn chat_any(
 }
 
 /// Shared core for enhance/compose: guard, ensure server, ground, generate, repair.
+// Mirrors the Tauri commands' argument list, which is their IPC contract.
+#[allow(clippy::too_many_arguments)]
 async fn run_generation(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
@@ -218,6 +227,7 @@ async fn run_generation(
     family: &str,
     mode: GenMode,
     opts: &PromptAssistantOpts,
+    image_data: Option<Vec<String>>,
 ) -> Result<String, AppError> {
     // No active-generation guard: contention with an in-flight ComfyUI generation
     // is handled by the free-VRAM check in `ensure_running` (it loads the LLM on
@@ -245,26 +255,48 @@ async fn run_generation(
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
-    let style = grounding::prompt_style(&purpose, family);
-    let candidates = grounding::candidates_for(style, input);
-    let system = grounding::system_prompt(style, mode, &candidates, opts.include_artists);
-    let max_tokens = match opts.length.as_deref() {
-        Some("short") => 96,
-        Some("detailed") => 384,
-        _ => 192,
+    let instruction = opts.instruction.as_deref().unwrap_or("").trim();
+    let mode = if mode == GenMode::Enhance && !instruction.is_empty() {
+        GenMode::Edit
+    } else {
+        mode
     };
+    // Only an external provider can see images; the bundled model would be
+    // told about pictures it never receives.
+    let images = if ext_enabled {
+        crate::prompt_assistant::vision::collect_images(state, None, image_data).await
+    } else {
+        Vec::new()
+    };
+    let labels = reference_labels(&opts.reference_labels, images.len());
+
+    let style = grounding::prompt_style(&purpose, family);
+    let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
+    let system = grounding::system_prompt(style, mode, &candidates, opts.include_artists)
+        + &grounding::reference_rules(images.len());
+    let max_tokens = grounding::max_tokens(mode, opts.length.as_deref());
+    let user = grounding::user_turn(mode, input, instruction, &labels);
 
     let history = crate::prompt_assistant::history::sanitize(
         crate::prompt_assistant::history::for_purpose(&purpose, history),
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
-    let raw = chat_any(app, state, &system, &history, input, max_tokens, &[]).await?;
+    let raw = chat_any(app, state, &system, &history, &user, max_tokens, &images).await?;
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
     // "blue hair" prompt). No-op for Compose and for prose families.
     Ok(grounding::finish(input, &raw, mode, style))
 }
 
+/// One label per image actually sent, padded or cut to match. An image that
+/// failed to load is dropped by `collect_images`, so the labels can outnumber it.
+fn reference_labels(labels: &[String], count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| labels.get(i).cloned().unwrap_or_default())
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn enhance_prompt(
     app: AppHandle,
@@ -273,6 +305,7 @@ pub async fn enhance_prompt(
     family: String,
     opts: Option<PromptAssistantOpts>,
     history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
+    image_data: Option<Vec<String>>,
 ) -> Result<String, AppError> {
     let opts = opts.unwrap_or_default();
     let history = history.unwrap_or_default();
@@ -284,10 +317,12 @@ pub async fn enhance_prompt(
         &family,
         GenMode::Enhance,
         &opts,
+        image_data,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn compose_prompt(
     app: AppHandle,
@@ -296,6 +331,7 @@ pub async fn compose_prompt(
     family: String,
     opts: Option<PromptAssistantOpts>,
     history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
+    image_data: Option<Vec<String>>,
 ) -> Result<String, AppError> {
     let opts = opts.unwrap_or_default();
     let history = history.unwrap_or_default();
@@ -307,6 +343,7 @@ pub async fn compose_prompt(
         &family,
         GenMode::Compose,
         &opts,
+        image_data,
     )
     .await
 }

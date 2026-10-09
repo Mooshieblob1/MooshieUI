@@ -42,6 +42,9 @@ import type { MusicWritingContext, MusicWritingTask } from "../utils/yue2Skill.j
 import {
   H3_MAX_TOKENS,
   h3RetryInstruction,
+  h3EditUserPrompt,
+  h3ReferenceNote,
+  h3ReferenceManifest,
   h3RewriteSystemPrompt,
   validateH3Response,
 } from "../utils/h3Prompt.js";
@@ -118,7 +121,6 @@ class PromptAssistantStore {
   stage = $state<string | null>(null);
 
   setupModalOpen = $state(false);
-  composeModalOpen = $state(false);
 
   /**
    * External provider settings as Rust reports them. The API key never crosses
@@ -431,22 +433,49 @@ class PromptAssistantStore {
     } finally { this.isGenerating = false; }
   }
 
-  /** Returns the cleaned/enhanced prompt string. Caller applies it. */
-  async enhance(
-    prompt: string,
-    family: string,
-    opts?: PromptAssistantOpts,
-  ): Promise<string> {
+  /**
+   * The general (non-V5) Enhance: three requests behind one box.
+   *
+   * - `existing` with no `text` polishes the current prompt (the old Enhance).
+   * - `existing` with `text` applies `text` to it as a requested change.
+   * - No `existing` writes a prompt from `text` (what Compose used to do).
+   *
+   * Returns the prompt and the user turn to record in the session; the caller
+   * applies the prompt. All three share the `enhance` session, because to the
+   * user it is one conversation in one modal.
+   */
+  async rewrite(req: {
+    text: string;
+    existing: string | null;
+    family: string;
+    opts: PromptAssistantOpts;
+    images: string[];
+  }): Promise<{ prompt: string; sessionUser: string }> {
+    const text = req.text.trim();
+    const existing = req.existing?.trim() || null;
+    const images = req.images;
     this.isGenerating = true;
     try {
       const history = this.sessionHistory("enhance", {
         systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
-        userText: prompt,
+        userText: existing ? `${existing}\n${text}` : text,
         maxOutputTokens: 384,
       });
-      return await this.withStageListener(() =>
-        enhancePrompt(prompt, family, opts, history.messages),
+      const prompt = await this.withStageListener(() =>
+        existing
+          ? enhancePrompt(
+              existing,
+              req.family,
+              { ...req.opts, instruction: text || undefined },
+              history.messages,
+              images,
+            )
+          : composePrompt(text, req.family, req.opts, history.messages, images),
       );
+      // The pasted current prompt is left out, like the V5 session: the next
+      // turn sends whatever the prompt box holds by then.
+      const sessionUser = withImageMarker(text || existing || "", images.length, "reference");
+      return { prompt, sessionUser };
     } finally {
       this.isGenerating = false;
     }
@@ -542,33 +571,59 @@ class PromptAssistantStore {
     prompt: string,
     ctx: H3PromptContext,
     firstFrameFilename?: string | null,
+    extra: {
+      /** The current prompt, when the request is a change to it. */
+      existing?: string | null;
+      /** Extra images from the Enhance modal: base64 plus optional label. */
+      references?: { base64: string; label: string }[];
+    } = {},
   ): Promise<H3RewriteResult & { sessionUser: string }> {
     const usesFirstFrame =
       ctx.taskType === "i2va" || ctx.taskType === "fl2va";
     const image = (usesFirstFrame && firstFrameFilename) || null;
-    const idle = detectH3IdleIntent(prompt);
+    // Only an external provider sees images, so the bundled model is not told
+    // about any. The cap mirrors `MAX_VISION_IMAGES` in Rust: the first frame
+    // takes a slot first, so the manifest names only images that arrive.
+    const refs = this.provider?.enabled
+      ? (extra.references ?? []).slice(0, image ? 3 : 4)
+      : [];
+    const text = prompt.trim();
+    const existing = extra.existing?.trim() || "";
+    // An empty box with the current prompt ticked is the old in-place
+    // Enhance: rewrite that prompt into the format.
+    const idea = text || existing;
+    const idle = detectH3IdleIntent(idea);
     const validate = idle ? validateH3IdleResponse : validateH3Response;
 
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
         const skill = await this.ensureH3Skill(ctx, !!image);
-        const baseSystem = h3SystemWithSkill(
-          idle
-            ? h3IdleRewriteSystemPrompt(ctx, !!image)
-            : h3RewriteSystemPrompt(ctx, !!image),
-          skill,
-        );
-        const user = idle ? h3IdleUserPrompt(prompt, ctx) : prompt;
+        const baseSystem =
+          h3SystemWithSkill(
+            idle
+              ? h3IdleRewriteSystemPrompt(ctx, !!image)
+              : h3RewriteSystemPrompt(ctx, !!image),
+            skill,
+          ) + (refs.length ? `\n\n${h3ReferenceNote(refs.length, !!image)}` : "");
+        const request = idle ? h3IdleUserPrompt(idea, ctx) : idea;
+        const user =
+          (existing && text ? h3EditUserPrompt(existing, request) : request) +
+          h3ReferenceManifest(refs.map((r) => r.label));
         const history = this.sessionHistory("h3", {
           systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
           userText: user,
           maxOutputTokens: H3_MAX_TOKENS,
         });
         const system = withSessionClause(baseSystem, history.sentTurns);
-        const sessionUser = withImageMarker(prompt, image ? 1 : 0, "first-frame");
+        const sessionUser = withImageMarker(
+          withImageMarker(idea, image ? 1 : 0, "first-frame"),
+          refs.length,
+          "reference",
+        );
+        const imageData = refs.map((r) => r.base64);
         const first = (
-          await callExternalLlm(system, user, H3_MAX_TOKENS, image, null, history.messages)
+          await callExternalLlm(system, user, H3_MAX_TOKENS, image, imageData, history.messages)
         ).trim();
         const check = validate(first, ctx);
         if (check.ok || !check.rule) {
@@ -580,7 +635,7 @@ class PromptAssistantStore {
             h3RetryInstruction(check.rule, first),
             H3_MAX_TOKENS,
             image,
-            null,
+            imageData,
             history.messages,
           )
         ).trim();
@@ -729,27 +784,6 @@ ${naiRetryInstruction(problems)}`,
           ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser }
           : { parsed: first, problems, raw: firstRaw, sessionUser };
       });
-    } finally {
-      this.isGenerating = false;
-    }
-  }
-
-  /** Returns the composed prompt string. Caller applies it. */
-  async compose(
-    description: string,
-    family: string,
-    opts?: PromptAssistantOpts,
-  ): Promise<string> {
-    this.isGenerating = true;
-    try {
-      const history = this.sessionHistory("compose", {
-        systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
-        userText: description,
-        maxOutputTokens: 384,
-      });
-      return await this.withStageListener(() =>
-        composePrompt(description, family, opts, history.messages),
-      );
     } finally {
       this.isGenerating = false;
     }

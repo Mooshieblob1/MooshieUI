@@ -244,6 +244,13 @@ one already present."
 matches it. Use concrete, well-known tags; do not invent subjects the description does not \
 mention."
             }
+            GenMode::Edit => {
+                "The user gives you their current danbooru tag list and a change \
+they want made to it. Apply that change: add the tags it calls for, and remove or replace the \
+tags it asks to change. Keep every tag the change does not touch, including any named character. \
+Return the complete updated list, not only the tags you changed, and add nothing the change did \
+not ask for beyond tags that directly support it."
+            }
         };
         let artist_rule = if include_artists {
             " You may add one or more well-known danbooru artist tags that fit the requested \
@@ -271,6 +278,13 @@ contradicts the prompt. Only add details that reinforce what is already there, a
 made-up tag into a real one."
             }
             GenMode::Compose => "Write a prompt from the user's description.",
+            GenMode::Edit => {
+                "The user gives you their current prompt and a change they want made \
+to it. Apply that change completely, and keep everything it does not touch, including the \
+subject, the number of characters and any named character. Return the whole revised prompt, \
+not only what you changed, and add nothing the change did not ask for beyond detail that \
+directly supports it."
+            }
         };
         let artist_rule = if include_artists {
             "You may reference well-known artists as @name to match the requested style; \
@@ -314,6 +328,14 @@ subject first, then their appearance, clothing, pose and expression, then the se
 lighting, composition and art style. Keep every detail the user gave, including names, counts \
 and left/right placement, and do not invent subjects they did not mention."
         }
+        GenMode::Edit => {
+            "The user gives you their current prompt and a change they want made to \
+it. Rewrite the prompt with that change applied. Keep everything the change does not touch: \
+every named character, the number of people, their appearance, clothing, pose and expression, \
+any text to be shown, and every spatial relationship. Apply the change completely, add nothing \
+it did not ask for beyond detail that directly supports it, and return the whole revised \
+prompt, not only what you changed."
+        }
     };
     let artist_rule = if include_artists {
         " You may name a well-known artist whose style fits, written as 'in the style of Name'; \
@@ -332,8 +354,87 @@ em dashes."
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenMode {
+    /// Polish the user's prompt without changing what it describes.
     Enhance,
+    /// Write a prompt from a description.
     Compose,
+    /// Apply a requested change to the user's current prompt. Unlike Enhance it
+    /// may remove or swap what the user wrote, so it skips the tag reconciliation
+    /// that would put a removed tag straight back.
+    Edit,
+}
+
+/// Token budget for one request. An Edit returns the user's whole prompt, so
+/// even a "short" pick must leave room for it or the tail gets cut off.
+pub fn max_tokens(mode: GenMode, length: Option<&str>) -> u32 {
+    let budget = match length {
+        Some("short") => 96,
+        Some("detailed") => 384,
+        _ => 192,
+    };
+    if mode == GenMode::Edit {
+        budget.max(384)
+    } else {
+        budget
+    }
+}
+
+/// The user turn for one request.
+///
+/// `input` is the prompt (Enhance, Edit) or the description (Compose), and
+/// `instruction` the requested change, used only by Edit. `references` holds
+/// one label per reference image the model will actually see, blank when the
+/// user gave none, so a message can say "the outfit" instead of counting.
+/// It must stay empty when the images are not sent: telling a model without
+/// vision about pictures it cannot see only invites it to make them up.
+pub fn user_turn(mode: GenMode, input: &str, instruction: &str, references: &[String]) -> String {
+    let body = match mode {
+        GenMode::Edit => format!(
+            "Current prompt:\n{}\n\nRequested change:\n{}",
+            input.trim(),
+            instruction.trim()
+        ),
+        // Images alone are a request: the manifest below names them, so the
+        // only thing missing is the verb.
+        GenMode::Compose if input.trim().is_empty() && !references.is_empty() => {
+            "Write a prompt from the attached reference images.".to_string()
+        }
+        _ => input.trim().to_string(),
+    };
+    if references.is_empty() {
+        return body;
+    }
+    let listed = references
+        .iter()
+        .enumerate()
+        .map(|(i, label)| match label.trim() {
+            "" => format!("image {}", i + 1),
+            name => format!("image {} ({name})", i + 1),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let n = references.len();
+    let plural = if n == 1 { "" } else { "s" };
+    format!("{body}\n\n{n} reference image{plural} attached, in this order: {listed}.")
+}
+
+/// Extra system rules when reference images ride along. Empty without them.
+///
+/// The image model never sees the references, so whatever the user wants taken
+/// from one has to be put into words in the prompt itself.
+pub fn reference_rules(count: usize) -> String {
+    if count == 0 {
+        return String::new();
+    }
+    format!(
+        " {count} reference image{s} {are} attached, in the order the user's message lists them. \
+They are references, not pictures to reproduce: take from them only what the user's message \
+asks for, or the subject they show when the message asks for nothing specific. Describe what you \
+take in concrete words in the prompt's own format (garment names, colours, hair, pose, setting). \
+Never mention the images themselves, because the image model will not see them.",
+        s = if count == 1 { "" } else { "s" },
+        are = if count == 1 { "is" } else { "are" },
+    )
 }
 
 /// Danbooru person-count tags, grouped girls / boys / others. Enhancement must not
@@ -1040,6 +1141,57 @@ tags: 1girl, red dress, hair bun";
             PromptStyle::Tags
         )
         .starts_with("1girl, solo"));
+    }
+
+    #[test]
+    fn edit_turn_carries_prompt_change_and_references() {
+        let turn = user_turn(
+            GenMode::Edit,
+            "1girl, red hair",
+            "make her hair blue",
+            &["outfit".into(), "".into()],
+        );
+        assert!(
+            turn.starts_with("Current prompt:\n1girl, red hair"),
+            "{turn}"
+        );
+        assert!(
+            turn.contains("Requested change:\nmake her hair blue"),
+            "{turn}"
+        );
+        assert!(
+            turn.ends_with(
+                "2 reference images attached, in this order: image 1 (outfit), image 2."
+            ),
+            "{turn}"
+        );
+        // Without images the turn is the text alone.
+        assert_eq!(user_turn(GenMode::Enhance, " 1girl ", "", &[]), "1girl");
+        // Images with no description still ask for something.
+        assert!(user_turn(GenMode::Compose, "", "", &["".into()]).starts_with("Write a prompt"));
+        assert!(reference_rules(0).is_empty());
+        assert!(reference_rules(1).contains("1 reference image is attached"));
+    }
+
+    #[test]
+    fn edit_skips_reconciliation_and_keeps_room_for_the_whole_prompt() {
+        // Edit may remove a tag on request; Enhance would put it back.
+        assert_eq!(
+            finish(
+                "1girl, hat",
+                "1girl, long hair",
+                GenMode::Edit,
+                PromptStyle::Tags
+            ),
+            "1girl, long hair"
+        );
+        assert_eq!(max_tokens(GenMode::Edit, Some("short")), 384);
+        assert_eq!(max_tokens(GenMode::Enhance, Some("short")), 96);
+        assert_eq!(max_tokens(GenMode::Compose, None), 192);
+        for style in [PromptStyle::Tags, PromptStyle::Anima, PromptStyle::Prose] {
+            let sys = system_prompt(style, GenMode::Edit, &[], false);
+            assert!(sys.contains("change"), "{sys}");
+        }
     }
 
     #[test]

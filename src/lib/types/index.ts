@@ -863,6 +863,10 @@ export interface LlmStatus {
 export interface PromptAssistantOpts {
   length?: "short" | "medium" | "detailed";
   include_artists?: boolean;
+  /** The change to make. Non-empty turns an enhance into an edit of the prompt. */
+  instruction?: string;
+  /** One optional label per attached reference image, in the same order. */
+  reference_labels?: string[];
 }
 
 /** Ids of the external LLM providers the backend registry knows about. */

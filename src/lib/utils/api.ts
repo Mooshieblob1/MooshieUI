@@ -1420,13 +1420,24 @@ async function runPromptAssistant(
   });
 }
 
+/**
+ * `imageData` is bare base64 reference images. Only an external provider sees
+ * them; the bundled local model answers from the text alone.
+ */
 export async function enhancePrompt(
   prompt: string,
   family: string,
   opts?: PromptAssistantOpts,
   history: ChatMessage[] = [],
+  imageData: string[] = [],
 ): Promise<string> {
-  return runPromptAssistant("enhance_prompt", { prompt, family, opts, history });
+  return runPromptAssistant("enhance_prompt", {
+    prompt,
+    family,
+    opts,
+    history,
+    imageData: imageData.length > 0 ? imageData : undefined,
+  });
 }
 
 export async function composePrompt(
@@ -1434,8 +1445,15 @@ export async function composePrompt(
   family: string,
   opts?: PromptAssistantOpts,
   history: ChatMessage[] = [],
+  imageData: string[] = [],
 ): Promise<string> {
-  return runPromptAssistant("compose_prompt", { description, family, opts, history });
+  return runPromptAssistant("compose_prompt", {
+    description,
+    family,
+    opts,
+    history,
+    imageData: imageData.length > 0 ? imageData : undefined,
+  });
 }
 
 /**

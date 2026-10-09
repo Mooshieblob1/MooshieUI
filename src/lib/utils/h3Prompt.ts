@@ -590,3 +590,41 @@ ${previous}
 
 Rewrite it so it satisfies that rule, keeping everything else that was already correct. Output only the corrected prompt.`;
 }
+
+/**
+ * The user turn when the current prompt comes along with a requested change,
+ * from the Enhance modal's "Edit current prompt". The answer replaces the
+ * prompt outright, so the model is told to return all of it.
+ */
+export function h3EditUserPrompt(existing: string, instruction: string): string {
+  return `This is the user's current video prompt:
+
+${existing.trim()}
+
+Apply the change below to it and return the whole prompt again in the required format. Keep everything the change does not touch, word for word where the wording still works, and add nothing it did not ask for.
+
+${instruction.trim()}`;
+}
+
+/**
+ * System rules for extra images the user attached in the Enhance modal.
+ *
+ * They are looked at, not fed to the video, so they must not take a
+ * <Picture N> label: those name the video's own keyframes and references,
+ * and a stray one would point H3 at an input that does not exist.
+ */
+export function h3ReferenceNote(count: number, afterFirstFrame: boolean): string {
+  if (count <= 0) return "";
+  const these = count === 1 ? "it" : "them";
+  return `${count} extra image${count === 1 ? " is" : "s are"} attached${afterFirstFrame ? " after the first frame" : ""}, for you to look at. ${count === 1 ? "It is" : "They are"} NOT an input to the video: never give ${these} a <Picture N> or <Subject N> label and never mention ${these} in your output. Take from ${these} only what the user's message asks for, or the subject shown when it asks for nothing specific, and put that into concrete words in the description: garment names, colours, hair, pose, setting.`;
+}
+
+/** Names the extra images in the user turn, so "image 2" means something. */
+export function h3ReferenceManifest(labels: string[]): string {
+  if (labels.length === 0) return "";
+  const listed = labels
+    .map((label, i) => (label.trim() ? `image ${i + 1} (${label.trim()})` : `image ${i + 1}`))
+    .join(", ");
+  const n = labels.length;
+  return `\n\n${n} extra image${n === 1 ? "" : "s"} attached, in this order: ${listed}.`;
+}
