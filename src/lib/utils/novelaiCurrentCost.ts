@@ -27,7 +27,8 @@ export function estimateCurrentNovelAiCost(
   return estimateNovelAiCost({
     width: generation.width,
     height: generation.height,
-    steps: generation.steps,
+    steps: generation.novelAiSteps,
+    mediumEffort: generation.novelAiMediumEffort,
     nSamples,
     strength: forceTxt2ImgStrength || generation.mode === "txt2img" ? 1 : nai.strength,
     isOpus: novelai.isOpus,

@@ -44,6 +44,12 @@ export interface NovelAiModelInfo {
    * the order NovelAI's own client lists them. Mirrors `presets::uc_preset`.
    */
   ucPresets: readonly number[];
+  /**
+   * Offers NovelAI's effort toggle. Medium is a separate distilled checkpoint
+   * (`nai-diffusion-5-full-medium`) the backend swaps in. Mirrors
+   * `models::MediumEffort`.
+   */
+  mediumEffort: boolean;
 }
 
 /** Stored `uc_preset` values (MooshieUI's numbering, not NovelAI's). */
@@ -52,6 +58,29 @@ export const NAI_UC_LIGHT = 1;
 export const NAI_UC_HUMAN_FOCUS = 2;
 export const NAI_UC_NONE = 3;
 export const NAI_UC_FURRY_FOCUS = 4;
+
+/** Stored `effort` values. */
+export const NAI_EFFORT_HIGH = "high";
+export const NAI_EFFORT_MEDIUM = "medium";
+
+/**
+ * What Medium effort pins, from the `fixedSettings` NovelAI's client applies to
+ * the medium checkpoint. The backend enforces the same in `with_medium_effort`;
+ * these only let the UI show what will be sent.
+ */
+export const NOVELAI_MEDIUM_EFFORT = {
+  steps: 14,
+  sampler: "k_euler_ancestral",
+  ucPreset: NAI_UC_HEAVY,
+} as const;
+
+/** Is Medium effort in force for this model and stored setting? */
+export function novelAiUsesMediumEffort(
+  model: NovelAiModelInfo | null | undefined,
+  effort: string | null | undefined,
+): boolean {
+  return !!model?.mediumEffort && effort === NAI_EFFORT_MEDIUM;
+}
 
 /** Stored `quality_preset` values. */
 export const NAI_QUALITY_STANDARD = 0;
@@ -85,6 +114,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     maxCharacters: 22,
     lightQuality: true,
     ucPresets: ALL_UC_PRESETS,
+    mediumEffort: true,
   },
   {
     id: "nai-diffusion-5-curated",
@@ -102,6 +132,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     maxCharacters: 22,
     lightQuality: true,
     ucPresets: ALL_UC_PRESETS,
+    mediumEffort: false,
   },
   {
     id: "nai-diffusion-4-5-full",
@@ -116,6 +147,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     maxCharacters: 6,
     lightQuality: false,
     ucPresets: ALL_UC_PRESETS,
+    mediumEffort: false,
   },
   {
     id: "nai-diffusion-4-full",
@@ -131,6 +163,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     lightQuality: false,
     // No focus presets on V4 Full.
     ucPresets: [NAI_UC_HEAVY, NAI_UC_LIGHT, NAI_UC_NONE],
+    mediumEffort: false,
   },
 ] as const;
 

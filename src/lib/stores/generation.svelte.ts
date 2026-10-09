@@ -30,8 +30,11 @@ import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
+  NAI_EFFORT_HIGH,
   NOVELAI_DEFAULTS,
+  NOVELAI_MEDIUM_EFFORT,
   findNovelAiModel,
+  novelAiUsesMediumEffort,
   isNovelAiModel,
   snapNovelAiDimension,
   toNovelAiSampler,
@@ -142,6 +145,9 @@ export type NovelAiSettings = Omit<
 /** NovelAI's own recommended starting point. Mirrors `novelai/params.rs`. */
 export function createDefaultNovelAiSettings(): NovelAiSettings {
   return {
+    // High is what V5 Full always ran, so nobody's cost or output changes
+    // until they pick Medium.
+    effort: NAI_EFFORT_HIGH,
     sampler: NOVELAI_DEFAULTS.sampler,
     noise_schedule: NOVELAI_DEFAULTS.noiseSchedule,
     cfg_rescale: NOVELAI_DEFAULTS.cfgRescale,
@@ -1458,6 +1464,23 @@ class GenerationStore {
   /** Capability flags for the selected NovelAI model, or null outside NovelAI mode. */
   get novelAiModel() {
     return findNovelAiModel(this.checkpoint) ?? null;
+  }
+
+  /**
+   * True when this generation runs on V5 Full's Medium effort checkpoint. The
+   * stored pick is kept on other models, so it comes back with V5 Full.
+   */
+  get novelAiMediumEffort(): boolean {
+    return novelAiUsesMediumEffort(this.novelAiModel, this.novelaiSettings.effort);
+  }
+
+  /**
+   * Steps the NovelAI request will run. Medium effort pins its own count
+   * whatever the slider says; the slider itself is left alone so High gets its
+   * value back.
+   */
+  get novelAiSteps(): number {
+    return this.novelAiMediumEffort ? NOVELAI_MEDIUM_EFFORT.steps : this.steps;
   }
 
   /** True when the model takes per-character prompts. */

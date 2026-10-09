@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 
+use super::models::{EFFORT_HIGH, EFFORT_MEDIUM};
 use super::presets::{QualityPreset, UcPreset};
 use super::prompt_syntax;
 
@@ -212,6 +213,13 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
         if let Some(model) = model_id_from_source(source) {
             params.insert("model".into(), model.into());
         }
+        // Only V5 Full has an effort toggle, so only its images say which
+        // side of it they came from.
+        if is_medium_effort_source(source) {
+            params.insert("mooshie_novelai_effort".into(), EFFORT_MEDIUM.into());
+        } else if model_id_from_source(source) == Some("nai-diffusion-5-full") {
+            params.insert("mooshie_novelai_effort".into(), EFFORT_HIGH.into());
+        }
     }
     if let Some(generation_time) = chunks.get("Generation time") {
         params.insert(
@@ -349,6 +357,19 @@ fn char_captions(block: Option<&serde_json::Value>) -> Option<Vec<serde_json::Va
 /// `Source` carries a version and a weights checksum, not the model id, and
 /// says nothing about Full versus Curated, so every version resolves to its
 /// Full id. Longest version prefix wins, or "V4.5" would match the "V4" arm.
+/// Weights checksums NovelAI's client reads as V5 Full on Medium effort.
+/// `Source` names the distilled checkpoint only through these. Mirrored in
+/// `novelaiPngMetadata.ts`.
+const MEDIUM_EFFORT_SOURCE_HASHES: [&str; 2] = ["93F4BD30", "70AB5786"];
+
+fn is_medium_effort_source(source: &str) -> bool {
+    let upper = source.to_ascii_uppercase();
+    upper.contains("V5")
+        && MEDIUM_EFFORT_SOURCE_HASHES
+            .iter()
+            .any(|hash| upper.contains(hash))
+}
+
 fn model_id_from_source(source: &str) -> Option<&'static str> {
     let upper = source.to_ascii_uppercase();
     for (marker, model) in [
@@ -366,6 +387,14 @@ fn model_id_from_source(source: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn medium_effort_is_read_off_the_source_checksum() {
+        assert!(is_medium_effort_source("NovelAI Diffusion V5 93F4BD30"));
+        assert!(is_medium_effort_source("NovelAI Diffusion V5 70AB5786"));
+        assert!(!is_medium_effort_source("NovelAI Diffusion V5 657484A5"));
+        assert!(!is_medium_effort_source("NovelAI Diffusion V4.5 4BDE2A90"));
+    }
 
     #[test]
     fn only_v5_zero_uncond_scale_is_a_placeholder() {

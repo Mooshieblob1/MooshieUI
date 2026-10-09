@@ -333,6 +333,9 @@ fn crop_request(
 
     if let Some(nai) = out.novelai.as_mut() {
         nai.action = "img2img".to_string();
+        // The face panel sets its own steps, and Medium effort would pin them
+        // to 14 behind its back. Crops stay on the full checkpoint.
+        nai.effort = crate::novelai::models::EFFORT_HIGH.to_string();
         nai.strength = detail.strength;
         // The crop is a real image, not a blank canvas: added noise only fights
         // the structure the pass is meant to preserve.

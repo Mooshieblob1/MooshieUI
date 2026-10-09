@@ -38,11 +38,35 @@ pub struct NovelAiModel {
     /// positioning was demonstrated with up to 22 characters; V4/V4.5 stop
     /// at 6.
     pub max_characters: usize,
+    /// The distilled checkpoints NovelAI's "Medium" effort runs on, or `None`
+    /// when the model has no effort toggle (everything but V5 Full).
+    pub medium_effort: Option<MediumEffort>,
     /// `parameters.params_version` the model's endpoint expects. V5 speaks 4
     /// (per NovelAI's OpenAPI schema, mirrored by every V5-updated reference
     /// client); V4/V4.5 stay on 3.
     pub params_version: u8,
 }
+
+/// The model ids behind a model's Medium effort.
+///
+/// NovelAI ships effort as a separate checkpoint rather than a request field:
+/// its client keeps "Effort: Medium / High" as a toggle next to the model and
+/// swaps the id when it sends. Medium has its own inpainting checkpoint too.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct MediumEffort {
+    pub id: &'static str,
+    pub inpainting_id: &'static str,
+}
+
+/// `NovelAiParams::effort` values.
+pub const EFFORT_HIGH: &str = "high";
+pub const EFFORT_MEDIUM: &str = "medium";
+
+/// What Medium effort pins, copied from the `fixedSettings` NovelAI's client
+/// applies to the medium checkpoints. The model was distilled for exactly
+/// these, so the client hides the controls rather than letting them vary.
+pub const MEDIUM_EFFORT_STEPS: u32 = 14;
+pub const MEDIUM_EFFORT_SAMPLER: &str = "k_euler_ancestral";
 
 /// Every NovelAI model MooshieUI offers.
 ///
@@ -61,6 +85,10 @@ pub const MODELS: &[NovelAiModel] = &[
         alpha: true,
         auto_text: true,
         max_characters: 22,
+        medium_effort: Some(MediumEffort {
+            id: "nai-diffusion-5-full-medium",
+            inpainting_id: "nai-diffusion-5-full-medium-inpainting",
+        }),
         params_version: 4,
     },
     NovelAiModel {
@@ -77,6 +105,7 @@ pub const MODELS: &[NovelAiModel] = &[
         alpha: true,
         auto_text: true,
         max_characters: 22,
+        medium_effort: None,
         params_version: 4,
     },
     NovelAiModel {
@@ -90,6 +119,7 @@ pub const MODELS: &[NovelAiModel] = &[
         alpha: false,
         auto_text: false,
         max_characters: 6,
+        medium_effort: None,
         params_version: 3,
     },
     NovelAiModel {
@@ -103,6 +133,7 @@ pub const MODELS: &[NovelAiModel] = &[
         alpha: false,
         auto_text: false,
         max_characters: 6,
+        medium_effort: None,
         params_version: 3,
     },
 ];
@@ -120,10 +151,27 @@ pub fn is_novelai_model(id: &str) -> bool {
     find(id).is_some()
 }
 
-/// Resolve the model id to send for a given action, swapping in the inpainting
-/// checkpoint when infilling.
-pub fn resolve_id(model: &NovelAiModel, action: &str) -> String {
-    if action == "infill" {
+/// True when this request runs on the model's Medium effort checkpoint.
+pub fn uses_medium_effort(model: &NovelAiModel, effort: &str) -> bool {
+    model.medium_effort.is_some() && effort.trim().eq_ignore_ascii_case(EFFORT_MEDIUM)
+}
+
+/// Resolve the model id to send for a given action and effort, swapping in the
+/// inpainting checkpoint when infilling and the distilled one on Medium.
+pub fn resolve_id(model: &NovelAiModel, action: &str, effort: &str) -> String {
+    let infill = action == "infill";
+    if let Some(medium) = model
+        .medium_effort
+        .filter(|_| uses_medium_effort(model, effort))
+    {
+        return if infill {
+            medium.inpainting_id
+        } else {
+            medium.id
+        }
+        .to_string();
+    }
+    if infill {
         model.inpainting_id.unwrap_or(model.id).to_string()
     } else {
         model.id.to_string()
@@ -151,9 +199,57 @@ mod tests {
     #[test]
     fn infill_swaps_to_the_inpainting_checkpoint() {
         let m = find("nai-diffusion-4-5-full").unwrap();
-        assert_eq!(resolve_id(m, "generate"), "nai-diffusion-4-5-full");
-        assert_eq!(resolve_id(m, "img2img"), "nai-diffusion-4-5-full");
-        assert_eq!(resolve_id(m, "infill"), "nai-diffusion-4-5-full-inpainting");
+        assert_eq!(
+            resolve_id(m, "generate", EFFORT_HIGH),
+            "nai-diffusion-4-5-full"
+        );
+        assert_eq!(
+            resolve_id(m, "img2img", EFFORT_HIGH),
+            "nai-diffusion-4-5-full"
+        );
+        assert_eq!(
+            resolve_id(m, "infill", EFFORT_HIGH),
+            "nai-diffusion-4-5-full-inpainting"
+        );
+    }
+
+    #[test]
+    fn medium_effort_swaps_to_the_distilled_checkpoints() {
+        let m = find("nai-diffusion-5-full").unwrap();
+        assert_eq!(
+            resolve_id(m, "generate", EFFORT_MEDIUM),
+            "nai-diffusion-5-full-medium"
+        );
+        assert_eq!(
+            resolve_id(m, "img2img", "Medium"),
+            "nai-diffusion-5-full-medium"
+        );
+        assert_eq!(
+            resolve_id(m, "infill", EFFORT_MEDIUM),
+            "nai-diffusion-5-full-medium-inpainting"
+        );
+        // High, and an empty value from a client that predates the toggle.
+        assert_eq!(resolve_id(m, "generate", ""), "nai-diffusion-5-full");
+        assert_eq!(
+            resolve_id(m, "infill", EFFORT_HIGH),
+            "nai-diffusion-5-full-inpainting"
+        );
+    }
+
+    #[test]
+    fn only_v5_full_has_medium_effort() {
+        for m in MODELS {
+            let full = m.id == "nai-diffusion-5-full";
+            assert_eq!(m.medium_effort.is_some(), full, "{}", m.id);
+            assert_eq!(uses_medium_effort(m, EFFORT_MEDIUM), full, "{}", m.id);
+            // A stale Medium on another model is ignored, not sent.
+            assert_eq!(
+                resolve_id(m, "generate", EFFORT_MEDIUM) == m.id,
+                !full,
+                "{}",
+                m.id
+            );
+        }
     }
 
     #[test]
@@ -178,9 +274,12 @@ mod tests {
     fn v5_curated_infill_borrows_v45_curated_inpainting() {
         // Upstream substitution while V5 Curated's inpainting model trains.
         let m = find("nai-diffusion-5-curated").unwrap();
-        assert_eq!(resolve_id(m, "generate"), "nai-diffusion-5-curated");
         assert_eq!(
-            resolve_id(m, "infill"),
+            resolve_id(m, "generate", EFFORT_HIGH),
+            "nai-diffusion-5-curated"
+        );
+        assert_eq!(
+            resolve_id(m, "infill", EFFORT_HIGH),
             "nai-diffusion-4-5-curated-inpainting"
         );
     }

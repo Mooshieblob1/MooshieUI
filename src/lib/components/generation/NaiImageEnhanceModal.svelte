@@ -143,7 +143,8 @@
     return estimateNovelAiCost({
       width: size.width,
       height: size.height,
-      steps: generation.steps,
+      steps: generation.novelAiSteps,
+      mediumEffort: generation.novelAiMediumEffort,
       nSamples: samples,
       strength,
       isOpus: novelai.isOpus,

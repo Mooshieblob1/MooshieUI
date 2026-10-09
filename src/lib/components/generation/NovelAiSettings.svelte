@@ -13,8 +13,11 @@
   import NovelAiReferences from "./NovelAiReferences.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import {
+    NAI_EFFORT_HIGH,
+    NAI_EFFORT_MEDIUM,
     NAI_QUALITY_LIGHT,
     NAI_QUALITY_STANDARD,
+    NOVELAI_MEDIUM_EFFORT,
     effectiveNovelAiQualityPreset,
     effectiveNovelAiUcPreset,
   } from "../../utils/novelaiModels.js";
@@ -45,7 +48,17 @@
         : "standard",
   );
   const ucPresets = $derived(novelAiModel?.ucPresets ?? []);
-  const ucPreset = $derived(effectiveNovelAiUcPreset(novelAiModel, nai.uc_preset));
+  const mediumEffort = $derived(generation.novelAiMediumEffort);
+  // Medium sends Heavy whatever is stored, so the dropdown shows Heavy and the
+  // stored pick waits for High.
+  const ucPreset = $derived(
+    mediumEffort
+      ? NOVELAI_MEDIUM_EFFORT.ucPreset
+      : effectiveNovelAiUcPreset(novelAiModel, nai.uc_preset),
+  );
+  const efforts = [NAI_EFFORT_MEDIUM, NAI_EFFORT_HIGH] as const;
+  // Anything but "medium" is High, as on the backend.
+  const effortChoice = $derived(nai.effort === NAI_EFFORT_MEDIUM ? NAI_EFFORT_MEDIUM : NAI_EFFORT_HIGH);
 
   /** One dropdown over two stored fields: the on/off toggle and the stack. */
   function pickQuality(choice: QualityChoice) {
@@ -118,6 +131,40 @@
       {locale.t("generation.novelai.advanced.title")}
     </span>
 
+    {#if novelAiModel?.mediumEffort}
+      <div class="text-[11px] text-neutral-500">
+        <span class="flex items-center gap-2">
+          {locale.t("generation.novelai.advanced.effort")}
+          <InfoTip text={locale.t("generation.novelai.advanced.effort_desc")} />
+        </span>
+        <div
+          class="mt-1 grid grid-cols-2 gap-1 rounded-md bg-neutral-950 border border-neutral-800 p-0.5"
+          role="radiogroup"
+          aria-label={locale.t("generation.novelai.advanced.effort")}
+        >
+          {#each efforts as effort (effort)}
+            {@const active = effortChoice === effort}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={active}
+              class="px-2 py-1 text-xs rounded transition-colors {active
+                ? 'bg-indigo-600 text-white'
+                : 'text-neutral-300 hover:bg-neutral-800'}"
+              onclick={() => generation.updateNovelAiSettings({ effort })}
+            >
+              {locale.t(`generation.novelai.advanced.effort_${effort}`)}
+            </button>
+          {/each}
+        </div>
+        {#if mediumEffort}
+          <p class="mt-1 text-[11px] text-neutral-500">
+            {locale.t("generation.novelai.advanced.effort_medium_note")}
+          </p>
+        {/if}
+      </div>
+    {/if}
+
     <div class="text-[11px] text-neutral-500">
       <span class="flex items-center gap-2">
         <label for={qualitySelectId}>{locale.t("generation.novelai.advanced.quality_toggle")}</label>
@@ -140,7 +187,8 @@
     <label class="block text-[11px] text-neutral-500">
       {locale.t("generation.novelai.advanced.uc_preset")}
       <select
-        class="mt-1 w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
+        class="mt-1 w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={mediumEffort}
         value={String(ucPreset)}
         onchange={(e) => generation.updateNovelAiSettings({ uc_preset: Number(e.currentTarget.value) })}
       >
@@ -186,20 +234,23 @@
       <InfoTip text={locale.t("generation.novelai.advanced.dynamic_thresholding_desc")} />
     </label>
 
-    <label class="block text-[11px] text-neutral-500">
-      {locale.t("generation.novelai.advanced.cfg_rescale")}
-      {nai.cfg_rescale.toFixed(2)}
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.02"
-        class="w-full accent-indigo-500"
-        value={nai.cfg_rescale}
-        oninput={(e) =>
-          generation.updateNovelAiSettings({ cfg_rescale: Number(e.currentTarget.value) })}
-      />
-    </label>
+    <!-- The medium checkpoint has no CFG rescale; NovelAI's client hides it. -->
+    {#if !mediumEffort}
+      <label class="block text-[11px] text-neutral-500">
+        {locale.t("generation.novelai.advanced.cfg_rescale")}
+        {nai.cfg_rescale.toFixed(2)}
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.02"
+          class="w-full accent-indigo-500"
+          value={nai.cfg_rescale}
+          oninput={(e) =>
+            generation.updateNovelAiSettings({ cfg_rescale: Number(e.currentTarget.value) })}
+        />
+      </label>
+    {/if}
 
     <label class="block text-[11px] text-neutral-500">
       {locale.t("generation.novelai.advanced.uncond_scale")}

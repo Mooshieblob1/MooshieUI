@@ -224,6 +224,12 @@ export interface NovelAiParams {
   /** "generate" | "img2img" | "infill". */
   action: string;
   /**
+   * NovelAI's effort toggle, "high" or "medium". Medium runs V5 Full's
+   * distilled checkpoint: about 40% cheaper, with steps, sampler and UC fixed.
+   * Ignored on models without one. Mirrors `params.rs`.
+   */
+  effort: string;
+  /**
    * NovelAI sampler, e.g. `k_euler_ancestral`. Separate from the top-level
    * `sampler_name`, which stays a ComfyUI sampler for the local post-process.
    */

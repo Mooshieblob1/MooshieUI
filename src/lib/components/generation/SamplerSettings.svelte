@@ -10,6 +10,7 @@
     NOVELAI_DEFAULTS,
     NOVELAI_NOISE_SCHEDULES,
     NOVELAI_SAMPLERS,
+    NOVELAI_MEDIUM_EFFORT,
   } from "../../utils/novelaiModels.js";
   import {
     ANIMA_SAMPLING,
@@ -266,6 +267,9 @@
   function recommendedStepRange() {
     // NovelAI ignores `samplerName` entirely, so the ComfyUI heuristics below
     // would rate its own recommended 23 steps as out of range.
+    if (generation.isNovelAi && generation.novelAiMediumEffort) {
+      return { min: NOVELAI_MEDIUM_EFFORT.steps, max: NOVELAI_MEDIUM_EFFORT.steps };
+    }
     if (generation.isNovelAi) return { min: 20, max: 28 };
     if (dmd2Enabled) return { min: 4, max: 8 };
     // Upstream advice for more quality is more steps at full strength.
@@ -284,8 +288,10 @@
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
 
+  // What the request will run: Medium effort pins NovelAI's steps.
+  const effectiveSteps = $derived(generation.isNovelAi ? generation.novelAiSteps : generation.steps);
   const stepsOutOfRange = $derived(
-    generation.steps < recommendedStepRange().min || generation.steps > recommendedStepRange().max
+    effectiveSteps < recommendedStepRange().min || effectiveSteps > recommendedStepRange().max
   );
 
   const cfgOutOfRange = $derived(
@@ -623,10 +629,13 @@
            would report settings that never reach the request. -->
       <div>
         <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.label')}<InfoTip text={locale.t('generation.sampler.label_tip')} /></label>
+        <!-- Medium effort pins the sampler; the stored pick waits for High. -->
         <select
-          value={generation.novelaiSettings.sampler}
+          value={generation.novelAiMediumEffort ? NOVELAI_MEDIUM_EFFORT.sampler : generation.novelaiSettings.sampler}
+          disabled={generation.novelAiMediumEffort}
+          title={generation.novelAiMediumEffort ? locale.t('generation.sampler.novelai_medium_fixed') : undefined}
           onchange={(e) => generation.updateNovelAiSettings({ sampler: e.currentTarget.value })}
-          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {#each NOVELAI_SAMPLERS as s (s.value)}
             <option value={s.value}>{s.label}</option>
@@ -679,18 +688,35 @@
   <!-- Steps + CFG side-by-side -->
   <div class="grid grid-cols-2 gap-2">
     <div use:scrollCapture>
-      <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>{locale.t('generation.sampler.steps')}<InfoTip text={locale.t('generation.sampler.steps_tip')} /></span>
-        <EditableValue value={generation.steps} min={1} max={150} step={1} onchange={(v) => generation.steps = v} />
-      </label>
-      <input
-        type="range"
-        bind:value={generation.steps}
-        min="1"
-        max="150"
-        step="1"
-        class="w-full accent-indigo-500"
-      />
+      {#if generation.isNovelAi && generation.novelAiMediumEffort}
+        <!-- Medium effort pins 14 steps. The slider keeps its value for High. -->
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          <span>{locale.t('generation.sampler.steps')}<InfoTip text={locale.t('generation.sampler.novelai_medium_fixed')} /></span>
+          <span class="text-neutral-300">{generation.novelAiSteps}</span>
+        </label>
+        <input
+          type="range"
+          value={generation.novelAiSteps}
+          min="1"
+          max="150"
+          step="1"
+          disabled
+          class="w-full accent-indigo-500 opacity-50 cursor-not-allowed"
+        />
+      {:else}
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          <span>{locale.t('generation.sampler.steps')}<InfoTip text={locale.t('generation.sampler.steps_tip')} /></span>
+          <EditableValue value={generation.steps} min={1} max={150} step={1} onchange={(v) => generation.steps = v} />
+        </label>
+        <input
+          type="range"
+          bind:value={generation.steps}
+          min="1"
+          max="150"
+          step="1"
+          class="w-full accent-indigo-500"
+        />
+      {/if}
     </div>
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">

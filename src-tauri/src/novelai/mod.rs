@@ -776,7 +776,13 @@ async fn run_inner(
     let body = build_request(resolved)?;
     log_vibe_summary(&body);
     log_character_summary(&body);
-    let steps = params.steps.max(1);
+    // Read off the body rather than `params`: Medium effort pins its own step
+    // count, and the bar has to fill at the step NovelAI actually stops on.
+    let steps = body
+        .pointer("/parameters/steps")
+        .and_then(|v| v.as_u64())
+        .map_or(params.steps, |v| v as u32)
+        .max(1);
 
     sink.emit(
         "comfyui:progress",

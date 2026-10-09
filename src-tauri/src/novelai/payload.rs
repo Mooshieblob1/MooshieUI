@@ -36,6 +36,13 @@ pub fn build(
     nai: &NovelAiParams,
     model: &NovelAiModel,
 ) -> Result<Value, String> {
+    let medium;
+    let (input, nai) = if models::uses_medium_effort(model, &nai.effort) {
+        medium = with_medium_effort(input, nai);
+        (&medium.0, &medium.1)
+    } else {
+        (input, nai)
+    };
     let action = normalise_action(&nai.action, input);
     // Own-line first, then transparency, quality and text, so the `Text:`
     // block ends up last and on its own line: the API wants it at the very end
@@ -179,10 +186,31 @@ pub fn build(
 
     Ok(json!({
         "input": positive_prompt,
-        "model": models::resolve_id(model, &action),
+        "model": models::resolve_id(model, &action, &nai.effort),
         "action": action,
         "parameters": Value::Object(parameters),
     }))
+}
+
+/// Pin what Medium effort fixes, the way NovelAI's client does before it
+/// sends: 14 steps on Euler Ancestral, the Heavy UC preset with no custom UC
+/// (base or per character), and no CFG rescale, which the medium checkpoint
+/// does not support. NovelAI suggests negative emphasis in the prompt
+/// (`-3::hat::`) in place of the UC.
+fn with_medium_effort(input: &PayloadInput, nai: &NovelAiParams) -> (PayloadInput, NovelAiParams) {
+    let input = PayloadInput {
+        steps: models::MEDIUM_EFFORT_STEPS,
+        sampler: models::MEDIUM_EFFORT_SAMPLER.to_string(),
+        negative_prompt: String::new(),
+        ..input.clone()
+    };
+    let mut nai = nai.clone();
+    nai.uc_preset = UcPreset::Heavy.index();
+    nai.cfg_rescale = 0.0;
+    for character in &mut nai.characters {
+        character.negative_prompt.clear();
+    }
+    (input, nai)
 }
 
 /// An action is only as good as the images backing it. A client that asks for
@@ -1562,5 +1590,76 @@ mod tests {
             body["input"],
             "1girl, rain, 2.1::transparent background::\nText:\nMumei\n\nHello"
         );
+    }
+
+    fn medium(n: NovelAiParams) -> NovelAiParams {
+        NovelAiParams {
+            effort: models::EFFORT_MEDIUM.into(),
+            ..n
+        }
+    }
+
+    #[test]
+    fn medium_effort_pins_what_novelais_client_fixes() {
+        let mut n = medium(presets_on(1));
+        n.sampler = "k_dpmpp_2m".into();
+        n.cfg_rescale = 0.4;
+        n.characters = vec![NovelAiCharacter {
+            prompt: "girl".into(),
+            negative_prompt: "hat".into(),
+            center: NovelAiCoord::from_grid(2, 2),
+            enabled: true,
+        }];
+        let mut i = input();
+        i.sampler = "k_dpmpp_2m".into();
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full-medium");
+        let p = &body["parameters"];
+        assert_eq!(p["steps"], 14);
+        assert_eq!(p["sampler"], "k_euler_ancestral");
+        assert_eq!(p["cfg_rescale"], 0.0);
+        // Heavy and nothing else: the user's UC ("lowres") and the
+        // character's are dropped, and the Light pick is overridden.
+        let uc = format!("nsfw, {V5_HEAVY}");
+        assert_eq!(p["negative_prompt"], uc.as_str());
+        assert_eq!(p["tag_hint_uc_preset"], 2);
+        assert_eq!(p["characterPrompts"][0]["uc"], "");
+        assert_eq!(
+            p["v4_negative_prompt"]["caption"]["char_captions"][0]["char_caption"],
+            ""
+        );
+        // Guidance stays the user's.
+        assert_eq!(p["scale"], 7.0);
+    }
+
+    #[test]
+    fn medium_effort_infill_uses_the_medium_inpainting_checkpoint() {
+        let mut n = medium(nai());
+        n.action = "infill".into();
+        let mut i = input();
+        i.input_image = Some("aW1n".into());
+        i.mask_image = Some("bWFzaw==".into());
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full-medium-inpainting");
+        assert_eq!(body["action"], "infill");
+    }
+
+    #[test]
+    fn medium_effort_is_ignored_on_a_model_without_it() {
+        let body = build(&input(), &medium(nai()), v45()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-4-5-full");
+        assert_eq!(body["parameters"]["steps"], 23);
+        assert_eq!(body["parameters"]["negative_prompt"], "lowres");
+    }
+
+    #[test]
+    fn high_effort_leaves_v5_full_as_it_was() {
+        let n = NovelAiParams {
+            effort: models::EFFORT_HIGH.into(),
+            ..nai()
+        };
+        let body = build(&input(), &n, v5()).unwrap();
+        assert_eq!(body["model"], "nai-diffusion-5-full");
+        assert_eq!(body["parameters"]["steps"], 23);
     }
 }

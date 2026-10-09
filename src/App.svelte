@@ -1911,6 +1911,7 @@
       metadata.sampler = nai.sampler;
       metadata.scheduler = nai.noise_schedule;
       metadata.model = nai.model;
+      metadata.mooshie_novelai_effort = nai.effort;
       metadata.mooshie_novelai_cfg_rescale = String(nai.cfg_rescale);
       metadata.mooshie_novelai_uncond_scale = String(nai.uncond_scale);
       metadata.mooshie_novelai_dynamic_thresholding = String(nai.dynamic_thresholding);
