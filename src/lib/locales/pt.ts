@@ -836,6 +836,11 @@ const pt: Record<string, string> = {
   "generation.mode.inpainting": "Inpainting",
   "generation.mode.image_edit": "Edição de Imagem",
   "generation.mode.video": "Vídeo",
+  "generation.tabs.label": "Abas de configurações",
+  "generation.tabs.new": "Nova aba",
+  "generation.tabs.new_hint": "Nova aba com uma cópia destas configurações",
+  "generation.tabs.close": "Fechar aba",
+  "generation.tabs.empty_prompt": "Prompt vazio",
 
   "generation.prompts.title": "Prompts",
   "generation.prompts.positive": "Prompt Positivo",

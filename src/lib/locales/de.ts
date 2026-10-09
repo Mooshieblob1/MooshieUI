@@ -857,6 +857,11 @@ const de: Record<string, string> = {
   "generation.mode.inpainting": "Inpainting",
   "generation.mode.image_edit": "Bildbearbeitung",
   "generation.mode.video": "Video",
+  "generation.tabs.label": "Einstellungs-Tabs",
+  "generation.tabs.new": "Neuer Tab",
+  "generation.tabs.new_hint": "Neuer Tab mit einer Kopie dieser Einstellungen",
+  "generation.tabs.close": "Tab schließen",
+  "generation.tabs.empty_prompt": "Leerer Prompt",
 
   "generation.prompts.title": "Prompts",
   "generation.prompts.positive": "Positiver Prompt",

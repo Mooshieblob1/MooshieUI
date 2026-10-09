@@ -907,6 +907,11 @@ const pl: Record<string, string> = {
   "generation.mode.inpainting": "Inpainting",
   "generation.mode.image_edit": "Edycja obrazu",
   "generation.mode.video": "Wideo",
+  "generation.tabs.label": "Karty ustawień",
+  "generation.tabs.new": "Nowa karta",
+  "generation.tabs.new_hint": "Nowa karta z kopią tych ustawień",
+  "generation.tabs.close": "Zamknij kartę",
+  "generation.tabs.empty_prompt": "Pusty prompt",
 
   // Prompts
   "generation.prompts.title": "Prompty",

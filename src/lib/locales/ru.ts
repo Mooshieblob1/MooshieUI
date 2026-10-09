@@ -836,6 +836,11 @@ const ru: Record<string, string> = {
   "generation.mode.inpainting": "Инпейнтинг",
   "generation.mode.image_edit": "Редактирование изображения",
   "generation.mode.video": "Видео",
+  "generation.tabs.label": "Вкладки настроек",
+  "generation.tabs.new": "Новая вкладка",
+  "generation.tabs.new_hint": "Новая вкладка с копией этих настроек",
+  "generation.tabs.close": "Закрыть вкладку",
+  "generation.tabs.empty_prompt": "Пустой промпт",
 
   "generation.prompts.title": "Промпты",
   "generation.prompts.positive": "Позитивный промпт",

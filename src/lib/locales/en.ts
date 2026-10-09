@@ -908,6 +908,11 @@ const en: Record<string, string> = {
   "generation.mode.inpainting": "Inpainting",
   "generation.mode.image_edit": "Image Edit",
   "generation.mode.video": "Video",
+  "generation.tabs.label": "Settings tabs",
+  "generation.tabs.new": "New tab",
+  "generation.tabs.new_hint": "New tab with a copy of these settings",
+  "generation.tabs.close": "Close tab",
+  "generation.tabs.empty_prompt": "Empty prompt",
 
   // Prompts
   "generation.prompts.title": "Prompts",

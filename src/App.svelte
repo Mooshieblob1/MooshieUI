@@ -30,6 +30,8 @@
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
+  import { generationTabs } from "./lib/stores/generationTabs.svelte.js";
+  import GenerationTabStrip from "./lib/components/generation/GenerationTabStrip.svelte";
   import { music } from "./lib/stores/music.svelte.js";
   import { musicCover } from "./lib/stores/musicCover.svelte.js";
   import { stopScorePreview } from "./lib/utils/musicPreview.js";
@@ -2793,6 +2795,8 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    // After the generation load, which restores the active tab's live settings.
+    await generationTabs.load();
     void music.loadLibrary();
     // The NovelAI key flag gates the Opus subscription fetch behind the Anlas
     // estimate. ModelSelector also seeds it, but it lives in the right panel,
@@ -3718,7 +3722,10 @@
     onTabChange={(tab) => (mobileCurrentTab = tab)}
   />
 {:else}
-<div class="flex h-full flex-col bg-neutral-950">
+<div class="relative flex h-full flex-col bg-neutral-950">
+  {#if currentPage === "generate"}
+    <GenerationTabStrip />
+  {/if}
 <div class="flex min-h-0 flex-1 bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
   <svg style="display: none">

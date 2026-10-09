@@ -836,6 +836,11 @@ const ko: Record<string, string> = {
   "generation.mode.inpainting": "인페인팅",
   "generation.mode.image_edit": "이미지 편집",
   "generation.mode.video": "동영상",
+  "generation.tabs.label": "설정 탭",
+  "generation.tabs.new": "새 탭",
+  "generation.tabs.new_hint": "이 설정을 복사한 새 탭",
+  "generation.tabs.close": "탭 닫기",
+  "generation.tabs.empty_prompt": "빈 프롬프트",
 
   "generation.prompts.title": "프롬프트",
   "generation.prompts.positive": "긍정 프롬프트",

@@ -848,6 +848,11 @@ const es: Record<string, string> = {
   "generation.mode.inpainting": "Inpainting",
   "generation.mode.image_edit": "Edición de imagen",
   "generation.mode.video": "Vídeo",
+  "generation.tabs.label": "Pestañas de ajustes",
+  "generation.tabs.new": "Nueva pestaña",
+  "generation.tabs.new_hint": "Nueva pestaña con una copia de estos ajustes",
+  "generation.tabs.close": "Cerrar pestaña",
+  "generation.tabs.empty_prompt": "Prompt vacío",
 
   // Prompts
   "generation.prompts.title": "Prompts",
