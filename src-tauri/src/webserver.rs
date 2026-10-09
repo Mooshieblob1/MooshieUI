@@ -5711,6 +5711,23 @@ async fn dispatch_command(
             };
             let length = args["opts"]["length"].as_str().map(|s| s.to_string());
             let include_artists = args["opts"]["include_artists"].as_bool().unwrap_or(false);
+            let instruction = args["opts"]["instruction"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let labels: Vec<String> = args["opts"]["reference_labels"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().unwrap_or("").to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let image_data: Option<Vec<String>> = args["imageData"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            });
             let history = crate::prompt_assistant::history::history_from_args(&args["history"]);
 
             match args["requestId"].as_str() {
@@ -5732,6 +5749,9 @@ async fn dispatch_command(
                             mode,
                             length.as_deref(),
                             include_artists,
+                            &instruction,
+                            &labels,
+                            image_data,
                         )
                         .await
                         {
@@ -5766,6 +5786,9 @@ async fn dispatch_command(
                         mode,
                         length.as_deref(),
                         include_artists,
+                        &instruction,
+                        &labels,
+                        image_data,
                     )
                     .await?;
                     Ok(serde_json::Value::String(result))
@@ -6582,6 +6605,9 @@ pub async fn chat_any_headless(
 }
 
 #[cfg(any(feature = "desktop", feature = "server"))]
+// One argument per field of the request the route parsed; bundling them would
+// only move the same list into a struct used in one place.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_prompt_assistant_headless(
     state: &Arc<AppState>,
     input: &str,
@@ -6590,6 +6616,9 @@ pub async fn run_prompt_assistant_headless(
     mode: crate::prompt_assistant::grounding::GenMode,
     length: Option<&str>,
     include_artists: bool,
+    instruction: &str,
+    reference_labels: &[String],
+    image_data: Option<Vec<String>>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::grounding;
     // No active-generation guard here: `prompt_queue` is shared across every user
@@ -6621,21 +6650,34 @@ pub async fn run_prompt_assistant_headless(
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
-    let style = grounding::prompt_style(&purpose, family);
-    let candidates = grounding::candidates_for(style, input);
-    let system = grounding::system_prompt(style, mode, &candidates, include_artists);
-    // Mirror the desktop token budget so browser Enhance/Compose honors the
-    // user's length pick instead of always generating at the medium default.
-    let max_tokens = match length {
-        Some("short") => 96,
-        Some("detailed") => 384,
-        _ => 192,
+    // Same mode, image and turn handling as the desktop `run_generation`.
+    let instruction = instruction.trim();
+    let mode = if mode == grounding::GenMode::Enhance && !instruction.is_empty() {
+        grounding::GenMode::Edit
+    } else {
+        mode
     };
+    let images = if ext_enabled {
+        crate::prompt_assistant::vision::collect_images(state, None, image_data).await
+    } else {
+        Vec::new()
+    };
+    let labels: Vec<String> = (0..images.len())
+        .map(|i| reference_labels.get(i).cloned().unwrap_or_default())
+        .collect();
+    let style = grounding::prompt_style(&purpose, family);
+    let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
+    let system = grounding::system_prompt(style, mode, &candidates, include_artists)
+        + &grounding::reference_rules(images.len());
+    // Mirror the desktop token budget so browser Enhance honors the user's
+    // length pick instead of always generating at the medium default.
+    let max_tokens = grounding::max_tokens(mode, length);
+    let user = grounding::user_turn(mode, input, instruction, &labels);
     let history = crate::prompt_assistant::history::sanitize(
         crate::prompt_assistant::history::for_purpose(&purpose, history),
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
-    let raw = chat_any_headless(state, &system, &history, input, max_tokens, &[]).await?;
+    let raw = chat_any_headless(state, &system, &history, &user, max_tokens, &images).await?;
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose and for prose families. The desktop path
     // runs this too; omitting it here made browser Enhance silently drop user tags.

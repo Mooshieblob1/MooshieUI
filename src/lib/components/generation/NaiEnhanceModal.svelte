@@ -1,6 +1,14 @@
 <script lang="ts">
   /**
-   * The whole NovelAI V5 rewrite flow, in one app-wide modal.
+   * The Enhance modal: the NovelAI V5 rewrite, the general Enhance every other
+   * image model uses, and the video (H3) rewrite (`naiEnhance.flow`). All share
+   * the input stage. The general and H3 flows replace the old in-place Enhance
+   * and the Compose modal: an empty box with "Edit current prompt" ticked
+   * rewrites the prompt, text with it ticked edits the prompt, and text without
+   * it writes a new one. Their review is a single before/after pair, since they
+   * only touch the prompt box.
+   *
+   * What follows describes the V5 flow.
    *
    * Stage one takes what the user wants written. It is a blank box rather than
    * the prompt box's contents because V5 is asked for scenes as often as it is
@@ -29,6 +37,7 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { readClipboardImageSafe } from "../../utils/api.js";
+  import { buildH3Context } from "../../utils/h3Prompt.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import type { OutputImage } from "../../types/index.js";
@@ -107,15 +116,37 @@
 
   const pending = $derived(naiEnhance.pending);
   const variant = $derived(naiV5Variant(generation.checkpoint));
+  const isGeneral = $derived(naiEnhance.flow === "general");
+  const isH3 = $derived(naiEnhance.flow === "h3");
+  /** The flows reviewed as one before/after pair rather than the V5 diff. */
+  const isSingleRow = $derived(naiEnhance.flow !== "nai");
 
   const languageLabel = $derived(pending ? naiLanguageInfo(pending.language).label : "");
 
-  const sessionCount = $derived(enhancerSessions.count("nai"));
+  const sessionFlow = $derived(isH3 ? "h3" : isGeneral ? "enhance" : "nai");
+  const sessionCount = $derived(enhancerSessions.count(sessionFlow));
 
   function newSession() {
     if (!confirm(locale.t("prompt_assistant.session_clear_confirm", { count: sessionCount }))) return;
-    enhancerSessions.clear("nai");
+    enhancerSessions.clear(sessionFlow);
   }
+
+  // General flow only. Not persisted, matching the Compose modal it replaces.
+  let length = $state<"short" | "medium" | "detailed">("medium");
+  let includeArtists = $state(false);
+
+  /**
+   * The general flow has a request to make when there is text, an image, or a
+   * current prompt to polish. The V5 flow does not take the last one: it
+   * always needs to be told what to write.
+   */
+  const canRun = $derived(
+    naiEnhance.input.trim() !== "" ||
+      naiEnhance.references.length > 0 ||
+      (isSingleRow &&
+        generation.naiEnhanceIncludeExisting &&
+        !!generation.positivePrompt?.trim()),
+  );
 
   /**
    * The whole selection, counted the way NovelAI counts it.
@@ -130,12 +161,106 @@
   // switch while a result is on screen invalidates it. The input stage survives:
   // what the user typed is worth just as much under the other variant.
   $effect(() => {
-    if (naiEnhance.stage === "review" && naiEnhance.pending?.variant !== variant) {
+    if (
+      naiEnhance.flow === "nai" &&
+      naiEnhance.stage === "review" &&
+      naiEnhance.pending?.variant !== variant
+    ) {
       naiEnhance.dismiss();
     }
   });
 
+  async function runGeneral() {
+    const text = naiEnhance.input.trim();
+    const refs = naiEnhance.references.map((r) => ({ ...r }));
+    if (!canRun || naiEnhance.busy) return;
+    naiEnhance.busy = true;
+    try {
+      const result = await promptAssistant.rewrite({
+        text,
+        existing: generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null,
+        family: generation.modelFamily,
+        opts: {
+          length,
+          include_artists: includeArtists,
+          reference_labels: refs.map((r) => r.label),
+        },
+        images: refs.map((r) => r.base64),
+      });
+      // Cancelled while waiting: drop the late answer, as the V5 flow does.
+      if (naiEnhance.stage !== "input") return;
+      if (!result.prompt.trim()) {
+        gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
+        return;
+      }
+      enhancerSessions.record("enhance", result.sessionUser, result.prompt);
+      naiEnhance.showGeneralReview({
+        before: generation.positivePrompt ?? "",
+        after: result.prompt,
+      });
+    } catch (e) {
+      console.error("Prompt enhance failed:", e);
+      gallery.showToast(mapLlmError(String(e)), "error");
+    } finally {
+      naiEnhance.busy = false;
+    }
+  }
+
+  async function runH3() {
+    const text = naiEnhance.input.trim();
+    const refs = naiEnhance.references.map((r) => ({ base64: r.base64, label: r.label }));
+    if (!canRun || naiEnhance.busy) return;
+    naiEnhance.busy = true;
+    try {
+      const result = await promptAssistant.enhanceForH3(
+        text,
+        buildH3Context({
+          variant: generation.videoVariant,
+          frames: generation.videoFrameLength,
+          hasFirstFrame: !!generation.videoFirstFrame,
+          hasLastFrame: !!generation.videoEffectiveLastFrame,
+          referenceImageCount: generation.videoRefImageFilenames.length,
+        }),
+        generation.videoFirstFrame,
+        {
+          existing: generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null,
+          references: refs,
+        },
+      );
+      if (naiEnhance.stage !== "input") return;
+      if (!result.text) {
+        gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
+        return;
+      }
+      // A near-miss is offered but not remembered: the session keeps only
+      // answers that passed the format check.
+      if (result.ok) enhancerSessions.record("h3", result.sessionUser, result.text);
+      naiEnhance.showGeneralReview({
+        before: generation.positivePrompt ?? "",
+        after: result.text,
+        // A near-miss is still a better start than the prose it replaces, so it
+        // is offered with the broken rule named. Idle mode is invisible until it
+        // fires, so it is named too, or "the pose never changes" reads as a bug.
+        notice: !result.ok
+          ? {
+              kind: "warning",
+              text: locale.t("prompt_assistant.h3_format_warning", { rule: result.rule ?? "" }),
+            }
+          : result.idle
+            ? { kind: "info", text: locale.t("prompt_assistant.h3_idle_applied") }
+            : null,
+      });
+    } catch (e) {
+      console.error("H3 prompt rewrite failed:", e);
+      gallery.showToast(mapLlmError(String(e)), "error");
+    } finally {
+      naiEnhance.busy = false;
+    }
+  }
+
   async function run() {
+    if (naiEnhance.flow === "general") return runGeneral();
+    if (naiEnhance.flow === "h3") return runH3();
     const text = naiEnhance.input.trim();
     const v = variant;
     // Snapshotted before the await: the labels sent in the manifest line have to
@@ -329,17 +454,35 @@
       role="dialog"
       aria-modal="true"
       tabindex="-1"
-      aria-label={locale.t("prompt_assistant.nai_input_title")}
+      aria-label={isH3
+        ? locale.t("prompt_assistant.enhance_h3")
+        : isGeneral
+          ? locale.t("prompt_assistant.general_input_title")
+          : locale.t("prompt_assistant.nai_input_title")}
     >
       <div class="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 class="text-sm font-semibold text-neutral-100">
-            {naiEnhance.stage === "review"
-              ? locale.t("prompt_assistant.nai_review_title")
-              : locale.t("prompt_assistant.nai_input_title")}
+            {#if isSingleRow}
+              {naiEnhance.stage === "review"
+                ? locale.t("prompt_assistant.general_review_title")
+                : isH3
+                  ? locale.t("prompt_assistant.enhance_h3")
+                  : locale.t("prompt_assistant.general_input_title")}
+            {:else}
+              {naiEnhance.stage === "review"
+                ? locale.t("prompt_assistant.nai_review_title")
+                : locale.t("prompt_assistant.nai_input_title")}
+            {/if}
           </h2>
           <p class="mt-0.5 text-[11px] text-neutral-400">
-            {#if naiEnhance.stage === "review" && pending}
+            {#if isSingleRow}
+              {naiEnhance.stage === "review"
+                ? locale.t("prompt_assistant.general_review_subtitle")
+                : isH3
+                  ? locale.t("prompt_assistant.h3_input_subtitle")
+                  : locale.t("prompt_assistant.general_input_subtitle")}
+            {:else if naiEnhance.stage === "review" && pending}
               {locale.t("prompt_assistant.nai_review_subtitle", {
                 variant:
                   pending.variant === "curated"
@@ -354,7 +497,7 @@
           {#if sessionCount > 0}
             <p class="mt-0.5 text-[10px] text-neutral-500">
               {locale.t("prompt_assistant.session_count", { count: sessionCount })}
-              {#if enhancerSessions.dropped.nai > 0}
+              {#if enhancerSessions.dropped[sessionFlow] > 0}
                 · {locale.t("prompt_assistant.session_trimmed")}
               {/if}
             </p>
@@ -384,8 +527,16 @@
           class="min-h-[9rem] w-full flex-1 resize-y rounded-lg border border-neutral-700 bg-neutral-950 p-3 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-indigo-500 focus:outline-none"
           placeholder={sessionCount > 0
             ? locale.t("prompt_assistant.session_continue_placeholder")
-            : locale.t("prompt_assistant.nai_input_placeholder")}
-          aria-label={locale.t("prompt_assistant.nai_input_title")}
+            : isH3
+              ? locale.t("prompt_assistant.h3_input_placeholder")
+              : isGeneral
+                ? locale.t("prompt_assistant.general_input_placeholder")
+                : locale.t("prompt_assistant.nai_input_placeholder")}
+          aria-label={isH3
+            ? locale.t("prompt_assistant.enhance_h3")
+            : isGeneral
+              ? locale.t("prompt_assistant.general_input_title")
+              : locale.t("prompt_assistant.nai_input_title")}
           disabled={naiEnhance.busy}
           bind:value={naiEnhance.input}
         ></textarea>
@@ -495,7 +646,9 @@
                idea is better off with the model unable to see the old prompt. -->
           <label
             class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
-            title={locale.t("prompt_assistant.nai_include_existing_tooltip")}
+            title={isSingleRow
+              ? locale.t("prompt_assistant.general_include_existing_tooltip")
+              : locale.t("prompt_assistant.nai_include_existing_tooltip")}
           >
             <input
               type="checkbox"
@@ -518,6 +671,31 @@
           >
             {locale.t("prompt_assistant.nai_copy_existing")}
           </button>
+          {#if isGeneral}
+            <div class="flex items-center gap-1 text-[10px] text-neutral-400">
+              <span>{locale.t("prompt_assistant.length")}:</span>
+              {#each ["short", "medium", "detailed"] as const as len (len)}
+                <button
+                  class="rounded border px-1.5 py-0.5 {length === len
+                    ? 'border-[var(--theme-accent-500)] text-neutral-100'
+                    : 'border-neutral-600 text-neutral-400 hover:bg-neutral-800'}"
+                  disabled={naiEnhance.busy}
+                  onclick={() => (length = len)}
+                >
+                  {locale.t(`prompt_assistant.length_${len}`)}
+                </button>
+              {/each}
+            </div>
+            <label class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300">
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                disabled={naiEnhance.busy}
+                bind:checked={includeArtists}
+              />
+              {locale.t("prompt_assistant.include_artists")}
+            </label>
+          {:else if !isH3}
           <!-- V5 writes the scene body in the prompt's own language. Detection is
                unreliable on a short Latin prompt, so the guess is overridable. -->
           <select
@@ -538,6 +716,7 @@
               </option>
             {/each}
           </select>
+          {/if}
         </div>
 
         <div class="mt-4 flex items-center justify-end gap-2">
@@ -549,8 +728,7 @@
           </button>
           <button
             class="rounded-lg bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-500 disabled:opacity-40"
-            disabled={naiEnhance.busy ||
-              (!naiEnhance.input.trim() && naiEnhance.references.length === 0)}
+            disabled={naiEnhance.busy || !canRun}
             onclick={run}
           >
             {#if naiEnhance.busy}
@@ -559,6 +737,64 @@
             {:else}
               {locale.t("prompt_assistant.nai_run")}
             {/if}
+          </button>
+        </div>
+      {:else if isSingleRow && naiEnhance.generalPending}
+        {@const general = naiEnhance.generalPending}
+        {#if general.notice}
+          <div
+            class="mb-3 rounded-lg border p-2 text-[11px] {general.notice.kind === 'warning'
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+              : 'border-indigo-500/40 bg-indigo-500/10 text-indigo-200'}"
+          >
+            {general.notice.text}
+          </div>
+        {/if}
+        <div class="grid gap-2 sm:grid-cols-2">
+          <div>
+            <div class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+              {locale.t("prompt_assistant.nai_before")}
+            </div>
+            <div
+              class="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded border border-neutral-800 bg-neutral-950 p-2 text-[11px] text-neutral-500"
+            >
+              {general.before.trim() || locale.t("prompt_assistant.nai_empty")}
+            </div>
+          </div>
+          <div>
+            <div class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+              {locale.t("prompt_assistant.nai_after")}
+            </div>
+            <div
+              class="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded border border-indigo-500/60 bg-neutral-950 p-2 text-[11px] text-neutral-200"
+            >
+              {general.after}
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-end gap-2">
+          <button
+            class="rounded-lg border border-neutral-600 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+            onclick={close}
+          >
+            {locale.t("common.cancel")}
+          </button>
+          <!-- H3 is one structured document; gluing a second one onto it
+               breaks the format, so it only replaces. -->
+          {#if general.before.trim() && !isH3}
+            <button
+              class="rounded-lg border border-neutral-600 px-3 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+              onclick={() => naiEnhance.applyGeneral("append")}
+            >
+              {locale.t("prompt_assistant.append")}
+            </button>
+          {/if}
+          <button
+            class="rounded-lg bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-500"
+            onclick={() => naiEnhance.applyGeneral("replace")}
+          >
+            {locale.t("prompt_assistant.replace")}
           </button>
         </div>
       {:else if pending}

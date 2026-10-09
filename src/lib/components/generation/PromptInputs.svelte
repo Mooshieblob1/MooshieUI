@@ -18,15 +18,10 @@
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
-  import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
-  import type { EnhancerFlow } from "../../utils/enhancerSession.js";
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
-  import PromptComposeModal from "./PromptComposeModal.svelte";
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
-  import { buildH3Context } from "../../utils/h3Prompt.js";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { naiEnhance } from "../../stores/naiEnhance.svelte.js";
-  import { mapLlmError } from "../../utils/llmError.js";
 
   interface Props {
     showHistory?: boolean;
@@ -120,97 +115,27 @@
     });
   }
 
-  let undoSnapshot = $state<string | null>(null);
-  let showUndo = $state(false);
-  let undoTimer: ReturnType<typeof setTimeout> | null = null;
-  let _pendingAction = $state<"enhance" | "enhance_h3" | "enhance_nai" | "compose" | null>(null);
+  let _pendingAction = $state<"enhance" | "enhance_h3" | "enhance_nai" | null>(null);
 
-  async function onEnhanceClick() {
+  // Every Enhance opens the same modal; the flow picks the rewrite. The general
+  // one also covers what Compose did: with "Edit current prompt" off, the box
+  // is a description to write from.
+  function onEnhanceClick() {
     if (!promptAssistant.isAvailable) {
       _pendingAction = "enhance";
       promptAssistant.setupModalOpen = true;
       return;
     }
-    await runEnhance();
+    naiEnhance.openInput("general");
   }
 
-  async function runEnhance() {
-    const current = generation.positivePrompt?.trim();
-    if (!current) return;
-    try {
-      const result = await promptAssistant.enhance(current, generation.modelFamily);
-      if (result && result.trim()) {
-        undoSnapshot = generation.positivePrompt;
-        generation.positivePrompt = result;
-        generation.saveSettings();
-        triggerUndo();
-        enhancerSessions.record("enhance", current, result);
-      } else {
-        gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
-      }
-    } catch (e) {
-      console.error("Prompt enhance failed:", e);
-      gallery.showToast(mapLlmError(String(e)), "error");
-    }
-  }
-
-  async function onEnhanceH3Click() {
+  function onEnhanceH3Click() {
     if (!promptAssistant.isAvailable) {
       _pendingAction = "enhance_h3";
       promptAssistant.setupModalOpen = true;
       return;
     }
-    await runEnhanceH3();
-  }
-
-  async function runEnhanceH3() {
-    const current = generation.positivePrompt?.trim();
-    if (!current) return;
-    try {
-      const result = await promptAssistant.enhanceForH3(
-        current,
-        buildH3Context({
-          variant: generation.videoVariant,
-          frames: generation.videoFrameLength,
-          hasFirstFrame: !!generation.videoFirstFrame,
-          hasLastFrame: !!generation.videoEffectiveLastFrame,
-          referenceImageCount: generation.videoRefImageFilenames.length,
-        }),
-        generation.videoFirstFrame,
-      );
-      if (!result.text) {
-        gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
-        return;
-      }
-      undoSnapshot = generation.positivePrompt;
-      generation.positivePrompt = result.text;
-      generation.saveSettings();
-      triggerUndo();
-      // A near-miss is applied but not remembered: the session keeps only
-      // answers that passed the format check.
-      if (result.ok) enhancerSessions.record("h3", result.sessionUser, result.text);
-      // Applied either way: a near-miss rewrite is still a better starting point
-      // than the prose it replaced, and undo is one click away. The warning names
-      // the rule the model broke so the guide below shows what to fix by hand.
-      if (!result.ok) {
-        gallery.showToast(
-          locale.t("prompt_assistant.h3_format_warning", {
-            rule: result.rule ?? "",
-          }),
-          "warning",
-          { durationMs: 12000 },
-        );
-      } else if (result.idle) {
-        // Idle mode is invisible until it fires, which is the point. Saying so
-        // once is what keeps "the pose never changes" from reading as a failure.
-        gallery.showToast(locale.t("prompt_assistant.h3_idle_applied"), "info", {
-          durationMs: 8000,
-        });
-      }
-    } catch (e) {
-      console.error("H3 prompt rewrite failed:", e);
-      gallery.showToast(mapLlmError(String(e)), "error");
-    }
+    naiEnhance.openInput("h3");
   }
 
   // V5 wants a natural language scene body and structured character boxes, which
@@ -218,17 +143,6 @@
   // existing path, so this is a variant check and not an isNovelAi check.
   const naiVariant = $derived(naiV5Variant(generation.checkpoint));
   const isNaiV5 = $derived(!isVideoMode && generation.isNovelAi && naiVariant !== null);
-
-  // NAI V5 keeps its session control in its modal; the chip covers the flows
-  // that rewrite in place.
-  const chipFlow = $derived<EnhancerFlow | null>(isVideoMode ? "h3" : isNaiV5 ? null : "enhance");
-  const chipCount = $derived(chipFlow ? enhancerSessions.count(chipFlow) : 0);
-
-  function clearChipSession() {
-    if (!chipFlow) return;
-    if (!confirm(locale.t("prompt_assistant.session_clear_confirm", { count: chipCount }))) return;
-    enhancerSessions.clear(chipFlow);
-  }
 
   // The V5 rewrite takes its own instructions rather than the prompt box, so the
   // button only opens the modal; the modal owns the call and the review.
@@ -241,37 +155,12 @@
     naiEnhance.openInput();
   }
 
-  function onComposeClick() {
-    if (!promptAssistant.isAvailable) {
-      _pendingAction = "compose";
-      promptAssistant.setupModalOpen = true;
-      return;
-    }
-    promptAssistant.composeModalOpen = true;
-  }
-
-  function triggerUndo() {
-    showUndo = true;
-    if (undoTimer) clearTimeout(undoTimer);
-    undoTimer = setTimeout(() => (showUndo = false), 10000);
-  }
-
-  function undoEnhance() {
-    if (undoSnapshot !== null) {
-      generation.positivePrompt = undoSnapshot;
-      generation.saveSettings();
-      undoSnapshot = null;
-    }
-    showUndo = false;
-  }
-
   function onSetupInstalled() {
     const action = _pendingAction;
     _pendingAction = null;
-    if (action === "enhance") runEnhance();
-    else if (action === "enhance_h3") runEnhanceH3();
+    if (action === "enhance") naiEnhance.openInput("general");
+    else if (action === "enhance_h3") naiEnhance.openInput("h3");
     else if (action === "enhance_nai") naiEnhance.openInput();
-    else if (action === "compose") promptAssistant.composeModalOpen = true;
   }
 
 </script>
@@ -405,13 +294,12 @@
     {:else}
     <div class="mb-1 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
-        <!-- One enhance button, two rewrites. The image one grounds on danbooru
-             tags, which is exactly wrong for H3 prose, so video mode swaps it
-             out rather than offering both. -->
+        <!-- One enhance button, three rewrites, all through the Enhance modal.
+             The image one grounds on danbooru tags, which is exactly wrong for
+             H3 prose, so video mode swaps it out rather than offering both. -->
         <button
           class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          disabled={promptAssistant.isGenerating ||
-            (!isNaiV5 && !generation.positivePrompt?.trim())}
+          disabled={promptAssistant.isGenerating}
           title={isVideoMode
             ? locale.t("prompt_assistant.enhance_h3_tooltip")
             : isNaiV5
@@ -434,45 +322,16 @@
               ? locale.t("prompt_assistant.enhance_nai")
               : locale.t("prompt_assistant.enhance")}
         </button>
-        {#if chipFlow && chipCount > 0}
-          <button
-            class="rounded-full border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-[var(--theme-accent-500)] hover:text-neutral-200 disabled:opacity-40"
-            disabled={promptAssistant.isGenerating}
-            title={locale.t("prompt_assistant.session_chip_tooltip", { count: chipCount })}
-            aria-label={locale.t("prompt_assistant.session_new")}
-            onclick={clearChipSession}
-          >
-            ⟲ {chipCount}
-          </button>
-        {/if}
-        {#if !isVideoMode}
-          <!-- Compose builds a tag list from a description. Nothing downstream of
-               it fits H3, which wants the prose the user already wrote. -->
-          <button
-            class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-            disabled={promptAssistant.isGenerating}
-            title={locale.t("prompt_assistant.compose_tooltip")}
-            onclick={onComposeClick}
-          >
-            ✍ {locale.t("prompt_assistant.compose")}
-          </button>
-        {/if}
-        {#if showUndo}
-          <button
-            class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-indigo-400 hover:bg-neutral-800"
-            onclick={undoEnhance}
-          >
-            ↩ {locale.t("prompt_assistant.undo")}
-          </button>
-        {/if}
         {#if naiEnhance.showUndo}
-          <!-- Its own pill, because the V5 undo restores the character boxes too
-               and the text-only one would silently leave them rewritten. -->
+          <!-- One pill for every Enhance flow: the V5 undo restores the
+               character boxes too, so its label says so. -->
           <button
             class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-indigo-400 hover:bg-neutral-800"
             onclick={() => naiEnhance.undo()}
           >
-            ↩ {locale.t("prompt_assistant.nai_undo")}
+            ↩ {naiEnhance.undoFlow === "nai"
+              ? locale.t("prompt_assistant.nai_undo")
+              : locale.t("prompt_assistant.undo")}
           </button>
         {/if}
         {#if promptAssistant.stage === "loading_model"}
@@ -722,7 +581,4 @@
     onClose={() => (promptAssistant.setupModalOpen = false)}
     onInstalled={onSetupInstalled}
   />
-{/if}
-{#if promptAssistant.composeModalOpen}
-  <PromptComposeModal onClose={() => (promptAssistant.composeModalOpen = false)} />
 {/if}

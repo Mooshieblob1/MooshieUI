@@ -6,7 +6,13 @@ import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
 
 /**
- * Review state for the NovelAI V5 rewrite.
+ * Review state for the Enhance modal: the NovelAI V5 rewrite, the general
+ * Enhance every other image model uses, and the video (H3) rewrite.
+ *
+ * All three share the input stage (a free text box, reference images, "edit
+ * current prompt") and differ only in what they review. The general and H3
+ * ones change the prompt box alone, so they review one before/after pair; the
+ * V5 one is the multi-field diff described below.
  *
  * The other two enhance paths overwrite the prompt box and offer an undo. This
  * one cannot: a V5 rewrite touches the base prompt, the undesired content and
@@ -30,6 +36,20 @@ import type { NaiLanguage } from "../utils/naiLanguage.js";
  * nothing was written.
  */
 export type NaiEnhanceStage = "input" | "review";
+
+/**
+ * `nai` is the V5 rewrite, `general` the Enhance for every other image model,
+ * `h3` the video rewrite.
+ */
+export type EnhanceFlow = "nai" | "general" | "h3";
+
+/** A general or H3 rewrite awaiting review: it only ever touches the prompt box. */
+export interface GeneralEnhancePending {
+  before: string;
+  after: string;
+  /** Shown above the diff: an H3 format miss, or the idle-mode note. */
+  notice?: { kind: "warning" | "info"; text: string } | null;
+}
 
 /** One reviewable field: what is there now, what the rewrite proposes. */
 export interface NaiEnhanceRow {
@@ -111,12 +131,17 @@ let referenceSeq = 0;
 
 class NaiEnhanceStore {
   stage = $state<NaiEnhanceStage | null>(null);
+  /** Which rewrite the modal is running. Fixed for the life of one opening. */
+  flow = $state<EnhanceFlow>("nai");
   /** What the user typed: a prompt to rewrite, or instructions for a new one. */
   input = $state("");
   /** True while the rewrite is in flight, so the modal stays open and busy. */
   busy = $state(false);
   pending = $state<NaiEnhancePending | null>(null);
+  generalPending = $state<GeneralEnhancePending | null>(null);
   showUndo = $state(false);
+  /** Which flow the undo pill belongs to, for its label. */
+  undoFlow = $state<EnhanceFlow>("nai");
   /**
    * Attached reference images, in the order the model will see them.
    *
@@ -207,11 +232,13 @@ class NaiEnhanceStore {
    * prefilled box reads as "edit this", which is the narrower of the two uses.
    * The copy button underneath covers the other case in one click.
    */
-  openInput(): void {
+  openInput(flow: EnhanceFlow = "nai"): void {
+    this.flow = flow;
     this.stage = "input";
     this.input = "";
     this.busy = false;
     this.pending = null;
+    this.generalPending = null;
     this.references = [];
   }
 
@@ -226,9 +253,16 @@ class NaiEnhanceStore {
     this.stage = "review";
   }
 
+  showGeneralReview(pending: GeneralEnhancePending): void {
+    this.generalPending = pending;
+    this.busy = false;
+    this.stage = "review";
+  }
+
   dismiss(): void {
     this.stage = null;
     this.pending = null;
+    this.generalPending = null;
     this.busy = false;
     this.input = "";
     this.references = [];
@@ -281,14 +315,7 @@ class NaiEnhanceStore {
     const p = this.pending;
     if (!p) return;
 
-    this.snapshot = {
-      positivePrompt: generation.positivePrompt,
-      negativePrompt: generation.negativePrompt,
-      characters: generation.novelaiSettings.characters.map((c) => ({
-        ...c,
-        center: { ...c.center },
-      })),
-    };
+    this.takeSnapshot();
 
     if (p.base.selected) generation.positivePrompt = p.base.after;
     if (p.uc.selected) generation.negativePrompt = p.uc.after;
@@ -314,10 +341,42 @@ class NaiEnhanceStore {
     });
     generation.saveSettings();
 
+    this.finishApply("nai");
+  }
+
+  /**
+   * Write the general rewrite into the prompt box and close. `append` keeps
+   * the current prompt and adds the rewrite after it, the way Compose did.
+   */
+  applyGeneral(how: "replace" | "append"): void {
+    const p = this.generalPending;
+    if (!p) return;
+    this.takeSnapshot();
+    const current = generation.positivePrompt?.trim();
+    generation.positivePrompt =
+      how === "append" && current ? `${current}, ${p.after}` : p.after;
+    generation.saveSettings();
+    this.finishApply(this.flow);
+  }
+
+  private takeSnapshot(): void {
+    this.snapshot = {
+      positivePrompt: generation.positivePrompt,
+      negativePrompt: generation.negativePrompt,
+      characters: generation.novelaiSettings.characters.map((c) => ({
+        ...c,
+        center: { ...c.center },
+      })),
+    };
+  }
+
+  private finishApply(flow: EnhanceFlow): void {
     this.stage = null;
     this.pending = null;
+    this.generalPending = null;
     this.input = "";
     this.references = [];
+    this.undoFlow = flow;
     this.showUndo = true;
     if (this.undoTimer) clearTimeout(this.undoTimer);
     this.undoTimer = setTimeout(() => (this.showUndo = false), UNDO_WINDOW_MS);
