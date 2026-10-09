@@ -19,6 +19,7 @@
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
+  import { novelai } from "./lib/stores/novelai.svelte.js";
   import { needsKrea2RefusalLora } from "./lib/utils/krea2Encoder.js";
   import { notifyKrea2RefusalLoraMissing } from "./lib/utils/krea2UncensoredSetup.js";
   import { BETA57_SCHEDULER } from "./lib/utils/samplingRecommendation.js";
@@ -2792,6 +2793,11 @@
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
     void music.loadLibrary();
+    // The NovelAI key flag gates the Opus subscription fetch behind the Anlas
+    // estimate. ModelSelector also seeds it, but it lives in the right panel,
+    // so with that panel collapsed the flag stayed off and the Generate badge
+    // quoted full price to Opus accounts until the panel was opened.
+    void novelai.refresh();
     await syncManualSaveModeToConfig();
     startupStatus = locale.t("app.status.starting_comfyui");
 
