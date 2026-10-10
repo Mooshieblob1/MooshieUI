@@ -6,6 +6,7 @@
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import MusicPage from "./lib/components/music/MusicPage.svelte";
+  import ScenePage from "./lib/components/scene/ScenePage.svelte";
   import MusicBottomPlayer from "./lib/components/music/MusicBottomPlayer.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import GalleryPage from "./lib/components/gallery/GalleryPage.svelte";
@@ -210,7 +211,7 @@
   const FETCH_TIMEOUT_MS = 45_000;
   const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
   const GENERATION_DONE_TOAST_EXIT_MS = 220;
-  type PrimaryPage = "generate" | "music" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
+  type PrimaryPage = "generate" | "music" | "scene" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
   type GenerationDoneToast = {
     id: number;
     imageUrl: string;
@@ -3850,6 +3851,15 @@
       <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></svg>
     </button>
     <button
+      class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'scene' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+      onclick={() => (currentPage = "scene")}
+      title={locale.t("nav.scene")}
+      aria-label={locale.t("nav.scene")}
+      aria-current={currentPage === "scene" ? "page" : undefined}
+    >
+      <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M10 9.5v3l3-1.5z"/></svg>
+    </button>
+    <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'gallery'
         ? 'bg-indigo-600 text-white'
@@ -4143,6 +4153,8 @@
       <GenerationPage />
     {:else if currentPage === "music"}
       <MusicPage {userRole} />
+    {:else if currentPage === "scene"}
+      <ScenePage onOpenSettings={() => (currentPage = "settings")} />
     {:else if currentPage === "gallery"}
       <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} />
     {:else if currentPage === "modelhub"}

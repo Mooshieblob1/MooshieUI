@@ -7,6 +7,16 @@ import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams
 import type { MusicTranscript } from "./musicReview.js";
 import type { MusicLinkCapabilities, MusicLinkImport } from "./musicLink.js";
 import type { ReferenceSong, MusicReferenceContext } from "../types/music.js";
+import type {
+  DesignResponse,
+  ElevenLabsSubscription,
+  ElevenLabsVoice,
+  Moderated,
+  SpeechEstimate,
+  TakeInfo,
+  TakeRequest,
+  VoiceBrief,
+} from "../types/scene.js";
 import type { AudioStyleCapabilities, AudioStyleTarget, AudioStyleStatus } from "./musicAudioStyle.js";
 
 export function getMusicAudioStyleCapabilities(): Promise<AudioStyleCapabilities> {
@@ -231,6 +241,54 @@ export async function setCloudApiKey(provider: CloudProviderId, apiKey: string):
 /** Which cloud providers the current account has a key for. Never returns a key. */
 export async function cloudKeyStatus(): Promise<CloudKeyStatus> {
   return ipcInvoke("cloud_key_status", {});
+}
+
+// --- Anime scene: ElevenLabs voice steps ---
+
+export async function elevenlabsSubscription(): Promise<ElevenLabsSubscription> {
+  return ipcInvoke("elevenlabs_subscription", {});
+}
+
+export async function elevenlabsListVoices(): Promise<ElevenLabsVoice[]> {
+  return ipcInvoke("elevenlabs_list_voices", {});
+}
+
+/** Spends ElevenLabs credits. Call only after the user confirmed the estimate. */
+export async function elevenlabsDesignVoice(request: {
+  brief: VoiceBrief;
+  preview_text: string;
+  seed: number | null;
+}): Promise<DesignResponse> {
+  return ipcInvoke("elevenlabs_design_voice", { request });
+}
+
+/** Saves a preview as a voice on the account, using one voice slot. */
+export async function elevenlabsSaveVoice(
+  name: string,
+  description: string,
+  generatedVoiceId: string,
+): Promise<ElevenLabsVoice> {
+  return ipcInvoke("elevenlabs_save_voice", { name, description, generatedVoiceId });
+}
+
+/** Permanently deletes a voice from the ElevenLabs account. Confirm first. */
+export async function elevenlabsDeleteVoice(voiceId: string): Promise<void> {
+  return ipcInvoke("elevenlabs_delete_voice", { voiceId });
+}
+
+/** What rendering these takes would bill, skipping takes already on disk. Free. */
+export async function sceneEstimateTakes(requests: TakeRequest[]): Promise<SpeechEstimate> {
+  return ipcInvoke("scene_estimate_takes", { requests });
+}
+
+/** Spends ElevenLabs credits unless the take is cached. Confirm first. */
+export async function sceneRenderTake(request: TakeRequest): Promise<Moderated<TakeInfo>> {
+  return ipcInvoke("scene_render_take", { request });
+}
+
+/** Load a take already on disk. Never calls ElevenLabs. */
+export async function sceneLoadTake(takeId: string): Promise<TakeInfo> {
+  return ipcInvoke("scene_load_take", { takeId });
 }
 
 export interface ControlNetPreprocessorPreviewResponse {

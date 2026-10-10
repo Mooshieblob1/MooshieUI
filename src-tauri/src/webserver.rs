@@ -3745,6 +3745,74 @@ async fn dispatch_command(
             let status = crate::cloud::key_status(&state, username).await;
             serde_json::to_value(status).map_err(|e| e.to_string())
         }
+        // Scene voice steps. Each account pays with its own ElevenLabs key
+        // and keeps its own takes, so these are open to every account.
+        "elevenlabs_subscription" => {
+            let sub = crate::cloud::voice::subscription(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(sub).map_err(|e| e.to_string())
+        }
+        "elevenlabs_list_voices" => {
+            let voices = crate::cloud::voice::list_voices(&state, username)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(voices).map_err(|e| e.to_string())
+        }
+        "elevenlabs_design_voice" => {
+            let request: crate::cloud::voice::DesignRequest =
+                serde_json::from_value(args["request"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let response = crate::cloud::voice::design(&state, username, request)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(response).map_err(|e| e.to_string())
+        }
+        "elevenlabs_save_voice" => {
+            let voice = crate::cloud::voice::save_voice(
+                &state,
+                username,
+                args["name"].as_str().unwrap_or(""),
+                args["description"].as_str().unwrap_or(""),
+                args["generatedVoiceId"].as_str().unwrap_or(""),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(voice).map_err(|e| e.to_string())
+        }
+        "elevenlabs_delete_voice" => {
+            crate::cloud::voice::delete_voice(
+                &state,
+                username,
+                args["voiceId"].as_str().unwrap_or(""),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "scene_estimate_takes" => {
+            let requests: Vec<crate::cloud::voice::TakeRequest> =
+                serde_json::from_value(args["requests"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let estimate = crate::cloud::voice::estimate_takes(username, &requests)
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(estimate).map_err(|e| e.to_string())
+        }
+        "scene_render_take" => {
+            let request: crate::cloud::voice::TakeRequest =
+                serde_json::from_value(args["request"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let take = crate::cloud::voice::render_take(&state, username, request)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(take).map_err(|e| e.to_string())
+        }
+        "scene_load_take" => {
+            let take =
+                crate::cloud::voice::load_take(username, args["takeId"].as_str().unwrap_or(""))
+                    .map_err(|e| e.to_string())?;
+            serde_json::to_value(take).map_err(|e| e.to_string())
+        }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
             let configured = !api_key.is_empty();
@@ -8651,7 +8719,18 @@ mod nai_key_tests {
 
     #[test]
     fn regular_accounts_can_manage_their_own_cloud_keys() {
-        for command in ["set_cloud_api_key", "cloud_key_status"] {
+        for command in [
+            "set_cloud_api_key",
+            "cloud_key_status",
+            "elevenlabs_subscription",
+            "elevenlabs_list_voices",
+            "elevenlabs_design_voice",
+            "elevenlabs_save_voice",
+            "elevenlabs_delete_voice",
+            "scene_estimate_takes",
+            "scene_render_take",
+            "scene_load_take",
+        ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }
     }
