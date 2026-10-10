@@ -4,9 +4,11 @@
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::cloud::elevenlabs::{Moderated, Subscription, VoiceSummary};
+use crate::cloud::scene::job::{self, ScenePlan, SceneRequest};
+use crate::cloud::video::VideoCapabilities;
 use crate::cloud::voice::{
     self, DesignRequest, DesignResponse, SpeechEstimate, TakeInfo, TakeRequest,
 };
@@ -95,4 +97,43 @@ pub async fn scene_render_take(
 #[tauri::command]
 pub async fn scene_load_take(take_id: String) -> Result<TakeInfo, AppError> {
     voice::load_take(None, &take_id)
+}
+
+#[tauri::command]
+pub async fn scene_video_capabilities() -> Result<Vec<VideoCapabilities>, AppError> {
+    Ok(job::capabilities())
+}
+
+/// Timings, prompt and price for a scene. Spends nothing.
+#[tauri::command]
+pub async fn scene_plan(
+    state: State<'_, Arc<AppState>>,
+    request: SceneRequest,
+) -> Result<ScenePlan, AppError> {
+    job::plan(state.inner(), None, &request).await
+}
+
+/// Start a paid scene render and return its prompt id. The page shows the
+/// itemized confirmation before calling this.
+#[tauri::command]
+pub async fn scene_generate(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    request: SceneRequest,
+) -> Result<String, AppError> {
+    let sink = crate::novelai::EventSink::new(Arc::clone(state.inner()), Some(app));
+    job::start(state.inner(), None, &request, sink).await
+}
+
+/// Pick up unfinished scenes after a restart. Costs nothing.
+#[tauri::command]
+pub async fn scene_resume_jobs(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<String>, AppError> {
+    let shared = Arc::clone(state.inner());
+    job::resume(state.inner(), None, || {
+        crate::novelai::EventSink::new(Arc::clone(&shared), Some(app.clone()))
+    })
+    .await
 }
