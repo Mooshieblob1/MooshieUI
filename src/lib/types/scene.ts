@@ -73,3 +73,92 @@ export interface SpeechEstimate {
   characters: number;
   cached: number;
 }
+
+// --- Video step (Phase 2) ---
+
+export type VideoModelId = "fal_seedance25";
+
+/** What a video model can do. The page reads limits from here and never
+ *  branches on a provider's name. */
+export interface VideoCapabilities {
+  model: VideoModelId;
+  provider: "elevenlabs" | "fal" | "segmind";
+  label: string;
+  min_seconds: number;
+  max_seconds: number;
+  max_images: number;
+  max_image_bytes: number;
+  max_audio: number;
+  audio_min_seconds: number;
+  audio_max_seconds: number;
+  max_audio_bytes: number;
+  resolutions: string[];
+  aspect_ratios: string[];
+  draft: boolean;
+  audio_reference: boolean;
+  price_checked: string;
+}
+
+/** What one reference image controls. `shot` is a 0-based shot index. */
+export type ImageRole = { kind: "character" } | { kind: "location" } | { kind: "shot"; shot: number };
+
+export interface SceneImageInput {
+  filename: string;
+  role: ImageRole;
+}
+
+export interface SceneLineInput {
+  line_id: string;
+  take_id: string;
+  text: string;
+  delivery: string;
+}
+
+export interface SceneShotInput {
+  framing: string;
+  action: string;
+  line_id: string | null;
+  /** Pause before the shot's line, or the whole length of a silent shot. */
+  lead: number;
+}
+
+export interface SceneRequest {
+  model: VideoModelId;
+  resolution: string;
+  draft: boolean;
+  aspect: string;
+  seed: number | null;
+  continuous: boolean;
+  character_name: string;
+  character_traits: string;
+  language: string;
+  starting_state: string;
+  ending_state: string;
+  ambience: string;
+  minor: boolean;
+  voice_id: string;
+  lines: SceneLineInput[];
+  shots: SceneShotInput[];
+  tail: number;
+  images: SceneImageInput[];
+  /** The user's edit of the built prompt; null sends the built one. */
+  prompt_override: string | null;
+}
+
+export interface VideoEstimate {
+  usd: number;
+  resolution: string;
+  seconds: number;
+  checked: string;
+}
+
+export interface ScenePlan {
+  prompt: string;
+  builder_version: number;
+  seconds: number;
+  track_seconds: number;
+  windows: { line_id: string; start: number; end: number }[];
+  shots: { start: number; end: number }[];
+  estimate: VideoEstimate;
+  model_label: string;
+}

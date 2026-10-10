@@ -79,6 +79,30 @@ pub struct SceneRequest {
     #[serde(default)]
     pub tail: f64,
     pub images: Vec<SceneImage>,
+    /// The user's edit of the built prompt (research doc 7, requirement 5).
+    #[serde(default)]
+    pub prompt_override: Option<String>,
+}
+
+/// Longest prompt accepted from the editor.
+const MAX_PROMPT_CHARS: usize = 8000;
+
+/// The user may edit the built prompt, but a minor-flagged scene keeps its
+/// age-appropriate constraints whatever the edit says.
+fn final_prompt(built: String, edited: Option<&str>, minor: bool) -> Result<String, String> {
+    let Some(edited) = edited.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(built);
+    };
+    if edited.chars().count() > MAX_PROMPT_CHARS {
+        return Err(format!(
+            "The prompt can be at most {MAX_PROMPT_CHARS} characters."
+        ));
+    }
+    let mut prompt = edited.to_string();
+    if minor && !prompt.contains(prompt::MINOR_CONSTRAINTS) {
+        prompt.push_str(&format!("\n\nConstraints: {}.", prompt::MINOR_CONSTRAINTS));
+    }
+    Ok(prompt)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -315,7 +339,12 @@ async fn plan_inner(
         ending_state: request.ending_state.clone(),
         minor: request.minor,
     };
-    let prompt = prompt::build(&spec).map_err(AppError::Other)?;
+    let prompt = final_prompt(
+        prompt::build(&spec).map_err(AppError::Other)?,
+        request.prompt_override.as_deref(),
+        request.minor,
+    )
+    .map_err(AppError::Other)?;
     let estimate = request
         .model
         .estimate(&request.resolution, timeline.seconds, request.draft)
@@ -853,6 +882,38 @@ fn metadata_json(record: &JobRecord, width: u32, height: u32) -> String {
     .to_string()
 }
 
+/// Copy the streams untouched and write the metadata as an mdta `comment`,
+/// the shape the gallery's reader and `mirror_uuid_sidecar` expect.
+fn tag_args(raw: &Path, out: &Path, comment: &str) -> Vec<String> {
+    vec![
+        "-hide_banner".into(),
+        "-y".into(),
+        "-i".into(),
+        raw.to_string_lossy().into_owned(),
+        "-map".into(),
+        "0".into(),
+        "-c".into(),
+        "copy".into(),
+        "-metadata".into(),
+        format!("comment={comment}"),
+        "-movflags".into(),
+        "+faststart+use_metadata_tags".into(),
+        out.to_string_lossy().into_owned(),
+    ]
+}
+
+fn poster_args(video: &Path, frame: &Path) -> Vec<String> {
+    vec![
+        "-hide_banner".into(),
+        "-y".into(),
+        "-i".into(),
+        video.to_string_lossy().into_owned(),
+        "-frames:v".into(),
+        "1".into(),
+        frame.to_string_lossy().into_owned(),
+    ]
+}
+
 /// Remux the clip with its metadata, grab a poster and move both into the
 /// account's gallery. Returns the `comfyui:output_video` payload.
 async fn ingest(
@@ -878,36 +939,18 @@ async fn ingest(
         .ok_or_else(|| AppError::Other("The downloaded file is not a readable video.".into()))?;
 
     let tagged = dir.join("scene.mp4");
-    let args: Vec<String> = vec![
-        "-hide_banner".into(),
-        "-y".into(),
-        "-i".into(),
-        raw.to_string_lossy().into_owned(),
-        "-map".into(),
-        "0".into(),
-        "-c".into(),
-        "copy".into(),
-        "-metadata".into(),
-        format!("comment={}", metadata_json(record, info.width, info.height)),
-        "-movflags".into(),
-        "+faststart+use_metadata_tags".into(),
-        tagged.to_string_lossy().into_owned(),
-    ];
+    let args = tag_args(
+        &raw,
+        &tagged,
+        &metadata_json(record, info.width, info.height),
+    );
     audio::run_ffmpeg(&ffmpeg, &args, false)
         .await
         .map_err(AppError::Other)?;
 
     let frame = dir.join("poster.png");
     let poster = dir.join("poster.webp");
-    let poster_args: Vec<String> = vec![
-        "-hide_banner".into(),
-        "-y".into(),
-        "-i".into(),
-        tagged.to_string_lossy().into_owned(),
-        "-frames:v".into(),
-        "1".into(),
-        frame.to_string_lossy().into_owned(),
-    ];
+    let poster_args = poster_args(&tagged, &frame);
     let poster_ok = match audio::run_ffmpeg(&ffmpeg, &poster_args, false).await {
         Ok(_) => {
             let (frame, poster) = (frame.clone(), poster.clone());
@@ -996,7 +1039,25 @@ mod tests {
                 filename: "a.jxl".into(),
                 role: ImageRole::Character,
             }],
+            prompt_override: None,
         }
+    }
+
+    #[test]
+    fn an_edited_prompt_keeps_a_minors_constraints() {
+        let built = "built".to_string();
+        assert_eq!(final_prompt(built.clone(), None, true).unwrap(), "built");
+        assert_eq!(
+            final_prompt(built.clone(), Some("  "), false).unwrap(),
+            "built"
+        );
+        assert_eq!(
+            final_prompt(built.clone(), Some("mine"), false).unwrap(),
+            "mine"
+        );
+        let edited = final_prompt(built.clone(), Some("mine"), true).unwrap();
+        assert!(edited.starts_with("mine") && edited.contains(prompt::MINOR_CONSTRAINTS));
+        assert!(final_prompt(built, Some(&"x".repeat(MAX_PROMPT_CHARS + 1)), false).is_err());
     }
 
     #[test]
@@ -1087,5 +1148,89 @@ mod tests {
         assert_eq!(parsed.get("size").map(String::as_str), Some("864x496"));
         let text = json.to_string();
         assert!(!text.contains("status_url") && !text.contains("queue.fal.run"));
+    }
+
+    /// Runs the real FFmpeg steps: `cargo test -- --ignored ffmpeg` with
+    /// `ffmpeg` on PATH (or FFMPEG set to its path).
+    #[tokio::test]
+    #[ignore = "needs ffmpeg"]
+    async fn ffmpeg_steps_build_a_track_and_a_tagged_clip() {
+        let ffmpeg = PathBuf::from(std::env::var("FFMPEG").unwrap_or_else(|_| "ffmpeg".into()));
+        let dir =
+            std::env::temp_dir().join(format!("mooshie-scene-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: Vec<String>| {
+            let ffmpeg = ffmpeg.clone();
+            async move { audio::run_ffmpeg(&ffmpeg, &args, false).await.unwrap() }
+        };
+        let s = |v: &str| v.to_string();
+
+        // Two stereo 48 kHz "takes" of 2.0 s and 1.5 s.
+        for (name, secs) in [("a.wav", "2.0"), ("b.wav", "1.5")] {
+            run(vec![
+                s("-hide_banner"),
+                s("-y"),
+                s("-f"),
+                s("lavfi"),
+                s("-i"),
+                format!("sine=frequency=440:sample_rate=48000:duration={secs}"),
+                s("-ac"),
+                s("2"),
+                dir.join(name).to_string_lossy().into_owned(),
+            ])
+            .await;
+        }
+        let takes = vec![(dir.join("a.wav"), 1.5), (dir.join("b.wav"), 0.5)];
+        let track = dir.join("voice.wav");
+        run(audio::track_args(&takes, 1.0, &track)).await;
+        let total = audio::probe_duration(&ffmpeg, &track).await.unwrap();
+        assert!((total - 6.5).abs() < 0.05, "{total}");
+
+        // A short clip standing in for the provider's mp4.
+        let raw = dir.join("raw.mp4");
+        run(vec![
+            s("-hide_banner"),
+            s("-y"),
+            s("-f"),
+            s("lavfi"),
+            s("-i"),
+            s("testsrc=size=320x240:rate=24:duration=1"),
+            s("-c:v"),
+            s("mpeg4"),
+            raw.to_string_lossy().into_owned(),
+        ])
+        .await;
+        let tagged = dir.join("scene.mp4");
+        let comment = r#"{"sui_image_params":{"prompt":"Format: test","width":320,"height":240}}"#;
+        run(tag_args(&raw, &tagged, comment)).await;
+        let meta = crate::metadata::read_file_metadata(&tagged).expect("metadata");
+        assert_eq!(
+            meta.get("positive_prompt").map(String::as_str),
+            Some("Format: test")
+        );
+
+        let banner = audio::run_ffmpeg(
+            &ffmpeg,
+            &[
+                s("-hide_banner"),
+                s("-i"),
+                tagged.to_string_lossy().into_owned(),
+            ],
+            true,
+        )
+        .await
+        .unwrap();
+        let info = audio::parse_video_info(&banner).unwrap();
+        assert_eq!((info.width, info.height, info.fps), (320, 240, 24.0));
+
+        let frame = dir.join("poster.png");
+        run(poster_args(&tagged, &frame)).await;
+        let poster = dir.join("poster.webp");
+        image::open(&frame)
+            .unwrap()
+            .save_with_format(&poster, image::ImageFormat::WebP)
+            .unwrap();
+        assert!(poster.metadata().unwrap().len() > 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

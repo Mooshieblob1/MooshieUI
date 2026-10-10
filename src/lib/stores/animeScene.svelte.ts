@@ -6,13 +6,23 @@ import {
   elevenlabsSaveVoice,
   elevenlabsSubscription,
   sceneEstimateTakes,
+  sceneGenerate,
   sceneLoadTake,
+  scenePlan,
   sceneRenderTake,
+  sceneResumeJobs,
+  sceneVideoCapabilities,
 } from "../utils/api.js";
+import { progress } from "./progress.svelte.js";
 import type {
   ElevenLabsSubscription,
   ElevenLabsVoice,
+  ImageRole,
+  ScenePlan,
+  SceneRequest,
   SpeechSettings,
+  VideoCapabilities,
+  VideoModelId,
   TakeRequest,
   VoiceBrief,
   VoicePreview,
@@ -51,6 +61,57 @@ export interface PendingConfirm {
   resolve: (ok: boolean) => void;
 }
 
+/** A reference image from the gallery and the one job it does. */
+export interface SceneReference {
+  filename: string;
+  /** Display only. */
+  thumb: string | null;
+  role: ImageRole;
+}
+
+export interface SceneShot {
+  id: string;
+  framing: string;
+  action: string;
+  lineId: string | null;
+  /** Pause before the line, or the whole length of a shot without one. */
+  lead: number;
+}
+
+export interface SceneVideoSettings {
+  model: VideoModelId;
+  resolution: string;
+  /** A cheap 480p draft. On by default: it is how the prototype iterated. */
+  draft: boolean;
+  aspect: string;
+  seed: number | null;
+  continuous: boolean;
+  characterTraits: string;
+  language: string;
+  startingState: string;
+  endingState: string;
+  ambience: string;
+  /** Silence after the last line, in seconds. */
+  tail: number;
+}
+
+function defaultVideo(): SceneVideoSettings {
+  return {
+    model: "fal_seedance25",
+    resolution: "720p",
+    draft: true,
+    aspect: "16:9",
+    seed: null,
+    continuous: false,
+    characterTraits: "",
+    language: "Japanese",
+    startingState: "",
+    endingState: "",
+    ambience: "",
+    tail: 1,
+  };
+}
+
 interface Persisted {
   characterName: string;
   isMinor: boolean;
@@ -61,6 +122,9 @@ interface Persisted {
   previewText: string;
   speech: SpeechSettings;
   lines: SceneLine[];
+  references: SceneReference[];
+  shots: SceneShot[];
+  video: SceneVideoSettings;
 }
 
 function newId(): string {
@@ -107,8 +171,20 @@ class AnimeSceneStore {
   previewText = $state("");
   speech = $state<SpeechSettings>(defaultSpeech());
   lines = $state<SceneLine[]>([]);
+  references = $state<SceneReference[]>([]);
+  shots = $state<SceneShot[]>([]);
+  video = $state<SceneVideoSettings>(defaultVideo());
 
   // Not persisted.
+  capabilities = $state<VideoCapabilities[]>([]);
+  plan = $state<ScenePlan | null>(null);
+  /** The user's edit of the built prompt; null sends the built one. */
+  promptOverride = $state<string | null>(null);
+  planning = $state(false);
+  videoError = $state<string | null>(null);
+  starting = $state(false);
+  /** Scene renders started from this page that are still running. */
+  activeJobs = $state<string[]>([]);
   subscription = $state<ElevenLabsSubscription | null>(null);
   voices = $state<ElevenLabsVoice[]>([]);
   accountLoading = $state(false);
@@ -170,6 +246,21 @@ class AnimeSceneStore {
             blocked: l.blocked ?? null,
           }));
       }
+      if (Array.isArray(p.references)) {
+        this.references = p.references.filter((r) => r && typeof r.filename === "string" && r.role && typeof r.role.kind === "string");
+      }
+      if (Array.isArray(p.shots)) {
+        this.shots = p.shots
+          .filter((sh) => sh && typeof sh.framing === "string")
+          .map((sh) => ({
+            id: typeof sh.id === "string" ? sh.id : newId(),
+            framing: sh.framing,
+            action: typeof sh.action === "string" ? sh.action : "",
+            lineId: sh.lineId ?? null,
+            lead: typeof sh.lead === "number" ? sh.lead : 0,
+          }));
+      }
+      if (p.video && typeof p.video === "object") this.video = { ...defaultVideo(), ...p.video };
     } catch {
       /* corrupt or unavailable storage: start fresh */
     }
@@ -186,6 +277,9 @@ class AnimeSceneStore {
       previewText: this.previewText,
       speech: this.speech,
       lines: this.lines,
+      references: this.references,
+      shots: this.shots,
+      video: this.video,
     };
     try {
       localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(data));
@@ -205,6 +299,10 @@ class AnimeSceneStore {
     this.previewText = "";
     this.previews = [];
     this.lines = [];
+    this.references = [];
+    this.shots = [];
+    this.video = defaultVideo();
+    this.invalidatePlan();
     this.saveSettings();
   }
 
@@ -346,11 +444,14 @@ class AnimeSceneStore {
       // so going back to that text finds them in the cache for free.
       return { ...l, ...patch, takes: [], chosenTakeId: null, blocked: null };
     });
+    this.invalidatePlan();
     this.saveSettings();
   }
 
   removeLine(id: string) {
     this.lines = this.lines.filter((l) => l.id !== id);
+    this.shots = this.shots.map((sh) => (sh.lineId === id ? { ...sh, lineId: null } : sh));
+    this.invalidatePlan();
     this.saveSettings();
   }
 
@@ -366,6 +467,7 @@ class AnimeSceneStore {
 
   chooseTake(lineId: string, takeId: string) {
     this.lines = this.lines.map((l) => (l.id === lineId ? { ...l, chosenTakeId: takeId } : l));
+    this.invalidatePlan();
     this.saveSettings();
   }
 
@@ -457,6 +559,245 @@ class AnimeSceneStore {
       return url;
     } catch {
       return null;
+    }
+  }
+
+  // --- Video step ---
+
+  /** A change to the scene makes the plan, and any edit of its prompt, stale. */
+  private invalidatePlan() {
+    this.plan = null;
+    this.promptOverride = null;
+  }
+
+  setPromptOverride(text: string) {
+    this.promptOverride = this.plan && text === this.plan.prompt ? null : text;
+  }
+
+  get capability(): VideoCapabilities | null {
+    return this.capabilities.find((c) => c.model === this.video.model) ?? this.capabilities[0] ?? null;
+  }
+
+  /** Lines with a chosen take, which are the only ones a shot can use. */
+  get readyLines(): SceneLine[] {
+    return this.lines.filter((l) => l.chosenTakeId && !l.blocked);
+  }
+
+  async loadCapabilities() {
+    try {
+      this.capabilities = await sceneVideoCapabilities();
+      const caps = this.capability;
+      if (caps) {
+        // Settings saved against an older model's options fall back to valid ones.
+        const v = { ...this.video, model: caps.model };
+        if (!caps.resolutions.includes(v.resolution)) v.resolution = caps.resolutions[0];
+        if (!caps.aspect_ratios.includes(v.aspect)) v.aspect = caps.aspect_ratios[0];
+        if (!caps.draft) v.draft = false;
+        this.video = v;
+      }
+    } catch (e) {
+      this.videoError = errorText(e);
+    }
+  }
+
+  /** Follow scenes a restart left unfinished. Costs nothing. */
+  async resumeJobs() {
+    try {
+      const ids = await sceneResumeJobs();
+      for (const id of ids) this.track(id);
+    } catch {
+      /* nothing to resume, or no key: the page says so elsewhere */
+    }
+  }
+
+  private track(promptId: string) {
+    progress.enqueue(promptId, false, "video", null);
+    if (!this.activeJobs.includes(promptId)) this.activeJobs = [...this.activeJobs, promptId];
+  }
+
+  /** Drop finished jobs from the page's list. Called from the page's effect. */
+  syncActiveJobs() {
+    const pending = new Set(progress.pendingPrompts.map((p) => p.promptId));
+    const still = this.activeJobs.filter((id) => pending.has(id));
+    if (still.length !== this.activeJobs.length) this.activeJobs = still;
+  }
+
+  updateVideo(patch: Partial<SceneVideoSettings>) {
+    this.video = { ...this.video, ...patch };
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  addReferences(images: { filename: string; thumb: string | null }[]) {
+    const max = this.capability?.max_images ?? 30;
+    const known = new Set(this.references.map((r) => r.filename));
+    const hasCharacter = this.references.some((r) => r.role.kind === "character");
+    const added: SceneReference[] = [];
+    for (const image of images) {
+      if (known.has(image.filename)) continue;
+      known.add(image.filename);
+      // The first image becomes the character reference; the rest start as
+      // the location and can be reassigned.
+      const role: ImageRole = !hasCharacter && added.length === 0 ? { kind: "character" } : { kind: "location" };
+      added.push({ filename: image.filename, thumb: image.thumb, role });
+    }
+    this.references = [...this.references, ...added].slice(0, max);
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  setReferenceRole(filename: string, role: ImageRole) {
+    this.references = this.references.map((r) => (r.filename === filename ? { ...r, role } : r));
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  removeReference(filename: string) {
+    this.references = this.references.filter((r) => r.filename !== filename);
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  addShot() {
+    // A new shot takes the next line no shot uses yet, if there is one.
+    const used = new Set(this.shots.map((sh) => sh.lineId));
+    const next = this.readyLines.find((l) => !used.has(l.id));
+    this.shots = [
+      ...this.shots,
+      {
+        id: newId(),
+        framing: "",
+        action: "",
+        lineId: next?.id ?? null,
+        lead: next ? (this.shots.length === 0 ? 0 : 0.5) : 1.5,
+      },
+    ];
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  updateShot(id: string, patch: Partial<Omit<SceneShot, "id">>) {
+    this.shots = this.shots.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh));
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  removeShot(id: string) {
+    const index = this.shots.findIndex((sh) => sh.id === id);
+    this.shots = this.shots.filter((sh) => sh.id !== id);
+    // Shot references point at shots by position, so later ones shift down.
+    this.references = this.references.flatMap((r) => {
+      if (r.role.kind !== "shot") return [r];
+      if (r.role.shot === index) return [{ ...r, role: { kind: "location" } as ImageRole }];
+      return [r.role.shot > index ? { ...r, role: { kind: "shot", shot: r.role.shot - 1 } as ImageRole } : r];
+    });
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  moveShot(id: string, delta: number) {
+    const i = this.shots.findIndex((sh) => sh.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= this.shots.length) return;
+    const next = [...this.shots];
+    [next[i], next[j]] = [next[j], next[i]];
+    this.shots = next;
+    this.references = this.references.map((r) => {
+      if (r.role.kind !== "shot") return r;
+      if (r.role.shot === i) return { ...r, role: { kind: "shot", shot: j } };
+      if (r.role.shot === j) return { ...r, role: { kind: "shot", shot: i } };
+      return r;
+    });
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  private sceneRequest(): SceneRequest {
+    const v = this.video;
+    return {
+      model: v.model,
+      resolution: v.resolution,
+      draft: v.draft,
+      aspect: v.aspect,
+      seed: v.seed,
+      continuous: v.continuous,
+      character_name: this.characterName,
+      character_traits: v.characterTraits,
+      language: v.language,
+      starting_state: v.startingState,
+      ending_state: v.endingState,
+      ambience: v.ambience,
+      minor: this.isMinor,
+      voice_id: this.voiceId ?? "",
+      lines: this.readyLines.map((l) => ({
+        line_id: l.id,
+        take_id: l.chosenTakeId!,
+        text: l.text,
+        delivery: l.delivery,
+      })),
+      shots: this.shots.map((sh) => ({
+        framing: sh.framing,
+        action: sh.action,
+        line_id: sh.lineId,
+        lead: sh.lead,
+      })),
+      tail: v.tail,
+      images: this.references.map((r) => ({ filename: r.filename, role: r.role })),
+      prompt_override: this.promptOverride,
+    };
+  }
+
+  /** Timings, prompt and price. Free: nothing leaves this machine. */
+  async planScene(): Promise<ScenePlan | null> {
+    this.planning = true;
+    this.videoError = null;
+    try {
+      this.plan = await scenePlan(this.sceneRequest());
+      // Show exactly what will be sent, including anything the backend adds.
+      if (this.promptOverride !== null) this.promptOverride = this.plan.prompt;
+      return this.plan;
+    } catch (e) {
+      this.plan = null;
+      this.videoError = errorText(e);
+      return null;
+    } finally {
+      this.planning = false;
+    }
+  }
+
+  /** Show the itemized estimate, then start the paid render on confirm. */
+  async generateVideo() {
+    if (this.starting || this.planning) return;
+    const plan = await this.planScene();
+    if (!plan) return;
+    const caps = this.capability;
+    const ok = await this.confirm(
+      "scene.cost.video_title",
+      [
+        {
+          labelKey: this.video.draft ? "scene.cost.video_item_draft" : "scene.cost.video_item",
+          params: {
+            model: plan.model_label,
+            seconds: plan.seconds,
+            resolution: plan.estimate.resolution,
+            usd: plan.estimate.usd.toFixed(2),
+          },
+        },
+        { labelKey: "scene.cost.video_inputs", params: { images: this.references.length, audio: plan.track_seconds.toFixed(1) } },
+        { labelKey: "scene.cost.video_checked", params: { date: caps?.price_checked ?? plan.estimate.checked } },
+      ],
+      ["scene.cost.fal_note", "scene.cost.cancel_note"],
+    );
+    if (!ok) return;
+    this.starting = true;
+    this.videoError = null;
+    try {
+      const id = await sceneGenerate(this.sceneRequest());
+      this.track(id);
+    } catch (e) {
+      this.videoError = errorText(e);
+    } finally {
+      this.starting = false;
     }
   }
 

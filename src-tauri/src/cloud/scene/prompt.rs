@@ -62,6 +62,10 @@ pub struct SceneSpec {
     pub minor: bool,
 }
 
+/// Constraints every minor-flagged scene carries, also after a user edit.
+pub const MINOR_CONSTRAINTS: &str =
+    "age-appropriate everyday scene, fully clothed, nothing suggestive";
+
 pub const MIN_SECONDS: u32 = 4;
 pub const MAX_SECONDS: u32 = 30;
 
@@ -287,11 +291,7 @@ pub fn build(spec: &SceneSpec) -> Result<String, String> {
         constraints.push("no cuts");
     }
     if spec.minor {
-        constraints.extend([
-            "age-appropriate everyday scene",
-            "fully clothed",
-            "nothing suggestive",
-        ]);
+        constraints.push(MINOR_CONSTRAINTS);
     }
     sections.push(format!("Constraints: {}.", constraints.join(", ")));
 
