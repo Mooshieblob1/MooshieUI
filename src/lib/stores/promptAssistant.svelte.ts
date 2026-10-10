@@ -713,7 +713,6 @@ class PromptAssistantStore {
     try {
       return await this.withStageListener(async () => {
         const skill = await this.ensureNaiSkill(ctx);
-        const user = naiUserPrompt(prompt, ctx);
         // Budgeted against every recorded turn, the most the session can send.
         const sessionCtx = {
           ...ctx,
@@ -724,11 +723,16 @@ class PromptAssistantStore {
           ]),
         };
         const sessionSystem = naiSystemWithSkill(naiRewriteSystemPrompt(sessionCtx), skill);
+        const sessionUserTurn = naiUserPrompt(prompt, sessionCtx);
         const history = this.sessionHistory("nai", {
           systemTokens: estimateTokens(sessionSystem),
-          userText: user,
+          userText: sessionUserTurn,
           maxOutputTokens: NAI_MAX_TOKENS,
         });
+        // With history the turn is a revision of the newest answer; without it,
+        // the ordinary rewrite from this text alone.
+        const user =
+          history.sentTurns > 0 ? sessionUserTurn : naiUserPrompt(prompt, { ...ctx, inSession: false });
         // The SESSION block only when history actually goes out: telling the
         // model about earlier turns it cannot see would be the opposite lie.
         const system =
