@@ -2345,6 +2345,8 @@ const pt: Record<string, string> = {
   "characters.no_results": "Nenhum personagem salvo corresponde à busca",
   "characters.name": "Nome",
   "characters.prompt": "Prompt do personagem",
+  "characters.negative": "Conteúdo indesejado (UC) para este personagem",
+  "characters.negative_prefix": "UC:",
   "characters.use": "Usar",
   "characters.use_tip": "Adicionar este personagem ao prompt atual",
   "characters.edit": "Editar",

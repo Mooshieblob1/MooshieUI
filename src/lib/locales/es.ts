@@ -2414,6 +2414,8 @@ const es: Record<string, string> = {
   "characters.no_results": "Ningún personaje guardado coincide con tu búsqueda",
   "characters.name": "Nombre",
   "characters.prompt": "Prompt del personaje",
+  "characters.negative": "Contenido no deseado (UC) para este personaje",
+  "characters.negative_prefix": "UC:",
   "characters.use": "Usar",
   "characters.use_tip": "Añadir este personaje al prompt actual",
   "characters.edit": "Editar",

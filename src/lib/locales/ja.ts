@@ -2370,6 +2370,8 @@ const ja: Record<string, string> = {
   "characters.no_results": "検索に一致する保存済みキャラクターはありません",
   "characters.name": "名前",
   "characters.prompt": "キャラクタープロンプト",
+  "characters.negative": "このキャラクターの除外内容 (UC)",
+  "characters.negative_prefix": "UC:",
   "characters.use": "使用",
   "characters.use_tip": "このキャラクターを現在のプロンプトに追加",
   "characters.edit": "編集",

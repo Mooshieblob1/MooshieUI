@@ -440,13 +440,14 @@ class PromptAssistantStore {
   }
 
   /**
-   * Pull the characters out of a prompt for the Characters tab. One retry when
+   * Pull the characters out of a prompt and its negative prompt (UC) for the
+   * Characters tab. One retry when
    * the reply is not the JSON asked for; an empty list means the model found
    * no characters.
    */
-  async extractCharacters(prompt: string): Promise<ExtractedCharacter[]> {
+  async extractCharacters(prompt: string, negative: string): Promise<ExtractedCharacter[]> {
     if (this.isGenerating) throw new Error("busy_generation");
-    const request = characterExtractRequest(prompt);
+    const request = characterExtractRequest(prompt, negative);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {

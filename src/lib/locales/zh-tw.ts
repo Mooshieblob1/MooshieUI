@@ -2345,6 +2345,8 @@ const zhTw: Record<string, string> = {
   "characters.no_results": "沒有符合搜尋的已儲存角色",
   "characters.name": "名稱",
   "characters.prompt": "角色提示詞",
+  "characters.negative": "此角色的負面內容 (UC)",
+  "characters.negative_prefix": "UC:",
   "characters.use": "使用",
   "characters.use_tip": "將此角色加入目前的提示詞",
   "characters.edit": "編輯",

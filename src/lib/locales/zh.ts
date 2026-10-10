@@ -2386,6 +2386,8 @@ const zh: Record<string, string> = {
   "characters.no_results": "没有与搜索匹配的已保存角色",
   "characters.name": "名称",
   "characters.prompt": "角色提示词",
+  "characters.negative": "此角色的负面内容 (UC)",
+  "characters.negative_prefix": "UC:",
   "characters.use": "使用",
   "characters.use_tip": "将此角色添加到当前提示词",
   "characters.edit": "编辑",

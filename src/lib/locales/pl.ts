@@ -2082,6 +2082,8 @@ const pl: Record<string, string> = {
   "characters.no_results": "Żadna zapisana postać nie pasuje do wyszukiwania",
   "characters.name": "Nazwa",
   "characters.prompt": "Prompt postaci",
+  "characters.negative": "Niepożądana treść (UC) dla tej postaci",
+  "characters.negative_prefix": "UC:",
   "characters.use": "Użyj",
   "characters.use_tip": "Dodaj tę postać do bieżącego promptu",
   "characters.edit": "Edytuj",

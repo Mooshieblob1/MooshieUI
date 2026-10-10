@@ -20,6 +20,7 @@
   let editingId = $state<string | null>(null);
   let editName = $state("");
   let editPrompt = $state("");
+  let editNegative = $state("");
 
   const architecture = $derived(savedCharacters.currentArchitecture);
   const archLabel = $derived(architecture ? architectureLabel(architecture) : "");
@@ -44,6 +45,18 @@
     return parts.filter(Boolean).join("\n");
   }
 
+  /** The negative prompt (UC) plus, on NovelAI, each sent character box's own UC. */
+  function extractionNegative(): string {
+    const parts = [generation.negativePrompt.trim()];
+    if (generation.isNovelAi) {
+      generation.activeNovelAiCharacters.forEach((c, i) => {
+        const uc = c.negative_prompt.trim();
+        if (uc) parts.push(`Character ${i + 1}: ${uc}`);
+      });
+    }
+    return parts.filter(Boolean).join("\n");
+  }
+
   async function extract() {
     const arch = architecture;
     if (!arch || extracting) return;
@@ -58,7 +71,7 @@
     }
     extracting = true;
     try {
-      const found = await promptAssistant.extractCharacters(source);
+      const found = await promptAssistant.extractCharacters(source, extractionNegative());
       if (found.length === 0) {
         gallery.showToast(locale.t("characters.toast.none_found"), "info");
         return;
@@ -108,11 +121,12 @@
     editingId = character.id;
     editName = character.name;
     editPrompt = character.prompt;
+    editNegative = character.negative;
   }
 
   function saveEdit() {
     if (!editingId) return;
-    savedCharacters.update(editingId, { name: editName, prompt: editPrompt });
+    savedCharacters.update(editingId, { name: editName, prompt: editPrompt, negative: editNegative });
     editingId = null;
   }
 
@@ -191,6 +205,14 @@
                 aria-label={locale.t("characters.prompt")}
                 class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
               ></textarea>
+              <textarea
+                bind:value={editNegative}
+                rows="2"
+                spellcheck="false"
+                placeholder={locale.t("characters.negative")}
+                aria-label={locale.t("characters.negative")}
+                class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-red-500/70"
+              ></textarea>
               <div class="flex justify-end gap-1.5">
                 <button
                   type="button"
@@ -239,6 +261,11 @@
                 </button>
               </div>
               <p class="text-[11px] leading-snug text-neutral-400 line-clamp-3 break-words" title={character.prompt}>{character.prompt}</p>
+              {#if character.negative}
+                <p class="text-[11px] leading-snug text-red-300/70 line-clamp-2 break-words" title={character.negative}>
+                  <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
+                </p>
+              {/if}
             {/if}
           </div>
         {/each}

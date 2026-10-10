@@ -20,6 +20,8 @@ export interface SavedCharacter {
   name: string;
   /** The text inserted back into a prompt. */
   prompt: string;
+  /** What to avoid for this character, inserted into the negative prompt (UC). */
+  negative: string;
   /** A `ModelFamily` value, or `NOVELAI_ARCHITECTURE`. */
   architecture: string;
   createdAt: number;
@@ -31,6 +33,12 @@ export type CharacterInsertResult = "prompt" | "novelai_character" | "duplicate"
 
 function newId(): string {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Append `text` to a comma-separated prompt, dropping a trailing comma first. */
+function joinPrompt(current: string, text: string): string {
+  const base = current.trim().replace(/,+$/, "").trimEnd();
+  return base ? `${base}, ${text}` : text;
 }
 
 /** Display name of an architecture bucket. */
@@ -51,6 +59,7 @@ function sanitize(raw: unknown): SavedCharacter | null {
     id: typeof c.id === "string" && c.id ? c.id : newId(),
     name: c.name,
     prompt: c.prompt,
+    negative: typeof c.negative === "string" ? c.negative : "",
     architecture: c.architecture,
     createdAt: typeof c.createdAt === "number" ? c.createdAt : now,
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : now,
@@ -107,8 +116,13 @@ class SavedCharactersStore {
         (c) => c.architecture === architecture && c.name.toLowerCase() === key,
       );
       if (index !== -1) {
-        if (next[index].prompt !== item.prompt) {
-          next[index] = { ...next[index], prompt: item.prompt, updatedAt: now };
+        if (next[index].prompt !== item.prompt || next[index].negative !== item.negative) {
+          next[index] = {
+            ...next[index],
+            prompt: item.prompt,
+            negative: item.negative,
+            updatedAt: now,
+          };
           updated++;
         }
         continue;
@@ -117,6 +131,7 @@ class SavedCharactersStore {
         id: newId(),
         name: item.name,
         prompt: item.prompt,
+        negative: item.negative,
         architecture,
         createdAt: now,
         updatedAt: now,
@@ -130,15 +145,18 @@ class SavedCharactersStore {
     return { added, updated };
   }
 
-  update(id: string, patch: { name?: string; prompt?: string }): void {
+  /** Empty name or prompt keeps the old one; an empty negative clears it. */
+  update(id: string, patch: { name?: string; prompt?: string; negative?: string }): void {
     const name = patch.name?.trim();
     const prompt = patch.prompt?.trim();
+    const negative = patch.negative?.trim();
     this.characters = this.characters.map((c) =>
       c.id === id
         ? {
             ...c,
             ...(name ? { name } : {}),
             ...(prompt ? { prompt } : {}),
+            ...(negative !== undefined ? { negative } : {}),
             updatedAt: Date.now(),
           }
         : c,
@@ -154,34 +172,49 @@ class SavedCharactersStore {
   /**
    * Put a saved character into the current prompt. NovelAI models with
    * character prompts get it as its own character box (filling an empty one
-   * first) while there is room; everything else appends it to the positive
-   * prompt.
+   * first) while there is room, with its UC in that box's undesired content;
+   * everything else appends it to the positive prompt and its UC to the
+   * negative prompt.
    */
   insert(character: SavedCharacter): CharacterInsertResult {
     const text = character.prompt.trim();
+    const negative = character.negative.trim();
     const lower = text.toLowerCase();
     if (generation.positivePrompt.toLowerCase().includes(lower)) return "duplicate";
 
     if (generation.isNovelAi && generation.novelAiModel?.v4Prompt) {
       const boxes = generation.novelaiSettings.characters;
       if (boxes.some((b) => b.prompt.trim().toLowerCase() === lower)) return "duplicate";
+      // Models without per-character UC take it in the main negative prompt.
+      const boxNegative = generation.novelAiModel.characterNegatives;
+      const box = { prompt: text, ...(boxNegative ? { negative_prompt: negative } : {}) };
       const empty = boxes.findIndex((b) => b.prompt.trim() === "");
+      const room = boxes.length < novelAiMaxCharacters(generation.checkpoint);
       if (empty !== -1) {
-        generation.updateNovelAiCharacter(empty, { prompt: text, enabled: true });
-        return "novelai_character";
-      }
-      if (boxes.length < novelAiMaxCharacters(generation.checkpoint)) {
+        generation.updateNovelAiCharacter(empty, { ...box, enabled: true });
+      } else if (room) {
         generation.updateNovelAiSettings({
-          characters: [...boxes, { ...createNovelAiCharacter(), prompt: text }],
+          characters: [...boxes, { ...createNovelAiCharacter(), ...box }],
         });
+      }
+      if (empty !== -1 || room) {
+        if (!boxNegative) this.appendNegative(negative);
         return "novelai_character";
       }
     }
 
-    const current = generation.positivePrompt.trim().replace(/,+$/, "").trimEnd();
-    generation.positivePrompt = current ? `${current}, ${text}` : text;
+    generation.positivePrompt = joinPrompt(generation.positivePrompt, text);
+    this.appendNegative(negative);
     generation.saveSettings();
     return "prompt";
+  }
+
+  /** Add to the main negative prompt unless it is empty or already there. */
+  private appendNegative(negative: string): void {
+    if (!negative) return;
+    if (generation.negativePrompt.toLowerCase().includes(negative.toLowerCase())) return;
+    generation.negativePrompt = joinPrompt(generation.negativePrompt, negative);
+    generation.saveSettings();
   }
 
   loadSettings(): void {

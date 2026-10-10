@@ -2128,6 +2128,8 @@ const en: Record<string, string> = {
   "characters.no_results": "No saved characters match your search",
   "characters.name": "Name",
   "characters.prompt": "Character prompt",
+  "characters.negative": "Undesired content (UC) for this character",
+  "characters.negative_prefix": "UC:",
   "characters.use": "Use",
   "characters.use_tip": "Add this character to the current prompt",
   "characters.edit": "Edit",

@@ -2345,6 +2345,8 @@ const ko: Record<string, string> = {
   "characters.no_results": "검색과 일치하는 저장된 캐릭터가 없습니다",
   "characters.name": "이름",
   "characters.prompt": "캐릭터 프롬프트",
+  "characters.negative": "이 캐릭터의 제외 내용 (UC)",
+  "characters.negative_prefix": "UC:",
   "characters.use": "사용",
   "characters.use_tip": "이 캐릭터를 현재 프롬프트에 추가",
   "characters.edit": "편집",

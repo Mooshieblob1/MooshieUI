@@ -2345,6 +2345,8 @@ const ru: Record<string, string> = {
   "characters.no_results": "Нет сохранённых персонажей, подходящих под поиск",
   "characters.name": "Имя",
   "characters.prompt": "Промпт персонажа",
+  "characters.negative": "Нежелательное содержимое (UC) для этого персонажа",
+  "characters.negative_prefix": "UC:",
   "characters.use": "Использовать",
   "characters.use_tip": "Добавить этого персонажа в текущий промпт",
   "characters.edit": "Изменить",

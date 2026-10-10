@@ -2370,6 +2370,8 @@ const fr: Record<string, string> = {
   "characters.no_results": "Aucun personnage enregistré ne correspond à ta recherche",
   "characters.name": "Nom",
   "characters.prompt": "Prompt du personnage",
+  "characters.negative": "Contenu indésirable (UC) pour ce personnage",
+  "characters.negative_prefix": "UC :",
   "characters.use": "Utiliser",
   "characters.use_tip": "Ajouter ce personnage au prompt actuel",
   "characters.edit": "Modifier",

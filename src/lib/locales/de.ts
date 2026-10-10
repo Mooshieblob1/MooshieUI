@@ -2366,6 +2366,8 @@ const de: Record<string, string> = {
   "characters.no_results": "Keine gespeicherten Charaktere entsprechen deiner Suche",
   "characters.name": "Name",
   "characters.prompt": "Charakter-Prompt",
+  "characters.negative": "Unerwünschte Inhalte (UC) für diesen Charakter",
+  "characters.negative_prefix": "UC:",
   "characters.use": "Verwenden",
   "characters.use_tip": "Diesen Charakter zum aktuellen Prompt hinzufügen",
   "characters.edit": "Bearbeiten",
