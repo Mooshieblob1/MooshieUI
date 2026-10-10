@@ -98,6 +98,7 @@ import {
   parseExtractedCharacters,
   type CharacterUpdate,
   type ExtractedCharacter,
+  type SavedCharacterHint,
 } from "../utils/characterExtract.js";
 import {
   CHARACTER_MERGE_RETRY,
@@ -454,11 +455,16 @@ class PromptAssistantStore {
    * Pull the characters out of a prompt and its negative prompt (UC) for the
    * Characters tab. One retry when
    * the reply is not the JSON asked for; an empty list means the model found
-   * no characters.
+   * no characters. `saved` lists the cards already saved, so the model can
+   * say which extracted character is one of them.
    */
-  async extractCharacters(prompt: string, negative: string): Promise<ExtractedCharacter[]> {
+  async extractCharacters(
+    prompt: string,
+    negative: string,
+    saved: SavedCharacterHint[] = [],
+  ): Promise<ExtractedCharacter[]> {
     if (this.isGenerating) throw new Error("busy_generation");
-    const request = characterExtractRequest(prompt, negative);
+    const request = characterExtractRequest(prompt, negative, saved);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {

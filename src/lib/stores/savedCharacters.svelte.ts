@@ -102,37 +102,28 @@ class SavedCharactersStore {
   }
 
   /**
-   * Save extracted characters under `architecture`. A name already saved there
-   * (ignoring case) has its prompt replaced instead of being added twice.
+   * Save characters under `architecture` as new cards. Duplicates of saved
+   * cards are sorted out before this by the Characters tab's review; a name
+   * already taken there gets a number so two cards never share one.
+   * Returns how many were added.
    */
   saveExtracted(
-    extracted: ExtractedCharacter[],
+    extracted: Pick<ExtractedCharacter, "name" | "prompt" | "negative">[],
     architecture: string,
-  ): { added: number; updated: number } {
+  ): number {
     const now = Date.now();
-    let added = 0;
-    let updated = 0;
     const next = [...this.characters];
+    const taken = new Set(
+      next.filter((c) => c.architecture === architecture).map((c) => c.name.toLowerCase()),
+    );
+    let added = 0;
     for (const item of extracted) {
-      const key = item.name.toLowerCase();
-      const index = next.findIndex(
-        (c) => c.architecture === architecture && c.name.toLowerCase() === key,
-      );
-      if (index !== -1) {
-        if (next[index].prompt !== item.prompt || next[index].negative !== item.negative) {
-          next[index] = {
-            ...next[index],
-            prompt: item.prompt,
-            negative: item.negative,
-            updatedAt: now,
-          };
-          updated++;
-        }
-        continue;
-      }
+      let name = item.name.trim();
+      for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${item.name.trim()} ${n}`;
+      taken.add(name.toLowerCase());
       next.push({
         id: newId(),
-        name: item.name,
+        name,
         prompt: item.prompt,
         negative: item.negative,
         architecture,
@@ -142,11 +133,11 @@ class SavedCharactersStore {
       });
       added++;
     }
-    if (added > 0 || updated > 0) {
+    if (added > 0) {
       this.characters = next;
       this.saveSettings();
     }
-    return { added, updated };
+    return added;
   }
 
   /** Empty name or prompt keeps the old one; an empty negative clears it. */

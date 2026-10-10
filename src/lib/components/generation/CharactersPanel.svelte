@@ -16,6 +16,12 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
   import CharacterMergeModal from "./CharacterMergeModal.svelte";
+  import CharacterDuplicatesModal, {
+    type DuplicateDecision,
+    type DuplicateMatch,
+  } from "./CharacterDuplicatesModal.svelte";
+  import type { ExtractedCharacter } from "../../utils/characterExtract.js";
+  import { findDuplicate, sameContent } from "../../utils/characterDuplicates.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import { progress } from "../../stores/progress.svelte.js";
   import type { OutputImage } from "../../types/index.js";
@@ -41,6 +47,15 @@
   let thumbBusyId = $state<string | null>(null);
   let thumbPickerOpen = $state(false);
   let thumbFileInput = $state<HTMLInputElement | null>(null);
+
+  /** Extract found characters that are already saved, awaiting the user's call. */
+  let duplicateReview = $state<{
+    arch: string;
+    fresh: ExtractedCharacter[];
+    matches: DuplicateMatch[];
+    source: string;
+    negative: string;
+  } | null>(null);
 
   /** Character being refreshed from the prompt right now. */
   let updatingId = $state<string | null>(null);
@@ -101,24 +116,39 @@
     }
     extracting = true;
     try {
-      const found = await promptAssistant.extractCharacters(source, extractionNegative());
+      const negative = extractionNegative();
+      const saved = savedCharacters.currentCharacters;
+      const found = await promptAssistant.extractCharacters(source, negative, saved);
       if (found.length === 0) {
         gallery.showToast(locale.t("characters.toast.none_found"), "info");
         return;
       }
-      const { added, updated } = savedCharacters.saveExtracted(found, arch);
-      if (added === 0 && updated === 0) {
-        gallery.showToast(locale.t("characters.toast.already_saved"), "info");
-      } else {
-        gallery.showToast(
-          locale.t("characters.toast.saved", {
-            added: String(added),
-            updated: String(updated),
-            arch: architectureLabel(arch),
-          }),
-          "success",
-        );
+      // Sorted three ways: new, already saved word for word (nothing to do),
+      // and saved but different, which the user decides on.
+      const fresh: ExtractedCharacter[] = [];
+      const matches: DuplicateMatch[] = [];
+      for (const item of found) {
+        const dup = findDuplicate(item, saved);
+        if (!dup) fresh.push(item);
+        else if (!sameContent(item, dup) && !matches.some((m) => m.saved.id === dup.id)) {
+          matches.push({ item, saved: dup });
+        }
       }
+      if (matches.length > 0) {
+        duplicateReview = { arch, fresh, matches, source, negative };
+        return;
+      }
+      const added = savedCharacters.saveExtracted(fresh, arch);
+      gallery.showToast(
+        added === 0
+          ? locale.t("characters.toast.already_saved")
+          : locale.t("characters.toast.saved", {
+              added: String(added),
+              updated: "0",
+              arch: architectureLabel(arch),
+            }),
+        added === 0 ? "info" : "success",
+      );
     } catch (e) {
       console.error("Character extraction failed:", e);
       const msg = String(e);
@@ -131,6 +161,64 @@
     } finally {
       extracting = false;
     }
+  }
+
+  /**
+   * Carry out the duplicate review: new characters and variants become cards,
+   * and each Update merges the prompt's details into the saved card the same
+   * way the card's own Update button does. One Undo covers every update.
+   */
+  async function applyDuplicates(decisions: DuplicateDecision[]) {
+    const pending = duplicateReview;
+    duplicateReview = null;
+    if (!pending) return;
+    const { arch, fresh, source, negative } = pending;
+    const variants = decisions
+      .filter((d) => d.action === "variant" && d.variantName.trim())
+      .map((d) => ({ name: d.variantName.trim(), prompt: d.item.prompt, negative: d.item.negative }));
+    const added = savedCharacters.saveExtracted(fresh, arch);
+    const addedVariants = savedCharacters.saveExtracted(variants, arch);
+    const previous: { id: string; prompt: string; negative: string }[] = [];
+    extracting = true;
+    try {
+      for (const d of decisions.filter((x) => x.action === "update")) {
+        let next: { prompt: string; negative: string };
+        try {
+          const merged = await promptAssistant.updateCharacter(d.saved, source, negative);
+          // The duplicate check already placed this character in the prompt,
+          // so a "not found" here means the model missed it: the extracted
+          // text stands in.
+          next = merged === "missing" ? { prompt: d.item.prompt, negative: d.item.negative } : merged;
+        } catch (e) {
+          console.error("Character update failed:", e);
+          gallery.showToast(mapLlmError(String(e)), "error");
+          continue;
+        }
+        if (next.prompt === d.saved.prompt && next.negative === d.saved.negative) continue;
+        previous.push({ id: d.saved.id, prompt: d.saved.prompt, negative: d.saved.negative });
+        savedCharacters.update(d.saved.id, next);
+      }
+    } finally {
+      extracting = false;
+    }
+    if (added + addedVariants + previous.length === 0) return;
+    gallery.showToast(
+      locale.t("characters.toast.dupes_saved", {
+        added: String(added),
+        variants: String(addedVariants),
+        updated: String(previous.length),
+      }),
+      "success",
+      previous.length > 0
+        ? {
+            actionLabel: locale.t("characters.undo"),
+            onAction: () => {
+              for (const p of previous) savedCharacters.update(p.id, { prompt: p.prompt, negative: p.negative });
+            },
+            durationMs: 8000,
+          }
+        : false,
+    );
   }
 
   /**
@@ -539,6 +627,15 @@
     </div>
   {/if}
 </div>
+
+{#if duplicateReview}
+  <CharacterDuplicatesModal
+    matches={duplicateReview.matches}
+    fresh={duplicateReview.fresh.map((c) => c.name)}
+    onsave={applyDuplicates}
+    onclose={() => { duplicateReview = null; }}
+  />
+{/if}
 
 {#if review}
   <CharacterMergeModal
