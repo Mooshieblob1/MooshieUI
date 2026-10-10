@@ -2,6 +2,8 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { animeScene, type SceneShot } from "../../stores/animeScene.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { readImageMetadata } from "../../utils/api.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import type { ImageRole } from "../../types/scene.js";
   import type { OutputImage } from "../../types/index.js";
@@ -58,6 +60,40 @@
     animeScene.updateShot(shot.id, { lead: Number.isFinite(n) ? Math.min(10, Math.max(0, n)) : 0 });
   }
 
+  /** Mirrors `cloud::scene::keyframe::size_for`. */
+  const KEYFRAME_SIZES: Record<string, { width: number; height: number }> = {
+    "16:9": { width: 1216, height: 832 },
+    "9:16": { width: 832, height: 1216 },
+    "4:3": { width: 1152, height: 896 },
+    "3:4": { width: 896, height: 1152 },
+    "1:1": { width: 1024, height: 1024 },
+    "21:9": { width: 1472, height: 640 },
+  };
+  const keyframeSize = $derived(KEYFRAME_SIZES[animeScene.video.aspect] ?? KEYFRAME_SIZES["16:9"]);
+  const keyframeAnlas = $derived(animeScene.keyframeAnlas(keyframeSize.width, keyframeSize.height));
+  const pendingShots = $derived(new Set(Object.values(animeScene.pendingKeyframes)));
+  const canKeyframe = $derived(
+    novelai.apiKeyConfigured && animeScene.characterReference !== null && animeScene.video.characterTags.trim() !== "",
+  );
+  let copyingTags = $state(false);
+
+  /** Fill the character tags from the character image's own prompt. */
+  async function copyCharacterTags() {
+    const ref = animeScene.characterReference;
+    if (!ref) return;
+    copyingTags = true;
+    try {
+      const meta = await readImageMetadata(ref.filename);
+      const prompt = meta?.positive_prompt?.trim();
+      if (prompt) animeScene.updateVideo({ characterTags: prompt });
+      else animeScene.failKeyframe(locale.t("scene.keyframe.no_prompt"));
+    } catch {
+      animeScene.failKeyframe(locale.t("scene.keyframe.no_prompt"));
+    } finally {
+      copyingTags = false;
+    }
+  }
+
   function setSeed(value: string) {
     const n = Number.parseInt(value, 10);
     animeScene.updateVideo({ seed: value.trim() === "" || !Number.isFinite(n) ? null : Math.max(0, n) });
@@ -98,6 +134,8 @@
             <div class="rounded-lg border border-neutral-800 bg-neutral-950 p-1.5 space-y-1">
               {#if ref.thumb}
                 <img src={ref.thumb} alt={ref.filename} class="w-full aspect-square object-cover rounded" />
+              {:else}
+                <p class="text-[10px] text-neutral-400 break-all">{ref.filename}</p>
               {/if}
               <label class="sr-only" for="scene-ref-role-{i}">{locale.t("scene.video.role")}</label>
               <select
@@ -118,6 +156,37 @@
             </div>
           {/each}
         </div>
+      {/if}
+    </div>
+
+    <!-- Keyframes -->
+    <div class="space-y-2">
+      <h3 class="text-xs font-medium text-neutral-300">{locale.t("scene.keyframe.title")}</h3>
+      <p class="text-[10px] text-neutral-500">{locale.t("scene.keyframe.desc")}</p>
+      {#if !novelai.apiKeyConfigured}
+        <p class="text-[10px] text-amber-400">{locale.t("scene.keyframe.no_key")}</p>
+      {/if}
+      <div>
+        <div class="flex items-center justify-between gap-2 mb-0.5">
+          <label class="text-[10px] text-neutral-400" for="scene-character-tags">{locale.t("scene.keyframe.character_tags")}</label>
+          <button class={small} disabled={!animeScene.characterReference || copyingTags} onclick={() => void copyCharacterTags()}>
+            {locale.t("scene.keyframe.copy_tags")}
+          </button>
+        </div>
+        <textarea
+          id="scene-character-tags"
+          rows="2"
+          class={input}
+          placeholder={locale.t("scene.keyframe.character_tags_ph")}
+          value={animeScene.video.characterTags}
+          onchange={(e) => animeScene.updateVideo({ characterTags: (e.target as HTMLTextAreaElement).value })}
+        ></textarea>
+        {#if animeScene.isMinor}
+          <p class="text-[10px] text-neutral-500">{locale.t("scene.keyframe.minor_note")}</p>
+        {/if}
+      </div>
+      {#if animeScene.keyframeError}
+        <p class="text-xs text-red-400">{animeScene.keyframeError}</p>
       {/if}
     </div>
 
@@ -185,6 +254,27 @@
               value={shot.framing}
               onchange={(e) => animeScene.updateShot(shot.id, { framing: (e.target as HTMLInputElement).value })}
             />
+          </div>
+          <div class="flex items-end gap-2">
+            <div class="flex-1">
+              <label class={label} for="scene-shot-keyframe-{shot.id}">{locale.t("scene.keyframe.shot_tags")}</label>
+              <input
+                id="scene-shot-keyframe-{shot.id}"
+                class={input}
+                placeholder={locale.t("scene.keyframe.shot_tags_ph")}
+                value={shot.keyframeTags}
+                onchange={(e) => animeScene.updateShot(shot.id, { keyframeTags: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <button
+              class="px-2 py-1.5 rounded-lg text-[10px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-40 whitespace-nowrap"
+              disabled={!canKeyframe || pendingShots.has(shot.id)}
+              onclick={() => void animeScene.makeKeyframe(shot.id, keyframeSize)}
+            >
+              {pendingShots.has(shot.id)
+                ? locale.t("scene.keyframe.running")
+                : locale.t("scene.keyframe.make", { anlas: keyframeAnlas })}
+            </button>
           </div>
           <div>
             <label class={label} for="scene-shot-action-{shot.id}">{locale.t("scene.video.shot_action")}</label>

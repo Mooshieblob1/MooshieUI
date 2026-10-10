@@ -690,6 +690,7 @@ pub fn run() {
             commands::cloud::scene_plan,
             commands::cloud::scene_generate,
             commands::cloud::scene_resume_jobs,
+            commands::cloud::scene_keyframe,
             commands::config::get_config,
             commands::config::update_config,
             commands::config::get_gallery_path,

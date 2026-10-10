@@ -7,6 +7,7 @@ import {
   elevenlabsSubscription,
   sceneEstimateTakes,
   sceneGenerate,
+  sceneKeyframe,
   sceneLoadTake,
   scenePlan,
   sceneRenderTake,
@@ -14,6 +15,8 @@ import {
   sceneVideoCapabilities,
 } from "../utils/api.js";
 import { progress } from "./progress.svelte.js";
+import { novelai } from "./novelai.svelte.js";
+import { estimateNovelAiCost } from "../utils/novelaiCost.js";
 import type {
   ElevenLabsSubscription,
   ElevenLabsVoice,
@@ -76,6 +79,8 @@ export interface SceneShot {
   lineId: string | null;
   /** Pause before the line, or the whole length of a shot without one. */
   lead: number;
+  /** NovelAI tags for this shot's keyframe: framing, pose, expression, place. */
+  keyframeTags: string;
 }
 
 export interface SceneVideoSettings {
@@ -93,6 +98,8 @@ export interface SceneVideoSettings {
   ambience: string;
   /** Silence after the last line, in seconds. */
   tail: number;
+  /** NovelAI appearance tags for keyframes, `1girl` first. ASCII only. */
+  characterTags: string;
 }
 
 function defaultVideo(): SceneVideoSettings {
@@ -109,6 +116,7 @@ function defaultVideo(): SceneVideoSettings {
     endingState: "",
     ambience: "",
     tail: 1,
+    characterTags: "",
   };
 }
 
@@ -185,6 +193,9 @@ class AnimeSceneStore {
   starting = $state(false);
   /** Scene renders started from this page that are still running. */
   activeJobs = $state<string[]>([]);
+  /** NovelAI keyframe prompt id -> the shot it is for. */
+  pendingKeyframes = $state<Record<string, string>>({});
+  keyframeError = $state<string | null>(null);
   subscription = $state<ElevenLabsSubscription | null>(null);
   voices = $state<ElevenLabsVoice[]>([]);
   accountLoading = $state(false);
@@ -247,7 +258,10 @@ class AnimeSceneStore {
           }));
       }
       if (Array.isArray(p.references)) {
-        this.references = p.references.filter((r) => r && typeof r.filename === "string" && r.role && typeof r.role.kind === "string");
+        this.references = p.references
+          .filter((r) => r && typeof r.filename === "string" && r.role && typeof r.role.kind === "string")
+          // Session blob URLs die with the page; the card falls back to the name.
+          .map((r) => ({ ...r, thumb: typeof r.thumb === "string" && !r.thumb.startsWith("blob:") ? r.thumb : null }));
       }
       if (Array.isArray(p.shots)) {
         this.shots = p.shots
@@ -258,6 +272,7 @@ class AnimeSceneStore {
             action: typeof sh.action === "string" ? sh.action : "",
             lineId: sh.lineId ?? null,
             lead: typeof sh.lead === "number" ? sh.lead : 0,
+            keyframeTags: typeof sh.keyframeTags === "string" ? sh.keyframeTags : "",
           }));
       }
       if (p.video && typeof p.video === "object") this.video = { ...defaultVideo(), ...p.video };
@@ -670,6 +685,7 @@ class AnimeSceneStore {
         action: "",
         lineId: next?.id ?? null,
         lead: next ? (this.shots.length === 0 ? 0 : 0.5) : 1.5,
+        keyframeTags: "",
       },
     ];
     this.invalidatePlan();
@@ -710,6 +726,85 @@ class AnimeSceneStore {
     });
     this.invalidatePlan();
     this.saveSettings();
+  }
+
+  // --- Keyframes (NovelAI V4.5 + Precise Reference) ---
+
+  get characterReference(): SceneReference | null {
+    return this.references.find((r) => r.role.kind === "character") ?? null;
+  }
+
+  /** Anlas a keyframe is expected to cost: free on Opus apart from the
+   *  Precise Reference surcharge, which Opus does not cover. */
+  keyframeAnlas(width: number, height: number): number {
+    return estimateNovelAiCost({
+      width,
+      height,
+      steps: 28,
+      nSamples: 1,
+      strength: 1,
+      isOpus: novelai.isOpus,
+      vibeEncodes: 0,
+      preciseReferences: 1,
+    });
+  }
+
+  async makeKeyframe(shotId: string, size: { width: number; height: number }) {
+    const shot = this.shots.find((sh) => sh.id === shotId);
+    const character = this.characterReference;
+    if (!shot || !character) return;
+    this.keyframeError = null;
+    const anlas = this.keyframeAnlas(size.width, size.height);
+    const ok = await this.confirm(
+      "scene.cost.keyframe_title",
+      [
+        { labelKey: "scene.cost.keyframe_item", params: { width: size.width, height: size.height, anlas } },
+        ...(novelai.subscription ? [{ labelKey: "scene.cost.anlas_left", params: { anlas: novelai.anlas.toLocaleString() } }] : []),
+      ],
+      ["scene.cost.keyframe_note"],
+    );
+    if (!ok) return;
+    try {
+      const id = await sceneKeyframe({
+        reference: character.filename,
+        character_tags: this.video.characterTags,
+        shot_tags: shot.keyframeTags,
+        aspect: this.video.aspect,
+        minor: this.isMinor,
+      });
+      this.pendingKeyframes = { ...this.pendingKeyframes, [id]: shotId };
+      progress.enqueue(id, false, "txt2img", null);
+    } catch (e) {
+      this.keyframeError = errorText(e);
+    }
+  }
+
+  /** Called from App.svelte when a generation finishes: the shot a keyframe
+   *  prompt was for, if it was one. */
+  resolveKeyframe(promptId: string): string | null {
+    const shotId = this.pendingKeyframes[promptId];
+    if (shotId === undefined) return null;
+    const { [promptId]: _, ...rest } = this.pendingKeyframes;
+    this.pendingKeyframes = rest;
+    return shotId;
+  }
+
+  /** Use a finished keyframe as its shot's reference image. */
+  recordKeyframe(shotId: string, filename: string, thumb: string | null) {
+    const index = this.shots.findIndex((sh) => sh.id === shotId);
+    if (index < 0) return;
+    const role: ImageRole = { kind: "shot", shot: index };
+    // One keyframe per shot: a new one replaces the previous one's role.
+    const others = this.references.filter(
+      (r) => !(r.role.kind === "shot" && r.role.shot === index) && r.filename !== filename,
+    );
+    this.references = [...others, { filename, thumb, role }];
+    this.invalidatePlan();
+    this.saveSettings();
+  }
+
+  failKeyframe(message: string) {
+    this.keyframeError = message;
   }
 
   private sceneRequest(): SceneRequest {

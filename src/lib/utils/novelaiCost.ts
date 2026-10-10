@@ -38,7 +38,22 @@ export interface NovelAiCostInput {
    * false.
    */
   mediumEffort?: boolean;
+  /**
+   * Precise Reference images sent with the request (V4.5 only). Each one adds
+   * a flat charge to every image, Opus or not. Defaults to 0.
+   */
+  preciseReferences?: number;
 }
+
+/**
+ * Precise Reference's surcharge per reference per image. Official: "an
+ * additional cost of 5 Anlas to each image generation" that "scales with the
+ * number of references" (docs.novelai.net/en/image/precisereference, checked
+ * 2026-10-11). Opus does not waive it: the scene prototype on Opus paid
+ * exactly 5 per generation for nine single-reference generations that were
+ * otherwise free (docs/research/anime-scene-pipeline.md, section 3).
+ */
+export const PRECISE_REFERENCE_COST = 5;
 
 /** Per-vibe encode charge on V4 and later. Cached `.naiv4vibe` files are free. */
 export const VIBE_ENCODE_COST = 2;
@@ -189,5 +204,7 @@ export function estimateNovelAiCost(input: NovelAiCostInput): number {
       input.opusExhausted ?? false,
     );
   const encodes = Math.max(0, Math.floor(input.vibeEncodes)) * VIBE_ENCODE_COST;
-  return (free ? 0 : samples * perSample) + encodes;
+  const references =
+    samples * Math.max(0, Math.floor(input.preciseReferences ?? 0)) * PRECISE_REFERENCE_COST;
+  return (free ? 0 : samples * perSample) + encodes + references;
 }

@@ -103,6 +103,7 @@
   } from "./lib/artist-gallery/previewRecipe.js";
   import { artistLocalPreviews } from "./lib/stores/artistLocalPreviews.svelte.js";
   import { styleCreator } from "./lib/stores/styleCreator.svelte.js";
+  import { animeScene } from "./lib/stores/animeScene.svelte.js";
   import { submitGeneration } from "./lib/utils/generationSubmit.js";
   import InterrogateQuickModal from "./lib/components/generation/InterrogateQuickModal.svelte";
   import {
@@ -2313,6 +2314,27 @@
       const cardImage = newImages[0];
       if (cardImage) styleCreator.record(creatorCard, cardImage);
       else styleCreator.failAll();
+    }
+
+    // Route a finished Scenes keyframe back to its shot as that shot's
+    // reference image, once it has a gallery filename the video job can read.
+    const keyframeShot = animeScene.resolveKeyframe(promptId);
+    if (keyframeShot !== null) {
+      const keyframe = newImages[0];
+      const persistPromise = keyframe ? gallery.getPersistPromise(keyframe) : null;
+      if (keyframe && persistPromise) {
+        void persistPromise
+          .then((galleryFilename) => {
+            if (galleryFilename) {
+              animeScene.recordKeyframe(keyframeShot, galleryFilename, keyframe.thumbnailUrl ?? keyframe.url ?? null);
+            } else {
+              animeScene.failKeyframe(locale.t("scene.keyframe.not_saved"));
+            }
+          })
+          .catch(() => animeScene.failKeyframe(locale.t("scene.keyframe.not_saved")));
+      } else {
+        animeScene.failKeyframe(locale.t("scene.keyframe.not_saved"));
+      }
     }
 
     // Route a finished artist-preview generation back to its placeholder card.

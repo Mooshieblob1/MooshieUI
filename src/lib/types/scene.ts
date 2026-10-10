@@ -162,3 +162,12 @@ export interface ScenePlan {
   estimate: VideoEstimate;
   model_label: string;
 }
+
+export interface KeyframeRequest {
+  /** Gallery filename of the character image. */
+  reference: string;
+  character_tags: string;
+  shot_tags: string;
+  aspect: string;
+  minor: boolean;
+}
