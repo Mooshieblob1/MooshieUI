@@ -26,6 +26,7 @@
     clearAllRegionalChainGallerySuppress,
   } from "../../utils/regionalChainGallery.js";
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
+  import { ensureUpscalerInstalled } from "../../utils/upscalerInstall.js";
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
   import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
@@ -130,6 +131,20 @@
     return willRunRegionalInpaintChain();
   }
 
+  /** The upscaler model this generation will load, or null when none will run.
+   *  NovelAI mode upscales only through the local pass, which needs a local model. */
+  function upscalerModelInUse(): string | null {
+    if (generation.mode === "video" || !generation.upscaleEnabled) return null;
+    if (generation.upscaleMethod !== "model" || !generation.upscaleModel) return null;
+    if (
+      generation.isNovelAi &&
+      !(generation.novelaiSettings.local_post_process && generation.novelaiSettings.local_checkpoint)
+    ) {
+      return null;
+    }
+    return generation.upscaleModel;
+  }
+
   async function handleEditPausedImage() {
     errorMsg = null;
     try {
@@ -179,6 +194,12 @@
         if (sequential) finishSubmitRun(runToken);
         return;
       }
+    }
+
+    const upscaler = upscalerModelInUse();
+    if (upscaler && !(await ensureUpscalerInstalled(upscaler))) {
+      if (sequential) finishSubmitRun(runToken);
+      return;
     }
 
     try {

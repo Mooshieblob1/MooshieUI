@@ -62,6 +62,30 @@ export const NANOSAUR_SAMPLING: SamplingRecommendation = {
 };
 
 /**
+ * Krea 2 Turbo (and Turbo merges such as Wulver). Distilled to run without
+ * guidance, so CFG stays at 1: anything higher burns the image and doubles
+ * the work. Euler/simple is Krea's own ComfyUI setup; see `kreaFewStep.ts`.
+ */
+export const KREA2_TURBO_SAMPLING: SamplingRecommendation = {
+  steps: 8,
+  cfg: 1.0,
+  samplerName: "euler",
+  scheduler: "simple",
+  upscaleSteps: 3,
+  facefixSteps: 3,
+};
+
+/** Krea 2 Raw, the undistilled weights. Matches the store's Krea 2 preset. */
+export const KREA2_SAMPLING: SamplingRecommendation = {
+  steps: 30,
+  cfg: 4.0,
+  samplerName: "er_sde",
+  scheduler: "sgm_uniform",
+  upscaleSteps: 10,
+  facefixSteps: 10,
+};
+
+/**
  * A conservative middle for a model nothing is known about.
  *
  * Only the NovelAI local pass uses this: it has to put some sampler in the
@@ -82,13 +106,17 @@ export const GENERIC_SAMPLING: SamplingRecommendation = {
  *
  * The filename is matched as well as the detected `family` because a finetune
  * keeps its base family but is named after the model whose settings it wants.
+ * `turbo` is the detected turbo variant, which picks between a family's
+ * distilled and undistilled settings where they differ.
  */
 export function recommendedSamplingFor(
   filename: string | null | undefined,
   family?: string | null,
+  turbo = false,
 ): SamplingRecommendation | null {
   const name = (filename ?? "").toLowerCase();
   const fam = (family ?? "").toLowerCase();
+  if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
   if (fam === "anima" || name.includes("anima")) return ANIMA_SAMPLING;
   if (name.includes("nanosaur")) return NANOSAUR_SAMPLING;
   if (

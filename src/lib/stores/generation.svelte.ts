@@ -25,7 +25,12 @@ import {
 } from "../utils/modelFamily.js";
 import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "../utils/api.js";
 import { locale } from "./locale.svelte.js";
-import { BETA57_SCHEDULER, GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
+import {
+  BETA57_SCHEDULER,
+  GENERIC_SAMPLING,
+  recommendedSamplingFor,
+  type SamplingRecommendation,
+} from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
@@ -207,6 +212,12 @@ export function createDefaultNovelAiFaceDetail(): NovelAiFaceDetail {
     anlas_policy: "fit_free",
     tagger_threshold: 0.4,
   };
+}
+
+/** Sampler, schedule and CFG for the NovelAI local pass on `filename`. */
+function localPassSamplingFor(filename: string, spec: ModelSpec | null): SamplingRecommendation {
+  const turbo = toTurboModelVariant(spec?.turbo_model_variant) !== "none";
+  return recommendedSamplingFor(filename, spec?.family, turbo) ?? GENERIC_SAMPLING;
 }
 
 /**
@@ -2321,7 +2332,7 @@ class GenerationStore {
     // the upscale and face-fix panels own those. Falling back to a generic
     // middle rather than to nothing, because the local pass has to put some
     // sampler in the graph.
-    const rec = recommendedSamplingFor(filename, spec?.family) ?? GENERIC_SAMPLING;
+    const rec = localPassSamplingFor(filename, spec);
 
     this.updateNovelAiSettings({
       local_architecture: spec?.family ?? null,
@@ -2337,6 +2348,41 @@ class GenerationStore {
         : null,
       local_clip_type: useSplit ? (spec?.recommended_clip_type ?? null) : null,
       local_vae: useSplit ? matchInstalledModel(spec?.recommended_vae, vaes) : null,
+      local_sampler: rec.samplerName,
+      local_scheduler: rec.scheduler,
+      local_cfg: rec.cfg,
+    });
+  }
+
+  /**
+   * Re-derive the local pass sampler from the saved local model.
+   *
+   * Those fields are settled when the model is picked and never shown, so a
+   * pick made before the table knew its family keeps the generic fallback
+   * forever. Krea 2 picked that way ran its refine at CFG 6, which a
+   * guidance-distilled Turbo burns at. Reading the spec again on load lets a
+   * table update reach settings that are already saved; the next save keeps it.
+   */
+  async refreshNovelAiLocalSampling() {
+    const { local_checkpoint: filename, local_model_category: category } = this.novelaiSettings;
+    if (!filename) return;
+    let spec: ModelSpec | null = null;
+    try {
+      spec = await readModelSpec(category ?? "checkpoints", filename);
+    } catch {
+      return;
+    }
+    if (this.novelaiSettings.local_checkpoint !== filename) return;
+    const rec = localPassSamplingFor(filename, spec);
+    const current = this.novelaiSettings;
+    if (
+      current.local_sampler === rec.samplerName &&
+      current.local_scheduler === rec.scheduler &&
+      current.local_cfg === rec.cfg
+    ) {
+      return;
+    }
+    this.updateNovelAiSettings({
       local_sampler: rec.samplerName,
       local_scheduler: rec.scheduler,
       local_cfg: rec.cfg,
@@ -3033,6 +3079,7 @@ class GenerationStore {
           fidelity: reference.fidelity ?? 1.0,
         })),
       };
+      void this.refreshNovelAiLocalSampling();
     }
     if (saved.showNovelaiUsage !== undefined)
       this.showNovelaiUsage = saved.showNovelaiUsage;

@@ -171,6 +171,36 @@ impl EventSink {
     }
 }
 
+/// Tell the frontend that the local upscale/refine pass did not run.
+///
+/// The NovelAI image is already paid for, so every local-pass problem falls
+/// back to delivering it untouched. Without a notice that is indistinguishable
+/// from the pass having worked, which is how a missing upscale model went
+/// unnoticed. `reason` is a locale-key suffix, not a sentence.
+fn notify_local_pass(sink: &EventSink, prompt_id: &str, status: &str, reason: &str) {
+    sink.emit(
+        "novelai:local_pass",
+        serde_json::json!({
+            "prompt_id": prompt_id,
+            "status": status,
+            "reason": reason,
+        }),
+    );
+}
+
+/// Classify a local-pass error for [`notify_local_pass`].
+///
+/// ComfyUI rejects a graph that names a file its loaders do not list with
+/// `value_not_in_list`, which is the common case: an upscale model or local
+/// model picked once and since moved or deleted.
+fn local_pass_failure_reason(err: &AppError) -> &'static str {
+    if err.to_string().contains("value_not_in_list") {
+        "missing_model"
+    } else {
+        "run_failed"
+    }
+}
+
 /// Pick the model a request runs against.
 ///
 /// The checkpoint field is the backend switch, but a client may also name
@@ -841,13 +871,17 @@ async fn run_inner(
             log::warn!(
                 "NovelAI {prompt_id}: local post-process skipped, it would flatten                  the transparent background"
             );
+            notify_local_pass(sink, prompt_id, "skipped", "transparency");
         } else if let [png] = images.as_slice() {
             match run_local_post_process(state, sink, prompt_id, params, png).await {
                 Ok(Some(refined)) => images = vec![refined],
                 Ok(None) => return Ok(RunOutcome::HandedOff),
-                Err(err) => log::warn!(
-                    "NovelAI {prompt_id}: local post-process failed ({err});                      delivering the unmodified image"
-                ),
+                Err(err) => {
+                    log::warn!(
+                        "NovelAI {prompt_id}: local post-process failed ({err});                      delivering the unmodified image"
+                    );
+                    notify_local_pass(sink, prompt_id, "failed", local_pass_failure_reason(&err));
+                }
             }
         } else {
             // One ComfyUI prompt maps to one alias and one GPU worker, so a
@@ -858,6 +892,7 @@ async fn run_inner(
                 "NovelAI {prompt_id}: local post-process skipped, it runs on                  single-image generations only ({} returned)",
                 images.len()
             );
+            notify_local_pass(sink, prompt_id, "skipped", "batch");
         }
     }
 
@@ -1185,6 +1220,18 @@ pub async fn fetch_subscription(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_file_is_told_apart_from_other_local_pass_failures() {
+        let missing = AppError::ApiError {
+            status: 400,
+            message: r#"{"node_errors": {"7": {"errors": [{"type": "value_not_in_list"}]}}}"#
+                .into(),
+        };
+        assert_eq!(local_pass_failure_reason(&missing), "missing_model");
+        let other = AppError::Other("CUDA out of memory".into());
+        assert_eq!(local_pass_failure_reason(&other), "run_failed");
+    }
 
     #[test]
     fn a_named_account_never_falls_back_to_the_owner_key() {
