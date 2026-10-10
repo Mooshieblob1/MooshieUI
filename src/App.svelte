@@ -136,6 +136,14 @@
     empty_result: "generate_failed",
     readback_failed: "generate_failed",
   };
+  // The local upscale/refine pass after a NovelAI image falls back the same
+  // way, delivering the image without it.
+  const NAI_LOCAL_PASS_BODIES: Record<string, string> = {
+    transparency: "transparency",
+    batch: "batch",
+    missing_model: "missing_model",
+    run_failed: "run_failed",
+  };
 
   /**
    * Refresh the installed-vs-pinned ComfyUI version and, if it is still behind,
@@ -2889,6 +2897,16 @@
         notifications.addLocalNotification({
           title: locale.t(`notifications.nai_face_pass.${status}_title`),
           body: locale.t(`notifications.nai_face_pass.${body}`),
+          kind: status === "skipped" ? "info" : "warning",
+        });
+      }),
+      ipcListen("novelai:local_pass", (event: any) => {
+        const data = event.payload;
+        const status = data?.status === "skipped" ? "skipped" : "failed";
+        const body = NAI_LOCAL_PASS_BODIES[data?.reason] ?? "run_failed";
+        notifications.addLocalNotification({
+          title: locale.t(`notifications.nai_local_pass.${status}_title`),
+          body: locale.t(`notifications.nai_local_pass.${body}`),
           kind: status === "skipped" ? "info" : "warning",
         });
       }),

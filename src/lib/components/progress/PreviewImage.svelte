@@ -16,6 +16,7 @@
     DEFAULT_REFINE_UPSCALER_SCALE,
     recommendedUpscaleModels,
   } from "../../utils/upscalers.js";
+  import { ensureUpscalerInstalled } from "../../utils/upscalerInstall.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
   import VideoPlayer from "../video/VideoPlayer.svelte";
   import type { GenerationParams } from "../../types/index.js";
@@ -332,6 +333,15 @@
           params.upscale_scale = DEFAULT_REFINE_UPSCALER_SCALE;
           appliedDefaultUpscaler = true;
         }
+      }
+      // A model the user picked themselves can have gone missing since.
+      if (
+        !appliedDefaultUpscaler &&
+        params.upscale_method === "model" &&
+        params.upscale_model &&
+        !(await ensureUpscalerInstalled(params.upscale_model))
+      ) {
+        return;
       }
       // ControlNet on a refine pass would re-condition the existing image
       // against the original control input, which is rarely what the user
