@@ -662,6 +662,13 @@ export interface AppConfig {
   novelai_api_key: string | null;
   /** True when a key is stored, so the UI can show "key set" without the value. */
   novelai_api_key_configured?: boolean;
+  /** The owner's cloud provider keys. Always null on the client, for every role. */
+  elevenlabs_api_key?: string | null;
+  fal_api_key?: string | null;
+  segmind_api_key?: string | null;
+  elevenlabs_api_key_configured?: boolean;
+  fal_api_key_configured?: boolean;
+  segmind_api_key_configured?: boolean;
   /** When set, in-app error reports POST here (Sub-project B proxy) instead of opening a prefilled GitHub issue. */
   report_endpoint?: string | null;
   gallery_path: string | null;
@@ -923,3 +930,9 @@ export interface LlmDeviceCode {
   /** Pre-filled URL when the server offers one, else the bare page. */
   verification_uri_complete: string;
 }
+
+/** Cloud voice and video providers that run on the user's own key. */
+export type CloudProviderId = "elevenlabs" | "fal" | "segmind";
+
+/** Which cloud providers the current account has a key for (`cloud_key_status`). */
+export type CloudKeyStatus = Record<CloudProviderId, boolean>;

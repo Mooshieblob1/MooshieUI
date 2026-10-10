@@ -92,6 +92,8 @@ export async function saveMusicFile(dataBase64: string, path: string): Promise<v
 }
 import type {
   AppConfig,
+  CloudKeyStatus,
+  CloudProviderId,
   GalleryImageEntry,
   GenerationMode,
   GenerationParams,
@@ -215,6 +217,20 @@ export async function novelaiSubscription(): Promise<NovelAiSubscription> {
  */
 export async function setNovelaiApiKey(apiKey: string): Promise<boolean> {
   return ipcInvoke("set_novelai_api_key", { apiKey });
+}
+
+/**
+ * Store a cloud voice or video provider key, or clear it with an empty string.
+ * Returns whether a key is now configured. Like the NovelAI key, a named
+ * account stores its own key and never sees or uses the owner's.
+ */
+export async function setCloudApiKey(provider: CloudProviderId, apiKey: string): Promise<boolean> {
+  return ipcInvoke("set_cloud_api_key", { provider, apiKey });
+}
+
+/** Which cloud providers the current account has a key for. Never returns a key. */
+export async function cloudKeyStatus(): Promise<CloudKeyStatus> {
+  return ipcInvoke("cloud_key_status", {});
 }
 
 export interface ControlNetPreprocessorPreviewResponse {

@@ -3729,6 +3729,22 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(sub).map_err(|e| e.to_string())
         }
+        // Cloud voice and video keys follow the NovelAI rule: a named
+        // account manages only its own, so these are open to every account.
+        "set_cloud_api_key" => {
+            let provider =
+                crate::cloud::CloudProvider::parse(args["provider"].as_str().unwrap_or(""))
+                    .map_err(|e| e.to_string())?;
+            let api_key = args["apiKey"].as_str().unwrap_or("");
+            let configured = crate::cloud::set_api_key(&state, username, provider, api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(configured))
+        }
+        "cloud_key_status" => {
+            let status = crate::cloud::key_status(&state, username).await;
+            serde_json::to_value(status).map_err(|e| e.to_string())
+        }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
             let configured = !api_key.is_empty();
@@ -8631,6 +8647,13 @@ mod nai_key_tests {
         };
         preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
         assert_eq!(incoming.novelai_api_key.as_deref(), Some("owner-token"));
+    }
+
+    #[test]
+    fn regular_accounts_can_manage_their_own_cloud_keys() {
+        for command in ["set_cloud_api_key", "cloud_key_status"] {
+            assert_eq!(min_role_for_command(command), UserRole::User);
+        }
     }
 
     #[test]

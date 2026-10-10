@@ -1,5 +1,7 @@
 pub mod api;
 #[cfg(feature = "desktop")]
+pub mod cloud;
+#[cfg(feature = "desktop")]
 pub mod config;
 #[cfg(feature = "desktop")]
 pub mod interrogator;

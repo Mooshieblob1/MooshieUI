@@ -1,5 +1,6 @@
 pub mod attention;
 pub mod auth;
+pub mod cloud;
 pub mod comfyui;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod comfyui_version;
@@ -675,6 +676,8 @@ pub fn run() {
             commands::novelai::novelai_generate,
             commands::novelai::novelai_subscription,
             commands::novelai::set_novelai_api_key,
+            commands::cloud::set_cloud_api_key,
+            commands::cloud::cloud_key_status,
             commands::config::get_config,
             commands::config::update_config,
             commands::config::get_gallery_path,
