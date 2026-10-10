@@ -25,6 +25,8 @@
   let editNegative = $state("");
   /** Character the prompt assistant is working into the prompt right now. */
   let mergingId = $state<string | null>(null);
+  /** Character being refreshed from the prompt right now. */
+  let updatingId = $state<string | null>(null);
   let review = $state<{
     character: SavedCharacter;
     before: { prompt: string; negative: string };
@@ -200,6 +202,53 @@
     );
   }
 
+  /**
+   * Refresh the card from what the current prompt says about this character,
+   * leaving other characters' details out. Undo restores the old text.
+   */
+  async function refresh(character: SavedCharacter) {
+    if (updatingId || mergingId) return;
+    if (!promptAssistant.isAvailable) {
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    const source = extractionSource();
+    if (!source) {
+      gallery.showToast(locale.t("characters.toast.empty_prompt"), "error");
+      return;
+    }
+    updatingId = character.id;
+    try {
+      const update = await promptAssistant.updateCharacter(character, source, extractionNegative());
+      if (update === "missing") {
+        gallery.showToast(locale.t("characters.toast.update_missing", { name: character.name }), "info");
+        return;
+      }
+      if (update.prompt === character.prompt && update.negative === character.negative) {
+        gallery.showToast(locale.t("characters.toast.update_unchanged", { name: character.name }), "info");
+        return;
+      }
+      const previous = { prompt: character.prompt, negative: character.negative };
+      savedCharacters.update(character.id, update);
+      gallery.showToast(locale.t("characters.toast.updated", { name: character.name }), "success", {
+        actionLabel: locale.t("characters.undo"),
+        onAction: () => savedCharacters.update(character.id, previous),
+        durationMs: 8000,
+      });
+    } catch (e) {
+      console.error("Character update failed:", e);
+      const msg = String(e);
+      gallery.showToast(
+        msg.includes("invalid_character_update")
+          ? locale.t("characters.toast.invalid_reply")
+          : mapLlmError(msg),
+        "error",
+      );
+    } finally {
+      updatingId = null;
+    }
+  }
+
   function startEdit(character: SavedCharacter) {
     editingId = character.id;
     editName = character.name;
@@ -320,7 +369,7 @@
                   type="button"
                   class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                   title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
-                  disabled={mergingId !== null}
+                  disabled={mergingId !== null || updatingId !== null}
                   onclick={() => use(character)}
                 >
                   {#if mergingId === character.id}
@@ -338,6 +387,16 @@
                   onclick={() => insertPlain(character)}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={locale.t("characters.update_tip")}
+                  aria-label={locale.t("characters.update")}
+                  disabled={updatingId !== null || mergingId !== null}
+                  onclick={() => refresh(character)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {updatingId === character.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 </button>
                 <button
                   type="button"

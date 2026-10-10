@@ -91,8 +91,12 @@ import {
 } from "../utils/h3Skill.js";
 import {
   CHARACTER_EXTRACT_RETRY,
+  CHARACTER_UPDATE_RETRY,
   characterExtractRequest,
+  characterUpdateRequest,
+  parseCharacterUpdate,
   parseExtractedCharacters,
+  type CharacterUpdate,
   type ExtractedCharacter,
 } from "../utils/characterExtract.js";
 import {
@@ -467,6 +471,37 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
         }
         throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Refresh one saved character from the current prompt and UC for the
+   * Characters tab's Update. "missing" when the prompt does not contain that
+   * character. One retry when the reply is not the JSON asked for.
+   */
+  async updateCharacter(
+    character: { name: string; prompt: string; negative: string },
+    prompt: string,
+    negative: string,
+  ): Promise<CharacterUpdate | "missing"> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterUpdateRequest(character, prompt, negative);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseCharacterUpdate(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            character.negative,
+          );
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_UPDATE_RETRY}`;
+        }
+        throw new Error("invalid_character_update");
       });
     } finally {
       this.isGenerating = false;
