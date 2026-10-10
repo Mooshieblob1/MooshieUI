@@ -18,6 +18,7 @@
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
+  import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
@@ -1139,6 +1140,7 @@
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
+    { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "account", labelKey: "settings.account", keywords: "account password username display name login logout users lan accounts admin moderator role security migration" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
@@ -1168,6 +1170,8 @@
       case "civitai": return canManageServer;
       // NovelAI is per-account now: every user manages their own key.
       case "novelai": return true;
+      // Cloud voice and video keys are per-account too.
+      case "cloud": return true;
       case "account": return isBrowserMode && (!isAdmin || usesLegacyPassword);
       case "developer": return generation.devModeUnlocked;
       default: return true;
@@ -4181,6 +4185,11 @@
             {/if}
           </div>
         </section>
+        {/if}
+
+        <!-- Cloud voice and video (per-account keys) -->
+        {#if activeCategory === "cloud"}
+          <CloudProvidersPanel isOwner={isAdmin} />
         {/if}
 
         <!-- Legacy password encryption upgrade (browser mode) -->

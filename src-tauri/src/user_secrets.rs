@@ -51,6 +51,56 @@ pub struct SecretsFile {
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub novelai_api_key: Option<SealedValue>,
+    /// Added in version 2, with the cloud voice and video providers. A
+    /// version 1 file simply has none of these.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elevenlabs_api_key: Option<SealedValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fal_api_key: Option<SealedValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segmind_api_key: Option<SealedValue>,
+}
+
+/// Current `SecretsFile::version`, written on every save.
+const SECRETS_VERSION: u32 = 2;
+
+/// Which credential in `secrets.json`. Every one is the account holder's own,
+/// billed to them by that provider, and never shared with another account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKey {
+    NovelAi,
+    ElevenLabs,
+    Fal,
+    Segmind,
+}
+
+impl ProviderKey {
+    pub const ALL: [ProviderKey; 4] = [
+        ProviderKey::NovelAi,
+        ProviderKey::ElevenLabs,
+        ProviderKey::Fal,
+        ProviderKey::Segmind,
+    ];
+}
+
+impl SecretsFile {
+    fn slot(&self, which: ProviderKey) -> &Option<SealedValue> {
+        match which {
+            ProviderKey::NovelAi => &self.novelai_api_key,
+            ProviderKey::ElevenLabs => &self.elevenlabs_api_key,
+            ProviderKey::Fal => &self.fal_api_key,
+            ProviderKey::Segmind => &self.segmind_api_key,
+        }
+    }
+
+    fn slot_mut(&mut self, which: ProviderKey) -> &mut Option<SealedValue> {
+        match which {
+            ProviderKey::NovelAi => &mut self.novelai_api_key,
+            ProviderKey::ElevenLabs => &mut self.elevenlabs_api_key,
+            ProviderKey::Fal => &mut self.fal_api_key,
+            ProviderKey::Segmind => &mut self.segmind_api_key,
+        }
+    }
 }
 
 const NONCE_LEN: usize = 24;
@@ -328,9 +378,14 @@ fn load_file_in(root: &std::path::Path, username: &str) -> Option<SecretsFile> {
     read_file(&secrets_path_in(root, username)?)
 }
 
-/// Decrypt the stored NovelAI key with `username` as the AAD.
-fn open_nai_key(file: &SecretsFile, master: &[u8; KEY_LEN], username: &str) -> Option<String> {
-    let sealed = file.novelai_api_key.as_ref()?;
+/// Decrypt one stored key with `username` as the AAD.
+fn open_key(
+    file: &SecretsFile,
+    master: &[u8; KEY_LEN],
+    username: &str,
+    which: ProviderKey,
+) -> Option<String> {
+    let sealed = file.slot(which).as_ref()?;
     let nonce = base64::engine::general_purpose::STANDARD
         .decode(&sealed.nonce)
         .ok()?;
@@ -345,7 +400,9 @@ fn open_nai_key(file: &SecretsFile, master: &[u8; KEY_LEN], username: &str) -> O
 /// this account and not by a lookalike that happens to share its directory.
 /// A file with nothing sealed in it proves nothing and counts as foreign.
 fn sealed_for(file: &SecretsFile, master: &[u8; KEY_LEN], username: &str) -> bool {
-    open_nai_key(file, master, username).is_some()
+    ProviderKey::ALL
+        .iter()
+        .any(|&which| open_key(file, master, username, which).is_some())
 }
 
 /// Carry a pre-128-bit secrets file over to this username's new directory.
@@ -384,19 +441,41 @@ fn migrate_legacy_in(root: &std::path::Path, master: &[u8; KEY_LEN], username: &
     }
 }
 
+fn load_key_in(
+    root: &std::path::Path,
+    master: &[u8; KEY_LEN],
+    username: &str,
+    which: ProviderKey,
+) -> Option<String> {
+    migrate_legacy_in(root, master, username);
+    open_key(&load_file_in(root, username)?, master, username, which)
+}
+
+#[cfg(test)]
 fn load_nai_key_in(
     root: &std::path::Path,
     master: &[u8; KEY_LEN],
     username: &str,
 ) -> Option<String> {
-    migrate_legacy_in(root, master, username);
-    open_nai_key(&load_file_in(root, username)?, master, username)
+    load_key_in(root, master, username, ProviderKey::NovelAi)
 }
 
+#[cfg(test)]
 fn save_nai_key_in(
     root: &std::path::Path,
     master: &[u8; KEY_LEN],
     username: &str,
+    api_key: Option<&str>,
+) -> Result<(), String> {
+    save_key_in(root, master, username, ProviderKey::NovelAi, api_key)
+}
+
+/// Store or clear one key, leaving every other key in the file as it was.
+fn save_key_in(
+    root: &std::path::Path,
+    master: &[u8; KEY_LEN],
+    username: &str,
+    which: ProviderKey,
     api_key: Option<&str>,
 ) -> Result<(), String> {
     // First, so a clear really clears: a legacy file left in place would still
@@ -404,7 +483,7 @@ fn save_nai_key_in(
     migrate_legacy_in(root, master, username);
     let path = secrets_path_in(root, username).ok_or_else(|| "Invalid username".to_string())?;
     let mut file = load_file_in(root, username).unwrap_or_default();
-    file.version = 1;
+    file.version = SECRETS_VERSION;
 
     // An all-whitespace key clears rather than stores: the UI's "clear" action
     // is an empty text field, and a key of spaces would otherwise be saved and
@@ -413,12 +492,12 @@ fn save_nai_key_in(
         Some(plaintext) => {
             let nonce: [u8; NONCE_LEN] = random_bytes();
             let ct = seal_with_nonce(master, &username.to_ascii_lowercase(), plaintext, &nonce)?;
-            file.novelai_api_key = Some(SealedValue {
+            *file.slot_mut(which) = Some(SealedValue {
                 nonce: base64::engine::general_purpose::STANDARD.encode(nonce),
                 ct: base64::engine::general_purpose::STANDARD.encode(&ct),
             });
         }
-        None => file.novelai_api_key = None,
+        None => *file.slot_mut(which) = None,
     }
 
     if let Some(parent) = path.parent() {
@@ -497,20 +576,38 @@ fn delete_all_in(
 /// longer decrypts all answer the same way, because the recovery is the same:
 /// prompt for the key again.
 pub fn load_nai_key(username: &str) -> Option<String> {
-    let root = config::app_data_dir()?;
-    let master = master_key()?;
-    load_nai_key_in(&root, &master, username)
+    load_key(username, ProviderKey::NovelAi)
 }
 
 /// Store or clear this account's NovelAI key. `None` (or an all-whitespace
 /// string) clears it.
 pub fn save_nai_key(username: &str, api_key: Option<&str>) -> Result<(), String> {
+    save_key(username, ProviderKey::NovelAi, api_key)
+}
+
+/// Read one of this account's provider keys, or `None` if it has none. Same
+/// failure semantics as [`load_nai_key`].
+pub fn load_key(username: &str, which: ProviderKey) -> Option<String> {
+    let root = config::app_data_dir()?;
+    let master = master_key()?;
+    load_key_in(&root, &master, username, which)
+}
+
+/// Store or clear one of this account's provider keys. `None` (or an
+/// all-whitespace string) clears it. Other keys in the file are kept.
+pub fn save_key(username: &str, which: ProviderKey, api_key: Option<&str>) -> Result<(), String> {
     let root = config::app_data_dir()
         .ok_or_else(|| "Cannot locate the server data directory.".to_string())?;
     let master = master_key().ok_or_else(|| {
         "Cannot access the secret store. Check the server data directory.".to_string()
     })?;
-    save_nai_key_in(&root, &master, username, api_key)
+    save_key_in(&root, &master, username, which, api_key)
+}
+
+/// Whether this account has a usable key for `which` (decrypts, like
+/// [`has_nai_key`]).
+pub fn has_key(username: &str, which: ProviderKey) -> bool {
+    load_key(username, which).is_some()
 }
 
 /// Whether this account has a usable NovelAI key.
@@ -713,6 +810,7 @@ mod tests {
                 nonce: "AAAA".into(),
                 ct: "BBBB".into(),
             }),
+            ..Default::default()
         };
         let json = serde_json::to_string(&file).unwrap();
         let back: SecretsFile = serde_json::from_str(&json).unwrap();
@@ -741,6 +839,7 @@ mod tests {
                 nonce: base64::engine::general_purpose::STANDARD.encode(nonce),
                 ct: base64::engine::general_purpose::STANDARD.encode(&ct),
             }),
+            ..Default::default()
         };
         let path = legacy_secrets_path_in(root, owner).unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -841,6 +940,105 @@ mod tests {
             load_nai_key_in(&root, &KEY, "b.o.b").as_deref(),
             Some("lookalikes-own-token")
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_provider_key_round_trips_on_its_own() {
+        let root = scratch("providers-round-trip");
+        for (i, which) in ProviderKey::ALL.iter().enumerate() {
+            let token = format!("token-{i}");
+            save_key_in(&root, &KEY, "alice", *which, Some(&token)).unwrap();
+        }
+        for (i, which) in ProviderKey::ALL.iter().enumerate() {
+            assert_eq!(
+                load_key_in(&root, &KEY, "alice", *which),
+                Some(format!("token-{i}"))
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clearing_one_provider_key_keeps_the_others() {
+        let root = scratch("providers-clear-one");
+        save_nai_key_in(&root, &KEY, "alice", Some("nai-token")).unwrap();
+        save_key_in(&root, &KEY, "alice", ProviderKey::Fal, Some("fal-token")).unwrap();
+        save_key_in(
+            &root,
+            &KEY,
+            "alice",
+            ProviderKey::ElevenLabs,
+            Some("xi-token"),
+        )
+        .unwrap();
+        save_key_in(&root, &KEY, "alice", ProviderKey::Fal, None).unwrap();
+        assert!(load_key_in(&root, &KEY, "alice", ProviderKey::Fal).is_none());
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "alice").as_deref(),
+            Some("nai-token")
+        );
+        assert_eq!(
+            load_key_in(&root, &KEY, "alice", ProviderKey::ElevenLabs).as_deref(),
+            Some("xi-token")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_version_1_file_still_loads_and_upgrades_on_save() {
+        let root = scratch("providers-v1");
+        // A file as the NovelAI-only build wrote it: version 1, one field.
+        let nonce: [u8; NONCE_LEN] = random_bytes();
+        let ct = seal_with_nonce(&KEY, "alice", "nai-v1-token", &nonce).unwrap();
+        let v1 = serde_json::json!({
+            "version": 1,
+            "novelai_api_key": {
+                "nonce": base64::engine::general_purpose::STANDARD.encode(nonce),
+                "ct": base64::engine::general_purpose::STANDARD.encode(&ct),
+            }
+        });
+        let path = secrets_path_in(&root, "alice").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&v1).unwrap()).unwrap();
+
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "alice").as_deref(),
+            Some("nai-v1-token")
+        );
+        assert!(load_key_in(&root, &KEY, "alice", ProviderKey::Segmind).is_none());
+
+        save_key_in(&root, &KEY, "alice", ProviderKey::Segmind, Some("sg-token")).unwrap();
+        let file = load_file_in(&root, "alice").unwrap();
+        assert_eq!(file.version, SECRETS_VERSION);
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "alice").as_deref(),
+            Some("nai-v1-token")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_legacy_file_holding_only_a_cloud_key_still_migrates() {
+        let root = scratch("migrate-cloud-only");
+        let nonce: [u8; NONCE_LEN] = random_bytes();
+        let ct = seal_with_nonce(&KEY, "alice", "fal-legacy", &nonce).unwrap();
+        let file = SecretsFile {
+            version: 2,
+            fal_api_key: Some(SealedValue {
+                nonce: base64::engine::general_purpose::STANDARD.encode(nonce),
+                ct: base64::engine::general_purpose::STANDARD.encode(&ct),
+            }),
+            ..Default::default()
+        };
+        let legacy = legacy_secrets_path_in(&root, "alice").unwrap();
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, serde_json::to_vec(&file).unwrap()).unwrap();
+        assert_eq!(
+            load_key_in(&root, &KEY, "alice", ProviderKey::Fal).as_deref(),
+            Some("fal-legacy")
+        );
+        assert!(!legacy.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

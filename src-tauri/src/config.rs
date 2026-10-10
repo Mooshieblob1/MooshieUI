@@ -127,6 +127,16 @@ pub struct AppConfig {
     /// Optional NovelAI API key. Required before any NovelAI model can be used.
     #[serde(default)]
     pub novelai_api_key: Option<String>,
+    /// The instance owner's cloud voice and video keys (ElevenLabs, fal.ai,
+    /// Segmind). Named accounts keep their own in `user_secrets` instead.
+    /// Never sent to any client, admin included (see [`cloud_secrets_mut`]),
+    /// and only changed through `set_cloud_api_key`.
+    #[serde(default)]
+    pub elevenlabs_api_key: Option<String>,
+    #[serde(default)]
+    pub fal_api_key: Option<String>,
+    #[serde(default)]
+    pub segmind_api_key: Option<String>,
     /// Custom gallery directory. When `None`, defaults to `{app_data_dir}/gallery`.
     pub gallery_path: Option<String>,
     /// Run the UI in the default web browser instead of the Tauri window.
@@ -307,6 +317,9 @@ impl Default for AppConfig {
             prompt_assistant_setup_done: false,
             civitai_api_key: None,
             novelai_api_key: None,
+            elevenlabs_api_key: None,
+            fal_api_key: None,
+            segmind_api_key: None,
             gallery_path: None,
             browser_mode: false,
             ui_server_port: 3200,
@@ -369,6 +382,18 @@ fn operator_secrets(config: &AppConfig) -> [&Option<String>; 4] {
     ]
 }
 
+/// The owner's cloud provider keys, by client-facing name. Unlike the
+/// operator secrets above, these never leave Rust for any role: the client
+/// only learns `{name}_configured`, and a full-config save always keeps the
+/// stored values.
+fn cloud_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<String>); 3] {
+    [
+        ("elevenlabs_api_key", &mut config.elevenlabs_api_key),
+        ("fal_api_key", &mut config.fal_api_key),
+        ("segmind_api_key", &mut config.segmind_api_key),
+    ]
+}
+
 fn is_set(value: &Option<String>) -> bool {
     value.as_deref().is_some_and(|v| !v.trim().is_empty())
 }
@@ -399,6 +424,10 @@ pub fn config_to_client_json(
     redacted.llm_oauth_client_id.clear();
 
     let mut configured_flags: Vec<(&'static str, bool)> = Vec::new();
+    for (name, field) in cloud_secrets_mut(&mut redacted) {
+        configured_flags.push((name, is_set(field)));
+        *field = None;
+    }
     if !include_secrets {
         // The NovelAI key spends the owner's money, so the client learns only
         // whether one is set.
@@ -727,6 +756,15 @@ fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
 /// through its own commands, and signing out through `set_llm_api_key("")`.
 pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
     keep_llm_provider_row(incoming, current);
+    // Never sent to a client, so whatever a full-config save carries here is
+    // either the blank redaction or something it had no business sending.
+    incoming
+        .elevenlabs_api_key
+        .clone_from(&current.elevenlabs_api_key);
+    incoming.fal_api_key.clone_from(&current.fal_api_key);
+    incoming
+        .segmind_api_key
+        .clone_from(&current.segmind_api_key);
     // Blanked for non-admin clients, so an absent or empty NovelAI key is a
     // stale echo rather than an intent to clear. Clearing goes through
     // `set_novelai_api_key("")`.
@@ -998,6 +1036,9 @@ mod secret_handling_tests {
     const PROXY: &str = "http://proxyuser:proxy-secret@10.0.0.2:3128";
     const PIP: &str = "https://pipuser:pip-secret@pypi.internal/simple";
     const NOVELAI: &str = "pst-owner-novelai";
+    const ELEVENLABS: &str = "xi-owner-key";
+    const FAL: &str = "fal-owner-key";
+    const SEGMIND: &str = "sg-owner-key";
     const LLM_KEY: &str = "sk-owner-llm";
     const REFRESH: &str = "refresh-owner-token";
     const CLIENT_ID: &str = "client-owner-registration";
@@ -1009,6 +1050,9 @@ mod secret_handling_tests {
             network_proxy: Some(PROXY.into()),
             pip_index_url: Some(PIP.into()),
             novelai_api_key: Some(NOVELAI.into()),
+            elevenlabs_api_key: Some(ELEVENLABS.into()),
+            fal_api_key: Some(FAL.into()),
+            segmind_api_key: Some(SEGMIND.into()),
             llm_provider: "nous".into(),
             llm_external_base_url: "https://inference-api.nousresearch.com/v1".into(),
             llm_external_model: "nousresearch/hermes-4-405b".into(),
@@ -1078,6 +1122,39 @@ mod secret_handling_tests {
             view["llm_external_api_key_configured"],
             serde_json::json!(true)
         );
+    }
+
+    #[test]
+    fn cloud_keys_never_reach_any_client() {
+        for include_secrets in [false, true] {
+            let view = config_to_client_json(&owner_config(), include_secrets).unwrap();
+            let text = view.to_string();
+            for secret in [ELEVENLABS, FAL, SEGMIND] {
+                assert!(!text.contains(secret), "{secret} left Rust");
+            }
+            for name in ["elevenlabs_api_key", "fal_api_key", "segmind_api_key"] {
+                assert_eq!(view[name], serde_json::Value::Null, "{name}");
+                assert_eq!(view[format!("{name}_configured")], serde_json::json!(true));
+            }
+        }
+        let view = config_to_client_json(&AppConfig::default(), true).unwrap();
+        assert_eq!(view["fal_api_key_configured"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn a_full_config_save_never_changes_the_cloud_keys() {
+        let current = owner_config();
+        let mut incoming = echo(config_to_client_json(&current, true).unwrap());
+        preserve_secrets(&mut incoming, &current);
+        assert_eq!(incoming.elevenlabs_api_key.as_deref(), Some(ELEVENLABS));
+        assert_eq!(incoming.fal_api_key.as_deref(), Some(FAL));
+        assert_eq!(incoming.segmind_api_key.as_deref(), Some(SEGMIND));
+
+        // A crafted payload cannot replace one either.
+        let mut crafted = current.clone();
+        crafted.fal_api_key = Some("attacker".into());
+        preserve_secrets(&mut crafted, &current);
+        assert_eq!(crafted.fal_api_key.as_deref(), Some(FAL));
     }
 
     #[test]

@@ -7,8 +7,9 @@ open an issue with the feature template and ask.
 ## What MooshieUI is
 
 - A desktop (Tauri) and browser front-end for image, video and music generation
-  through local or remote ComfyUI, with optional NovelAI image generation
-  using the user's own API key.
+  through local or remote ComfyUI, with optional NovelAI image generation, and
+  optional cloud voice and video generation (for example ElevenLabs and
+  Seedance), each using the user's own API key and billed by that provider.
 - A polished UI over generation workflows: prompt building, generation
   settings, gallery management, model hub, and related in-app tooling.
 - Video generation on the same footing as images: shot planning through the
@@ -17,7 +18,8 @@ open an issue with the feature template and ask.
 - Music composition through ComfyUI, with style and lyric writing, a local song
   library, playlists, playback, manual lyric timing and audio export.
 - Self-hosting with LAN accounts, roles, per-user galleries and configured GPU
-  workers. Regular users and moderators manage their own NovelAI credentials.
+  workers. Regular users and moderators manage their own NovelAI and cloud
+  provider credentials.
 - Windows/Linux releases and experimental Apple Silicon macOS candidates,
   with native desktop and embedded browser-server modes sharing one codebase.
   See [Mac support status](docs/MACOS.md).
@@ -34,7 +36,10 @@ open an issue with the feature template and ask.
   already shipped.
 - Not a video editor or non-linear editing suite. Clips are planned before
   generation and exported afterwards; MooshieUI does not cut, composite, or
-  grade footage.
+  grade footage. Joining a generated voice track to a generated clip at
+  generation time is muxing, not editing.
+- Never a way around a provider's safety filters. A provider's moderation
+  block is shown to the user as final, not retried with a reworded prompt.
 - Not a plugin marketplace or arbitrary third-party extension host.
 
 ## How scope is enforced
