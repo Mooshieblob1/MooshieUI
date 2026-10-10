@@ -27,6 +27,12 @@ export interface NaiParsedResponse {
   characters: string[];
   /** A trailing `NOTE:` line, shown in the modal banner. Empty when absent. */
   note: string;
+  /**
+   * The `CANON:` field: one line per way a saved canon character's card
+   * differs from canon, so the modal can ask which side should win. Empty
+   * when absent.
+   */
+  canon: string[];
 }
 
 /** Em dash and en dash. NovelAI treats both as prompt poison. */
@@ -38,8 +44,9 @@ const LABEL_UC =
   /^\s*(?:\*\*)?(?:uc|undesired(?:\s*content)?|negative(?:\s*prompt)?)(?:\*\*)?\s*:\s*/i;
 const LABEL_CHAR = /^\s*(?:\*\*)?char(?:acter)?\s*\d*(?:\*\*)?\s*:\s*/i;
 const LABEL_NOTE = /^\s*(?:\*\*)?note(?:\*\*)?\s*:\s*/i;
+const LABEL_CANON = /^\s*(?:\*\*)?canon(?:\s*conflicts?)?(?:\*\*)?\s*:\s*/i;
 
-type Field = "base" | "uc" | "char" | "note" | null;
+type Field = "base" | "uc" | "char" | "note" | "canon" | null;
 
 /**
  * Pull the labelled fields out of a raw completion.
@@ -58,6 +65,7 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
   const uc: string[] = [];
   const chars: string[][] = [];
   const note: string[] = [];
+  const canon: string[] = [];
 
   let field: Field = null;
   let sawLabel = false;
@@ -98,6 +106,14 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
       continue;
     }
 
+    if (LABEL_CANON.test(line)) {
+      field = "canon";
+      sawLabel = true;
+      const rest = line.replace(LABEL_CANON, "");
+      if (rest.trim()) canon.push(rest);
+      continue;
+    }
+
     if (!sawLabel) {
       preamble.push(line);
       continue;
@@ -115,6 +131,9 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
       case "note":
         note.push(line);
         break;
+      case "canon":
+        canon.push(line);
+        break;
       default:
         break;
     }
@@ -122,7 +141,7 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
 
   if (!sawLabel) {
     const bare = (raw ?? "").replace(/^\s*```[^\n]*\n?|```\s*$/g, "").trim();
-    return { base: bare, uc: "", characters: [], note: "" };
+    return { base: bare, uc: "", characters: [], note: "", canon: [] };
   }
 
   const joinedBase = joinField(base);
@@ -133,7 +152,13 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
     uc: joinField(uc),
     characters: chars.map((c) => joinField(c)).filter((c) => !isBlankBox(c)),
     note: joinField(note),
+    canon: canonLines(canon),
   };
+}
+
+/** One difference per line, bullets and blanks dropped. */
+function canonLines(lines: string[]): string[] {
+  return lines.map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter(Boolean);
 }
 
 /**
@@ -362,6 +387,7 @@ export function normalizeNaiResponse(parsed: NaiParsedResponse): NaiParsedRespon
     uc: normalizeField(parsed.uc, NAI_PRESET_UC_JUNK),
     characters: parsed.characters.map((box) => normalizeField(normalizeCharIdentity(box))),
     note: parsed.note.trim(),
+    canon: parsed.canon,
   };
 }
 

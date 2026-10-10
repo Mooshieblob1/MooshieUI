@@ -11,6 +11,13 @@
  * Leaf util, like `naiPrompt.ts`: it takes plain data and imports no store.
  */
 
+/**
+ * Which side wins when a saved canon character's card disagrees with canon:
+ * the saved details (the default) or the canon look. The user picks after
+ * seeing the differences the first rewrite lists in its CANON field.
+ */
+export type NaiCanonPriority = "saved" | "canon";
+
 export interface NaiSavedCharacter {
   name: string;
   prompt: string;
@@ -29,7 +36,10 @@ function clip(text: string): string {
 }
 
 /** The SAVED CHARACTERS block, or "" when there are none to send. */
-export function naiSavedCharacterDirective(characters: NaiSavedCharacter[]): string {
+export function naiSavedCharacterDirective(
+  characters: NaiSavedCharacter[],
+  canonPriority: NaiCanonPriority = "saved",
+): string {
   const roster = characters
     .filter((c) => c.name.trim() && c.prompt.trim())
     .slice(0, NAI_SAVED_CHARACTER_LIMIT);
@@ -49,7 +59,12 @@ ${entries}
 - The exception is text that plainly means someone else: a series, a surname or a description that does not fit the saved character ("Julie from Persona" is not a saved Julie Evergreen whose saved text has nothing to do with Persona). Context that fits the saved character, such as the series their name or saved text belongs to, still means the saved character ("Brock from Pokemon" is a saved Brock who is the Pokemon Brock). A bare name with no such context always means the saved character.
 - If more than one saved character could fit, pick the closest match on the name. Never merge two saved characters into one.
 - A saved character the text refers to gets their own CHAR block. Its identity section uses the saved name, then the saved appearance. Rewrite the appearance into the CHAR block's sections and V5 form as you go, but keep every detail it gives: hair, eyes, body, features and outfit.
-- Some saved characters are canon characters you already know, such as Brock from Pokemon: their name or saved text matches a known character. For those, use both. Write their danbooru character and series tags and draw on your own knowledge of their canon look, and add every saved detail on top. Where the saved text and canon differ, the saved text wins, because the user saved it on purpose.
+- Some saved characters are canon characters you already know, such as Brock from Pokemon: their name or saved text matches a known character. For those, use both. Write their danbooru character and series tags and draw on your own knowledge of their canon look, and add the saved details on top. ${
+    canonPriority === "saved"
+      ? "Where the saved text and canon differ, the saved text wins, because the user saved it on purpose."
+      : "Where the saved text and canon differ, canon wins: the user asked for the canon look over their saved details. Saved details canon says nothing about still apply."
+  }
+- Whenever a saved canon character is in the image and their saved text disagrees with canon on something (hair, eyes, build, outfit, features), list every disagreement in a CANON field after the CHAR blocks and before any NOTE line: the label CANON: on its own line, then one line per difference in the form <name>: <what> (saved: <saved detail>; canon: <canon detail>). List them whichever side won. Leave the field out when nothing differs.
 - A saved character you do not recognise is the user's original. Their appearance comes only from the saved text, never from a canon character who happens to share the name.
 - The user's text wins over both the saved text and canon where it changes something. If they ask for her in a swimsuit, the swimsuit replaces the saved outfit; everything else saved still holds.
 - Add a saved character's avoid list to UC, skipping anything already there and anything that would rule out another character in the image or something the user asked for.

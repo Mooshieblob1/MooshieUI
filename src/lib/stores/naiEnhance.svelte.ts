@@ -4,6 +4,7 @@ import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import type { NovelAiSettings } from "./generation.svelte.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
+import type { NaiCanonPriority } from "../utils/naiSavedCharacters.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
 
 /**
@@ -87,6 +88,12 @@ export interface NaiEnhancePending {
   note: string;
   /** Validator problems that survived the retry. Advisory only. */
   problems: string[];
+  /**
+   * Ways a saved canon character's card differs from canon, from the
+   * rewrite's CANON field. Non-empty puts the keep saved / use canon choice
+   * on the review.
+   */
+  canon: string[];
   base: NaiEnhanceRow;
   uc: NaiEnhanceRow;
   characters: NaiEnhanceCharacterRow[];
@@ -167,6 +174,12 @@ class NaiEnhanceStore {
    * when ticked for this rewrite.
    */
   curate = $state(false);
+  /**
+   * V5 flow only: which side wins when a saved canon character's card
+   * disagrees with canon. Saved on every opening; the review offers the switch
+   * once the rewrite has listed differences.
+   */
+  canonPriority = $state<NaiCanonPriority>("saved");
 
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
@@ -258,6 +271,7 @@ class NaiEnhanceStore {
     this.generalPending = null;
     this.references = [];
     this.curate = false;
+    this.canonPriority = "saved";
   }
 
   /** Paste the prompt box into the input, for the "tidy up what I have" case. */
