@@ -95,6 +95,13 @@ import {
   parseExtractedCharacters,
   type ExtractedCharacter,
 } from "../utils/characterExtract.js";
+import {
+  CHARACTER_MERGE_RETRY,
+  characterMergeRequest,
+  parseCharacterMerge,
+  type CharacterMergeInput,
+  type CharacterMergeResult,
+} from "../utils/characterMerge.js";
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -460,6 +467,34 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
         }
         throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Work a saved character into the current prompt for the Characters tab's
+   * Use. The caller reviews the result before writing anything. One retry when
+   * the reply is not the JSON asked for.
+   */
+  async mergeCharacter(input: CharacterMergeInput): Promise<CharacterMergeResult> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterMergeRequest(input);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseCharacterMerge(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            input.box !== null,
+            input.negative,
+          );
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_MERGE_RETRY}`;
+        }
+        throw new Error("invalid_character_merge");
       });
     } finally {
       this.isGenerating = false;

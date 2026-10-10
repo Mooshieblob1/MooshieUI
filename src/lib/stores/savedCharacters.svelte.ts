@@ -169,44 +169,89 @@ class SavedCharactersStore {
     this.saveSettings();
   }
 
+  /** True when the character's text is already in the prompt or a character box. */
+  isInPrompt(character: SavedCharacter): boolean {
+    const lower = character.prompt.trim().toLowerCase();
+    if (generation.positivePrompt.toLowerCase().includes(lower)) return true;
+    if (!generation.isNovelAi || !generation.novelAiModel?.v4Prompt) return false;
+    return generation.novelaiSettings.characters.some(
+      (b) => b.prompt.trim().toLowerCase() === lower,
+    );
+  }
+
   /**
-   * Put a saved character into the current prompt. NovelAI models with
-   * character prompts get it as its own character box (filling an empty one
-   * first) while there is room, with its UC in that box's undesired content;
-   * everything else appends it to the positive prompt and its UC to the
-   * negative prompt.
+   * Where a NovelAI V4+ character box can take the character: the index of an
+   * empty box to fill, or -1 for a new one. Null when the character goes into
+   * the positive prompt instead (not NovelAI, an older model, or every slot
+   * taken).
+   */
+  boxTarget(): { index: number; boxNegative: boolean } | null {
+    if (!generation.isNovelAi || !generation.novelAiModel?.v4Prompt) return null;
+    const boxes = generation.novelaiSettings.characters;
+    const boxNegative = generation.novelAiModel.characterNegatives;
+    const empty = boxes.findIndex((b) => b.prompt.trim() === "");
+    if (empty !== -1) return { index: empty, boxNegative };
+    if (boxes.length < novelAiMaxCharacters(generation.checkpoint)) {
+      return { index: -1, boxNegative };
+    }
+    return null;
+  }
+
+  /**
+   * Put a saved character into the current prompt as it is. NovelAI models
+   * with character prompts get it as its own character box while there is
+   * room, with its UC in that box's undesired content; everything else
+   * appends it to the positive prompt and its UC to the negative prompt.
    */
   insert(character: SavedCharacter): CharacterInsertResult {
+    if (this.isInPrompt(character)) return "duplicate";
     const text = character.prompt.trim();
     const negative = character.negative.trim();
-    const lower = text.toLowerCase();
-    if (generation.positivePrompt.toLowerCase().includes(lower)) return "duplicate";
-
-    if (generation.isNovelAi && generation.novelAiModel?.v4Prompt) {
-      const boxes = generation.novelaiSettings.characters;
-      if (boxes.some((b) => b.prompt.trim().toLowerCase() === lower)) return "duplicate";
-      // Models without per-character UC take it in the main negative prompt.
-      const boxNegative = generation.novelAiModel.characterNegatives;
-      const box = { prompt: text, ...(boxNegative ? { negative_prompt: negative } : {}) };
-      const empty = boxes.findIndex((b) => b.prompt.trim() === "");
-      const room = boxes.length < novelAiMaxCharacters(generation.checkpoint);
-      if (empty !== -1) {
-        generation.updateNovelAiCharacter(empty, { ...box, enabled: true });
-      } else if (room) {
-        generation.updateNovelAiSettings({
-          characters: [...boxes, { ...createNovelAiCharacter(), ...box }],
-        });
-      }
-      if (empty !== -1 || room) {
-        if (!boxNegative) this.appendNegative(negative);
-        return "novelai_character";
-      }
+    const target = this.boxTarget();
+    if (target) {
+      this.writeBox(target.index, text, target.boxNegative ? negative : "");
+      if (!target.boxNegative) this.appendNegative(negative);
+      return "novelai_character";
     }
-
     generation.positivePrompt = joinPrompt(generation.positivePrompt, text);
     this.appendNegative(negative);
     generation.saveSettings();
     return "prompt";
+  }
+
+  /**
+   * Write a reviewed LLM merge. Only the fields passed are written, so a row
+   * the user unticked keeps what is there now. `character` (box mode) goes
+   * into the box `boxTarget` picks at apply time.
+   */
+  applyMerge(fields: {
+    prompt?: string;
+    negative?: string;
+    character?: string;
+    characterNegative?: string;
+  }): void {
+    if (fields.prompt !== undefined) generation.positivePrompt = fields.prompt;
+    if (fields.negative !== undefined) generation.negativePrompt = fields.negative;
+    const target = fields.character ? this.boxTarget() : null;
+    if (target && fields.character) {
+      this.writeBox(target.index, fields.character, target.boxNegative ? (fields.characterNegative ?? "") : "");
+    } else if (fields.character) {
+      // Every slot filled up since the merge ran: fall back to the prompt.
+      generation.positivePrompt = joinPrompt(generation.positivePrompt, fields.character);
+    }
+    generation.saveSettings();
+  }
+
+  /** Fill box `index`, or add a new one when it is -1. */
+  private writeBox(index: number, prompt: string, negative: string): void {
+    const box = { prompt, negative_prompt: negative };
+    if (index !== -1) {
+      generation.updateNovelAiCharacter(index, { ...box, enabled: true });
+    } else {
+      generation.updateNovelAiSettings({
+        characters: [...generation.novelaiSettings.characters, { ...createNovelAiCharacter(), ...box }],
+      });
+    }
   }
 
   /** Add to the main negative prompt unless it is empty or already there. */

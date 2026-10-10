@@ -14,6 +14,8 @@
     type SavedCharacter,
   } from "../../stores/savedCharacters.svelte.js";
   import { mapLlmError } from "../../utils/llmError.js";
+  import type { CharacterMergeResult } from "../../utils/characterMerge.js";
+  import CharacterMergeModal from "./CharacterMergeModal.svelte";
 
   let search = $state("");
   let extracting = $state(false);
@@ -21,6 +23,15 @@
   let editName = $state("");
   let editPrompt = $state("");
   let editNegative = $state("");
+  /** Character the prompt assistant is working into the prompt right now. */
+  let mergingId = $state<string | null>(null);
+  let review = $state<{
+    character: SavedCharacter;
+    before: { prompt: string; negative: string };
+    result: CharacterMergeResult;
+    boxMode: boolean;
+    boxNegative: boolean;
+  } | null>(null);
 
   const architecture = $derived(savedCharacters.currentArchitecture);
   const archLabel = $derived(architecture ? architectureLabel(architecture) : "");
@@ -103,7 +114,79 @@
     }
   }
 
-  function use(character: SavedCharacter) {
+  /**
+   * Have the prompt assistant work the character into the prompt, then review
+   * it. Without an assistant, or with nothing in the prompt to merge into,
+   * there is nothing to resolve, so it inserts the saved text as is.
+   */
+  async function use(character: SavedCharacter) {
+    if (mergingId) return;
+    if (savedCharacters.isInPrompt(character)) {
+      gallery.showToast(locale.t("characters.toast.already_in_prompt", { name: character.name }), "info");
+      return;
+    }
+    if (!promptAssistant.isAvailable || !generation.positivePrompt.trim()) {
+      insertPlain(character);
+      return;
+    }
+    const target = savedCharacters.boxTarget();
+    const before = { prompt: generation.positivePrompt, negative: generation.negativePrompt };
+    mergingId = character.id;
+    try {
+      const result = await promptAssistant.mergeCharacter({
+        prompt: before.prompt,
+        negative: before.negative,
+        character,
+        box: target
+          ? {
+              boxes: generation.activeNovelAiCharacters.map((c) => c.prompt),
+              boxNegative: target.boxNegative,
+            }
+          : null,
+      });
+      review = {
+        character,
+        before,
+        result,
+        boxMode: target !== null,
+        boxNegative: target?.boxNegative ?? false,
+      };
+    } catch (e) {
+      console.error("Character merge failed:", e);
+      const msg = String(e);
+      gallery.showToast(
+        msg.includes("invalid_character_merge")
+          ? locale.t("characters.toast.merge_invalid")
+          : mapLlmError(msg),
+        "error",
+      );
+    } finally {
+      mergingId = null;
+    }
+  }
+
+  function applyReview(fields: { prompt?: string; negative?: string; character?: string; characterNegative?: string }) {
+    const r = review;
+    if (!r) return;
+    review = null;
+    // The merge was written against the prompt as it was; applying it over
+    // edits made since would silently undo them.
+    if (generation.positivePrompt !== r.before.prompt || generation.negativePrompt !== r.before.negative) {
+      gallery.showToast(locale.t("characters.toast.prompt_changed", { name: r.character.name }), "error");
+      return;
+    }
+    savedCharacters.applyMerge(fields);
+    gallery.showToast(
+      locale.t(
+        r.boxMode && fields.character ? "characters.toast.added_character_box" : "characters.toast.added_prompt",
+        { name: r.character.name },
+      ),
+      "success",
+    );
+  }
+
+  function insertPlain(character: SavedCharacter) {
+    review = null;
     const result = savedCharacters.insert(character);
     const key =
       result === "duplicate"
@@ -235,11 +318,26 @@
                 <span class="flex-1 min-w-0 truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
                 <button
                   type="button"
-                  class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white"
-                  title={locale.t("characters.use_tip")}
+                  class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
+                  disabled={mergingId !== null}
                   onclick={() => use(character)}
                 >
-                  {locale.t("characters.use")}
+                  {#if mergingId === character.id}
+                    <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+                    {locale.t("characters.merging")}
+                  {:else}
+                    {locale.t("characters.use")}
+                  {/if}
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+                  title={locale.t("characters.insert_plain_tip")}
+                  aria-label={locale.t("characters.insert_plain")}
+                  onclick={() => insertPlain(character)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
                 <button
                   type="button"
@@ -273,3 +371,16 @@
     </div>
   {/if}
 </div>
+
+{#if review}
+  <CharacterMergeModal
+    name={review.character.name}
+    before={review.before}
+    result={review.result}
+    boxMode={review.boxMode}
+    boxNegative={review.boxNegative}
+    onapply={applyReview}
+    oninsertplain={() => { if (review) insertPlain(review.character); }}
+    onclose={() => { review = null; }}
+  />
+{/if}
