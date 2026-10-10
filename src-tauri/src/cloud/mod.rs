@@ -11,7 +11,9 @@
 //! reference `tauri`.
 
 pub mod elevenlabs;
+pub mod scene;
 pub mod takes;
+pub mod video;
 pub mod voice;
 pub mod voice_prompt;
 

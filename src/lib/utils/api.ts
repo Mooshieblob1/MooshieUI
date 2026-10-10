@@ -12,9 +12,12 @@ import type {
   ElevenLabsSubscription,
   ElevenLabsVoice,
   Moderated,
+  ScenePlan,
+  SceneRequest,
   SpeechEstimate,
   TakeInfo,
   TakeRequest,
+  VideoCapabilities,
   VoiceBrief,
 } from "../types/scene.js";
 import type { AudioStyleCapabilities, AudioStyleTarget, AudioStyleStatus } from "./musicAudioStyle.js";
@@ -289,6 +292,28 @@ export async function sceneRenderTake(request: TakeRequest): Promise<Moderated<T
 /** Load a take already on disk. Never calls ElevenLabs. */
 export async function sceneLoadTake(takeId: string): Promise<TakeInfo> {
   return ipcInvoke("scene_load_take", { takeId });
+}
+
+// --- Anime scene: video step ---
+
+/** Limits and options for every cloud video model. */
+export async function sceneVideoCapabilities(): Promise<VideoCapabilities[]> {
+  return ipcInvoke("scene_video_capabilities");
+}
+
+/** Timings, prompt and price for a scene. Spends nothing. */
+export async function scenePlan(request: SceneRequest): Promise<ScenePlan> {
+  return ipcInvoke("scene_plan", { request });
+}
+
+/** Start a paid scene render; returns its prompt id. Confirm the cost first. */
+export async function sceneGenerate(request: SceneRequest): Promise<string> {
+  return ipcInvoke("scene_generate", { request });
+}
+
+/** Pick up scenes left unfinished by a restart. Costs nothing. */
+export async function sceneResumeJobs(): Promise<string[]> {
+  return ipcInvoke("scene_resume_jobs");
 }
 
 export interface ControlNetPreprocessorPreviewResponse {

@@ -4,6 +4,7 @@
   import { cloudKeyStatus } from "../../utils/api.js";
   import SceneVoicePanel from "./SceneVoicePanel.svelte";
   import SceneScriptPanel from "./SceneScriptPanel.svelte";
+  import SceneVideoPanel from "./SceneVideoPanel.svelte";
   import SceneCostDialog from "./SceneCostDialog.svelte";
 
   interface Props {
@@ -13,13 +14,18 @@
   let { onOpenSettings }: Props = $props();
 
   let hasKey = $state<boolean | null>(null);
+  let hasVideoKey = $state(false);
   let confirmReset = $state(false);
 
   $effect(() => {
     void cloudKeyStatus()
       .then((status) => {
         hasKey = status.elevenlabs;
+        hasVideoKey = status.fal;
         if (status.elevenlabs) void animeScene.refreshAccount();
+        void animeScene.loadCapabilities();
+        // Picks up scenes a restart left unfinished. Polling only, never a new charge.
+        if (status.fal) void animeScene.resumeJobs();
       })
       .catch(() => (hasKey = false));
   });
@@ -81,6 +87,7 @@
 
       <SceneVoicePanel />
       <SceneScriptPanel />
+      <SceneVideoPanel hasKey={hasVideoKey} {onOpenSettings} />
     {/if}
   </div>
 </div>

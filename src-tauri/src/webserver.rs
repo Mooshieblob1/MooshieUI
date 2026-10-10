@@ -3813,6 +3813,46 @@ async fn dispatch_command(
                     .map_err(|e| e.to_string())?;
             serde_json::to_value(take).map_err(|e| e.to_string())
         }
+        "scene_video_capabilities" => {
+            serde_json::to_value(crate::cloud::scene::job::capabilities())
+                .map_err(|e| e.to_string())
+        }
+        "scene_plan" => {
+            let request: crate::cloud::scene::job::SceneRequest =
+                serde_json::from_value(args["request"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let plan = crate::cloud::scene::job::plan(&state, username, &request)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(plan).map_err(|e| e.to_string())
+        }
+        "scene_generate" => {
+            let request: crate::cloud::scene::job::SceneRequest =
+                serde_json::from_value(args["request"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let sink = crate::novelai::EventSink::new(
+                Arc::clone(&state),
+                #[cfg(feature = "desktop")]
+                None,
+            );
+            let prompt_id = crate::cloud::scene::job::start(&state, username, &request, sink)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(prompt_id))
+        }
+        "scene_resume_jobs" => {
+            let shared = Arc::clone(&state);
+            let ids = crate::cloud::scene::job::resume(&state, username, || {
+                crate::novelai::EventSink::new(
+                    Arc::clone(&shared),
+                    #[cfg(feature = "desktop")]
+                    None,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(ids).map_err(|e| e.to_string())
+        }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
             let configured = !api_key.is_empty();
@@ -8730,6 +8770,10 @@ mod nai_key_tests {
             "scene_estimate_takes",
             "scene_render_take",
             "scene_load_take",
+            "scene_video_capabilities",
+            "scene_plan",
+            "scene_generate",
+            "scene_resume_jobs",
         ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }
