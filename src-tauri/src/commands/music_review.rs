@@ -34,7 +34,7 @@ pub struct MusicTranscript {
 fn configured(config: &AppConfig) -> bool {
     config.llm_external_enabled
         && matches!(config.llm_provider.as_str(), "xai" | "xai-oauth")
-        && !config.llm_external_api_key.trim().is_empty()
+        && !config.llm_api_key().is_empty()
 }
 
 pub(crate) async fn capabilities(state: &AppState) -> bool {
@@ -170,7 +170,7 @@ pub(crate) async fn transcribe(
         if !configured(&config) {
             return Err("Assistant provider changed before transcription".into());
         }
-        config.llm_external_api_key.clone()
+        config.llm_api_key()
     };
     request_transcript(
         &state.http_client_no_redirect,

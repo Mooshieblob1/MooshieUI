@@ -155,6 +155,7 @@ pub async fn set_novelai_api_key(
     api_key: String,
 ) -> Result<bool, AppError> {
     let trimmed = api_key.trim().to_string();
+    crate::key_source::check(&trimmed).map_err(AppError::Other)?;
     let configured = !trimmed.is_empty();
 
     // Saved while the write lock is still held: saving a snapshot after

@@ -90,7 +90,7 @@ fn backend(config: &AppConfig) -> Result<Backend, AppError> {
             "Select an audio-input model in Prompt Assistant settings.",
         ));
     }
-    let key = config.llm_external_api_key.clone();
+    let key = config.llm_api_key();
     if provider == "openrouter" && key.trim().is_empty() {
         return Err(error(
             "Add your OpenRouter API key in Prompt Assistant settings.",

@@ -126,7 +126,17 @@ pub async fn resolve_credential(
     provider: CloudProvider,
 ) -> Result<CloudCredential, AppError> {
     let owner_key = if username.is_none() {
-        provider.owner_key(&*state.config.read().await)
+        let config = state.config.read().await;
+        let stored = provider.owner_key(&config);
+        let key = crate::key_source::resolve(stored.as_deref());
+        if key.is_none() {
+            if let Some(message) =
+                crate::key_source::missing_message(stored.as_deref(), provider.display_name())
+            {
+                return Err(AppError::Other(message));
+            }
+        }
+        key
     } else {
         None
     };
@@ -175,6 +185,7 @@ pub async fn set_api_key(
     api_key: &str,
 ) -> Result<bool, AppError> {
     let trimmed = api_key.trim();
+    crate::key_source::check(trimmed).map_err(AppError::Other)?;
     let configured = !trimmed.is_empty();
     let value = configured.then_some(trimmed);
     match username {

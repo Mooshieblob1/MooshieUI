@@ -86,7 +86,16 @@ pub async fn resolve_credential(
     username: Option<&str>,
 ) -> Result<NaiCredential, AppError> {
     let host_key = if username.is_none() {
-        state.config.read().await.novelai_api_key.clone()
+        let config = state.config.read().await;
+        let key = config.novelai_key();
+        if key.is_none() {
+            if let Some(message) =
+                crate::key_source::missing_message(config.novelai_api_key.as_deref(), "NovelAI")
+            {
+                return Err(AppError::Other(message));
+            }
+        }
+        key
     } else {
         None
     };

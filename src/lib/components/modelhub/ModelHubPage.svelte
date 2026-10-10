@@ -21,6 +21,8 @@
   import { models } from "../../stores/models.svelte.js";
   import { modelRequests } from "../../stores/modelRequests.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
+  import KeyEnvToggle from "../settings/KeyEnvToggle.svelte";
   import { showError } from "../../stores/errorModal.svelte.js";
   import { portal } from "../../utils/portal.js";
   import { sortCivitaiModels } from "../../utils/civitaiSort.js";
@@ -145,6 +147,14 @@
 
   let apiKey = $state("");
   let apiKeyDraft = $state("");
+  /** `null` until flipped, so the field opens in variable mode for a saved `env:NAME`. */
+  let keyEnvChoice = $state<boolean | null>(null);
+  const keyEnvMode = $derived(keyEnvChoice ?? isEnvRef(apiKey));
+  /**
+   * The key to send with a request. A saved `env:NAME` is only meaningful to
+   * the backend's own config, which it falls back to when none is sent.
+   */
+  const clientKey = $derived(isEnvRef(apiKey) ? "" : apiKey.trim());
   let keySaved = $state(false);
   let keyRecommended = $state(false);
   let loadingArchitectures = $state(false);
@@ -338,7 +348,7 @@
   }
 
   function withToken(downloadUrl: string): string {
-    const trimmed = apiKey.trim();
+    const trimmed = clientKey;
     if (!trimmed) return downloadUrl;
     try {
       const url = new URL(downloadUrl);
@@ -529,7 +539,7 @@
       saved = "";
     }
     apiKey = saved;
-    apiKeyDraft = saved;
+    apiKeyDraft = isEnvRef(saved) ? saved.slice(4) : saved;
   }
 
   function loadCivitaiColumns() {
@@ -553,7 +563,7 @@
   });
 
   function saveApiKey() {
-    const normalized = apiKeyDraft.trim();
+    const normalized = toStoredKey(apiKeyDraft, keyEnvMode);
     apiKey = normalized;
     keySaved = true;
     keyRecommended = false;
@@ -563,7 +573,7 @@
     getConfig().then((cfg) => {
       cfg.civitai_api_key = normalized || null;
       return updateConfig(cfg);
-    }).catch(() => { /* non-fatal */ });
+    }).then(() => keyEnv.refresh()).catch(() => { /* non-fatal */ });
     setTimeout(() => {
       keySaved = false;
     }, 1500);
@@ -677,7 +687,7 @@
         page: cursorParam ? undefined : (append ? nextPage : page),
         cursor: cursorParam ?? undefined,
         limit: 30,
-        apiKey: apiKey.trim() || undefined,
+        apiKey: clientKey || undefined,
       });
       if (seq !== searchSeq) return;
 
@@ -769,7 +779,7 @@
       });
 
       const architectures = await Promise.race([
-        listCivitaiArchitectures(apiKey.trim() || undefined),
+        listCivitaiArchitectures(clientKey || undefined),
         timeoutPromise,
       ]);
 
@@ -854,7 +864,7 @@
   async function installFromCivitaiPageUrl(modelId: number, versionId: number | null) {
     directInstalling = true;
     try {
-      const model = await getCivitaiModel(modelId, apiKey.trim() || undefined);
+      const model = await getCivitaiModel(modelId, clientKey || undefined);
       const version =
         (versionId != null ? model.modelVersions.find((v) => v.id === versionId) : undefined) ??
         model.modelVersions[0];
@@ -1016,7 +1026,7 @@
     loadingMore = false;
     error = null;
     try {
-      const model = await getCivitaiModel(modelId, apiKey.trim() || undefined);
+      const model = await getCivitaiModel(modelId, clientKey || undefined);
       items = [model];
       totalPages = 1;
       totalItems = 1;
@@ -1206,10 +1216,16 @@
           <input
             id="civitai-api-key"
             name="civitaiApiKey"
-            type="password"
+            type={keyEnvMode ? "text" : "password"}
+            autocomplete="off"
+            spellcheck="false"
             bind:value={apiKeyDraft}
             class="w-full bg-neutral-800 border rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 {keyRecommended ? 'border-red-500 ring-1 ring-red-500/50' : 'border-neutral-700'}"
-            placeholder={locale.t("modelhub.civitai.paste_key")}
+            placeholder={keyEnvMode ? locale.t("settings.key_env.placeholder") : locale.t("modelhub.civitai.paste_key")}
+          />
+          <KeyEnvToggle
+            field="civitai"
+            bind:envMode={() => keyEnvMode, (v) => { keyEnvChoice = v; apiKeyDraft = ""; }}
           />
         </div>
         <div class="flex items-center gap-2">

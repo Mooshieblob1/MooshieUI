@@ -20,6 +20,15 @@ pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<serde_json::V
     Ok(config_to_client_json(&config, true)?)
 }
 
+/// Which owner key fields read from an environment variable, and whether
+/// each variable is set. Names only, never values.
+#[tauri::command]
+pub async fn api_key_env_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::key_source::KeyEnvStatus, AppError> {
+    Ok(crate::key_source::owner_status(&*state.config.read().await))
+}
+
 /// Apply `edit` to the live config and save it before releasing the write
 /// lock. Saving a snapshot after dropping the lock lets a concurrent
 /// `update_config` land in between and then be overwritten on disk by the

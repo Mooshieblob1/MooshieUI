@@ -110,6 +110,7 @@ export async function saveMusicFile(dataBase64: string, path: string): Promise<v
 import type {
   AppConfig,
   CloudKeyStatus,
+  KeyEnvStatus,
   CloudProviderId,
   GalleryImageEntry,
   GenerationMode,
@@ -248,6 +249,14 @@ export async function setCloudApiKey(provider: CloudProviderId, apiKey: string):
 /** Which cloud providers the current account has a key for. Never returns a key. */
 export async function cloudKeyStatus(): Promise<CloudKeyStatus> {
   return ipcInvoke("cloud_key_status", {});
+}
+
+/**
+ * Which of the owner's key fields read from an environment variable, and
+ * whether each is set. Names only; a named account gets `available: false`.
+ */
+export async function apiKeyEnvStatus(): Promise<KeyEnvStatus> {
+  return ipcInvoke("api_key_env_status", {});
 }
 
 // --- Anime scene: ElevenLabs voice steps ---

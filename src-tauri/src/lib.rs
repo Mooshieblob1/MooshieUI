@@ -12,6 +12,7 @@ pub mod http_range;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
 pub mod jxl;
+pub mod key_source;
 pub mod log_buffer;
 pub mod media_tools;
 pub mod metadata;
@@ -678,6 +679,7 @@ pub fn run() {
             commands::novelai::set_novelai_api_key,
             commands::cloud::set_cloud_api_key,
             commands::cloud::cloud_key_status,
+            commands::config::api_key_env_status,
             commands::cloud::elevenlabs_subscription,
             commands::cloud::elevenlabs_list_voices,
             commands::cloud::elevenlabs_design_voice,

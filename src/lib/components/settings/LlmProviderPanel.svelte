@@ -4,6 +4,8 @@
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { LlmProviderState } from "../../types/index.js";
   import { cancelLlmOauth } from "../../utils/api.js";
+  import { keyEnv, toStoredKey } from "../../stores/keyEnv.svelte.js";
+  import KeyEnvToggle from "./KeyEnvToggle.svelte";
 
   /**
    * Provider picker and auth row for the external LLM path.
@@ -27,6 +29,9 @@
   }
 
   let { enabled = $bindable(), autoSave, onstate }: Props = $props();
+
+  /** The key field holds an environment variable name, not a key. */
+  let llmEnvMode = $state(false);
 
   /** Ids the Rust registry knows. Base URL, default model and wire format stay
    *  server-side; the frontend only needs the id and a label. */
@@ -96,6 +101,9 @@
       await fn();
       if (promptAssistant.provider) onstate(promptAssistant.provider);
       await promptAssistant.refreshStatus();
+      // A save, a clear or a provider switch can each change whether the key
+      // names a variable.
+      void keyEnv.refresh();
     } catch (e) {
       error = String(e);
     }
@@ -244,18 +252,22 @@
       </div>
       <input
         id="llm-api-key"
-        type="password"
+        type={llmEnvMode ? "text" : "password"}
         value=""
         disabled={promptAssistant.providerBusy}
         onchange={(e) => {
-          const key = e.currentTarget.value;
+          const key = toStoredKey(e.currentTarget.value, llmEnvMode);
           e.currentTarget.value = "";
+          llmEnvMode = false;
           run(() => promptAssistant.saveApiKey(key));
         }}
-        placeholder={provider?.api_key_configured
-          ? locale.t('settings.prompt_assistant.key_replace_placeholder')
-          : "sk-..."}
+        placeholder={llmEnvMode
+          ? locale.t('settings.key_env.placeholder')
+          : provider?.api_key_configured
+            ? locale.t('settings.prompt_assistant.key_replace_placeholder')
+            : "sk-..."}
         autocomplete="off"
+        spellcheck="false"
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
       />
       <p class="text-[10px] text-neutral-500">
@@ -263,6 +275,7 @@
           ? locale.t('settings.prompt_assistant.external_key_hint')
           : locale.t('settings.prompt_assistant.key_stored_hint')}
       </p>
+      <KeyEnvToggle field="llm" bind:envMode={llmEnvMode} />
 
       {#if provider?.oauth}
         {#if canOauth}

@@ -3938,7 +3938,7 @@ async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<
     if !is_valid_civitai_hash(hash) {
         return Err(AppError::Other("Invalid model hash".into()));
     }
-    let api_key = state.config.read().await.civitai_api_key.clone();
+    let api_key = state.config.read().await.civitai_key();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let mut req = state
         .http_client
@@ -4029,7 +4029,7 @@ pub(crate) async fn fetch_civitai_image_bytes(
     // a generic server-side fetch primitive (it is reachable through browser-mode
     // LAN auth and carries the user's CivitAI token).
     let mut current = parse_civitai_image_url(url)?;
-    let civitai_api_key = state.config.read().await.civitai_api_key.clone();
+    let civitai_api_key = state.config.read().await.civitai_key();
 
     for _ in 0..5 {
         // CivitAI redirects image requests to its CDN, which is not on a
@@ -4127,7 +4127,7 @@ pub async fn civitai_lookup_image(
     image_ref: String,
 ) -> Result<Value, AppError> {
     let image_id = parse_civitai_image_id(&image_ref)?;
-    let api_key = state.config.read().await.civitai_api_key.clone();
+    let api_key = state.config.read().await.civitai_key();
     let url = format!(
         "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
         image_id
@@ -5331,12 +5331,18 @@ async fn lookup_civitai_base_model_by_hash(
 /// else the instance's configured key. Browser clients below admin never get
 /// the configured key from `get_config`, so without this fallback their Model
 /// Hub calls would run unauthenticated. The key itself never goes back to them.
+///
+/// A client key naming an environment variable is ignored rather than
+/// resolved: only the owner's stored key may read the host's environment, and
+/// `configured` arrives here already resolved.
 pub(crate) fn effective_civitai_key(
     client_key: Option<String>,
     configured: Option<String>,
 ) -> Option<String> {
     let usable = |key: &String| !key.trim().is_empty();
-    client_key.filter(usable).or(configured.filter(usable))
+    client_key
+        .filter(|key| usable(key) && !crate::key_source::is_env_ref(key))
+        .or(configured.filter(usable))
 }
 
 /// [`effective_civitai_key`] against the current config.
@@ -5344,7 +5350,7 @@ pub(crate) async fn civitai_key_with_fallback(
     state: &AppState,
     client_key: Option<String>,
 ) -> Option<String> {
-    let configured = state.config.read().await.civitai_api_key.clone();
+    let configured = state.config.read().await.civitai_key();
     effective_civitai_key(client_key, configured)
 }
 
@@ -7119,7 +7125,7 @@ pub async fn get_lora_civitai_info(
         (
             config.comfyui_path.clone(),
             config.extra_model_paths.clone(),
-            config.civitai_api_key.clone(),
+            config.civitai_key(),
         )
     };
 
@@ -7315,7 +7321,7 @@ pub async fn get_checkpoint_civitai_info(
         (
             config.comfyui_path.clone(),
             config.extra_model_paths.clone(),
-            config.civitai_api_key.clone(),
+            config.civitai_key(),
         )
     };
 
@@ -9459,7 +9465,7 @@ where
         (
             config.comfyui_path.clone(),
             config.extra_model_paths.clone(),
-            config.civitai_api_key.clone(),
+            config.civitai_key(),
         )
     };
 
@@ -10020,6 +10026,14 @@ mod lan_command_hardening_tests {
         assert_eq!(effective_civitai_key(s("  "), s("host")), s("host"));
         assert_eq!(effective_civitai_key(None, s(" ")), None);
         assert_eq!(effective_civitai_key(None, None), None);
+        // The owner's Model Hub holds the stored `env:NAME` and sends it
+        // back; it must fall through to the resolved configured key, and a
+        // client can never make the server read a variable of its choosing.
+        assert_eq!(
+            effective_civitai_key(s("env:CIVITAI_TOKEN"), s("host")),
+            s("host")
+        );
+        assert_eq!(effective_civitai_key(s("env:HOME"), None), None);
     }
 
     #[test]
