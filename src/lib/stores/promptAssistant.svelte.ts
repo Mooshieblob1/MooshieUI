@@ -91,10 +91,25 @@ import {
 } from "../utils/h3Skill.js";
 import {
   CHARACTER_EXTRACT_RETRY,
+  CHARACTER_UPDATE_RETRY,
+  CHARACTER_CONVERT_RETRY,
+  characterConvertRequest,
   characterExtractRequest,
+  characterUpdateRequest,
+  parseCharacterUpdate,
   parseExtractedCharacters,
+  type CharacterPromptStyle,
+  type CharacterUpdate,
   type ExtractedCharacter,
+  type SavedCharacterHint,
 } from "../utils/characterExtract.js";
+import {
+  CHARACTER_MERGE_RETRY,
+  characterMergeRequest,
+  parseCharacterMerge,
+  type CharacterMergeInput,
+  type CharacterMergeResult,
+} from "../utils/characterMerge.js";
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -443,11 +458,16 @@ class PromptAssistantStore {
    * Pull the characters out of a prompt and its negative prompt (UC) for the
    * Characters tab. One retry when
    * the reply is not the JSON asked for; an empty list means the model found
-   * no characters.
+   * no characters. `saved` lists the cards already saved, so the model can
+   * say which extracted character is one of them.
    */
-  async extractCharacters(prompt: string, negative: string): Promise<ExtractedCharacter[]> {
+  async extractCharacters(
+    prompt: string,
+    negative: string,
+    saved: SavedCharacterHint[] = [],
+  ): Promise<ExtractedCharacter[]> {
     if (this.isGenerating) throw new Error("busy_generation");
-    const request = characterExtractRequest(prompt, negative);
+    const request = characterExtractRequest(prompt, negative, saved);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
@@ -460,6 +480,97 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
         }
         throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Refresh one saved character from the current prompt and UC for the
+   * Characters tab's Update. "missing" when the prompt does not contain that
+   * character. One retry when the reply is not the JSON asked for.
+   */
+  async updateCharacter(
+    character: { name: string; prompt: string; negative: string },
+    prompt: string,
+    negative: string,
+  ): Promise<CharacterUpdate | "missing"> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterUpdateRequest(character, prompt, negative);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseCharacterUpdate(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            character.negative,
+          );
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_UPDATE_RETRY}`;
+        }
+        throw new Error("invalid_character_update");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Rewrite a saved character for another architecture's prompt style, for
+   * the Characters tab's Copy to. One retry when the reply is not the JSON
+   * asked for.
+   */
+  async convertCharacter(
+    character: { name: string; prompt: string; negative: string },
+    from: string,
+    to: string,
+    style: CharacterPromptStyle,
+  ): Promise<CharacterUpdate> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterConvertRequest(character, from, to, style);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseCharacterUpdate(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            character.negative,
+          );
+          if (parsed && parsed !== "missing") return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_CONVERT_RETRY}`;
+        }
+        throw new Error("invalid_character_convert");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Work a saved character into the current prompt for the Characters tab's
+   * Use. The caller reviews the result before writing anything. One retry when
+   * the reply is not the JSON asked for.
+   */
+  async mergeCharacter(input: CharacterMergeInput): Promise<CharacterMergeResult> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterMergeRequest(input);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseCharacterMerge(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            input.box !== null,
+            input.negative,
+          );
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_MERGE_RETRY}`;
+        }
+        throw new Error("invalid_character_merge");
       });
     } finally {
       this.isGenerating = false;

@@ -52,6 +52,13 @@ class EnhancerSessionsStore {
     this.save();
   }
 
+  /** Take back the newest exchange, for a rewrite that is being redone. */
+  dropLast(flow: EnhancerFlow): void {
+    if (this.sessions[flow].length === 0) return;
+    this.sessions = { ...this.sessions, [flow]: this.sessions[flow].slice(0, -1) };
+    this.save();
+  }
+
   clear(flow: EnhancerFlow): void {
     this.sessions = { ...this.sessions, [flow]: [] };
     this.dropped = { ...this.dropped, [flow]: 0 };

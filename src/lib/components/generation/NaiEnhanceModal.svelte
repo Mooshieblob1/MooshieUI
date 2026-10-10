@@ -28,10 +28,13 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
   import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
+  import { naiSavedCharacterDirective, NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
+  import type { NaiCanonPriority } from "../../utils/naiSavedCharacters.js";
   import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import { mapLlmError } from "../../utils/llmError.js";
@@ -125,6 +128,14 @@
   });
   const isGeneral = $derived(naiEnhance.flow === "general");
   const isH3 = $derived(naiEnhance.flow === "h3");
+  // The saved characters a V5 rewrite is told about, named under the box so
+  // the user knows "Julie" will resolve to one of them.
+  const savedNames = $derived(
+    savedCharacters.currentCharacters
+      .slice(0, NAI_SAVED_CHARACTER_LIMIT)
+      .map((c) => c.name.trim())
+      .filter(Boolean),
+  );
   /** The flows reviewed as one before/after pair rather than the V5 diff. */
   const isSingleRow = $derived(naiEnhance.flow !== "nai");
 
@@ -265,6 +276,32 @@
     }
   }
 
+  // Whether the rewrite on review was recorded into the session, so redoing it
+  // replaces that turn instead of stacking a second copy of the same message.
+  let recordedLast = false;
+
+  /**
+   * Redo the rewrite with the other side winning where a saved canon
+   * character's card disagrees with canon. The turn being redone is taken out
+   * of the session first, so the redo sees the same history the first answer
+   * did, and put back if the redo fails.
+   */
+  async function rerunWithCanon(priority: NaiCanonPriority) {
+    if (naiEnhance.busy || naiEnhance.canonPriority === priority) return;
+    const turns = enhancerSessions.turns("nai");
+    const taken = recordedLast ? turns[turns.length - 1] : undefined;
+    if (taken) enhancerSessions.dropLast("nai");
+    recordedLast = false;
+    naiEnhance.canonPriority = priority;
+    naiEnhance.stage = "input";
+    await run();
+    // Widened: TypeScript keeps the "input" assigned above across the await.
+    const stage: string | null = naiEnhance.stage;
+    if (taken && stage !== "review") {
+      enhancerSessions.record("nai", taken.user, taken.assistant);
+    }
+  }
+
   async function run() {
     if (naiEnhance.flow === "general") return runGeneral();
     if (naiEnhance.flow === "h3") return runH3();
@@ -298,6 +335,16 @@
           : null,
         language,
         references: refs.map((r) => r.label),
+        // NovelAI mode, so these are the characters saved under NovelAI.
+        savedCharacters: naiSavedCharacterDirective(
+          savedCharacters.currentCharacters.map((c) => ({
+            ...c,
+            variantOf: c.parentId
+              ? savedCharacters.characters.find((p) => p.id === c.parentId)?.name
+              : undefined,
+          })),
+          naiEnhance.canonPriority,
+        ),
       }, refs.map((r) => r.base64));
       // Cancelling closes the modal but cannot recall the request, so a late
       // answer to a dismissed one is dropped rather than popped back up.
@@ -309,7 +356,8 @@
       // Recorded once on screen, applied or not: the answer is part of the
       // conversation either way. Not when it failed validation, and not when
       // the modal was cancelled (the early return above).
-      if (result.problems.length === 0) {
+      recordedLast = result.problems.length === 0;
+      if (recordedLast) {
         enhancerSessions.record("nai", result.sessionUser, result.raw);
       }
       naiEnhance.showReview({
@@ -318,6 +366,7 @@
         budget: NAI_VARIANT_BUDGET[v],
         note: result.parsed.note,
         problems: result.problems,
+        canon: result.parsed.canon,
         // Every row starts ticked: the rewrite is one coherent answer, and
         // half-applying it leaves a base prompt describing characters that the
         // character boxes no longer match.
@@ -548,6 +597,11 @@
           disabled={naiEnhance.busy}
           bind:value={naiEnhance.input}
         ></textarea>
+        {#if !isH3 && !isGeneral && savedNames.length > 0}
+          <p class="mt-1.5 truncate text-[10px] text-neutral-500" title={savedNames.join(", ")}>
+            {locale.t("prompt_assistant.nai_saved_characters", { names: savedNames.join(", ") })}
+          </p>
+        {/if}
 
         <!-- Below the box, not above it: what the user types is the request,
              and the images are what the request points at. -->
@@ -831,6 +885,34 @@
             class="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-200"
           >
             {pending.note}
+          </div>
+        {/if}
+
+        {#if pending.canon.length > 0}
+          <!-- A saved canon character whose card disagrees with canon. The
+               rewrite went with one side; the other is one redo away. -->
+          <div class="mb-3 rounded-lg border border-sky-500/40 bg-sky-500/10 p-2 text-[11px] text-sky-100">
+            <div class="font-medium">{locale.t("prompt_assistant.nai_canon_title")}</div>
+            <ul class="mt-1 list-disc space-y-0.5 pl-4">
+              {#each pending.canon as line, i (i)}
+                <li>{line}</li>
+              {/each}
+            </ul>
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <span class="text-sky-200/80">{locale.t("prompt_assistant.nai_canon_question")}</span>
+              {#each [["saved", "prompt_assistant.nai_canon_keep_saved"], ["canon", "prompt_assistant.nai_canon_use_canon"]] as [choice, key] (choice)}
+                <button
+                  class="rounded-lg border px-2 py-0.5 text-[10px] disabled:cursor-default {naiEnhance.canonPriority === choice
+                    ? 'border-sky-400 bg-sky-500/30 text-white'
+                    : 'border-neutral-600 text-neutral-200 hover:bg-neutral-800'}"
+                  aria-pressed={naiEnhance.canonPriority === choice}
+                  disabled={naiEnhance.busy || naiEnhance.canonPriority === choice}
+                  onclick={() => rerunWithCanon(choice as NaiCanonPriority)}
+                >
+                  {locale.t(key)}
+                </button>
+              {/each}
+            </div>
           </div>
         {/if}
 

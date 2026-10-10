@@ -86,6 +86,11 @@ export interface NaiPromptContext {
    * by `naiRecipeDirective`, or `""` / absent for none.
    */
   recipes?: string;
+  /**
+   * The user's saved characters for NovelAI, already rendered by
+   * `naiSavedCharacterDirective`, or `""` / absent for none.
+   */
+  savedCharacters?: string;
 }
 
 /**
@@ -465,6 +470,7 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
     ctx.recipes ?? "",
+    ctx.savedCharacters ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
     sessionDirective(ctx.inSession, ctx.existing !== null),
     referenceDirective(ctx.references),
