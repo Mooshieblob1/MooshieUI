@@ -92,10 +92,13 @@ import {
 import {
   CHARACTER_EXTRACT_RETRY,
   CHARACTER_UPDATE_RETRY,
+  CHARACTER_CONVERT_RETRY,
+  characterConvertRequest,
   characterExtractRequest,
   characterUpdateRequest,
   parseCharacterUpdate,
   parseExtractedCharacters,
+  type CharacterPromptStyle,
   type CharacterUpdate,
   type ExtractedCharacter,
   type SavedCharacterHint,
@@ -508,6 +511,38 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_UPDATE_RETRY}`;
         }
         throw new Error("invalid_character_update");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Rewrite a saved character for another architecture's prompt style, for
+   * the Characters tab's Copy to. One retry when the reply is not the JSON
+   * asked for.
+   */
+  async convertCharacter(
+    character: { name: string; prompt: string; negative: string },
+    from: string,
+    to: string,
+    style: CharacterPromptStyle,
+  ): Promise<CharacterUpdate> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterConvertRequest(character, from, to, style);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseCharacterUpdate(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            character.negative,
+          );
+          if (parsed && parsed !== "missing") return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_CONVERT_RETRY}`;
+        }
+        throw new Error("invalid_character_convert");
       });
     } finally {
       this.isGenerating = false;

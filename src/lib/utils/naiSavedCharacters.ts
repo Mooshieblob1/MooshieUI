@@ -22,6 +22,8 @@ export interface NaiSavedCharacter {
   name: string;
   prompt: string;
   negative: string;
+  /** Name of the character this is a variant of (another look), if any. */
+  variantOf?: string;
 }
 
 /** Most saved characters sent per request. */
@@ -46,7 +48,10 @@ export function naiSavedCharacterDirective(
   if (roster.length === 0) return "";
   const entries = roster
     .map((c) => {
-      const lines = [`- Name: ${c.name.trim()}`, `  Appearance: ${clip(c.prompt)}`];
+      const lines = [
+        `- Name: ${c.name.trim()}${c.variantOf ? ` (a variant of ${c.variantOf.trim()})` : ""}`,
+        `  Appearance: ${clip(c.prompt)}`,
+      ];
       if (c.negative.trim()) lines.push(`  Avoid: ${clip(c.negative)}`);
       return lines.join("\n");
     })
@@ -58,6 +63,7 @@ ${entries}
 - When the user's text refers to a person by a saved character's full name, by part of it (a first name or a surname alone), or by a close approximation of it (a nickname, a short form, a misspelling), that person is the saved character. Use them; do not ask and do not invent someone new.
 - The exception is text that plainly means someone else: a series, a surname or a description that does not fit the saved character ("Julie from Persona" is not a saved Julie Evergreen whose saved text has nothing to do with Persona). Context that fits the saved character, such as the series their name or saved text belongs to, still means the saved character ("Brock from Pokemon" is a saved Brock who is the Pokemon Brock). A bare name with no such context always means the saved character.
 - If more than one saved character could fit, pick the closest match on the name. Never merge two saved characters into one.
+- A variant is another look of the character it belongs to (another outfit or style), not a different person. A reference to the character uses the character's own entry, unless the text asks for what a variant's name describes, such as "Julie in her swimsuit" for a variant named "Julie Evergreen (swimsuit)". Either way the CHAR block names the character, not the variant label.
 - A saved character the text refers to gets their own CHAR block. Its identity section uses the saved name, then the saved appearance. Rewrite the appearance into the CHAR block's sections and V5 form as you go, but keep every detail it gives: hair, eyes, body, features and outfit.
 - Some saved characters are canon characters you already know, such as Brock from Pokemon: their name or saved text matches a known character. For those, use both. Write their danbooru character and series tags and draw on your own knowledge of their canon look, and add the saved details on top. ${
     canonPriority === "saved"

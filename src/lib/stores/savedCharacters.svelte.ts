@@ -2,7 +2,7 @@ import { triggerSync } from "../utils/syncTrigger.js";
 import { userScopedKey } from "../utils/ipc.js";
 import { MODEL_FAMILY_LABELS, type ModelFamily } from "../utils/modelFamily.js";
 import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
-import type { ExtractedCharacter } from "../utils/characterExtract.js";
+import type { CharacterPromptStyle } from "../utils/characterExtract.js";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 
 const STORAGE_KEY = "mooshieui.savedCharacters.v1";
@@ -26,6 +26,17 @@ export interface SavedCharacter {
   architecture: string;
   /** Card thumbnail as a small image data URL, or null for none. */
   thumbnail: string | null;
+  /**
+   * The same picture at a size NovelAI can read as a Precise Reference, as an
+   * image data URL, or null. Made alongside the thumbnail.
+   */
+  reference: string | null;
+  /**
+   * The card this one is a variant of (another outfit or look of the same
+   * character), or null for a character of its own. Always a top-level card:
+   * variants do not nest.
+   */
+  parentId: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -41,6 +52,19 @@ function newId(): string {
 function joinPrompt(current: string, text: string): string {
   const base = current.trim().replace(/,+$/, "").trimEnd();
   return base ? `${base}, ${text}` : text;
+}
+
+/** Architectures whose prompts are written as Danbooru-style tags. */
+const TAG_ARCHITECTURES = new Set<string>([NOVELAI_ARCHITECTURE, "sdxl", "illustrious", "pony", "sd15", "anima"]);
+
+/** How a character is written for `architecture`: tags, or natural language. */
+export function architecturePromptStyle(architecture: string): CharacterPromptStyle {
+  return TAG_ARCHITECTURES.has(architecture) ? "tags" : "natural";
+}
+
+/** Every architecture a card can be copied to, NovelAI first. */
+export function characterArchitectures(): string[] {
+  return [NOVELAI_ARCHITECTURE, ...Object.keys(MODEL_FAMILY_LABELS)];
 }
 
 /** Display name of an architecture bucket. */
@@ -64,6 +88,8 @@ function sanitize(raw: unknown): SavedCharacter | null {
     negative: typeof c.negative === "string" ? c.negative : "",
     architecture: c.architecture,
     thumbnail: typeof c.thumbnail === "string" && c.thumbnail.startsWith("data:image/") ? c.thumbnail : null,
+    reference: typeof c.reference === "string" && c.reference.startsWith("data:image/") ? c.reference : null,
+    parentId: typeof c.parentId === "string" && c.parentId ? c.parentId : null,
     createdAt: typeof c.createdAt === "number" ? c.createdAt : now,
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : now,
   };
@@ -71,7 +97,26 @@ function sanitize(raw: unknown): SavedCharacter | null {
 
 function sanitizeList(raw: unknown): SavedCharacter[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map(sanitize).filter((c): c is SavedCharacter => c !== null);
+  const list = raw.map(sanitize).filter((c): c is SavedCharacter => c !== null);
+  // A variant whose parent is gone, or is itself a variant, or sits under
+  // another architecture, stands on its own rather than vanishing from view.
+  const tops = new Map(list.filter((c) => !c.parentId).map((c) => [c.id, c.architecture]));
+  return list.map((c) =>
+    c.parentId && tops.get(c.parentId) !== c.architecture ? { ...c, parentId: null } : c,
+  );
+}
+
+/** The JSON file Export writes and Import reads. */
+export const CHARACTER_EXPORT_FORMAT = "mooshieui.characters";
+
+/** A new card in `architecture`, before it is added. */
+export interface NewCharacter {
+  name: string;
+  prompt: string;
+  negative: string;
+  thumbnail?: string | null;
+  reference?: string | null;
+  parentId?: string | null;
 }
 
 class SavedCharactersStore {
@@ -107,10 +152,7 @@ class SavedCharactersStore {
    * already taken there gets a number so two cards never share one.
    * Returns how many were added.
    */
-  saveExtracted(
-    extracted: Pick<ExtractedCharacter, "name" | "prompt" | "negative">[],
-    architecture: string,
-  ): number {
+  saveExtracted(extracted: NewCharacter[], architecture: string): number {
     const now = Date.now();
     const next = [...this.characters];
     const taken = new Set(
@@ -127,7 +169,9 @@ class SavedCharactersStore {
         prompt: item.prompt,
         negative: item.negative,
         architecture,
-        thumbnail: null,
+        thumbnail: item.thumbnail ?? null,
+        reference: item.reference ?? null,
+        parentId: item.parentId ?? null,
         createdAt: now,
         updatedAt: now,
       });
@@ -159,15 +203,133 @@ class SavedCharactersStore {
     this.saveSettings();
   }
 
-  /** Set or clear (null) a card's thumbnail. Changes nothing else about it. */
-  setThumbnail(id: string, thumbnail: string | null): void {
-    this.characters = this.characters.map((c) => (c.id === id ? { ...c, thumbnail } : c));
+  /**
+   * Set a card's thumbnail and its reference-sized copy, or clear both (null).
+   * Changes nothing else about it.
+   */
+  setThumbnail(id: string, thumbnail: string | null, reference: string | null = null): void {
+    this.characters = this.characters.map((c) =>
+      c.id === id ? { ...c, thumbnail, reference: thumbnail ? reference : null } : c,
+    );
     this.saveSettings();
   }
 
+  /** Delete a card. Its variants stay, as characters of their own. */
   remove(id: string): void {
-    this.characters = this.characters.filter((c) => c.id !== id);
+    this.characters = this.characters
+      .filter((c) => c.id !== id)
+      .map((c) => (c.parentId === id ? { ...c, parentId: null } : c));
     this.saveSettings();
+  }
+
+  /** Variants of a top-level card, oldest first. */
+  variantsOf(id: string): SavedCharacter[] {
+    return this.characters
+      .filter((c) => c.parentId === id)
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /**
+   * Start a variant of `character` as a copy with its own name, filed under
+   * the top-level card (a variant of a variant is a variant of its parent).
+   * Returns the new card's id.
+   */
+  addVariant(character: SavedCharacter, label: string): string | null {
+    const parentId = character.parentId ?? character.id;
+    const parent = this.characters.find((c) => c.id === parentId) ?? character;
+    const before = new Set(this.characters.map((c) => c.id));
+    const added = this.saveExtracted(
+      [
+        {
+          name: `${parent.name} (${label})`,
+          prompt: character.prompt,
+          negative: character.negative,
+          thumbnail: character.thumbnail,
+          reference: character.reference,
+          parentId,
+        },
+      ],
+      character.architecture,
+    );
+    if (!added) return null;
+    return this.characters.find((c) => !before.has(c.id))?.id ?? null;
+  }
+
+  /**
+   * File an existing card as a variant of `parentId`, or back as a character
+   * of its own (null). Its own variants move up with it.
+   */
+  setParent(id: string, parentId: string | null): void {
+    const parent = parentId ? this.characters.find((c) => c.id === parentId) : null;
+    const target = parent?.parentId ?? parent?.id ?? null;
+    if (target === id) return;
+    this.characters = this.characters.map((c) => {
+      if (c.id === id) return { ...c, parentId: target };
+      if (target && c.parentId === id) return { ...c, parentId: target };
+      return c;
+    });
+    this.saveSettings();
+  }
+
+  /** Every saved card as an Export file. */
+  exportJson(): string {
+    return JSON.stringify(
+      { format: CHARACTER_EXPORT_FORMAT, version: 1, characters: this.characters },
+      null,
+      2,
+    );
+  }
+
+  /**
+   * Add the cards in an Export file. A card already saved with the same
+   * architecture, name and prompt is skipped; anything else is added as new,
+   * with variants kept under their imported parent. Null when the file is not
+   * an Export file at all.
+   */
+  importJson(text: string): { added: number; skipped: number } | null {
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    const raw =
+      data && typeof data === "object" && Array.isArray((data as { characters?: unknown }).characters)
+        ? (data as { characters: unknown[] }).characters
+        : Array.isArray(data)
+          ? data
+          : null;
+    if (!raw) return null;
+    const incoming = sanitizeList(raw);
+    const key = (c: SavedCharacter) =>
+      `${c.architecture}\u0000${c.name.trim().toLowerCase()}\u0000${c.prompt.trim().toLowerCase()}`;
+    const existing = new Map(this.characters.map((c) => [key(c), c.id]));
+    const takenIds = new Set(this.characters.map((c) => c.id));
+    // Imported id to the id it ends up with, so variants find their parent
+    // whether it was added or was already here.
+    const idMap = new Map<string, string>();
+    const added: SavedCharacter[] = [];
+    let skipped = 0;
+    const now = Date.now();
+    for (const c of incoming) {
+      const match = existing.get(key(c));
+      if (match) {
+        idMap.set(c.id, match);
+        skipped++;
+        continue;
+      }
+      const id = takenIds.has(c.id) ? newId() : c.id;
+      takenIds.add(id);
+      idMap.set(c.id, id);
+      existing.set(key(c), id);
+      added.push({ ...c, id, updatedAt: now });
+    }
+    if (added.length > 0) {
+      const remapped = added.map((c) => ({ ...c, parentId: c.parentId ? (idMap.get(c.parentId) ?? null) : null }));
+      this.characters = sanitizeList([...this.characters, ...remapped]);
+      this.saveSettings();
+    }
+    return { added: added.length, skipped };
   }
 
   /** True when the character's text is already in the prompt or a character box. */

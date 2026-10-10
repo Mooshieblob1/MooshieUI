@@ -337,7 +337,12 @@
         references: refs.map((r) => r.label),
         // NovelAI mode, so these are the characters saved under NovelAI.
         savedCharacters: naiSavedCharacterDirective(
-          savedCharacters.currentCharacters,
+          savedCharacters.currentCharacters.map((c) => ({
+            ...c,
+            variantOf: c.parentId
+              ? savedCharacters.characters.find((p) => p.id === c.parentId)?.name
+              : undefined,
+          })),
           naiEnhance.canonPriority,
         ),
       }, refs.map((r) => r.base64));

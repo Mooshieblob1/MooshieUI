@@ -10,9 +10,13 @@
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import {
     architectureLabel,
+    architecturePromptStyle,
+    characterArchitectures,
     savedCharacters,
     type SavedCharacter,
   } from "../../stores/savedCharacters.svelte.js";
+  import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant } from "../../utils/novelaiModels.js";
+  import { saveTextFile } from "../../utils/api.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
   import CharacterMergeModal from "./CharacterMergeModal.svelte";
@@ -26,7 +30,9 @@
   import { progress } from "../../stores/progress.svelte.js";
   import type { OutputImage } from "../../types/index.js";
   import {
+    type CharacterImages,
     blobToCharacterThumbnail,
+    characterReferenceBase64,
     currentImageToCharacterThumbnail,
     outputImageToCharacterThumbnail,
   } from "../../utils/characterThumbnail.js";
@@ -57,6 +63,14 @@
     negative: string;
   } | null>(null);
 
+  /** Top-level cards whose variants are showing. */
+  let expanded = $state<Set<string>>(new Set());
+  /** Card whose extra options (variants, copy) are showing. */
+  let moreMenuId = $state<string | null>(null);
+  /** Card being copied to another architecture right now. */
+  let copyingId = $state<string | null>(null);
+  let importInput = $state<HTMLInputElement | null>(null);
+
   /** Character being refreshed from the prompt right now. */
   let updatingId = $state<string | null>(null);
   let review = $state<{
@@ -70,14 +84,180 @@
   const architecture = $derived(savedCharacters.currentArchitecture);
   const archLabel = $derived(architecture ? architectureLabel(architecture) : "");
 
-  const filtered = $derived.by(() => {
+  /**
+   * Top-level cards with their variants. While searching, a group shows when
+   * its card or any variant matches, with the matching variants open.
+   */
+  const groups = $derived.by(() => {
     const q = search.toLowerCase().trim();
     const list = savedCharacters.currentCharacters;
-    if (!q) return list;
-    return list.filter(
-      (c) => c.name.toLowerCase().includes(q) || c.prompt.toLowerCase().includes(q),
-    );
+    const ids = new Set(list.map((c) => c.id));
+    const matches = (c: SavedCharacter) =>
+      !q || c.name.toLowerCase().includes(q) || c.prompt.toLowerCase().includes(q);
+    const out: { top: SavedCharacter; variants: SavedCharacter[]; open: boolean }[] = [];
+    for (const top of list) {
+      if (top.parentId && ids.has(top.parentId)) continue;
+      const variants = list
+        .filter((c) => c.parentId === top.id)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      if (!q) {
+        out.push({ top, variants, open: expanded.has(top.id) });
+        continue;
+      }
+      const hits = variants.filter(matches);
+      if (!matches(top) && hits.length === 0) continue;
+      out.push({
+        top,
+        variants: hits.length > 0 ? hits : variants,
+        open: hits.length > 0 || expanded.has(top.id),
+      });
+    }
+    return out;
   });
+
+  /** Top-level cards a card could be filed under as a variant. */
+  function parentChoices(character: SavedCharacter): SavedCharacter[] {
+    return savedCharacters.currentCharacters.filter((c) => !c.parentId && c.id !== character.id);
+  }
+
+  function toggleExpanded(id: string) {
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    expanded = next;
+  }
+
+  /** Whether Use can attach a card's picture as a Precise Reference (not V5 yet). */
+  const canReference = $derived(
+    generation.isNovelAi &&
+      generation.supportsNovelAiPreciseReference &&
+      naiV5Variant(generation.checkpoint) === null,
+  );
+
+  /**
+   * After Use, put the card's picture in as a Precise Reference on models
+   * that take one. Vibe Transfer and Precise Reference cannot go together, so
+   * it stays out rather than clearing vibes the user set up.
+   */
+  async function attachReference(character: SavedCharacter) {
+    if (!canReference || !(character.reference ?? character.thumbnail)) return;
+    const nai = generation.novelaiSettings;
+    if (nai.vibes.length > 0) {
+      gallery.showToast(locale.t("characters.toast.reference_vibes", { name: character.name }), "info");
+      return;
+    }
+    if (nai.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) {
+      gallery.showToast(locale.t("characters.toast.reference_full", { name: character.name }), "info");
+      return;
+    }
+    const base64 = await characterReferenceBase64(character);
+    if (!base64 || generation.novelaiSettings.director_references.some((r) => r.image === base64)) return;
+    generation.addNovelAiDirectorReference(base64);
+    gallery.showToast(locale.t("characters.toast.reference_added", { name: character.name }), "success");
+  }
+
+  /** Start a variant as a copy of the card and open it for editing. */
+  function addVariant(character: SavedCharacter) {
+    moreMenuId = null;
+    const id = savedCharacters.addVariant(character, locale.t("characters.dupes.variant_default"));
+    if (!id) return;
+    expanded = new Set([...expanded, character.parentId ?? character.id]);
+    const created = savedCharacters.characters.find((c) => c.id === id);
+    if (created) startEdit(created);
+  }
+
+  /**
+   * Copy a card to another architecture. Between tag and natural-language
+   * models the prompt assistant rewrites it; between two tag models (or with
+   * no assistant set up) it goes over as is.
+   */
+  async function copyTo(character: SavedCharacter, target: string) {
+    if (!target || copyingId) return;
+    moreMenuId = null;
+    const arch = architectureLabel(target);
+    const style = architecturePromptStyle(target);
+    const rewrite = style !== architecturePromptStyle(character.architecture);
+    let text = { prompt: character.prompt, negative: character.negative };
+    if (rewrite && promptAssistant.isAvailable) {
+      copyingId = character.id;
+      try {
+        text = await promptAssistant.convertCharacter(
+          character,
+          architectureLabel(character.architecture),
+          arch,
+          style,
+        );
+      } catch (e) {
+        console.error("Character copy failed:", e);
+        const msg = String(e);
+        gallery.showToast(
+          msg.includes("invalid_character_convert")
+            ? locale.t("characters.toast.copy_failed", { name: character.name, arch })
+            : mapLlmError(msg),
+          "error",
+        );
+        return;
+      } finally {
+        copyingId = null;
+      }
+    }
+    savedCharacters.saveExtracted(
+      [{ name: character.name, ...text, thumbnail: character.thumbnail, reference: character.reference }],
+      target,
+    );
+    gallery.showToast(
+      locale.t(
+        rewrite && !promptAssistant.isAvailable ? "characters.toast.copied_as_is" : "characters.toast.copied",
+        { name: character.name, arch },
+      ),
+      "success",
+    );
+  }
+
+  /** Every saved card, for every architecture, as a JSON file. */
+  async function exportCharacters() {
+    const count = savedCharacters.characters.length;
+    if (count === 0) return;
+    const content = savedCharacters.exportJson();
+    const filename = "mooshieui-characters.json";
+    try {
+      if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const path = await save({ defaultPath: filename, filters: [{ name: "JSON", extensions: ["json"] }] });
+        if (!path) return;
+        await saveTextFile(content, path);
+      } else {
+        const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+      gallery.showToast(locale.t("characters.toast.exported", { count: String(count) }), "success");
+    } catch (e) {
+      console.error("Character export failed:", e);
+      gallery.showToast(String(e), "error");
+    }
+  }
+
+  async function importCharacters(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    const result = savedCharacters.importJson(await file.text());
+    if (!result) {
+      gallery.showToast(locale.t("characters.toast.import_invalid"), "error");
+      return;
+    }
+    gallery.showToast(
+      locale.t("characters.toast.imported", { added: String(result.added), skipped: String(result.skipped) }),
+      result.added > 0 ? "success" : "info",
+    );
+  }
 
   /** The positive prompt plus, on NovelAI, every character box that will be sent. */
   function extractionSource(): string {
@@ -175,7 +355,12 @@
     const { arch, fresh, source, negative } = pending;
     const variants = decisions
       .filter((d) => d.action === "variant" && d.variantName.trim())
-      .map((d) => ({ name: d.variantName.trim(), prompt: d.item.prompt, negative: d.item.negative }));
+      .map((d) => ({
+        name: d.variantName.trim(),
+        prompt: d.item.prompt,
+        negative: d.item.negative,
+        parentId: d.saved.parentId ?? d.saved.id,
+      }));
     const added = savedCharacters.saveExtracted(fresh, arch);
     const addedVariants = savedCharacters.saveExtracted(variants, arch);
     const previous: { id: string; prompt: string; negative: string }[] = [];
@@ -290,6 +475,7 @@
       ),
       "success",
     );
+    void attachReference(r.character);
   }
 
   function insertPlain(character: SavedCharacter) {
@@ -305,6 +491,7 @@
       locale.t(key, { name: character.name }),
       result === "duplicate" ? "info" : "success",
     );
+    if (result !== "duplicate") void attachReference(character);
   }
 
   /**
@@ -355,12 +542,12 @@
   }
 
   /** Run one thumbnail source for a card and store what it produced. */
-  async function setThumb(id: string, make: () => Promise<string | null>, emptyKey: string) {
+  async function setThumb(id: string, make: () => Promise<CharacterImages | null>, emptyKey: string) {
     thumbBusyId = id;
     thumbMenuId = null;
     try {
-      const thumb = await make();
-      if (thumb) savedCharacters.setThumbnail(id, thumb);
+      const images = await make();
+      if (images) savedCharacters.setThumbnail(id, images.thumbnail, images.reference);
       else gallery.showToast(locale.t(emptyKey), "error");
     } catch (e) {
       console.error("Character thumbnail failed:", e);
@@ -420,6 +607,211 @@
   }
 </script>
 
+{#snippet card(character: SavedCharacter)}
+  <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 flex flex-col gap-1.5 min-w-0">
+    {#if editingId === character.id}
+      <input
+        type="text"
+        bind:value={editName}
+        aria-label={locale.t("characters.name")}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500"
+      />
+      <textarea
+        bind:value={editPrompt}
+        rows="3"
+        spellcheck="false"
+        aria-label={locale.t("characters.prompt")}
+        class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
+      ></textarea>
+      <textarea
+        bind:value={editNegative}
+        rows="2"
+        spellcheck="false"
+        placeholder={locale.t("characters.negative")}
+        aria-label={locale.t("characters.negative")}
+        class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-red-500/70"
+      ></textarea>
+      <div class="flex justify-end gap-1.5">
+        <button
+          type="button"
+          class="px-2 py-0.5 text-[11px] rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
+          onclick={() => { editingId = null; }}
+        >
+          {locale.t("common.cancel")}
+        </button>
+        <button
+          type="button"
+          class="px-2 py-0.5 text-[11px] rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
+          disabled={!editName.trim() || !editPrompt.trim()}
+          onclick={saveEdit}
+        >
+          {locale.t("common.save")}
+        </button>
+      </div>
+    {:else}
+      <div class="flex gap-2 min-w-0">
+      <button
+        type="button"
+        class="shrink-0 w-14 h-14 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
+        title={locale.t("characters.thumbnail.change")}
+        aria-label={locale.t("characters.thumbnail.change")}
+        aria-expanded={thumbMenuId === character.id}
+        onclick={() => { thumbMenuId = thumbMenuId === character.id ? null : character.id; }}
+      >
+        {#if thumbBusyId === character.id}
+          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+        {:else if character.thumbnail}
+          <img src={character.thumbnail} alt={character.name} class="w-full h-full object-cover" />
+        {:else}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        {/if}
+      </button>
+      <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+      <div class="flex items-center gap-1 min-w-0">
+        <span class="flex-1 min-w-0 truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
+        <button
+          type="button"
+          class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+          title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
+          disabled={mergingId !== null || updatingId !== null}
+          onclick={() => use(character)}
+        >
+          {#if mergingId === character.id}
+            <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+            {locale.t("characters.merging")}
+          {:else}
+            {locale.t("characters.use")}
+          {/if}
+        </button>
+        <button
+          type="button"
+          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+          title={locale.t("characters.insert_plain_tip")}
+          aria-label={locale.t("characters.insert_plain")}
+          onclick={() => insertPlain(character)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          title={locale.t("characters.update_tip")}
+          aria-label={locale.t("characters.update")}
+          disabled={updatingId !== null || mergingId !== null}
+          onclick={() => refresh(character)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {updatingId === character.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+          title={locale.t("characters.edit")}
+          aria-label={locale.t("characters.edit")}
+          onclick={() => startEdit(character)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 {moreMenuId === character.id ? 'bg-neutral-800 text-neutral-200' : ''}"
+          title={locale.t("characters.more")}
+          aria-label={locale.t("characters.more")}
+          aria-expanded={moreMenuId === character.id}
+          onclick={() => { moreMenuId = moreMenuId === character.id ? null : character.id; }}
+        >
+          {#if copyingId === character.id}
+            <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          {/if}
+        </button>
+        <button
+          type="button"
+          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-red-300 hover:bg-red-600/10"
+          title={locale.t("characters.delete")}
+          aria-label={locale.t("characters.delete")}
+          onclick={() => remove(character)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
+      <p class="text-[11px] leading-snug text-neutral-400 line-clamp-3 break-words" title={character.prompt}>{character.prompt}</p>
+      {#if character.negative}
+        <p class="text-[11px] leading-snug text-red-300/70 line-clamp-2 break-words" title={character.negative}>
+          <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
+        </p>
+      {/if}
+      </div>
+      </div>
+      {#if moreMenuId === character.id}
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <button
+            type="button"
+            class="px-2 py-0.5 rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => addVariant(character)}
+          >{locale.t("characters.variants.add")}</button>
+          <label class="flex items-center gap-1 text-neutral-400">
+            {locale.t("characters.variants.of")}
+            <select
+              class="max-w-[9rem] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:border-indigo-500"
+              value={character.parentId ?? ""}
+              onchange={(e) => {
+                savedCharacters.setParent(character.id, (e.currentTarget as HTMLSelectElement).value || null);
+                moreMenuId = null;
+              }}
+            >
+              <option value="">{locale.t("characters.variants.none")}</option>
+              {#each parentChoices(character) as parent (parent.id)}
+                <option value={parent.id}>{parent.name}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="flex items-center gap-1 text-neutral-400">
+            {locale.t("characters.copy_to")}
+            <select
+              class="max-w-[9rem] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-[11px] text-neutral-200 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+              value=""
+              disabled={copyingId !== null}
+              onchange={(e) => copyTo(character, (e.currentTarget as HTMLSelectElement).value)}
+            >
+              <option value="">{locale.t("characters.copy_to_placeholder")}</option>
+              {#each characterArchitectures().filter((a) => a !== character.architecture) as arch (arch)}
+                <option value={arch}>{architectureLabel(arch)}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/if}
+      {#if thumbMenuId === character.id}
+        <div class="flex flex-wrap gap-1">
+          <button
+            type="button"
+            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => thumbFromCurrent(character)}
+          >{locale.t("characters.thumbnail.current")}</button>
+          <button
+            type="button"
+            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => { thumbTargetId = character.id; thumbFileInput?.click(); }}
+          >{locale.t("characters.thumbnail.upload")}</button>
+          <button
+            type="button"
+            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            onclick={() => { thumbTargetId = character.id; thumbPickerOpen = true; }}
+          >{locale.t("characters.thumbnail.gallery")}</button>
+          {#if character.thumbnail}
+            <button
+              type="button"
+              class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300"
+              onclick={() => { savedCharacters.setThumbnail(character.id, null); thumbMenuId = null; }}
+            >{locale.t("characters.thumbnail.remove")}</button>
+          {/if}
+        </div>
+      {/if}
+    {/if}
+  </div>
+{/snippet}
+
 <div class="flex flex-col h-full">
   <div class="px-2 pt-1.5 pb-1 shrink-0 flex items-center gap-2">
     <input
@@ -438,6 +830,25 @@
         {archLabel}
       </span>
     {/if}
+    <button
+      type="button"
+      class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+      title={locale.t("characters.import_tip")}
+      aria-label={locale.t("characters.import")}
+      onclick={() => importInput?.click()}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+    <button
+      type="button"
+      class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
+      title={locale.t("characters.export_tip")}
+      aria-label={locale.t("characters.export")}
+      disabled={savedCharacters.characters.length === 0}
+      onclick={exportCharacters}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </button>
     <button
       type="button"
       class="shrink-0 px-2.5 py-1 text-[11px] font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
@@ -465,159 +876,31 @@
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs px-4 text-center">
       <p>{locale.t("characters.empty", { arch: archLabel })}</p>
     </div>
-  {:else if filtered.length === 0}
+  {:else if groups.length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
       <p>{locale.t("characters.no_results")}</p>
     </div>
   {:else}
     <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
       <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); align-content: start;">
-        {#each filtered as character (character.id)}
-          <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 flex flex-col gap-1.5 min-w-0">
-            {#if editingId === character.id}
-              <input
-                type="text"
-                bind:value={editName}
-                aria-label={locale.t("characters.name")}
-                class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500"
-              />
-              <textarea
-                bind:value={editPrompt}
-                rows="3"
-                spellcheck="false"
-                aria-label={locale.t("characters.prompt")}
-                class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
-              ></textarea>
-              <textarea
-                bind:value={editNegative}
-                rows="2"
-                spellcheck="false"
-                placeholder={locale.t("characters.negative")}
-                aria-label={locale.t("characters.negative")}
-                class="w-full resize-y bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-red-500/70"
-              ></textarea>
-              <div class="flex justify-end gap-1.5">
-                <button
-                  type="button"
-                  class="px-2 py-0.5 text-[11px] rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
-                  onclick={() => { editingId = null; }}
-                >
-                  {locale.t("common.cancel")}
-                </button>
-                <button
-                  type="button"
-                  class="px-2 py-0.5 text-[11px] rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
-                  disabled={!editName.trim() || !editPrompt.trim()}
-                  onclick={saveEdit}
-                >
-                  {locale.t("common.save")}
-                </button>
-              </div>
-            {:else}
-              <div class="flex gap-2 min-w-0">
+        {#each groups as group (group.top.id)}
+          <div class="flex flex-col gap-1.5 min-w-0">
+            {@render card(group.top)}
+            {#if group.variants.length > 0}
               <button
                 type="button"
-                class="shrink-0 w-14 h-14 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
-                title={locale.t("characters.thumbnail.change")}
-                aria-label={locale.t("characters.thumbnail.change")}
-                aria-expanded={thumbMenuId === character.id}
-                onclick={() => { thumbMenuId = thumbMenuId === character.id ? null : character.id; }}
+                class="self-start flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
+                aria-expanded={group.open}
+                onclick={() => toggleExpanded(group.top.id)}
               >
-                {#if thumbBusyId === character.id}
-                  <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-                {:else if character.thumbnail}
-                  <img src={character.thumbnail} alt={character.name} class="w-full h-full object-cover" />
-                {:else}
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                {/if}
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-2.5 h-2.5 transition-transform {group.open ? 'rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                {locale.t("characters.variants.count", { count: String(group.variants.length) })}
               </button>
-              <div class="flex-1 min-w-0 flex flex-col gap-1.5">
-              <div class="flex items-center gap-1 min-w-0">
-                <span class="flex-1 min-w-0 truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
-                <button
-                  type="button"
-                  class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-                  title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
-                  disabled={mergingId !== null || updatingId !== null}
-                  onclick={() => use(character)}
-                >
-                  {#if mergingId === character.id}
-                    <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
-                    {locale.t("characters.merging")}
-                  {:else}
-                    {locale.t("characters.use")}
-                  {/if}
-                </button>
-                <button
-                  type="button"
-                  class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-                  title={locale.t("characters.insert_plain_tip")}
-                  aria-label={locale.t("characters.insert_plain")}
-                  onclick={() => insertPlain(character)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-                <button
-                  type="button"
-                  class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  title={locale.t("characters.update_tip")}
-                  aria-label={locale.t("characters.update")}
-                  disabled={updatingId !== null || mergingId !== null}
-                  onclick={() => refresh(character)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {updatingId === character.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                </button>
-                <button
-                  type="button"
-                  class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-                  title={locale.t("characters.edit")}
-                  aria-label={locale.t("characters.edit")}
-                  onclick={() => startEdit(character)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                </button>
-                <button
-                  type="button"
-                  class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-red-300 hover:bg-red-600/10"
-                  title={locale.t("characters.delete")}
-                  aria-label={locale.t("characters.delete")}
-                  onclick={() => remove(character)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                </button>
-              </div>
-              <p class="text-[11px] leading-snug text-neutral-400 line-clamp-3 break-words" title={character.prompt}>{character.prompt}</p>
-              {#if character.negative}
-                <p class="text-[11px] leading-snug text-red-300/70 line-clamp-2 break-words" title={character.negative}>
-                  <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
-                </p>
-              {/if}
-              </div>
-              </div>
-              {#if thumbMenuId === character.id}
-                <div class="flex flex-wrap gap-1">
-                  <button
-                    type="button"
-                    class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-                    onclick={() => thumbFromCurrent(character)}
-                  >{locale.t("characters.thumbnail.current")}</button>
-                  <button
-                    type="button"
-                    class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-                    onclick={() => { thumbTargetId = character.id; thumbFileInput?.click(); }}
-                  >{locale.t("characters.thumbnail.upload")}</button>
-                  <button
-                    type="button"
-                    class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
-                    onclick={() => { thumbTargetId = character.id; thumbPickerOpen = true; }}
-                  >{locale.t("characters.thumbnail.gallery")}</button>
-                  {#if character.thumbnail}
-                    <button
-                      type="button"
-                      class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300"
-                      onclick={() => { savedCharacters.setThumbnail(character.id, null); thumbMenuId = null; }}
-                    >{locale.t("characters.thumbnail.remove")}</button>
-                  {/if}
+              {#if group.open}
+                <div class="ml-3 pl-2 border-l border-neutral-800 flex flex-col gap-1.5">
+                  {#each group.variants as variant (variant.id)}
+                    {@render card(variant)}
+                  {/each}
                 </div>
               {/if}
             {/if}
@@ -665,4 +948,12 @@
   title={locale.t("characters.thumbnail.pick_title")}
   onselect={thumbFromGallery}
   onclose={() => { thumbPickerOpen = false; }}
+/>
+
+<input
+  bind:this={importInput}
+  type="file"
+  accept="application/json,.json"
+  class="hidden"
+  onchange={importCharacters}
 />
