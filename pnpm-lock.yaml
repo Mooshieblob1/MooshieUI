@@ -12,8 +12,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       '@lucide/svelte':
-        specifier: ^1.47.0
-        version: 1.47.0(svelte@5.56.10)
+        specifier: ^1.52.0
+        version: 1.52.0(svelte@5.56.10)
       '@tauri-apps/api':
         specifier: ^2.12.1
         version: 2.12.1
@@ -268,8 +268,8 @@ packages:
   '@jsquash/avif@2.1.1':
     resolution: {integrity: sha512-LMRxd0fMgfCLtobDh0/sFYJMMiRJTNYSEEWvRDKXlAeZ08t3gI5V+1thIT0XjXJ+SVG7Zug9B0XPyx0Ti5VRNA==}
 
-  '@lucide/svelte@1.47.0':
-    resolution: {integrity: sha512-tpuE7JIK9FzYDWsJx6PxHj9ROyCpnDxZfvHu5q5yHGKS2CFNjzSyf1o9/Ypu2A27GLvkPGqZcIMrF6idM+eQZQ==}
+  '@lucide/svelte@1.52.0':
+    resolution: {integrity: sha512-bQ8t3IcZxWqAdmdMZPyZEv8Qf+MDgBAf7n43eRQoXyBeLWr8HWToiMIO6vKlHxC/lnMiCDdTzm09hjy92ch46A==}
     peerDependencies:
       svelte: ^5
 
@@ -1057,7 +1057,7 @@ snapshots:
     dependencies:
       wasm-feature-detect: 1.8.0
 
-  '@lucide/svelte@1.47.0(svelte@5.56.10)':
+  '@lucide/svelte@1.52.0(svelte@5.56.10)':
     dependencies:
       svelte: 5.56.10
 
