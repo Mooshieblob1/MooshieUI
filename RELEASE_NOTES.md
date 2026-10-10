@@ -1,3 +1,29 @@
+## What's New in v2.3.20
+
+### Anime Scenes (new, optional, uses your own cloud keys)
+- **Scenes page**: a new **Scenes** page turns a character into a short voiced, lip-synced anime clip. It is optional and only works with your own ElevenLabs and fal.ai keys. Every paid step shows an itemized cost confirmation first.
+- **Cloud voice and video keys**: a new **Cloud voice and video** section in Settings stores ElevenLabs, fal.ai and Segmind keys, encrypted and per account. Keys are write-only in the UI and never sent to other clients.
+- **Voice**: design a character voice with ElevenLabs Voice Design (three previews to pick from), then record the scene's lines as takes. Takes are cached, so the same take is never paid for twice; a new take is only made when you ask for one.
+- **Video**: pick reference images from the gallery (character, location or a shot's framing), lay out the shot list, preview the plan for free, and render a Seedance 2.5 clip on fal.ai. The generated prompt is shown and can be edited before rendering. The clip lands in the gallery with a poster and the full scene recipe in its metadata, and an unfinished job resumes when you reopen the page instead of being submitted again.
+- **Keyframes (optional)**: make a NovelAI V4.5 keyframe per shot from the character image with Precise Reference, to keep the character on model and the shot framed as described. The keyframe becomes that shot's reference.
+- **Mouth map**: **Measure mouth timing** uses ElevenLabs alignment on each take so the video model knows exactly when the mouth moves. Each take is measured once and reused.
+- **Finished scenes**: clips made on the page are listed under **Finished scenes**. A draft can be completed at 1080p with **Complete at 1080p** for up to seven days, and **Use my exact voice** makes a free copy with your recorded voice track in place of the model's speech.
+- **Safety**: marking a character as a minor turns on stricter rules. Provider refusals are shown as they are and are never retried automatically.
+
+### Saved Characters
+- **Smart Use**: **Use** now has the prompt assistant work the character into your prompt (taking over an unnamed character or joining the cast, fixing count tags, folding in their undesired content). On NovelAI V4 and later it goes into a new character box. You review the change before it is applied. **Insert as is** keeps the old plain insert.
+- **Update**: refresh a card from the current prompt, ignoring details meant for other characters, with Undo.
+- **Duplicates and variants**: Extract no longer adds a character twice or silently overwrites one. When a found character differs from the saved card, a review asks **Update saved**, **Save as variant** or **Disregard**. Variants sit folded under their character, and can also be made with **Add variant** or **Variant of** in a card's menu.
+- **Thumbnails and character references**: each card can have a picture (current image, upload or gallery). On NovelAI models that take a Precise Reference (V4.5 today), Use also attaches the picture as a character reference when a slot is free.
+- **Copy to** another model, with the prompt assistant rewriting the card when moving between tag and natural-language models.
+- **Export / Import** every saved character, for every model, as a JSON file. Import skips characters already saved.
+- **V5 Enhance knows your characters**: naming a saved NovelAI character (full name, first name, surname or a close match) uses their saved appearance and avoid list. For a saved canon character, the review lists where your saved details differ from canon and lets you keep them or use canon.
+
+### NovelAI
+- **Precise Reference cost**: the Anlas estimate now adds the 5 Anlas NovelAI charges per Precise Reference per image, even on Opus. The Generate button and the Enhance window previously showed 0 Anlas on Opus for requests NovelAI billed.
+
+---
+
 ## What's New in v2.3.19
 
 ### Generation
