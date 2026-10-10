@@ -24,6 +24,8 @@ export interface SavedCharacter {
   negative: string;
   /** A `ModelFamily` value, or `NOVELAI_ARCHITECTURE`. */
   architecture: string;
+  /** Card thumbnail as a small image data URL, or null for none. */
+  thumbnail: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -61,6 +63,7 @@ function sanitize(raw: unknown): SavedCharacter | null {
     prompt: c.prompt,
     negative: typeof c.negative === "string" ? c.negative : "",
     architecture: c.architecture,
+    thumbnail: typeof c.thumbnail === "string" && c.thumbnail.startsWith("data:image/") ? c.thumbnail : null,
     createdAt: typeof c.createdAt === "number" ? c.createdAt : now,
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : now,
   };
@@ -133,6 +136,7 @@ class SavedCharactersStore {
         prompt: item.prompt,
         negative: item.negative,
         architecture,
+        thumbnail: null,
         createdAt: now,
         updatedAt: now,
       });
@@ -161,6 +165,12 @@ class SavedCharactersStore {
           }
         : c,
     );
+    this.saveSettings();
+  }
+
+  /** Set or clear (null) a card's thumbnail. Changes nothing else about it. */
+  setThumbnail(id: string, thumbnail: string | null): void {
+    this.characters = this.characters.map((c) => (c.id === id ? { ...c, thumbnail } : c));
     this.saveSettings();
   }
 

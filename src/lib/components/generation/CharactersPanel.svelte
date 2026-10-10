@@ -5,7 +5,7 @@
    * selected model show up.
    */
   import { generation } from "../../stores/generation.svelte.js";
-  import { gallery } from "../../stores/gallery.svelte.js";
+  import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import {
@@ -16,6 +16,14 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
   import CharacterMergeModal from "./CharacterMergeModal.svelte";
+  import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import { progress } from "../../stores/progress.svelte.js";
+  import type { OutputImage } from "../../types/index.js";
+  import {
+    blobToCharacterThumbnail,
+    currentImageToCharacterThumbnail,
+    outputImageToCharacterThumbnail,
+  } from "../../utils/characterThumbnail.js";
 
   let search = $state("");
   let extracting = $state(false);
@@ -25,6 +33,15 @@
   let editNegative = $state("");
   /** Character the prompt assistant is working into the prompt right now. */
   let mergingId = $state<string | null>(null);
+  /** Card whose thumbnail options are showing. */
+  let thumbMenuId = $state<string | null>(null);
+  /** Card a file upload or gallery pick is for. */
+  let thumbTargetId = $state<string | null>(null);
+  /** Card whose thumbnail is being made right now. */
+  let thumbBusyId = $state<string | null>(null);
+  let thumbPickerOpen = $state(false);
+  let thumbFileInput = $state<HTMLInputElement | null>(null);
+
   /** Character being refreshed from the prompt right now. */
   let updatingId = $state<string | null>(null);
   let review = $state<{
@@ -249,6 +266,52 @@
     }
   }
 
+  /** Run one thumbnail source for a card and store what it produced. */
+  async function setThumb(id: string, make: () => Promise<string | null>, emptyKey: string) {
+    thumbBusyId = id;
+    thumbMenuId = null;
+    try {
+      const thumb = await make();
+      if (thumb) savedCharacters.setThumbnail(id, thumb);
+      else gallery.showToast(locale.t(emptyKey), "error");
+    } catch (e) {
+      console.error("Character thumbnail failed:", e);
+      gallery.showToast(locale.t("characters.thumbnail.failed"), "error");
+    } finally {
+      thumbBusyId = null;
+    }
+  }
+
+  function thumbFromCurrent(character: SavedCharacter) {
+    const latest = gallery.sessionImages.find((image) => !isVideoImage(image)) ?? null;
+    if (!progress.lastOutputImage && !latest) {
+      thumbMenuId = null;
+      gallery.showToast(locale.t("characters.thumbnail.no_current"), "info");
+      return;
+    }
+    void setThumb(
+      character.id,
+      () => currentImageToCharacterThumbnail(progress.lastOutputImage, latest),
+      "characters.thumbnail.failed",
+    );
+  }
+
+  function thumbFromFile(files: FileList | null) {
+    const id = thumbTargetId;
+    const file = files?.[0];
+    if (thumbFileInput) thumbFileInput.value = "";
+    if (!id || !file) return;
+    void setThumb(id, () => blobToCharacterThumbnail(file), "characters.thumbnail.failed");
+  }
+
+  function thumbFromGallery(images: OutputImage[]) {
+    thumbPickerOpen = false;
+    const id = thumbTargetId;
+    const image = images[0];
+    if (!id || !image) return;
+    void setThumb(id, () => outputImageToCharacterThumbnail(image), "characters.thumbnail.failed");
+  }
+
   function startEdit(character: SavedCharacter) {
     editingId = character.id;
     editName = character.name;
@@ -363,6 +426,24 @@
                 </button>
               </div>
             {:else}
+              <div class="flex gap-2 min-w-0">
+              <button
+                type="button"
+                class="shrink-0 w-14 h-14 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
+                title={locale.t("characters.thumbnail.change")}
+                aria-label={locale.t("characters.thumbnail.change")}
+                aria-expanded={thumbMenuId === character.id}
+                onclick={() => { thumbMenuId = thumbMenuId === character.id ? null : character.id; }}
+              >
+                {#if thumbBusyId === character.id}
+                  <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+                {:else if character.thumbnail}
+                  <img src={character.thumbnail} alt={character.name} class="w-full h-full object-cover" />
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {/if}
+              </button>
+              <div class="flex-1 min-w-0 flex flex-col gap-1.5">
               <div class="flex items-center gap-1 min-w-0">
                 <span class="flex-1 min-w-0 truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
                 <button
@@ -423,6 +504,34 @@
                   <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
                 </p>
               {/if}
+              </div>
+              </div>
+              {#if thumbMenuId === character.id}
+                <div class="flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+                    onclick={() => thumbFromCurrent(character)}
+                  >{locale.t("characters.thumbnail.current")}</button>
+                  <button
+                    type="button"
+                    class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+                    onclick={() => { thumbTargetId = character.id; thumbFileInput?.click(); }}
+                  >{locale.t("characters.thumbnail.upload")}</button>
+                  <button
+                    type="button"
+                    class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+                    onclick={() => { thumbTargetId = character.id; thumbPickerOpen = true; }}
+                  >{locale.t("characters.thumbnail.gallery")}</button>
+                  {#if character.thumbnail}
+                    <button
+                      type="button"
+                      class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300"
+                      onclick={() => { savedCharacters.setThumbnail(character.id, null); thumbMenuId = null; }}
+                    >{locale.t("characters.thumbnail.remove")}</button>
+                  {/if}
+                </div>
+              {/if}
             {/if}
           </div>
         {/each}
@@ -443,3 +552,20 @@
     onclose={() => { review = null; }}
   />
 {/if}
+
+<input
+  bind:this={thumbFileInput}
+  type="file"
+  accept="image/*"
+  class="hidden"
+  aria-hidden="true"
+  tabindex="-1"
+  onchange={(e) => thumbFromFile((e.currentTarget as HTMLInputElement).files)}
+/>
+
+<GalleryPickerModal
+  open={thumbPickerOpen}
+  title={locale.t("characters.thumbnail.pick_title")}
+  onselect={thumbFromGallery}
+  onclose={() => { thumbPickerOpen = false; }}
+/>
