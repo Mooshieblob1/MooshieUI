@@ -31,8 +31,10 @@ import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
   NAI_EFFORT_HIGH,
+  NOVELAI_CURATE,
   NOVELAI_DEFAULTS,
   NOVELAI_MEDIUM_EFFORT,
+  appendNovelAiCurateUc,
   findNovelAiModel,
   novelAiUsesMediumEffort,
   isNovelAiModel,
@@ -2460,6 +2462,31 @@ class GenerationStore {
       sampler: NOVELAI_DEFAULTS.sampler,
       noise_schedule: NOVELAI_DEFAULTS.noiseSchedule,
       cfg_rescale: NOVELAI_DEFAULTS.cfgRescale,
+    });
+  }
+
+  /**
+   * The Enhance modal's "Curate it": V5 Full with cleaner, Curated-leaning
+   * settings, plus extra avoids appended to the undesired content box. Prompt
+   * content is left to whatever the rewrite wrote.
+   */
+  applyNovelAiCurate() {
+    if (this.checkpoint !== NOVELAI_CURATE.model) this.selectNovelAiModel(NOVELAI_CURATE.model);
+    this.steps = NOVELAI_CURATE.steps;
+    this.cfg = NOVELAI_CURATE.cfg;
+    this.width = NOVELAI_CURATE.width;
+    this.height = NOVELAI_CURATE.height;
+    this.batchSize = NOVELAI_CURATE.batchSize;
+    this.negativePrompt = appendNovelAiCurateUc(this.negativePrompt ?? "");
+    this.updateNovelAiSettings({
+      effort: NOVELAI_CURATE.effort,
+      quality_toggle: true,
+      quality_preset: NOVELAI_CURATE.qualityPreset,
+      uc_preset: NOVELAI_CURATE.ucPreset,
+      sampler: NOVELAI_CURATE.sampler,
+      noise_schedule: NOVELAI_CURATE.noiseSchedule,
+      cfg_rescale: NOVELAI_CURATE.cfgRescale,
+      variety_plus: false,
     });
   }
 

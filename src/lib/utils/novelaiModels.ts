@@ -253,6 +253,61 @@ export const NOVELAI_DEFAULTS = {
   cfgRescale: 0,
 } as const;
 
+/**
+ * What the Enhance modal's "Curate it" box applies alongside the rewrite: V5
+ * Full tuned toward Curated's cleaner look. Guidance sits below NovelAI's
+ * default on purpose, since Full grains and oversharpens at 7. Effort is High
+ * because Medium would pin its own step count over these 25.
+ */
+export const NOVELAI_CURATE = {
+  model: "nai-diffusion-5-full",
+  effort: NAI_EFFORT_HIGH,
+  qualityPreset: NAI_QUALITY_STANDARD,
+  ucPreset: NAI_UC_HEAVY,
+  cfg: 5.0,
+  steps: 25,
+  sampler: "k_euler_ancestral",
+  noiseSchedule: "karras",
+  cfgRescale: 0,
+  width: 832,
+  height: 1216,
+  batchSize: 1,
+} as const;
+
+/** Avoids "Curate it" appends to the undesired content, on top of the Heavy preset. */
+export const NOVELAI_CURATE_UC = [
+  "{worst quality}",
+  "{bad quality}",
+  "{very displeasing}",
+  "{artistic error}",
+  "{jpeg artifacts}",
+  "{film grain}",
+  "{scan artifacts}",
+  "{chromatic aberration}",
+  "{dithering}",
+  "{halftone}",
+  "{screentone}",
+  "{rough}",
+  "{messy}",
+] as const;
+
+/**
+ * Append the "Curate it" avoids to an undesired content string. A tag already
+ * there in the same form is not added twice, so applying twice is a no-op.
+ */
+export function appendNovelAiCurateUc(uc: string): string {
+  const current = uc.trim().replace(/,\s*$/, "");
+  const have = new Set(
+    current
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t !== ""),
+  );
+  const extra = NOVELAI_CURATE_UC.filter((t) => !have.has(t));
+  if (extra.length === 0) return uc;
+  return current ? `${current}, ${extra.join(", ")}` : extra.join(", ");
+}
+
 /** Samplers NovelAI accepts, in the order its own UI lists them. */
 export const NOVELAI_SAMPLERS = [
   { value: "k_euler_ancestral", label: "Euler Ancestral" },
