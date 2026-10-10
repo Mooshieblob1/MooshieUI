@@ -1655,7 +1655,8 @@
   <div class="relative">
     <div class="mb-1 flex items-center justify-between gap-2">
       <label class="block text-xs text-neutral-400">{locale.t('generation.model.checkpoint')}<InfoTip text={locale.t('generation.model.checkpoint_tip')} /></label>
-      {#if generation.currentModelMetadataKey()}
+      <!-- NovelAI models are remote, so there is no file to detect an architecture from. -->
+      {#if generation.currentModelMetadataKey() && !generation.isNovelAi}
         <div bind:this={architecturePickerEl} class="relative shrink-0">
           <button
             type="button"
