@@ -76,8 +76,9 @@ export interface NaiPromptContext {
   references: string[];
   /**
    * Whether earlier turns of this enhancer session are sent before this one.
-   * Adds the SESSION block, which overrides the blind-mode line saying the
-   * model cannot see any earlier rewrite.
+   * Adds the SESSION block, and without `existing` turns the rewrite into a
+   * revision of the newest answer: details from earlier turns are kept unless
+   * the new message changes them.
    */
   inSession?: boolean;
   /**
@@ -273,6 +274,7 @@ function referenceDirective(references: string[]): string {
 function sourceFidelity(
   existing: NaiExistingPrompt | null,
   hasReferences: boolean,
+  inSession: boolean,
 ): string {
   if (existing) {
     return `SOURCE FIDELITY
@@ -285,6 +287,7 @@ function sourceFidelity(
 - If the current prompt is not in V5 shape, put it in V5 shape as you go. That is repair, and it is expected of you; it is not licence to invent.
 - A named character keeps their name, their tags and their canon through the revision. Never generalize one away while editing.`;
   }
+  if (inSession) return SESSION_REVISION_FIDELITY;
   const input = hasReferences
     ? "The user's text and the attached reference images are the whole of your input. You cannot see their current prompt, any earlier rewrite or their character boxes"
     : "The user's text is the whole of your input. You cannot see their current prompt, any earlier rewrite, their character boxes or the image they are working on";
@@ -422,15 +425,34 @@ boy, <the same five sections>
 
 Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. BASE is required. Everything else is optional.`;
 
+/**
+ * Source fidelity for a session turn with no pasted prompt.
+ *
+ * The blind block cannot be used here: "your text is your only input" and
+ * "build a complete prompt around a revision" are exactly the instructions
+ * that make a model rebuild from the newest message alone, so a smug look and
+ * a furrowed brow asked for two turns ago vanish the moment a later message
+ * talks about something else. Here the newest answer is the prompt, and
+ * silence about a detail means keep it.
+ */
+const SESSION_REVISION_FIDELITY = `SOURCE FIDELITY
+- This is a running session. Your newest answer in it is the user's current prompt, and their message is an instruction for changing it. Treat it as a revision unless it clearly asks for a different image altogether.
+- In a revision, change what the message asks for and keep everything else. Every detail established in earlier turns stays in the prompt even though the newest message does not mention it: expressions and eyebrows, gaze, pose, outfit, props, setting, lighting and framing. A message that says nothing about a detail is never a reason to drop it.
+- A later instruction overrides an earlier detail only where the two actually conflict, and then only that detail. Asking for a smile replaces a frown; asking for rain does not remove a furrowed brow.
+- Carry the untouched parts over word for word wherever the wording still works. The user built them up turn by turn, and quietly rewording or trimming them is the failure this mode exists to avoid.
+- Keep the same characters in the same CHAR order unless the instruction adds, removes or swaps one.
+- Do not invent a location, a time of day, weather, a wardrobe, a mood or a camera angle that neither this message nor an earlier turn asked for.
+- A named character keeps their name, their tags and their canon through every revision.`;
+
 function sessionDirective(inSession: boolean | undefined, existing: boolean): string {
   if (!inSession) return "";
   const current = existing
-    ? "- The user's current prompt is given in their message below. It is the current prompt and wins over your earlier answers, since they may have edited it by hand since."
-    : "- Treat your newest answer as the current prompt. A message that reads like a revision applies to it: change what it names and keep everything else.";
+    ? "- The user's current prompt is given in their message below. It is the current prompt and wins over your earlier answers, since they may have edited it by hand since. Details from earlier turns that are still in it stay in it."
+    : "- Treat your newest answer as the current prompt. A message that reads like a revision applies to it: change what it names and keep everything else, including details from earlier turns that this message does not mention.";
   return `SESSION
 - Earlier turns of this session come before this message: the user's instructions and your answers to them. That overrides anything above saying you cannot see an earlier rewrite: your earlier rewrites are right there.
 ${current}
-- A message that clearly starts something new starts fresh. Do not carry characters, settings or style over from earlier turns unless it asks for them.
+- A message that clearly starts something new (a different subject, scene or cast, with nothing tying it to the current prompt) starts fresh. Do not carry characters, settings or style over into a fresh start unless it asks for them.
 - Every answer is still a complete prompt in the output format, never a diff against an earlier answer.`;
 }
 
@@ -443,7 +465,7 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
     ctx.recipes ?? "",
-    sourceFidelity(ctx.existing, ctx.references.length > 0),
+    sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
     sessionDirective(ctx.inSession, ctx.existing !== null),
     referenceDirective(ctx.references),
     naiLanguageDirective(ctx.language),
@@ -502,6 +524,7 @@ function variantLabel(variant: NaiVariant): string {
 /** The user turn: the raw prompt plus what the model needs to know about the scene. */
 export function naiUserPrompt(prompt: string, ctx: NaiPromptContext): string {
   if (ctx.existing) return naiEditUserPrompt(prompt, ctx.existing, ctx.references);
+  if (ctx.inSession) return naiSessionUserPrompt(prompt, ctx.references);
 
   const boxes =
     ctx.characterCount > 0
@@ -516,6 +539,17 @@ export function naiUserPrompt(prompt: string, ctx: NaiPromptContext): string {
   return `Rewrite this into a V5 ${variantLabel(ctx.variant)} prompt. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler. ${inputs}:
 
 ${instruction(prompt, ctx.references)}${refs}${boxes}`;
+}
+
+/**
+ * The user turn for a session follow-up with no pasted prompt: a revision of the
+ * newest answer, not a fresh rewrite. The blind turn's "this text is your only
+ * input" is what made a follow-up drop everything earlier turns had added.
+ */
+function naiSessionUserPrompt(prompt: string, references: string[]): string {
+  return `Revise your newest answer in this session with the instruction below, and return the whole prompt again in the output format: BASE and UC always, then one CHAR block for each character still in the scene. Keep every detail from earlier turns that this instruction does not change or contradict, including expression, pose and outfit, even where it does not mention them. If it clearly asks for a different image altogether, write that instead. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
+
+${instruction(prompt, references)}${referenceManifest(references)}`;
 }
 
 /**
