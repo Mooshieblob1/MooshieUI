@@ -368,6 +368,14 @@
       {#if caps.draft && animeScene.video.draft}
         <p class="text-[10px] text-neutral-500">{locale.t("scene.video.draft_desc")}</p>
       {/if}
+      <label class="flex items-start gap-2 select-none cursor-pointer">
+        <input type="checkbox" class="w-4 h-4 mt-0.5 rounded accent-indigo-500" checked={animeScene.video.mouthMap}
+          onchange={(e) => animeScene.updateVideo({ mouthMap: (e.target as HTMLInputElement).checked })} />
+        <span>
+          <span class="text-xs text-neutral-300 block">{locale.t("scene.video.mouth_map")}</span>
+          <span class="text-[10px] text-neutral-500">{locale.t("scene.video.mouth_map_desc")}</span>
+        </span>
+      </label>
     {/if}
 
     <!-- Plan and render -->
@@ -406,6 +414,21 @@
             resolution: plan.estimate.resolution,
           })}
         </p>
+        {#if animeScene.video.mouthMap && plan.mouth_measured + plan.mouth_missing > 0}
+          <div class="flex flex-wrap items-center gap-2">
+            <p class="text-[10px] text-neutral-400">
+              {locale.t("scene.video.mouth_status", { measured: plan.mouth_measured, total: plan.mouth_measured + plan.mouth_missing })}
+            </p>
+            {#if plan.mouth_missing > 0}
+              <button class={small} disabled={animeScene.measuring} onclick={() => void animeScene.measureMouth()}>
+                {animeScene.measuring ? locale.t("scene.video.mouth_measuring") : locale.t("scene.video.mouth_measure")}
+              </button>
+            {/if}
+          </div>
+        {/if}
+        {#if animeScene.mouthError}
+          <p class="text-xs text-red-400 whitespace-pre-wrap">{animeScene.mouthError}</p>
+        {/if}
         <div class="flex items-center justify-between gap-2">
           <label class={label} for="scene-prompt-preview">{locale.t("scene.video.prompt", { version: plan.builder_version })}</label>
           {#if animeScene.promptOverride !== null}

@@ -25,7 +25,8 @@ use crate::error::AppError;
 use crate::novelai::EventSink;
 use crate::state::AppState;
 
-use super::audio::{self, LineWindow};
+use super::audio::{self, LineWindow, VideoInfo};
+use super::mouth;
 use super::price::VideoEstimate;
 use super::prompt::{self, ImageRole, SceneSpec};
 use super::timeline::{self, LineInput, ShotInput};
@@ -82,6 +83,9 @@ pub struct SceneRequest {
     /// The user's edit of the built prompt (research doc 7, requirement 5).
     #[serde(default)]
     pub prompt_override: Option<String>,
+    /// Use the measured mouth timing of each take (rule S10) where it exists.
+    #[serde(default)]
+    pub mouth_map: bool,
 }
 
 /// Longest prompt accepted from the editor.
@@ -122,6 +126,10 @@ pub struct ScenePlan {
     pub shots: Vec<ShotSpan>,
     pub estimate: VideoEstimate,
     pub model_label: &'static str,
+    /// Lines whose mouth timing is in the prompt.
+    pub mouth_measured: usize,
+    /// Lines whose take has not been measured yet.
+    pub mouth_missing: usize,
 }
 
 /// What is written into the clip's metadata and the job file, so the scene
@@ -142,6 +150,9 @@ pub struct SceneRecipe {
     pub lines: Vec<LineInput>,
     pub images: Vec<SceneImage>,
     pub estimate_usd: f64,
+    /// The provider request id of the draft this clip completes.
+    #[serde(default)]
+    pub upgraded_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -163,6 +174,9 @@ pub struct JobRecord {
     provider_seed: Option<i64>,
     draft_id: Option<String>,
     recipe: SceneRecipe,
+    /// Id of the voice track kept in `tracks/` for the exact-voice option.
+    #[serde(default)]
+    voice_track: Option<String>,
 }
 
 impl JobRecord {
@@ -175,9 +189,11 @@ impl JobRecord {
 pub struct PreparedScene {
     prompt_id: String,
     dir: PathBuf,
+    endpoint: &'static str,
     body: serde_json::Value,
     recipe: SceneRecipe,
     credential: CloudCredential,
+    voice_track: Option<String>,
 }
 
 impl PreparedScene {
@@ -211,6 +227,13 @@ fn active() -> &'static Mutex<HashSet<String>> {
 fn jobs_dir(username: Option<&str>) -> Result<PathBuf, AppError> {
     takes::scene_assets_dir(username)
         .map(|d| d.join("jobs"))
+        .ok_or_else(|| AppError::Other("Cannot locate the scene asset folder.".into()))
+}
+
+/// Voice tracks kept after upload, named by the scene that made them.
+fn tracks_dir(username: Option<&str>) -> Result<PathBuf, AppError> {
+    takes::scene_assets_dir(username)
+        .map(|d| d.join("tracks"))
         .ok_or_else(|| AppError::Other("Cannot locate the scene asset folder.".into()))
 }
 
@@ -308,7 +331,7 @@ async fn plan_inner(
         durations.insert(line.line_id.clone(), seconds);
     }
 
-    let timeline = timeline::build(
+    let mut timeline = timeline::build(
         &request.shots,
         &request.lines,
         &durations,
@@ -323,6 +346,12 @@ async fn plan_inner(
             caps.audio_max_seconds
         )));
     }
+
+    let (mouth_measured, mouth_missing) = if request.mouth_map {
+        apply_mouth_map(&mut timeline, request, &store)
+    } else {
+        (0, 0)
+    };
 
     let spec = SceneSpec {
         seconds: timeline.seconds,
@@ -366,6 +395,8 @@ async fn plan_inner(
             .collect(),
         estimate,
         model_label: caps.label,
+        mouth_measured,
+        mouth_missing,
     };
     Ok(Planned {
         plan,
@@ -373,6 +404,35 @@ async fn plan_inner(
         caps,
         store,
     })
+}
+
+/// Put each measured take's talking stretches into its line (rule S10).
+/// Returns how many lines got a map and how many takes are not measured.
+fn apply_mouth_map(
+    timeline: &mut timeline::Timeline,
+    request: &SceneRequest,
+    store: &TakeStore,
+) -> (usize, usize) {
+    let take_of: HashMap<&str, &str> = request
+        .lines
+        .iter()
+        .map(|l| (l.line_id.as_str(), l.take_id.as_str()))
+        .collect();
+    let (mut measured, mut missing) = (0, 0);
+    // The timeline keeps the request's shot order.
+    for (shot, input) in timeline.shots.iter_mut().zip(&request.shots) {
+        let (Some(line), Some(line_id)) = (shot.line.as_mut(), input.line_id.as_deref()) else {
+            continue;
+        };
+        match take_of.get(line_id).and_then(|take| store.mouth(take)) {
+            Some(map) => {
+                line.talking = mouth::place(&map.spans, line.start, line.end);
+                measured += 1;
+            }
+            None => missing += 1,
+        }
+    }
+    (measured, missing)
 }
 
 pub async fn plan(
@@ -499,10 +559,13 @@ pub async fn prepare(
             .collect(),
         images: request.images.clone(),
         estimate_usd: planned.plan.estimate.usd,
+        upgraded_from: None,
     };
     Ok(PreparedScene {
+        voice_track: Some(prompt_id.clone()),
         prompt_id,
         dir,
+        endpoint: fal::SEEDANCE_25_REFERENCE,
         body,
         recipe,
         credential,
@@ -539,23 +602,30 @@ async fn build_track(
 /// Unfinished jobs on disk for this account, oldest first, that are not
 /// already being followed in this process.
 pub fn resumable(username: Option<&str>) -> Vec<JobRecord> {
+    let running = active().lock().map(|a| a.clone()).unwrap_or_default();
+    let mut records: Vec<JobRecord> = job_records(username)
+        .into_iter()
+        .filter(|r| !running.contains(&r.prompt_id))
+        .collect();
+    records.sort_by_key(|r| r.created_unix);
+    records
+}
+
+/// Every submitted job still on disk for this account, running or not.
+fn job_records(username: Option<&str>) -> Vec<JobRecord> {
     let Ok(dir) = jobs_dir(username) else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
-    let running = active().lock().map(|a| a.clone()).unwrap_or_default();
-    let mut records: Vec<JobRecord> = entries
+    entries
         .flatten()
         .filter(|e| e.file_name().to_str().is_some_and(valid_job_id))
         .filter_map(|e| std::fs::read(e.path().join(JOB_FILE)).ok())
         .filter_map(|bytes| serde_json::from_slice::<JobRecord>(&bytes).ok())
         .filter(|r| r.version == JOB_VERSION && valid_job_id(&r.prompt_id))
-        .filter(|r| !running.contains(&r.prompt_id))
-        .collect();
-    records.sort_by_key(|r| r.created_unix);
-    records
+        .collect()
 }
 
 /// Claim a job for this process. False when it is already being followed.
@@ -704,9 +774,7 @@ async fn run_inner(
         JobStart::New(prepared) => {
             progress(sink, &prepared.prompt_id, 0);
             let client = FalClient::new(&state.http_client, &prepared.credential);
-            let submitted = client
-                .submit(fal::SEEDANCE_25_REFERENCE, &prepared.body)
-                .await;
+            let submitted = client.submit(prepared.endpoint, &prepared.body).await;
             let handle = match submitted {
                 Ok(Moderated::Ok { value }) => value,
                 Ok(Moderated::Blocked { message }) => {
@@ -727,14 +795,14 @@ async fn run_inner(
                 provider_seed: None,
                 draft_id: None,
                 recipe: prepared.recipe,
+                voice_track: prepared.voice_track,
             };
             // Written before anything else can fail: from here on the job is
             // paid for, and only this file lets a restart find it again.
             if let Err(e) = write_record(&prepared.dir, &record) {
                 log::error!("[scene] could not save job {}: {e}", record.prompt_id);
             }
-            // The voice track was only needed for the upload.
-            let _ = std::fs::remove_file(prepared.dir.join("voice.wav"));
+            // voice.wav stays: ingest keeps it for the exact-voice option.
             (prepared.dir, record, prepared.credential)
         }
         JobStart::Resume(record, credential) => {
@@ -854,7 +922,7 @@ fn parked(error: AppError) -> AppError {
 
 /// The JSON written into the clip, in the SwarmUI shape the gallery reads,
 /// plus the full scene recipe.
-fn metadata_json(record: &JobRecord, width: u32, height: u32) -> String {
+fn metadata_json(record: &JobRecord, width: u32, height: u32, voice_track: Option<&str>) -> String {
     let recipe = &record.recipe;
     let seed = record
         .provider_seed
@@ -877,6 +945,9 @@ fn metadata_json(record: &JobRecord, width: u32, height: u32) -> String {
             "provider_seed": record.provider_seed,
             "draft_id": record.draft_id,
             "request_id": record.handle.request_id,
+            "created_unix": record.created_unix,
+            "voice_track": voice_track,
+            "audio": "model",
         },
     })
     .to_string()
@@ -902,6 +973,34 @@ fn tag_args(raw: &Path, out: &Path, comment: &str) -> Vec<String> {
     ]
 }
 
+/// Keep the clip's picture and replace its sound with the user's own voice
+/// track (research doc 5.4). The video stream is copied, never re-encoded.
+fn exact_voice_args(video: &Path, track: &Path, out: &Path, comment: &str) -> Vec<String> {
+    vec![
+        "-hide_banner".into(),
+        "-y".into(),
+        "-i".into(),
+        video.to_string_lossy().into_owned(),
+        "-i".into(),
+        track.to_string_lossy().into_owned(),
+        "-map".into(),
+        "0:v:0".into(),
+        "-map".into(),
+        "1:a:0".into(),
+        "-c:v".into(),
+        "copy".into(),
+        "-c:a".into(),
+        "aac".into(),
+        "-b:a".into(),
+        "192k".into(),
+        "-metadata".into(),
+        format!("comment={comment}"),
+        "-movflags".into(),
+        "+faststart+use_metadata_tags".into(),
+        out.to_string_lossy().into_owned(),
+    ]
+}
+
 fn poster_args(video: &Path, frame: &Path) -> Vec<String> {
     vec![
         "-hide_banner".into(),
@@ -914,44 +1013,56 @@ fn poster_args(video: &Path, frame: &Path) -> Vec<String> {
     ]
 }
 
-/// Remux the clip with its metadata, grab a poster and move both into the
-/// account's gallery. Returns the `comfyui:output_video` payload.
-async fn ingest(
-    state: &Arc<AppState>,
-    username: Option<&str>,
-    dir: &Path,
-    record: &JobRecord,
-) -> Result<serde_json::Value, AppError> {
-    let ffmpeg = ffmpeg_path(state)?;
-    let raw = dir.join("raw.mp4");
+async fn probe_video(ffmpeg: &Path, video: &Path) -> Result<VideoInfo, AppError> {
     let banner = audio::run_ffmpeg(
-        &ffmpeg,
+        ffmpeg,
         &[
             "-hide_banner".into(),
             "-i".into(),
-            raw.to_string_lossy().into_owned(),
+            video.to_string_lossy().into_owned(),
         ],
         true,
     )
     .await
     .map_err(AppError::Other)?;
-    let info = audio::parse_video_info(&banner)
-        .ok_or_else(|| AppError::Other("The downloaded file is not a readable video.".into()))?;
+    audio::parse_video_info(&banner)
+        .ok_or_else(|| AppError::Other("The file is not a readable video.".into()))
+}
 
-    let tagged = dir.join("scene.mp4");
-    let args = tag_args(
-        &raw,
-        &tagged,
-        &metadata_json(record, info.width, info.height),
-    );
-    audio::run_ffmpeg(&ffmpeg, &args, false)
-        .await
-        .map_err(AppError::Other)?;
+/// Move the voice track out of the job folder into `tracks/`, so it outlives
+/// the job. Returns the track id when the track is kept.
+fn keep_track(username: Option<&str>, dir: &Path, record: &JobRecord) -> Option<String> {
+    let id = record
+        .voice_track
+        .as_deref()
+        .filter(|id| valid_job_id(id))?;
+    let tracks = tracks_dir(username).ok()?;
+    let dest = tracks.join(format!("{id}.wav"));
+    let src = dir.join("voice.wav");
+    if src.is_file() && !dest.is_file() {
+        let moved = std::fs::create_dir_all(&tracks).and_then(|_| {
+            std::fs::rename(&src, &dest).or_else(|_| std::fs::copy(&src, &dest).map(|_| ()))
+        });
+        if let Err(e) = moved {
+            log::warn!("[scene] could not keep the voice track of {id}: {e}");
+        }
+    }
+    dest.is_file().then(|| id.to_string())
+}
 
-    let frame = dir.join("poster.png");
-    let poster = dir.join("poster.webp");
-    let poster_args = poster_args(&tagged, &frame);
-    let poster_ok = match audio::run_ffmpeg(&ffmpeg, &poster_args, false).await {
+/// Grab a poster and move a finished clip into the account's gallery.
+/// Returns the `comfyui:output_video` payload.
+async fn save_clip(
+    ffmpeg: &Path,
+    username: Option<&str>,
+    work: &Path,
+    video: PathBuf,
+    info: VideoInfo,
+    prompt_id: &str,
+) -> Result<serde_json::Value, AppError> {
+    let frame = work.join("poster.png");
+    let poster = work.join("poster.webp");
+    let poster_ok = match audio::run_ffmpeg(ffmpeg, &poster_args(&video, &frame), false).await {
         Ok(_) => {
             let (frame, poster) = (frame.clone(), poster.clone());
             tokio::task::spawn_blocking(move || -> Result<(), String> {
@@ -973,17 +1084,17 @@ async fn ingest(
 
     let gallery = crate::webserver::user_gallery_dir(username)
         .ok_or_else(|| AppError::Other("Cannot find the gallery folder.".into()))?;
-    let prompt_id = record.prompt_id.clone();
+    let id = prompt_id.to_string();
     let frame_count = (info.duration * info.fps).round().max(0.0) as u64;
     let poster_path = poster_ok.then_some(poster);
     // A paid clip always goes to the gallery, even in manual save mode:
     // a held-back clip that is never saved would be paid work thrown away.
     let saved = tokio::task::spawn_blocking(move || {
         crate::commands::api::save_video_to_gallery(
-            &tagged,
+            &video,
             poster_path.as_deref(),
             &gallery,
-            &prompt_id,
+            &id,
             info.fps,
             frame_count,
             info.width,
@@ -995,7 +1106,7 @@ async fn ingest(
 
     Ok(serde_json::json!({
         "type": "video",
-        "prompt_id": record.prompt_id,
+        "prompt_id": prompt_id,
         "persisted": true,
         "video_filename": saved.video_filename,
         "poster_filename": saved.poster_filename,
@@ -1005,6 +1116,255 @@ async fn ingest(
         "width": info.width,
         "height": info.height,
     }))
+}
+
+/// Remux the downloaded clip with its metadata and add it to the gallery.
+async fn ingest(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+    dir: &Path,
+    record: &JobRecord,
+) -> Result<serde_json::Value, AppError> {
+    let ffmpeg = ffmpeg_path(state)?;
+    let raw = dir.join("raw.mp4");
+    let info = probe_video(&ffmpeg, &raw).await?;
+    let voice_track = keep_track(username, dir, record);
+    let tagged = dir.join("scene.mp4");
+    let args = tag_args(
+        &raw,
+        &tagged,
+        &metadata_json(record, info.width, info.height, voice_track.as_deref()),
+    );
+    audio::run_ffmpeg(&ffmpeg, &args, false)
+        .await
+        .map_err(AppError::Other)?;
+    save_clip(&ffmpeg, username, dir, tagged, info, &record.prompt_id).await
+}
+
+/// What the scene metadata of a gallery clip says.
+struct ClipMeta {
+    root: serde_json::Value,
+    recipe: SceneRecipe,
+    draft_id: Option<String>,
+    request_id: Option<String>,
+    created_unix: Option<i64>,
+    voice_track: Option<String>,
+    exact_voice: bool,
+}
+
+fn parse_clip_meta(root: serde_json::Value) -> Option<ClipMeta> {
+    let scene = root.get("mooshie_scene")?;
+    let recipe: SceneRecipe = serde_json::from_value(scene.get("recipe")?.clone()).ok()?;
+    let text = |key: &str| {
+        scene
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    Some(ClipMeta {
+        draft_id: text("draft_id"),
+        request_id: text("request_id"),
+        created_unix: scene
+            .get("created_unix")
+            .and_then(serde_json::Value::as_i64),
+        voice_track: text("voice_track").filter(|id| valid_job_id(id)),
+        exact_voice: text("audio").as_deref() == Some("exact_voice"),
+        recipe,
+        root,
+    })
+}
+
+/// A gallery file name from the page: a bare `.mp4` name, never a path.
+fn clip_path(username: Option<&str>, filename: &str) -> Result<PathBuf, AppError> {
+    let name = filename.trim();
+    if name.is_empty()
+        || name.contains(['/', '\\'])
+        || name.contains("..")
+        || !name.to_ascii_lowercase().ends_with(".mp4")
+    {
+        return Err(AppError::Other(
+            "Pick a scene clip from the gallery.".into(),
+        ));
+    }
+    let gallery = crate::webserver::user_gallery_dir(username)
+        .ok_or_else(|| AppError::Other("Cannot find the gallery folder.".into()))?;
+    let path = gallery.join(name);
+    if !path.is_file() {
+        return Err(AppError::Other(
+            "That clip is no longer in the gallery.".into(),
+        ));
+    }
+    Ok(path)
+}
+
+async fn read_clip(
+    username: Option<&str>,
+    filename: &str,
+) -> Result<(PathBuf, ClipMeta), AppError> {
+    let path = clip_path(username, filename)?;
+    let read = path.clone();
+    let root = tokio::task::spawn_blocking(move || crate::metadata::read_video_comment_json(&read))
+        .await
+        .map_err(|e| AppError::Other(format!("Task failed: {e}")))?;
+    let meta = root
+        .and_then(parse_clip_meta)
+        .ok_or_else(|| AppError::Other("That clip was not made on the Scenes page.".into()))?;
+    Ok((path, meta))
+}
+
+/// What can still be done with a finished scene clip.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ClipInfo {
+    pub model_label: &'static str,
+    pub seconds: u32,
+    pub resolution: String,
+    pub draft: bool,
+    /// When fal stops completing this draft.
+    pub draft_expires_unix: Option<i64>,
+    /// The price of completing the draft at 1080p, while it can be.
+    pub upgrade: Option<VideoEstimate>,
+    /// The user's own voice track was kept, so it can replace the clip's sound.
+    pub exact_voice: bool,
+}
+
+/// A draft is offered for completion until ten minutes before fal's limit,
+/// so a slow submit never lands on an expired draft.
+const DRAFT_MARGIN_SECONDS: i64 = 10 * 60;
+
+fn clip_info_from(meta: &ClipMeta, track_kept: bool, now_unix: i64) -> ClipInfo {
+    let caps = meta.recipe.model.capabilities();
+    let expires = meta
+        .created_unix
+        .filter(|_| meta.recipe.draft && meta.draft_id.is_some() && caps.draft)
+        .map(|c| c + fal::DRAFT_LIFETIME_SECONDS);
+    let upgrade = expires
+        .filter(|e| now_unix < e - DRAFT_MARGIN_SECONDS)
+        .and_then(|_| {
+            meta.recipe
+                .model
+                .estimate("1080p", meta.recipe.seconds, false)
+        });
+    ClipInfo {
+        model_label: caps.label,
+        seconds: meta.recipe.seconds,
+        resolution: meta.recipe.resolution.clone(),
+        draft: meta.recipe.draft,
+        draft_expires_unix: expires,
+        upgrade,
+        exact_voice: track_kept && !meta.exact_voice,
+    }
+}
+
+fn kept_track(username: Option<&str>, meta: &ClipMeta) -> Option<PathBuf> {
+    let id = meta.voice_track.as_deref()?;
+    let path = tracks_dir(username).ok()?.join(format!("{id}.wav"));
+    path.is_file().then_some(path)
+}
+
+pub async fn clip_info(username: Option<&str>, filename: &str) -> Result<ClipInfo, AppError> {
+    let (_, meta) = read_clip(username, filename).await?;
+    let kept = kept_track(username, &meta).is_some();
+    Ok(clip_info_from(&meta, kept, chrono::Utc::now().timestamp()))
+}
+
+/// Complete a draft at 1080p. Paid; the page shows the itemized price first.
+/// Runs as an ordinary scene job, so it resumes after a restart like one.
+pub async fn start_upgrade(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+    filename: &str,
+    sink: EventSink,
+) -> Result<String, AppError> {
+    let (_, meta) = read_clip(username, filename).await?;
+    let kept = kept_track(username, &meta).is_some();
+    let info = clip_info_from(&meta, kept, chrono::Utc::now().timestamp());
+    let (Some(estimate), Some(draft_id)) = (info.upgrade, meta.draft_id.as_deref()) else {
+        return Err(AppError::Other(
+            "This clip is not a draft fal.ai can still complete. Drafts can be completed for seven days.".into(),
+        ));
+    };
+    // A second click must not pay for the same completion twice.
+    if job_records(username)
+        .iter()
+        .any(|r| r.recipe.upgraded_from.is_some() && r.recipe.upgraded_from == meta.request_id)
+    {
+        return Err(AppError::Other(
+            "This draft is already being completed. It appears in the gallery when it is done."
+                .into(),
+        ));
+    }
+    let endpoint = match meta.recipe.model {
+        VideoModel::FalSeedance25 => fal::SEEDANCE_25_DRAFT_COMPLETE,
+    };
+    let credential =
+        resolve_credential(state, username, meta.recipe.model.capabilities().provider).await?;
+    let mut recipe = meta.recipe.clone();
+    recipe.draft = false;
+    recipe.resolution = "1080p".into();
+    recipe.estimate_usd = estimate.usd;
+    recipe.upgraded_from = meta.request_id.clone();
+
+    let prompt_id = format!("scene-{}", uuid::Uuid::new_v4());
+    let dir = jobs_dir(username)?.join(&prompt_id);
+    std::fs::create_dir_all(&dir)?;
+    let prepared = PreparedScene {
+        prompt_id,
+        dir,
+        endpoint,
+        body: fal::seedance_25_complete_body(draft_id),
+        recipe,
+        credential,
+        voice_track: meta.voice_track.filter(|_| kept),
+    };
+    claim(&prepared.prompt_id);
+    Ok(spawn(
+        state,
+        username.map(str::to_string),
+        JobStart::New(prepared),
+        sink,
+    ))
+}
+
+/// Replace a clip's sound with the voice track it was made from, as a new
+/// gallery clip. Free and local. Returns the `comfyui:output_video` payload.
+pub async fn exact_voice(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+    filename: &str,
+) -> Result<serde_json::Value, AppError> {
+    let (source, meta) = read_clip(username, filename).await?;
+    if meta.exact_voice {
+        return Err(AppError::Other(
+            "This clip already uses your exact voice.".into(),
+        ));
+    }
+    let track = kept_track(username, &meta).ok_or_else(|| {
+        AppError::Other(
+            "The voice track for this scene was not kept, so its sound cannot be replaced.".into(),
+        )
+    })?;
+    let ffmpeg = ffmpeg_path(state)?;
+    let work = takes::scene_assets_dir(username)
+        .ok_or_else(|| AppError::Other("Cannot locate the scene asset folder.".into()))?
+        .join("work")
+        .join(uuid::Uuid::new_v4().simple().to_string());
+    std::fs::create_dir_all(&work)?;
+    let result = async {
+        let mut root = meta.root.clone();
+        root["mooshie_scene"]["audio"] = serde_json::json!("exact_voice");
+        let out = work.join("scene.mp4");
+        let args = exact_voice_args(&source, &track, &out, &root.to_string());
+        audio::run_ffmpeg(&ffmpeg, &args, false)
+            .await
+            .map_err(AppError::Other)?;
+        let info = probe_video(&ffmpeg, &out).await?;
+        let prompt_id = format!("scene-{}", uuid::Uuid::new_v4());
+        save_clip(&ffmpeg, username, &work, out, info, &prompt_id).await
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(&work);
+    result
 }
 
 #[cfg(test)]
@@ -1040,6 +1400,7 @@ mod tests {
                 role: ImageRole::Character,
             }],
             prompt_override: None,
+            mouth_map: false,
         }
     }
 
@@ -1138,16 +1499,92 @@ mod tests {
                 lines: vec![],
                 images: vec![],
                 estimate_usd: 6.17,
+                upgraded_from: None,
             },
+            voice_track: None,
         };
+        let track = format!("scene-{}", uuid::Uuid::nil());
         let json: serde_json::Value =
-            serde_json::from_str(&metadata_json(&record, 864, 496)).unwrap();
+            serde_json::from_str(&metadata_json(&record, 864, 496, Some(&track))).unwrap();
         assert_eq!(json["sui_image_params"]["seed"], "42");
         assert_eq!(json["mooshie_scene"]["draft_id"], "d1");
+        let meta = parse_clip_meta(json.clone()).expect("scene metadata reads back");
+        assert_eq!(meta.recipe, record.recipe);
+        assert_eq!(meta.voice_track.as_deref(), Some(track.as_str()));
+        assert_eq!(meta.request_id.as_deref(), Some("req"));
+        assert!(!meta.exact_voice);
         let parsed = crate::metadata::parse_swarmui_json(&json.to_string()).unwrap();
         assert_eq!(parsed.get("size").map(String::as_str), Some("864x496"));
         let text = json.to_string();
         assert!(!text.contains("status_url") && !text.contains("queue.fal.run"));
+    }
+
+    fn clip(draft: bool, created: Option<i64>) -> ClipMeta {
+        let mut recipe: SceneRecipe = serde_json::from_value(serde_json::json!({
+            "builder_version": 2, "model": "fal_seedance25", "resolution": "720p",
+            "draft": draft, "seconds": 10, "aspect": "16:9", "seed": null,
+            "prompt": "p", "voice_id": "v", "character_name": "Aoi", "minor": false,
+            "lines": [], "images": [], "estimate_usd": 2.2
+        }))
+        .unwrap();
+        recipe.draft = draft;
+        ClipMeta {
+            root: serde_json::Value::Null,
+            recipe,
+            draft_id: Some("d1".into()),
+            request_id: Some("req".into()),
+            created_unix: created,
+            voice_track: None,
+            exact_voice: false,
+        }
+    }
+
+    #[test]
+    fn a_draft_can_be_completed_for_seven_days_only() {
+        let day = 24 * 60 * 60;
+        let fresh = clip_info_from(&clip(true, Some(0)), false, day);
+        let upgrade = fresh.upgrade.expect("a fresh draft can be completed");
+        assert_eq!(upgrade.resolution, "1080p");
+        assert!((upgrade.usd - 11.64).abs() < 0.01);
+        assert_eq!(fresh.draft_expires_unix, Some(7 * day));
+        assert!(clip_info_from(&clip(true, Some(0)), false, 7 * day - 60)
+            .upgrade
+            .is_none());
+        assert!(clip_info_from(&clip(false, Some(0)), false, day)
+            .upgrade
+            .is_none());
+        assert!(clip_info_from(&clip(true, None), false, day)
+            .upgrade
+            .is_none());
+    }
+
+    #[test]
+    fn exact_voice_needs_a_kept_track_and_is_offered_once() {
+        assert!(clip_info_from(&clip(true, Some(0)), true, 0).exact_voice);
+        assert!(!clip_info_from(&clip(true, Some(0)), false, 0).exact_voice);
+        let mut done = clip(true, Some(0));
+        done.exact_voice = true;
+        assert!(!clip_info_from(&done, true, 0).exact_voice);
+    }
+
+    #[test]
+    fn clip_names_are_never_paths() {
+        for name in ["", "../a.mp4", "a/b.mp4", "a\\b.mp4", "a.png"] {
+            assert!(clip_path(None, name).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn exact_voice_copies_the_picture() {
+        let args = exact_voice_args(
+            Path::new("v.mp4"),
+            Path::new("t.wav"),
+            Path::new("o.mp4"),
+            "{}",
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("-map 0:v:0 -map 1:a:0 -c:v copy"));
+        assert!(joined.ends_with("o.mp4"));
     }
 
     /// Runs the real FFmpeg steps: `cargo test -- --ignored ffmpeg` with
@@ -1231,6 +1668,30 @@ mod tests {
             .save_with_format(&poster, image::ImageFormat::WebP)
             .unwrap();
         assert!(poster.metadata().unwrap().len() > 0);
+
+        // The exact-voice mux keeps the picture, takes the track's sound and
+        // carries the scene metadata the page reads back.
+        let comment = serde_json::json!({
+            "sui_image_params": {"prompt": "Format: test"},
+            "mooshie_scene": {"audio": "exact_voice", "recipe": {}},
+        })
+        .to_string();
+        let muxed = dir.join("exact.mp4");
+        run(exact_voice_args(&tagged, &track, &muxed, &comment)).await;
+        let root = crate::metadata::read_video_comment_json(&muxed).expect("comment");
+        assert_eq!(root["mooshie_scene"]["audio"], "exact_voice");
+        let banner = audio::run_ffmpeg(
+            &ffmpeg,
+            &[
+                s("-hide_banner"),
+                s("-i"),
+                muxed.to_string_lossy().into_owned(),
+            ],
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(banner.contains("Audio: aac"), "{banner}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

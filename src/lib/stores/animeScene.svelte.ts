@@ -5,22 +5,30 @@ import {
   elevenlabsListVoices,
   elevenlabsSaveVoice,
   elevenlabsSubscription,
+  sceneAlignTakes,
+  sceneClipInfo,
+  sceneEstimateAlignment,
   sceneEstimateTakes,
+  sceneExactVoice,
   sceneGenerate,
   sceneKeyframe,
   sceneLoadTake,
   scenePlan,
   sceneRenderTake,
   sceneResumeJobs,
+  sceneUpgradeDraft,
   sceneVideoCapabilities,
 } from "../utils/api.js";
 import { progress } from "./progress.svelte.js";
+import { locale } from "./locale.svelte.js";
 import { novelai } from "./novelai.svelte.js";
 import { estimateNovelAiCost } from "../utils/novelaiCost.js";
 import type {
+  ClipInfo,
   ElevenLabsSubscription,
   ElevenLabsVoice,
   ImageRole,
+  SavedSceneClip,
   ScenePlan,
   SceneRequest,
   SpeechSettings,
@@ -100,7 +108,19 @@ export interface SceneVideoSettings {
   tail: number;
   /** NovelAI appearance tags for keyframes, `1girl` first. ASCII only. */
   characterTags: string;
+  /** Put each measured take's mouth timing in the prompt (rule S10). */
+  mouthMap: boolean;
 }
+
+/** A finished scene clip in the gallery, newest first. */
+export interface SceneClip {
+  filename: string;
+  /** The prompt id that made it, to tell drafts and upgrades apart. */
+  promptId: string;
+}
+
+/** How many finished clips the page lists. */
+const MAX_CLIPS = 12;
 
 function defaultVideo(): SceneVideoSettings {
   return {
@@ -117,6 +137,7 @@ function defaultVideo(): SceneVideoSettings {
     ambience: "",
     tail: 1,
     characterTags: "",
+    mouthMap: true,
   };
 }
 
@@ -133,6 +154,7 @@ interface Persisted {
   references: SceneReference[];
   shots: SceneShot[];
   video: SceneVideoSettings;
+  clips: SceneClip[];
 }
 
 function newId(): string {
@@ -182,6 +204,7 @@ class AnimeSceneStore {
   references = $state<SceneReference[]>([]);
   shots = $state<SceneShot[]>([]);
   video = $state<SceneVideoSettings>(defaultVideo());
+  clips = $state<SceneClip[]>([]);
 
   // Not persisted.
   capabilities = $state<VideoCapabilities[]>([]);
@@ -196,6 +219,13 @@ class AnimeSceneStore {
   /** NovelAI keyframe prompt id -> the shot it is for. */
   pendingKeyframes = $state<Record<string, string>>({});
   keyframeError = $state<string | null>(null);
+  measuring = $state(false);
+  mouthError = $state<string | null>(null);
+  /** filename -> what can still be done with it. */
+  clipInfo = $state<Record<string, ClipInfo>>({});
+  /** The clip an action is running on. */
+  clipBusy = $state<string | null>(null);
+  clipError = $state<string | null>(null);
   subscription = $state<ElevenLabsSubscription | null>(null);
   voices = $state<ElevenLabsVoice[]>([]);
   accountLoading = $state(false);
@@ -276,6 +306,11 @@ class AnimeSceneStore {
           }));
       }
       if (p.video && typeof p.video === "object") this.video = { ...defaultVideo(), ...p.video };
+      if (Array.isArray(p.clips)) {
+        this.clips = p.clips
+          .filter((c) => c && typeof c.filename === "string" && typeof c.promptId === "string")
+          .slice(0, MAX_CLIPS);
+      }
     } catch {
       /* corrupt or unavailable storage: start fresh */
     }
@@ -295,6 +330,7 @@ class AnimeSceneStore {
       references: this.references,
       shots: this.shots,
       video: this.video,
+      clips: this.clips,
     };
     try {
       localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(data));
@@ -839,7 +875,131 @@ class AnimeSceneStore {
       tail: v.tail,
       images: this.references.map((r) => ({ filename: r.filename, role: r.role })),
       prompt_override: this.promptOverride,
+      mouth_map: v.mouthMap,
     };
+  }
+
+  // --- Mouth map (ElevenLabs forced alignment, rule S10) ---
+
+  /** Chosen takes of the lines the shots use. */
+  get sceneTakeIds(): string[] {
+    const used = new Set(this.shots.map((sh) => sh.lineId).filter((id): id is string => !!id));
+    return this.readyLines.filter((l) => used.has(l.id)).map((l) => l.chosenTakeId!);
+  }
+
+  /** Measure when the mouth moves in each take not measured yet, after the
+   *  itemized estimate, then rebuild the plan so the prompt uses it. */
+  async measureMouth() {
+    const ids = this.sceneTakeIds;
+    if (this.measuring || ids.length === 0) return;
+    this.mouthError = null;
+    try {
+      const estimate = await sceneEstimateAlignment(ids);
+      if (estimate.takes > 0) {
+        const ok = await this.confirm(
+          "scene.cost.mouth_title",
+          [
+            {
+              labelKey: "scene.cost.mouth_item",
+              params: { takes: estimate.takes, seconds: estimate.seconds.toFixed(1), usd: estimate.usd.toFixed(3) },
+            },
+            { labelKey: "scene.cost.mouth_checked", params: { date: estimate.checked } },
+          ],
+          ["scene.cost.mouth_note"],
+        );
+        if (!ok) return;
+        this.measuring = true;
+        await sceneAlignTakes(ids);
+      }
+      if (this.plan) await this.planScene();
+    } catch (e) {
+      this.mouthError = errorText(e);
+    } finally {
+      this.measuring = false;
+    }
+  }
+
+  // --- Finished clips: exact voice and draft completion ---
+
+  /** Called from App.svelte when a clip lands: remember it if this page made it. */
+  recordClip(promptId: string, filename: string) {
+    if (!this.activeJobs.includes(promptId)) return;
+    this.clips = [{ filename, promptId }, ...this.clips.filter((c) => c.filename !== filename)].slice(0, MAX_CLIPS);
+    this.saveSettings();
+    void this.loadClipInfo(filename);
+  }
+
+  removeClip(filename: string) {
+    this.clips = this.clips.filter((c) => c.filename !== filename);
+    const { [filename]: _, ...rest } = this.clipInfo;
+    this.clipInfo = rest;
+    this.saveSettings();
+  }
+
+  async loadClipInfo(filename: string) {
+    try {
+      const info = await sceneClipInfo(filename);
+      this.clipInfo = { ...this.clipInfo, [filename]: info };
+    } catch {
+      // Deleted or renamed in the gallery: nothing left to offer.
+      this.removeClip(filename);
+    }
+  }
+
+  /** Complete a draft at 1080p, after the itemized estimate. */
+  async upgradeDraft(filename: string) {
+    if (this.clipBusy) return;
+    this.clipError = null;
+    await this.loadClipInfo(filename);
+    const info = this.clipInfo[filename];
+    if (!info?.upgrade) {
+      this.clipError = locale.t("scene.clips.upgrade_unavailable");
+      return;
+    }
+    const expires = info.draft_expires_unix ? new Date(info.draft_expires_unix * 1000).toLocaleString() : "";
+    const ok = await this.confirm(
+      "scene.cost.upgrade_title",
+      [
+        {
+          labelKey: "scene.cost.video_item",
+          params: { model: info.model_label, seconds: info.seconds, resolution: "1080p", usd: info.upgrade.usd.toFixed(2) },
+        },
+        { labelKey: "scene.cost.upgrade_expires", params: { date: expires } },
+        { labelKey: "scene.cost.video_checked", params: { date: info.upgrade.checked } },
+      ],
+      ["scene.cost.upgrade_note", "scene.cost.fal_note", "scene.cost.cancel_note"],
+    );
+    if (!ok) return;
+    this.clipBusy = filename;
+    try {
+      this.track(await sceneUpgradeDraft(filename));
+      // Hide the offer while it runs; the finished 1080p clip joins the list.
+      this.clipInfo = { ...this.clipInfo, [filename]: { ...info, upgrade: null } };
+    } catch (e) {
+      this.clipError = errorText(e);
+    } finally {
+      this.clipBusy = null;
+    }
+  }
+
+  /** Swap a clip's sound for the user's own voice track. Free and local, so
+   *  no confirmation. Returns the new gallery clip for the page to show. */
+  async exactVoice(filename: string): Promise<SavedSceneClip | null> {
+    if (this.clipBusy) return null;
+    this.clipError = null;
+    this.clipBusy = filename;
+    try {
+      const saved = await sceneExactVoice(filename);
+      this.clips = [{ filename: saved.video_filename, promptId: "" }, ...this.clips].slice(0, MAX_CLIPS);
+      this.saveSettings();
+      void this.loadClipInfo(saved.video_filename);
+      return saved;
+    } catch (e) {
+      this.clipError = errorText(e);
+      return null;
+    } finally {
+      this.clipBusy = null;
+    }
   }
 
   /** Timings, prompt and price. Free: nothing leaves this machine. */

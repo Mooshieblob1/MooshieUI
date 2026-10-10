@@ -149,3 +149,50 @@ pub async fn scene_keyframe(
     let sink = crate::novelai::EventSink::new(Arc::clone(state.inner()), Some(app));
     crate::cloud::scene::keyframe::start(state.inner(), None, &request, sink).await
 }
+
+/// What measuring mouth timing for these takes would cost. Calls no provider.
+#[tauri::command]
+pub async fn scene_estimate_alignment(
+    state: State<'_, Arc<AppState>>,
+    take_ids: Vec<String>,
+) -> Result<voice::AlignEstimate, AppError> {
+    voice::estimate_alignment(state.inner(), None, &take_ids).await
+}
+
+/// Measure the mouth timing of takes not measured yet. Paid (ElevenLabs);
+/// the page shows the estimate first. Returns how many were measured.
+#[tauri::command]
+pub async fn scene_align_takes(
+    state: State<'_, Arc<AppState>>,
+    take_ids: Vec<String>,
+) -> Result<usize, AppError> {
+    voice::align_takes(state.inner(), None, &take_ids).await
+}
+
+/// What can still be done with a finished scene clip.
+#[tauri::command]
+pub async fn scene_clip_info(filename: String) -> Result<job::ClipInfo, AppError> {
+    job::clip_info(None, &filename).await
+}
+
+/// Complete a draft clip at 1080p; returns the prompt id. Paid; the page
+/// shows the itemized price first.
+#[tauri::command]
+pub async fn scene_upgrade_draft(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    filename: String,
+) -> Result<String, AppError> {
+    let sink = crate::novelai::EventSink::new(Arc::clone(state.inner()), Some(app));
+    job::start_upgrade(state.inner(), None, &filename, sink).await
+}
+
+/// Replace a clip's sound with the user's own voice track, as a new gallery
+/// clip. Free and local.
+#[tauri::command]
+pub async fn scene_exact_voice(
+    state: State<'_, Arc<AppState>>,
+    filename: String,
+) -> Result<serde_json::Value, AppError> {
+    job::exact_voice(state.inner(), None, &filename).await
+}

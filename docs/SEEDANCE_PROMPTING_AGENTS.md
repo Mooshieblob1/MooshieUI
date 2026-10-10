@@ -57,8 +57,12 @@ and stored in the clip's metadata.
 - **S9** `[secondary]` Say the mouth moves only during the character's own
   lines, and ask for clean lip-synced speech in Audio.
 - **S10** `[secondary]` A mouth map from word-level timestamps (ElevenLabs
-  Scribe or forced alignment) lists talking and quiet windows. *Not built yet
-  (Phase 4); line windows from the measured takes are used today.*
+  Scribe or forced alignment) lists talking and quiet windows. *Builder: with
+  Mouth map on, each line says "mouth moves only at 1.6-3.2, 3.7-5 seconds and
+  is closed in between". The stretches come from ElevenLabs forced alignment
+  of each take (`mouth.rs`: characters merged across pauses under 0.3 s),
+  cached next to the take, so each take is paid for once. Unmeasured lines
+  fall back to the whole line window.*
 - **S11** `[secondary]` Camera: give screen positions, tie moves to visible
   events, avoid vague words like "dynamic". *Left to the user's framing text.*
 - **S12** `[official]` There is no `negative_prompt` field. Constraints go in a
@@ -67,8 +71,10 @@ and stored in the clip's metadata.
   continuation, pass the previous clip's last frame as `@Image1`.
 - **S14** `[official]` `draft: true` returns a 480p clip and a `draft_id`;
   `bytedance/seedance-2.5/draft/complete` renders it at 1080p within 7 days on
-  the same account. *The draft id is stored in the clip's metadata; completing
-  a draft is Phase 4.*
+  the same account. *The draft id and creation time are stored in the clip's
+  metadata. The Scenes page lists finished clips and offers "Complete at
+  1080p" while the draft is completable, priced at fal's 1080p per-second
+  rate (fal's completion page lists the same $1.164 per second).*
 - **S15** `[secondary]` No anime-specific official advice was found. State the
   anime look in Format and rely on image references for style.
 
@@ -81,6 +87,15 @@ and stored in the clip's metadata.
   (`job::final_prompt`).
 - Reference images are re-encoded before upload, so their embedded prompts and
   settings never leave the machine.
+
+## The exact-voice option
+
+Seedance re-synthesizes speech rather than playing `@Audio1` verbatim, so a
+finished clip can be copied with the user's own voice track in place of the
+model's audio (`job::exact_voice`: video stream copied, track encoded to AAC).
+The track is kept in `scene_assets/tracks/` when the clip is ingested. The page
+warns that the lips may drift, since the model does not follow the track's
+timing exactly.
 
 ## Unknowns
 

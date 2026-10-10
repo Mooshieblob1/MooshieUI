@@ -358,6 +358,19 @@ pub fn read_file_metadata(path: &std::path::Path) -> Option<HashMap<String, Stri
     read_image_metadata(&bytes).ok().flatten()
 }
 
+/// The raw JSON comment of an mp4 on disk, unparsed, for callers that need
+/// fields beyond the SwarmUI parameters (the scene recipe, for example).
+/// Same read order as [`read_file_metadata`]. Blocking I/O.
+pub fn read_video_comment_json(path: &std::path::Path) -> Option<serde_json::Value> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut iso = IsoFile::open(file).ok()??;
+    let text = match iso.container_comment().ok()? {
+        Some(text) => Some(text),
+        None => iso.uuid_xmp().ok()?,
+    }?;
+    serde_json::from_str(text.trim()).ok()
+}
+
 /// Append a `uuid` XMP box to ISOBMFF bytes. Test-only: production code reaches
 /// the same writer through `mirror_uuid_sidecar`, which reads the payload out of
 /// the file rather than taking it from a caller.

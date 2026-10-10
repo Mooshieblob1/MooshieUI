@@ -128,6 +128,7 @@ pub fn build(
                         delivery: input.delivery.clone(),
                         start: line_start,
                         end: line_end,
+                        talking: Vec::new(),
                     }),
                 )
             }

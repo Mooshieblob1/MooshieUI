@@ -3259,6 +3259,7 @@
           { duration_seconds: durationSeconds, fps: videoFps, generationTimeMs },
           true,
         );
+        if (typeof data.prompt_id === "string") animeScene.recordClip(data.prompt_id, videoFilename);
 
         // Play it in the progress preview. The gallery URL is Range-served, so
         // the preview never buffers the whole clip.

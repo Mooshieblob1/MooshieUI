@@ -18,6 +18,11 @@ use crate::error::AppError;
 
 const QUEUE_BASE: &str = "https://queue.fal.run";
 pub const SEEDANCE_25_REFERENCE: &str = "bytedance/seedance-2.5/reference-to-video";
+/// Renders a Seedance 2.5 draft again at 1080p. A draft id is valid for seven
+/// days and only for the account that made it (fal model page, 2026-10-11).
+pub const SEEDANCE_25_DRAFT_COMPLETE: &str = "bytedance/seedance-2.5/draft/complete";
+/// How long fal keeps a draft completable.
+pub const DRAFT_LIFETIME_SECONDS: i64 = 7 * 24 * 60 * 60;
 
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(300);
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -241,6 +246,15 @@ pub fn seedance_25_body(
     body
 }
 
+/// The draft completion body. Completed drafts are always 1080p.
+pub fn seedance_25_complete_body(draft_id: &str) -> Value {
+    serde_json::json!({
+        "draft_id": draft_id,
+        "resolution": "1080p",
+        "codec": "H264",
+    })
+}
+
 fn parse_handle(value: &Value) -> Result<QueueHandle, AppError> {
     let field = |name: &str| {
         value
@@ -412,6 +426,14 @@ fn classify_error(status: u16, body: &str) -> ApiFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_draft_completes_at_1080p_in_h264() {
+        let body = seedance_25_complete_body("d-1");
+        assert_eq!(body["draft_id"], "d-1");
+        assert_eq!(body["resolution"], "1080p");
+        assert_eq!(body["codec"], "H264");
+    }
 
     #[test]
     fn the_body_follows_the_model_page() {

@@ -20,6 +20,16 @@ const FAL_SEEDANCE_25_USD_PER_SECOND: [(&str, f64); 3] =
 /// fal bills video inputs at 0.6x. Scenes send no video inputs today.
 const FAL_VIDEO_INPUT_MULTIPLIER: f64 = 0.6;
 
+/// ElevenLabs bills forced alignment at its speech-to-text rate, in US
+/// dollars per hour of audio, or from a plan's included hours (ElevenLabs
+/// API pricing page and forced alignment docs, checked on the date below).
+pub const ELEVENLABS_ALIGNMENT_USD_PER_HOUR: f64 = 0.22;
+pub const ELEVENLABS_ALIGNMENT_CHECKED: &str = "2026-10-11";
+
+pub fn elevenlabs_alignment(seconds: f64) -> f64 {
+    ELEVENLABS_ALIGNMENT_USD_PER_HOUR * seconds.max(0.0) / 3600.0
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct VideoEstimate {
     pub usd: f64,
@@ -68,6 +78,13 @@ mod tests {
         assert!((fal_seedance_25("720p", 10, false, 0.0).unwrap().usd - 4.73).abs() < 0.01);
         assert!((fal_seedance_25("1080p", 10, false, 0.0).unwrap().usd - 11.64).abs() < 0.01);
         assert!(fal_seedance_25("4k", 10, false, 0.0).is_none());
+    }
+
+    #[test]
+    fn alignment_is_billed_by_the_hour_of_audio() {
+        assert!((elevenlabs_alignment(3600.0) - 0.22).abs() < 1e-9);
+        assert!(elevenlabs_alignment(30.0) < 0.01);
+        assert_eq!(elevenlabs_alignment(-1.0), 0.0);
     }
 
     #[test]

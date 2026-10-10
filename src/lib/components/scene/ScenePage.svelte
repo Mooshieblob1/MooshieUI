@@ -5,6 +5,7 @@
   import SceneVoicePanel from "./SceneVoicePanel.svelte";
   import SceneScriptPanel from "./SceneScriptPanel.svelte";
   import SceneVideoPanel from "./SceneVideoPanel.svelte";
+  import SceneClipsPanel from "./SceneClipsPanel.svelte";
   import SceneCostDialog from "./SceneCostDialog.svelte";
 
   interface Props {
@@ -88,6 +89,7 @@
       <SceneVoicePanel />
       <SceneScriptPanel />
       <SceneVideoPanel hasKey={hasVideoKey} {onOpenSettings} />
+      <SceneClipsPanel hasKey={hasVideoKey} />
     {/if}
   </div>
 </div>
