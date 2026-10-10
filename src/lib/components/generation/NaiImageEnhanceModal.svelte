@@ -151,6 +151,9 @@
       opusExhausted:
         naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
       vibeEncodes: generation.novelaiSettings.vibes.filter((v) => !v.encoding).length,
+      preciseReferences: generation.supportsNovelAiPreciseReference
+        ? generation.novelaiSettings.director_references.length
+        : 0,
     });
   }
 

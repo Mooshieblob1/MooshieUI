@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod job;
+pub mod keyframe;
 pub mod price;
 pub mod prompt;
 pub mod timeline;

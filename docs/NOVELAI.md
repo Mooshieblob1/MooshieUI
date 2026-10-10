@@ -133,6 +133,15 @@ the vibe arrays before writing the director arrays, and the UI mirrors the same
 rule. Note that "Precise Reference" and "character reference" are two names for
 the same `director_reference_*` system.
 
+#### Precise Reference is never free
+
+Each reference adds 5 Anlas to every image, on top of the generation's own
+price and whether or not Opus covers that price (official Precise Reference
+page; the anime scene prototype on Opus paid exactly 5 per single-reference
+generation). `estimateNovelAiCost()` adds it through `preciseReferences`,
+which callers set only when the selected model supports Precise Reference,
+since other models drop the references from the request.
+
 #### The reference encoder only accepts three canvases
 
 NovelAI's character-reference encoder takes `1024x1536`, `1536x1024` or

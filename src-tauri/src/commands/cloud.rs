@@ -137,3 +137,15 @@ pub async fn scene_resume_jobs(
     })
     .await
 }
+
+/// Start a NovelAI keyframe for one shot; returns its prompt id. The page
+/// shows the Anlas estimate before calling this.
+#[tauri::command]
+pub async fn scene_keyframe(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    request: crate::cloud::scene::keyframe::KeyframeRequest,
+) -> Result<String, AppError> {
+    let sink = crate::novelai::EventSink::new(Arc::clone(state.inner()), Some(app));
+    crate::cloud::scene::keyframe::start(state.inner(), None, &request, sink).await
+}

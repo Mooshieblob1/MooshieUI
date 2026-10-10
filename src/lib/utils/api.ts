@@ -11,6 +11,7 @@ import type {
   DesignResponse,
   ElevenLabsSubscription,
   ElevenLabsVoice,
+  KeyframeRequest,
   Moderated,
   ScenePlan,
   SceneRequest,
@@ -309,6 +310,12 @@ export async function scenePlan(request: SceneRequest): Promise<ScenePlan> {
 /** Start a paid scene render; returns its prompt id. Confirm the cost first. */
 export async function sceneGenerate(request: SceneRequest): Promise<string> {
   return ipcInvoke("scene_generate", { request });
+}
+
+/** Start a NovelAI keyframe for one shot; returns its prompt id. Confirm the
+ *  Anlas estimate first. */
+export async function sceneKeyframe(request: KeyframeRequest): Promise<string> {
+  return ipcInvoke("scene_keyframe", { request });
 }
 
 /** Pick up scenes left unfinished by a restart. Costs nothing. */

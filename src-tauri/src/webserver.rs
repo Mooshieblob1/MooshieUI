@@ -3840,6 +3840,20 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(prompt_id))
         }
+        "scene_keyframe" => {
+            let request: crate::cloud::scene::keyframe::KeyframeRequest =
+                serde_json::from_value(args["request"].clone())
+                    .map_err(|e| format!("Invalid request: {e}"))?;
+            let sink = crate::novelai::EventSink::new(
+                Arc::clone(&state),
+                #[cfg(feature = "desktop")]
+                None,
+            );
+            let prompt_id = crate::cloud::scene::keyframe::start(&state, username, &request, sink)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(prompt_id))
+        }
         "scene_resume_jobs" => {
             let shared = Arc::clone(&state);
             let ids = crate::cloud::scene::job::resume(&state, username, || {
@@ -8774,6 +8788,7 @@ mod nai_key_tests {
             "scene_plan",
             "scene_generate",
             "scene_resume_jobs",
+            "scene_keyframe",
         ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }

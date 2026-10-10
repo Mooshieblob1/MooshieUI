@@ -35,5 +35,7 @@ export function estimateCurrentNovelAiCost(
     // V5 has no Opus unlimited: with the allowance drained it bills in full.
     opusExhausted: naiV5Variant(generation.checkpoint) !== null && novelai.opusAllowanceEmpty,
     vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
+    // Only a model with Precise Reference sends them; others drop them.
+    preciseReferences: generation.supportsNovelAiPreciseReference ? nai.director_references.length : 0,
   });
 }
