@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::elevenlabs::{SpeechSettings, TTS_MODEL};
+use super::scene::mouth::{MouthMap, MOUTH_VERSION};
 
 /// Bump to invalidate every cached take, for example if the hash inputs change.
 const TAKE_KEY_VERSION: &str = "take-v1";
@@ -108,6 +109,29 @@ impl TakeStore {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())?;
         Some((meta, bytes))
+    }
+
+    fn mouth_path(&self, id: &str) -> PathBuf {
+        self.dir.join(format!("{id}.mouth.json"))
+    }
+
+    /// The take's cached mouth map, if it was measured with the current rules.
+    pub fn mouth(&self, id: &str) -> Option<MouthMap> {
+        if !valid_take_id(id) {
+            return None;
+        }
+        std::fs::read(self.mouth_path(id))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<MouthMap>(&b).ok())
+            .filter(|m| m.version == MOUTH_VERSION)
+    }
+
+    pub fn put_mouth(&self, id: &str, map: &MouthMap) -> Result<(), String> {
+        if !self.contains(id) {
+            return Err("Invalid take id".into());
+        }
+        let json = serde_json::to_vec_pretty(map).map_err(|e| e.to_string())?;
+        write_atomic(&self.mouth_path(id), &json)
     }
 
     /// Write audio first and metadata last, each through a temp file and a

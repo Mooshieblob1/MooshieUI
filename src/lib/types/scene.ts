@@ -143,6 +143,8 @@ export interface SceneRequest {
   images: SceneImageInput[];
   /** The user's edit of the built prompt; null sends the built one. */
   prompt_override: string | null;
+  /** Put each measured take's mouth timing in the prompt. */
+  mouth_map: boolean;
 }
 
 export interface VideoEstimate {
@@ -161,6 +163,41 @@ export interface ScenePlan {
   shots: { start: number; end: number }[];
   estimate: VideoEstimate;
   model_label: string;
+  /** Lines whose mouth timing is in the prompt. */
+  mouth_measured: number;
+  /** Lines whose take has not been measured yet. */
+  mouth_missing: number;
+}
+
+export interface AlignEstimate {
+  takes: number;
+  seconds: number;
+  usd: number;
+  cached: number;
+  checked: string;
+}
+
+/** What can still be done with a finished scene clip. */
+export interface ClipInfo {
+  model_label: string;
+  seconds: number;
+  resolution: string;
+  draft: boolean;
+  draft_expires_unix: number | null;
+  /** The price of completing the draft at 1080p, while it can be. */
+  upgrade: VideoEstimate | null;
+  /** The user's own voice track can replace the clip's sound. */
+  exact_voice: boolean;
+}
+
+/** The gallery entry a finished clip became, as `comfyui:output_video` sends it. */
+export interface SavedSceneClip {
+  video_filename: string;
+  poster_filename: string | null;
+  duration_seconds: number;
+  fps: number;
+  width: number;
+  height: number;
 }
 
 export interface KeyframeRequest {

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bump when the emitted text changes, so a saved prompt says which builder
 /// wrote it.
-pub const BUILDER_VERSION: u32 = 1;
+pub const BUILDER_VERSION: u32 = 2;
 
 /// What one reference image controls (rule S5: one narrow job each).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -30,6 +30,10 @@ pub struct ShotLine {
     pub delivery: String,
     pub start: f64,
     pub end: f64,
+    /// The mouth map (rule S10): when the mouth moves within the line, in
+    /// scene seconds. Empty when the take was not measured.
+    #[serde(default)]
+    pub talking: Vec<super::mouth::Span>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -233,8 +237,21 @@ pub fn build(spec: &SceneSpec) -> Result<String, String> {
         match &shot.line {
             Some(line) => {
                 let delivery = line.delivery.trim();
+                let mouth = if line.talking.is_empty() {
+                    format!("{name}'s mouth moves only during this line.")
+                } else {
+                    let spans: Vec<String> = line
+                        .talking
+                        .iter()
+                        .map(|t| format!("{}-{}", secs(t.start), secs(t.end)))
+                        .collect();
+                    format!(
+                        "{name}'s mouth moves only at {} seconds and is closed in between.",
+                        spans.join(", ")
+                    )
+                };
                 beat.push_str(&format!(
-                    " From {} to {} seconds {name} says: \"{}\"{}{} {name}'s mouth moves only during this line.",
+                    " From {} to {} seconds {name} says: \"{}\"{}{} {mouth}",
                     secs(line.start),
                     secs(line.end),
                     quote_safe(&line.text),
@@ -335,6 +352,7 @@ mod tests {
                         delivery: "haughty, scoffing".into(),
                         start: 1.5,
                         end: 9.3,
+                        talking: Vec::new(),
                     }),
                 },
             ],
@@ -393,6 +411,29 @@ mod tests {
         // A double quote inside the line cannot end the quotation early.
         index(&text, "'あなた'");
         index(&text, "clean lip-synced Japanese speech");
+    }
+
+    #[test]
+    fn a_mouth_map_replaces_the_whole_line_rule() {
+        let mut s = spec();
+        if let Some(line) = s.shots[1].line.as_mut() {
+            line.talking = vec![
+                crate::cloud::scene::mouth::Span {
+                    start: 1.6,
+                    end: 3.2,
+                },
+                crate::cloud::scene::mouth::Span {
+                    start: 3.66,
+                    end: 5.0,
+                },
+            ];
+        }
+        let text = build(&s).unwrap();
+        index(
+            &text,
+            "Aoi's mouth moves only at 1.6-3.2, 3.7-5 seconds and is closed in between.",
+        );
+        assert!(!text.contains("mouth moves only during this line"));
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! HTTP access to ElevenLabs: voice library, Voice Design and text to speech.
+//! HTTP access to ElevenLabs: voice library, Voice Design, text to speech and
+//! forced alignment.
 //!
 //! Borrows the shared `reqwest::Client` from `AppState` and sets a deadline on
 //! every call, because the shared client has none. The client deliberately has
@@ -259,6 +260,82 @@ impl<'a> ElevenLabsClient<'a> {
     }
 }
 
+/// One aligned unit of a transcript, in seconds from the start of the file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AlignedUnit {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+impl<'a> ElevenLabsClient<'a> {
+    /// Forced alignment of known text to audio. Billed at ElevenLabs'
+    /// speech-to-text rate. Returns the per-character timings, or the
+    /// per-word ones when ElevenLabs sent no characters.
+    pub async fn align(
+        &self,
+        audio: Vec<u8>,
+        file_name: &str,
+        text: &str,
+    ) -> Result<Vec<AlignedUnit>, AppError> {
+        let file = reqwest::multipart::Part::bytes(audio)
+            .file_name(file_name.to_string())
+            .mime_str("audio/mpeg")
+            .map_err(|e| AppError::Other(format!("Could not attach the take: {e}")))?;
+        let form = reqwest::multipart::Form::new()
+            .part("file", file)
+            .text("text", text.to_string());
+        let res = self
+            .request(reqwest::Method::POST, "/v1/forced-alignment")
+            .timeout(GENERATION_TIMEOUT)
+            .multipart(form)
+            .send()
+            .await?;
+        let res = check_status(res).await?;
+        let value = read_json(res).await?;
+        parse_alignment(&value)
+            .ok_or_else(|| AppError::Other("ElevenLabs returned no alignment.".into()))
+    }
+}
+
+/// Characters when present (finer, and right for Japanese, which has no
+/// spaces between words), else words. Units with a bad time are skipped.
+fn parse_alignment(value: &Value) -> Option<Vec<AlignedUnit>> {
+    let units = |key: &str| -> Vec<AlignedUnit> {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|i| {
+                        let start = i.get("start").and_then(Value::as_f64)?;
+                        let end = i.get("end").and_then(Value::as_f64)?;
+                        (start.is_finite() && end.is_finite() && end >= start && start >= 0.0).then(
+                            || AlignedUnit {
+                                text: i
+                                    .get("text")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                start,
+                                end,
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let chars = units("characters");
+    let picked = if chars.is_empty() {
+        units("words")
+    } else {
+        chars
+    };
+    (!picked.is_empty()).then_some(picked)
+}
+
 fn speech_body(text: &str, settings: &SpeechSettings) -> Value {
     let mut body = serde_json::json!({
         "text": text,
@@ -473,6 +550,25 @@ fn parse_design(value: &Value) -> Result<DesignResult, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alignment_prefers_characters_and_skips_bad_times() {
+        let v = serde_json::json!({
+            "characters": [
+                {"text": "あ", "start": 0.1, "end": 0.2},
+                {"text": "い", "start": 0.3, "end": 0.2},
+                {"text": "う", "start": 0.4, "end": 0.6}
+            ],
+            "words": [{"text": "あいう", "start": 0.1, "end": 0.6, "loss": 0.1}],
+            "loss": 0.1
+        });
+        let units = parse_alignment(&v).unwrap();
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[1].text, "う");
+        let words_only = serde_json::json!({"characters": [], "words": [{"text": "hi", "start": 0.0, "end": 0.4}]});
+        assert_eq!(parse_alignment(&words_only).unwrap()[0].text, "hi");
+        assert!(parse_alignment(&serde_json::json!({"loss": 0.0})).is_none());
+    }
 
     #[test]
     fn a_blocked_generation_is_a_refusal_not_an_error() {

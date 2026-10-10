@@ -3854,6 +3854,54 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(prompt_id))
         }
+        "scene_estimate_alignment" => {
+            let take_ids: Vec<String> = serde_json::from_value(args["takeIds"].clone())
+                .map_err(|e| format!("Invalid request: {e}"))?;
+            let estimate = crate::cloud::voice::estimate_alignment(&state, username, &take_ids)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(estimate).map_err(|e| e.to_string())
+        }
+        "scene_align_takes" => {
+            let take_ids: Vec<String> = serde_json::from_value(args["takeIds"].clone())
+                .map_err(|e| format!("Invalid request: {e}"))?;
+            let measured = crate::cloud::voice::align_takes(&state, username, &take_ids)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(measured))
+        }
+        "scene_clip_info" => {
+            let info = crate::cloud::scene::job::clip_info(
+                username,
+                args["filename"].as_str().unwrap_or(""),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(info).map_err(|e| e.to_string())
+        }
+        "scene_upgrade_draft" => {
+            let sink = crate::novelai::EventSink::new(
+                Arc::clone(&state),
+                #[cfg(feature = "desktop")]
+                None,
+            );
+            let prompt_id = crate::cloud::scene::job::start_upgrade(
+                &state,
+                username,
+                args["filename"].as_str().unwrap_or(""),
+                sink,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(prompt_id))
+        }
+        "scene_exact_voice" => crate::cloud::scene::job::exact_voice(
+            &state,
+            username,
+            args["filename"].as_str().unwrap_or(""),
+        )
+        .await
+        .map_err(|e| e.to_string()),
         "scene_resume_jobs" => {
             let shared = Arc::clone(&state);
             let ids = crate::cloud::scene::job::resume(&state, username, || {
@@ -8789,6 +8837,11 @@ mod nai_key_tests {
             "scene_generate",
             "scene_resume_jobs",
             "scene_keyframe",
+            "scene_estimate_alignment",
+            "scene_align_takes",
+            "scene_clip_info",
+            "scene_upgrade_draft",
+            "scene_exact_voice",
         ] {
             assert_eq!(min_role_for_command(command), UserRole::User);
         }

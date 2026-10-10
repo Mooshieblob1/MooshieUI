@@ -266,6 +266,109 @@ pub fn load_take(username: Option<&str>, take_id: &str) -> Result<TakeInfo, AppE
     Ok(take_info(take_id.to_string(), &meta, &bytes, true))
 }
 
+/// What measuring mouth timing for a set of takes would cost.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct AlignEstimate {
+    /// Takes that would be sent to ElevenLabs.
+    pub takes: usize,
+    /// Their total length.
+    pub seconds: f64,
+    pub usd: f64,
+    /// Takes already measured, which cost nothing.
+    pub cached: usize,
+    pub checked: &'static str,
+}
+
+fn ffmpeg_for(state: &AppState) -> Result<std::path::PathBuf, AppError> {
+    state.media_tools.path("ffmpeg").ok_or_else(|| {
+        AppError::Other(
+            "Scenes need FFmpeg. Set up the music tools on the Music page first.".into(),
+        )
+    })
+}
+
+/// Distinct, valid take ids that are on disk and not measured yet.
+fn unmeasured<'a>(store: &TakeStore, take_ids: &'a [String]) -> (Vec<&'a str>, usize) {
+    let mut seen = std::collections::HashSet::new();
+    let mut todo = Vec::new();
+    let mut cached = 0;
+    for id in take_ids.iter().map(String::as_str) {
+        if !seen.insert(id) || !store.contains(id) {
+            continue;
+        }
+        if store.mouth(id).is_some() {
+            cached += 1;
+        } else {
+            todo.push(id);
+        }
+    }
+    (todo, cached)
+}
+
+/// Price of measuring these takes. Reads the takes' lengths; calls no
+/// provider.
+pub async fn estimate_alignment(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+    take_ids: &[String],
+) -> Result<AlignEstimate, AppError> {
+    let store = store_for(username)?;
+    let (todo, cached) = unmeasured(&store, take_ids);
+    let ffmpeg = ffmpeg_for(state)?;
+    let mut seconds = 0.0;
+    for id in &todo {
+        if let Some(path) = store.path_of(id) {
+            seconds += super::scene::audio::probe_duration(&ffmpeg, &path)
+                .await
+                .map_err(AppError::Other)?;
+        }
+    }
+    Ok(AlignEstimate {
+        takes: todo.len(),
+        seconds,
+        usd: super::scene::price::elevenlabs_alignment(seconds),
+        cached,
+        checked: super::scene::price::ELEVENLABS_ALIGNMENT_CHECKED,
+    })
+}
+
+/// Measure the mouth timing of each take not measured yet, one request at a
+/// time, caching each result as it arrives so a failure part way through
+/// loses nothing already paid for. Returns how many takes were measured.
+pub async fn align_takes(
+    state: &Arc<AppState>,
+    username: Option<&str>,
+    take_ids: &[String],
+) -> Result<usize, AppError> {
+    let store = store_for(username)?;
+    let (todo, _) = unmeasured(&store, take_ids);
+    if todo.is_empty() {
+        return Ok(0);
+    }
+    let credential = client_credential(state, username).await?;
+    let client = ElevenLabsClient::new(&state.http_client, &credential);
+    let mut measured = 0;
+    for id in todo {
+        let Some((meta, bytes)) = store.get(id) else {
+            continue;
+        };
+        let text = super::scene::mouth::spoken_only(&meta.text);
+        if text.is_empty() {
+            continue;
+        }
+        let units = client.align(bytes, &format!("{id}.mp3"), &text).await?;
+        let map = super::scene::mouth::MouthMap {
+            version: super::scene::mouth::MOUTH_VERSION,
+            spans: super::scene::mouth::spans_from(&units),
+        };
+        if let Err(e) = store.put_mouth(id, &map) {
+            log::warn!("Could not cache a mouth map: {e}");
+        }
+        measured += 1;
+    }
+    Ok(measured)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

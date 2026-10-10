@@ -8,11 +8,14 @@ import type { MusicTranscript } from "./musicReview.js";
 import type { MusicLinkCapabilities, MusicLinkImport } from "./musicLink.js";
 import type { ReferenceSong, MusicReferenceContext } from "../types/music.js";
 import type {
+  AlignEstimate,
+  ClipInfo,
   DesignResponse,
   ElevenLabsSubscription,
   ElevenLabsVoice,
   KeyframeRequest,
   Moderated,
+  SavedSceneClip,
   ScenePlan,
   SceneRequest,
   SpeechEstimate,
@@ -321,6 +324,30 @@ export async function sceneKeyframe(request: KeyframeRequest): Promise<string> {
 /** Pick up scenes left unfinished by a restart. Costs nothing. */
 export async function sceneResumeJobs(): Promise<string[]> {
   return ipcInvoke("scene_resume_jobs");
+}
+
+/** What measuring mouth timing for these takes would cost. Calls no provider. */
+export async function sceneEstimateAlignment(takeIds: string[]): Promise<AlignEstimate> {
+  return ipcInvoke("scene_estimate_alignment", { takeIds });
+}
+
+/** Measure the mouth timing of takes not measured yet. Paid (ElevenLabs). */
+export async function sceneAlignTakes(takeIds: string[]): Promise<number> {
+  return ipcInvoke("scene_align_takes", { takeIds });
+}
+
+export async function sceneClipInfo(filename: string): Promise<ClipInfo> {
+  return ipcInvoke("scene_clip_info", { filename });
+}
+
+/** Complete a draft clip at 1080p; returns the prompt id. Paid (fal.ai). */
+export async function sceneUpgradeDraft(filename: string): Promise<string> {
+  return ipcInvoke("scene_upgrade_draft", { filename });
+}
+
+/** Replace a clip's sound with the user's own voice track. Free and local. */
+export async function sceneExactVoice(filename: string): Promise<SavedSceneClip> {
+  return ipcInvoke("scene_exact_voice", { filename });
 }
 
 export interface ControlNetPreprocessorPreviewResponse {
