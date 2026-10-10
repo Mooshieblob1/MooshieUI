@@ -89,6 +89,12 @@ import {
   sanitizeH3Skill,
   saveH3Skill,
 } from "../utils/h3Skill.js";
+import {
+  CHARACTER_EXTRACT_RETRY,
+  characterExtractRequest,
+  parseExtractedCharacters,
+  type ExtractedCharacter,
+} from "../utils/characterExtract.js";
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -431,6 +437,32 @@ class PromptAssistantStore {
         throw new Error("invalid_music_review");
       });
     } finally { this.isGenerating = false; }
+  }
+
+  /**
+   * Pull the characters out of a prompt for the Characters tab. One retry when
+   * the reply is not the JSON asked for; an empty list means the model found
+   * no characters.
+   */
+  async extractCharacters(prompt: string): Promise<ExtractedCharacter[]> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterExtractRequest(prompt);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseExtractedCharacters(
+            await callExternalLlm(request.system, user, request.maxTokens),
+          );
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
+        }
+        throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
   }
 
   /**

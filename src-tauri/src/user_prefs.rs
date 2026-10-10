@@ -41,6 +41,9 @@ pub struct UserPrefs {
     pub accessibility: Option<serde_json::Value>,
     /// Freeform user notes (bottom panel Notes tab).
     pub notes: Option<serde_json::Value>,
+    /// Characters saved from prompts (bottom panel Characters tab), each
+    /// tagged with the model architecture it belongs to.
+    pub characters: Option<serde_json::Value>,
     /// H3 Director timeline (bottom panel Timeline tab, video mode).
     pub video_timeline: Option<serde_json::Value>,
     /// UI locale string (e.g. `"en"`, `"ja"`).
