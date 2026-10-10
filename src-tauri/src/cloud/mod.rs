@@ -10,6 +10,11 @@
 //! Compiles in both the desktop and the server build, so nothing here may
 //! reference `tauri`.
 
+pub mod elevenlabs;
+pub mod takes;
+pub mod voice;
+pub mod voice_prompt;
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};

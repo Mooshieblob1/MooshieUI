@@ -324,7 +324,7 @@ fn tmp_path_for(path: &std::path::Path) -> PathBuf {
 /// with the old 32-bit suffix, a moderator could brute-force a username that
 /// filters to the victim's and shares its suffix in minutes, then overwrite or
 /// delete the victim's `secrets.json` through their own account.
-fn sanitize_username(username: &str) -> Option<String> {
+pub(crate) fn sanitize_username(username: &str) -> Option<String> {
     user_dir_name(username, SUFFIX_HEX)
 }
 
