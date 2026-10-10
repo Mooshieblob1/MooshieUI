@@ -40,6 +40,39 @@ export const MODEL_FAMILIES = [
 
 export type ModelFamily = typeof MODEL_FAMILIES[number];
 
+/** Display names per family. Families without an entry (`unknown`, the edit models) have none. */
+export const MODEL_FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
+  anima: "Anima",
+  sdxl: "SDXL",
+  illustrious: "Illustrious",
+  pony: "Pony",
+  sd15: "SD 1.5",
+  sd3: "SD3",
+  flux: "Flux",
+  flux1d: "Flux.1 Dev",
+  flux1s: "Flux.1 Schnell",
+  flux1krea: "Flux.1 Krea",
+  flux2d: "Flux.2 Dev",
+  flux2klein9b: "Flux.2 Klein 9B",
+  flux2klein9bbase: "Flux.2 Klein 9B Base",
+  flux2klein4b: "Flux.2 Klein 4B",
+  flux2klein4bbase: "Flux.2 Klein 4B Base",
+  chroma: "Chroma",
+  zib: "Z-Image Base",
+  zit: "Z-Image Turbo",
+  wan: "Wan",
+  qwen: "Qwen",
+  ideogram4: "Ideogram 4.0",
+  krea2: "Krea 2",
+  auraflow: "AuraFlow",
+  pixart: "PixArt",
+  hunyuandit: "HunyuanDiT",
+  cascade: "Stable Cascade",
+  kolors: "Kolors",
+  mugen: "Mugen",
+  nanosaur: "Nanosaur",
+};
+
 export const TURBO_MODEL_VARIANTS = [
   "none",
   "turbo",

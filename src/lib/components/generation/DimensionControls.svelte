@@ -3,7 +3,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
-  import type { ModelFamily } from "../../utils/modelFamily.js";
+  import { MODEL_FAMILY_LABELS, type ModelFamily } from "../../utils/modelFamily.js";
   import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
@@ -280,38 +280,6 @@
     });
   });
 
-  const FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
-    anima: "Anima",
-    sdxl: "SDXL",
-    illustrious: "Illustrious",
-    pony: "Pony",
-    sd15: "SD 1.5",
-    sd3: "SD3",
-    flux: "Flux",
-    flux1d: "Flux.1 Dev",
-    flux1s: "Flux.1 Schnell",
-    flux1krea: "Flux.1 Krea",
-    flux2d: "Flux.2 Dev",
-    flux2klein9b: "Flux.2 Klein 9B",
-    flux2klein9bbase: "Flux.2 Klein 9B Base",
-    flux2klein4b: "Flux.2 Klein 4B",
-    flux2klein4bbase: "Flux.2 Klein 4B Base",
-    chroma: "Chroma",
-    zib: "Z-Image Base",
-    zit: "Z-Image Turbo",
-    wan: "Wan",
-    qwen: "Qwen",
-    ideogram4: "Ideogram 4.0",
-    krea2: "Krea 2",
-    auraflow: "AuraFlow",
-    pixart: "PixArt",
-    hunyuandit: "HunyuanDiT",
-    cascade: "Stable Cascade",
-    kolors: "Kolors",
-    mugen: "Mugen",
-    nanosaur: "Nanosaur",
-  };
-
   /** Recommended initial-generation side-length range per model family. */
   function recommendedRange(family: ModelFamily): { min: number; max: number } | null {
     switch (family) {
@@ -340,7 +308,7 @@
         : `${recommended.min}–${recommended.max}`
       : ""
   );
-  const familyLabel = $derived(FAMILY_LABELS[generation.modelFamily] ?? "");
+  const familyLabel = $derived(MODEL_FAMILY_LABELS[generation.modelFamily] ?? "");
 
   /** Fit a w:h ratio into a max bounding box for preset preview chips. */
   function aspectPreviewSize(w: number, h: number, boxPx = 12): { w: number; h: number } {
