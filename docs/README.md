@@ -31,6 +31,7 @@ These documents include proposals and historical evidence; they are not promises
 | [Music generation improvements](research/music-generation-improvements.md) | Continued Suno, Udio and Lyria 2 research, practical priorities and validation boundaries |
 | [RTX 5070 video comparison](research/video-benchmark-2026-09-15.md) | Measured generation times, motion observations and VDN compatibility failures |
 | [Cover audio review and timing](research/music-cover-review.md) | Implemented xAI review, timing limits, and the decision to abandon experimental audio timing repair |
+| [Anime scene pipeline](research/anime-scene-pipeline.md) | Proposal for a NovelAI character to voiced, animated scene with ElevenLabs and cloud video, from a working prototype; needs a scope decision first |
 | [MACOS_RELEASE_PLAN.md](MACOS_RELEASE_PLAN.md) | Apple Silicon release requirements and outstanding qualification gates |
 | [BOT_REVIEW_TRIAGE.md](BOT_REVIEW_TRIAGE.md) | Triage notes for automated PR review comments |
 | [issue_cleanup_followup_tracks.md](issue_cleanup_followup_tracks.md) | Historical issue follow-up tracks |
