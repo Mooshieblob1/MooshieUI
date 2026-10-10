@@ -32,7 +32,7 @@
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
-  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
@@ -115,7 +115,14 @@
   }
 
   const pending = $derived(naiEnhance.pending);
-  const variant = $derived(naiV5Variant(generation.checkpoint));
+  /**
+   * The variant the rewrite is written for. "Curate it" switches the model to
+   * V5 Full on apply, so the rewrite targets Full's budget from the start.
+   */
+  const variant = $derived.by(() => {
+    const v = naiV5Variant(generation.checkpoint);
+    return v && naiEnhance.curate ? "full" : v;
+  });
   const isGeneral = $derived(naiEnhance.flow === "general");
   const isH3 = $derived(naiEnhance.flow === "h3");
   /** The flows reviewed as one before/after pair rather than the V5 diff. */
@@ -277,7 +284,8 @@
     try {
       const result = await promptAssistant.enhanceForNai(text, {
         variant: v,
-        ucPreset: generation.novelaiSettings.uc_preset,
+        // Curate it applies the Heavy preset, so the rewrite skips what it covers.
+        ucPreset: naiEnhance.curate ? NAI_UC_HEAVY : generation.novelaiSettings.uc_preset,
         characterCount: boxes.length,
         // Ticked, what the user typed is applied as an edit to these fields
         // rather than treated as the whole of the idea.
@@ -716,6 +724,18 @@
               </option>
             {/each}
           </select>
+          <label
+            class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
+            title={locale.t("prompt_assistant.nai_curate_tooltip")}
+          >
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              disabled={naiEnhance.busy}
+              bind:checked={naiEnhance.curate}
+            />
+            {locale.t("prompt_assistant.nai_curate")}
+          </label>
           {/if}
         </div>
 
@@ -798,6 +818,14 @@
           </button>
         </div>
       {:else if pending}
+        {#if naiEnhance.curate}
+          <div
+            class="mb-3 rounded-lg border border-indigo-500/40 bg-indigo-500/10 p-2 text-[11px] text-indigo-200"
+          >
+            {locale.t("prompt_assistant.nai_curate_notice")}
+          </div>
+        {/if}
+
         {#if pending.note}
           <div
             class="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-200"

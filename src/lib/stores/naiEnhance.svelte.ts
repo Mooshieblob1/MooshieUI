@@ -2,6 +2,7 @@ import { generation } from "./generation.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
 import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { NovelAiCharacter } from "../types/index.js";
+import type { NovelAiSettings } from "./generation.svelte.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
 
@@ -95,6 +96,16 @@ interface UndoSnapshot {
   positivePrompt: string;
   negativePrompt: string;
   characters: NovelAiCharacter[];
+  /** Present only when "Curate it" changed the generation settings too. */
+  curate?: {
+    checkpoint: string;
+    steps: number;
+    cfg: number;
+    width: number;
+    height: number;
+    batchSize: number;
+    novelaiSettings: NovelAiSettings;
+  };
 }
 
 /** Matches the text-enhance undo window in PromptInputs. */
@@ -150,6 +161,12 @@ class NaiEnhanceStore {
    * swapped over to the diff and no longer renders the picker.
    */
   references = $state<NaiEnhanceReference[]>([]);
+  /**
+   * V5 flow only: applying also switches to V5 Full with the Curated-leaning
+   * settings in `NOVELAI_CURATE`. Off on every opening, so it only happens
+   * when ticked for this rewrite.
+   */
+  curate = $state(false);
 
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
@@ -240,6 +257,7 @@ class NaiEnhanceStore {
     this.pending = null;
     this.generalPending = null;
     this.references = [];
+    this.curate = false;
   }
 
   /** Paste the prompt box into the input, for the "tidy up what I have" case. */
@@ -315,7 +333,7 @@ class NaiEnhanceStore {
     const p = this.pending;
     if (!p) return;
 
-    this.takeSnapshot();
+    this.takeSnapshot(this.curate);
 
     if (p.base.selected) generation.positivePrompt = p.base.after;
     if (p.uc.selected) generation.negativePrompt = p.uc.after;
@@ -339,6 +357,9 @@ class NaiEnhanceStore {
     generation.updateNovelAiSettings({
       characters: chars.filter((_, i) => !dropped.has(i)),
     });
+    // After the rows, so the avoids land on the undesired content the rewrite
+    // wrote rather than being overwritten by it.
+    if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
 
     this.finishApply("nai");
@@ -359,7 +380,7 @@ class NaiEnhanceStore {
     this.finishApply(this.flow);
   }
 
-  private takeSnapshot(): void {
+  private takeSnapshot(withSettings = false): void {
     this.snapshot = {
       positivePrompt: generation.positivePrompt,
       negativePrompt: generation.negativePrompt,
@@ -367,6 +388,17 @@ class NaiEnhanceStore {
         ...c,
         center: { ...c.center },
       })),
+      curate: withSettings
+        ? {
+            checkpoint: generation.checkpoint,
+            steps: generation.steps,
+            cfg: generation.cfg,
+            width: generation.width,
+            height: generation.height,
+            batchSize: generation.batchSize,
+            novelaiSettings: $state.snapshot(generation.novelaiSettings),
+          }
+        : undefined,
     };
   }
 
@@ -386,6 +418,16 @@ class NaiEnhanceStore {
   undo(): void {
     const snap = this.snapshot;
     if (snap) {
+      const prev = snap.curate;
+      if (prev) {
+        if (generation.checkpoint !== prev.checkpoint) generation.selectNovelAiModel(prev.checkpoint);
+        generation.steps = prev.steps;
+        generation.cfg = prev.cfg;
+        generation.width = prev.width;
+        generation.height = prev.height;
+        generation.batchSize = prev.batchSize;
+        generation.updateNovelAiSettings(prev.novelaiSettings);
+      }
       generation.positivePrompt = snap.positivePrompt;
       generation.negativePrompt = snap.negativePrompt;
       generation.updateNovelAiSettings({ characters: snap.characters });
