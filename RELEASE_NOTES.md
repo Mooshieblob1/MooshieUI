@@ -1,3 +1,27 @@
+## What's New in v2.3.19
+
+### Generation
+- **Settings tabs**: keep several full sets of image settings side by side. The tab strip sits at the top of the generate page and stays hidden until you open a second tab; collapsed, it shows a thin line per tab with the active one lit, and hovering the top edge slides the tabs down. **New tab** copies the current settings. The queue, gallery, canvas and app-wide preferences stay shared, and tabs are remembered across restarts. On desktop, Ctrl+T opens a tab, Ctrl+W closes it and Ctrl+Tab switches.
+- **Saved characters**: a new **Characters** tab in the bottom panel. **Extract from prompt** has the prompt assistant find each character in your prompt (and NovelAI character boxes), with their appearance and the undesired content that applies to them, and saves them for the current model architecture. **Use** puts a character, with its UC, back into the prompt or a NovelAI character box.
+- **Wrong model slot warnings**: picking a text encoder or VAE as the model, a model or text encoder as the VAE, or a model or VAE as the text encoder now shows a warning naming the file and the slot it belongs in, instead of failing at generation time.
+
+### Prompt Assistant
+- **One Enhance window**: Enhance and H3 Enhance now open the same window as NovelAI's V5 Enhance, and Compose is folded into it. Describe what you want or paste a prompt to rewrite, tick **Edit current prompt** to change what you already have, or leave the box empty to polish it. The rewrite is shown for review and nothing is applied until you choose.
+- **Session follow-ups keep earlier details**: a follow-up in an Enhance session now revises the latest answer instead of rewriting from your newest message alone, so details from earlier turns stay unless you change them.
+
+### NovelAI
+- **Medium / High effort for V5 Full**: a new **Effort** setting under NovelAI options. Medium runs a distilled V5 Full (and its inpainting model) that NovelAI says costs about 40% fewer Anlas at comparable quality. Like NovelAI's own site, it fixes 14 steps, Euler Ancestral and the Heavy UC preset, with no CFG rescale and no custom undesired content. High stays the default.
+- **Curate it**: a new option in the V5 Enhance window, off by default. When ticked, the rewrite is written for V5 Full, and applying it also switches to V5 Full with curated settings (Standard quality tags, Heavy UC, guidance 5, 25 steps, Euler Ancestral with Karras, 832x1216, High effort) and adds extra avoids to the undesired content. Undo restores your previous settings too.
+- **Local refine problems are visible**: when the local refine pass needed an upscaler that was no longer installed, it silently saved the image without upscaling. A missing recommended upscaler is now downloaded before generating (a missing custom one stops with a message naming it), and a skipped or failed local refine shows a notification. The same check runs for Refine.
+- **Krea 2 local refine settings**: the local refine pass now uses Krea 2's own sampling (Turbo: CFG 1, euler/simple; Raw: CFG 4, er_sde/sgm_uniform) instead of the generic defaults.
+- **Anlas badge with Opus**: the Anlas cost badge no longer ignores an Opus subscription when the right panel starts collapsed.
+- **No architecture badge in NovelAI mode**: the local model architecture badge is hidden while generating with NovelAI.
+
+### Upscaling
+- **Anima TeaCache with tiled upscale**: TeaCache could hand one upscale tile the result of a neighbouring tile, leaving noisy patches. Each tile is now only compared with itself.
+
+---
+
 ## What's New in v2.3.18
 
 ### Krea 2
