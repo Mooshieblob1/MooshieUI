@@ -27,7 +27,7 @@ from comfy_api.latest import ComfyExtension, io
 
 @dataclass
 class _SlotCache:
-    """Cache for one cond/uncond batch layout.
+    """Cache for one cond/uncond batch layout at one call position in a step.
 
     ComfyUI may evaluate cond and uncond in one batched call or in separate
     calls (low VRAM, or conds that cannot share a batch). Both see the same
@@ -45,6 +45,8 @@ class _TeaCacheState:
     step: int = -1
     last_timestep: Optional[float] = None
     slots: Dict[Tuple, _SlotCache] = field(default_factory=dict)
+    # Calls seen so far in the current step, per cond/uncond layout.
+    call_counts: Dict[Tuple, int] = field(default_factory=dict)
 
     def advance(self, timestep: float) -> int:
         """Step index of this call within the current sampling run.
@@ -59,10 +61,28 @@ class _TeaCacheState:
         if self.last_timestep is None or timestep > self.last_timestep:
             self.step = 0
             self.slots.clear()
+            self.call_counts.clear()
         elif timestep < self.last_timestep:
             self.step += 1
+            self.call_counts.clear()
         self.last_timestep = timestep
         return self.step
+
+    def slot_for(self, layout: Tuple) -> "_SlotCache":
+        """Cache slot for this call: its layout plus its position in the step.
+
+        A wrapper above this one can call the model several times per step on
+        different inputs. Tiled Diffusion does, once per tile, all with the
+        same layout and the same tile shape. With one slot per layout, the
+        tile-to-tile change in the input mean was read as step-to-step change,
+        and a tile could be handed the previous tile's residual: the picture
+        then kept its noise wherever that happened. The n-th call of a step is
+        the same tile every step, so keying on the position compares each tile
+        only with itself.
+        """
+        index = self.call_counts.get(layout, 0)
+        self.call_counts[layout] = index + 1
+        return self.slots.setdefault((layout, index), _SlotCache())
 
 
 def _rel_l1(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -102,7 +122,7 @@ def _make_wrapper(state, rel_l1_thresh, start_step, end_step, total_steps):
         c = args["c"]
 
         step = state.advance(float(args["timestep"].max()))
-        slot = state.slots.setdefault(_slot_key(args), _SlotCache())
+        slot = state.slot_for(_slot_key(args))
 
         run_steps = _run_steps(c, total_steps)
         effective_end = end_step if end_step >= 0 else max(run_steps + end_step, 0)
