@@ -3677,6 +3677,7 @@ const de: Record<string, string> = {
   "prompt_assistant.nai_input_title": "Für V5 verbessern",
   "prompt_assistant.nai_input_subtitle": "Beschreibe die gewünschte Szene oder füge einen Prompt zum Umschreiben ein.",
   "prompt_assistant.nai_input_placeholder": "Eine regnerische Straße bei Nacht, ein Mädchen unter einer Laterne. Oder eine Anweisung: mach meinen Prompt filmischer.",
+  "prompt_assistant.nai_saved_characters": "Kennt deine gespeicherten Charaktere: {names}",
   "prompt_assistant.nai_references": "Referenzbilder",
   "prompt_assistant.nai_references_hint": "Hänge bis zu {max} Bilder an und verweise in deiner Anweisung darauf, zum Beispiel \"zieh ihr das Outfit aus Bild 1 an\". Der Assistent beschreibt in Worten, was er sieht, und braucht dafür ein Modell, das Bilder sehen kann.",
   "prompt_assistant.nai_reference_upload": "Hochladen",

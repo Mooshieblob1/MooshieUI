@@ -3675,6 +3675,7 @@ const pt: Record<string, string> = {
   "prompt_assistant.nai_input_title": "Melhorar para V5",
   "prompt_assistant.nai_input_subtitle": "Descreva a cena que você quer ou cole um prompt para reescrever.",
   "prompt_assistant.nai_input_placeholder": "Uma rua chuvosa à noite, uma garota sob um poste de luz. Ou uma instrução: deixe meu prompt mais cinematográfico.",
+  "prompt_assistant.nai_saved_characters": "Conhece seus personagens salvos: {names}",
   "prompt_assistant.nai_references": "Imagens de referência",
   "prompt_assistant.nai_references_hint": "Anexe até {max} imagens e refira-se a elas na sua instrução, por exemplo \"coloca nela a roupa da imagem 1\". O assistente descreve por palavras o que vê, por isso precisa de um modelo capaz de ver imagens.",
   "prompt_assistant.nai_reference_upload": "Carregar",

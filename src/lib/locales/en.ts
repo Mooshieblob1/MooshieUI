@@ -3782,6 +3782,7 @@ const en: Record<string, string> = {
   "prompt_assistant.nai_input_title": "Enhance for V5",
   "prompt_assistant.nai_input_subtitle": "Describe the scene you want, or paste a prompt to rewrite.",
   "prompt_assistant.nai_input_placeholder": "A rainy night street, one girl under a streetlamp. Or an instruction: make my prompt more cinematic.",
+  "prompt_assistant.nai_saved_characters": "Knows your saved characters: {names}",
   "prompt_assistant.nai_references": "Reference images",
   "prompt_assistant.nai_references_hint": "Attach up to {max} images and point at them in your instruction, for example \"put the outfit from image 1 on her\". The assistant describes what it sees in words, so it needs a model that can see images.",
   "prompt_assistant.nai_reference_upload": "Upload",

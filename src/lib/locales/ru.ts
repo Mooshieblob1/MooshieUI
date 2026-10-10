@@ -3674,6 +3674,7 @@ const ru: Record<string, string> = {
   "prompt_assistant.nai_input_title": "Улучшить для V5",
   "prompt_assistant.nai_input_subtitle": "Опишите нужную сцену или вставьте промпт для переписывания.",
   "prompt_assistant.nai_input_placeholder": "Дождливая улица ночью, девушка под фонарём. Или инструкция: сделай мой промпт более кинематографичным.",
+  "prompt_assistant.nai_saved_characters": "Знает ваших сохранённых персонажей: {names}",
   "prompt_assistant.nai_references": "Референсные изображения",
   "prompt_assistant.nai_references_hint": "Прикрепите до {max} изображений и ссылайтесь на них в инструкции, например \"надень на неё наряд с изображения 1\". Ассистент описывает словами то, что видит, поэтому нужна модель, умеющая смотреть на изображения.",
   "prompt_assistant.nai_reference_upload": "Загрузить",

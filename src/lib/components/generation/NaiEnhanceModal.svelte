@@ -28,10 +28,12 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
   import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
+  import { naiSavedCharacterDirective, NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
   import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import { mapLlmError } from "../../utils/llmError.js";
@@ -125,6 +127,14 @@
   });
   const isGeneral = $derived(naiEnhance.flow === "general");
   const isH3 = $derived(naiEnhance.flow === "h3");
+  // The saved characters a V5 rewrite is told about, named under the box so
+  // the user knows "Julie" will resolve to one of them.
+  const savedNames = $derived(
+    savedCharacters.currentCharacters
+      .slice(0, NAI_SAVED_CHARACTER_LIMIT)
+      .map((c) => c.name.trim())
+      .filter(Boolean),
+  );
   /** The flows reviewed as one before/after pair rather than the V5 diff. */
   const isSingleRow = $derived(naiEnhance.flow !== "nai");
 
@@ -298,6 +308,8 @@
           : null,
         language,
         references: refs.map((r) => r.label),
+        // NovelAI mode, so these are the characters saved under NovelAI.
+        savedCharacters: naiSavedCharacterDirective(savedCharacters.currentCharacters),
       }, refs.map((r) => r.base64));
       // Cancelling closes the modal but cannot recall the request, so a late
       // answer to a dismissed one is dropped rather than popped back up.
@@ -548,6 +560,11 @@
           disabled={naiEnhance.busy}
           bind:value={naiEnhance.input}
         ></textarea>
+        {#if !isH3 && !isGeneral && savedNames.length > 0}
+          <p class="mt-1.5 truncate text-[10px] text-neutral-500" title={savedNames.join(", ")}>
+            {locale.t("prompt_assistant.nai_saved_characters", { names: savedNames.join(", ") })}
+          </p>
+        {/if}
 
         <!-- Below the box, not above it: what the user types is the request,
              and the images are what the request points at. -->

@@ -3674,6 +3674,7 @@ const ko: Record<string, string> = {
   "prompt_assistant.nai_input_title": "V5용으로 향상",
   "prompt_assistant.nai_input_subtitle": "원하는 장면을 설명하거나 다시 쓸 프롬프트를 붙여넣으세요.",
   "prompt_assistant.nai_input_placeholder": "비 오는 밤거리, 가로등 아래 소녀 한 명. 또는 지시: 내 프롬프트를 더 영화처럼 만들어줘.",
+  "prompt_assistant.nai_saved_characters": "저장된 캐릭터를 알고 있습니다: {names}",
   "prompt_assistant.nai_references": "참조 이미지",
   "prompt_assistant.nai_references_hint": "최대 {max}장까지 첨부하고 지시문에서 가리킬 수 있습니다. 예: \"이미지 1의 의상을 입혀줘\". 어시스턴트는 본 것을 말로 설명하므로 이미지를 볼 수 있는 모델이 필요합니다.",
   "prompt_assistant.nai_reference_upload": "업로드",

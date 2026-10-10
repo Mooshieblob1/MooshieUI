@@ -3674,6 +3674,7 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.nai_input_title": "為 V5 增強",
   "prompt_assistant.nai_input_subtitle": "描述你想要的場景，或貼上一段需要改寫的提示詞。",
   "prompt_assistant.nai_input_placeholder": "雨夜的街道，路燈下站著一個女孩。或者一條指令：讓我的提示詞更有電影感。",
+  "prompt_assistant.nai_saved_characters": "已知你儲存的角色：{names}",
   "prompt_assistant.nai_references": "參考圖",
   "prompt_assistant.nai_references_hint": "最多可附加 {max} 張圖片，並在指令中提到它們，例如「把圖 1 的衣服穿到她身上」。助手會用文字描述它所看到的內容，因此需要能看圖的模型。",
   "prompt_assistant.nai_reference_upload": "上傳",

@@ -3699,6 +3699,7 @@ const ja: Record<string, string> = {
   "prompt_assistant.nai_input_title": "V5用に強化",
   "prompt_assistant.nai_input_subtitle": "作りたいシーンを書くか、書き換えたいプロンプトを貼り付けてください。",
   "prompt_assistant.nai_input_placeholder": "雨の夜の街路、街灯の下に少女がひとり。または指示: プロンプトをもっと映画的にして。",
+  "prompt_assistant.nai_saved_characters": "保存済みキャラクターを認識します: {names}",
   "prompt_assistant.nai_references": "参照画像",
   "prompt_assistant.nai_references_hint": "最大{max}枚まで添付でき、指示の中で参照できます。例：「画像1の服を着せて」。アシスタントは見たものを言葉で説明するため、画像を見られるモデルが必要です。",
   "prompt_assistant.nai_reference_upload": "アップロード",
