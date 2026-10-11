@@ -1,3 +1,26 @@
+## What's New in v2.3.21
+
+### Gallery
+- **Search**: a search box over each image's prompt, model, LoRAs and file name. Quoted phrases match exactly, `-word` leaves images out, and the fields `neg:`, `model:`, `lora:`, `sampler:`, `scheduler:` and `file:` narrow the search. `seed:`, `steps:` and `cfg:` take `=`, `>`, `>=`, `<` and `<=`. The **?** button explains the syntax.
+- **Favourites and ratings**: mark any image as a favourite or give it 1 to 5 stars, then filter by them or sort by rating. In the viewer, `1` to `5` set the rating, `0` clears it, `F` toggles favourite and `N` toggles NSFW.
+- **NSFW filter and blur**: images are flagged as NSFW from prompt keywords (editable in Settings > Gallery, and can be switched off), and you can mark images by hand. Filter to show all, hide or only NSFW images. The optional **Blur NSFW** toggle blurs them in the gallery, the bottom strip and the image picker, and the viewer asks before showing one. Blur is off by default.
+- **Linked folders (desktop)**: Settings > Gallery > **Linked folders** adds folders outside MooshieUI's gallery. Their images are indexed in place without copying and appear in the gallery with a source filter, thumbnails, metadata, copy and export. Deleting one asks first and sends it to the recycle bin.
+- **Viewer follows the filters**: paging in the viewer now goes through the same filtered list the grid shows.
+
+### Interrogator
+- **Detect artists (Kaloscope 3.0)**: a new toggle in Settings > Interrogator, off by default. Each interrogation also scores the image with the Kaloscope 3.0 artist classifier (44,000+ Danbooru artists) and lists up to 3 artists above an adjustable threshold in the artist section. The 169 MB model downloads on first use.
+- **Detect saved characters**: a new toggle in Settings > Interrogator, off by default. The prompt assistant checks which of your saved characters are in the image and shows them as chips above the tags. Picking one switches off the tags its saved prompt already covers, and Apply to Prompt inserts the character card. Nothing is added unless you pick one.
+
+### Settings
+- **API keys from environment variables**: under each API key field (cloud voice and video, NovelAI, CivitAI, the prompt assistant's external LLM), the owner can choose **Use an environment variable instead** and enter a variable name such as `FAL_KEY`. The key is read from the environment each time it is used and never written to disk, and a status line says which variable is read or that it is not set. Only the instance owner can use this.
+- **Support MooshieUI**: a small card at the bottom of Settings > Help & Updates with **Support on Ko-fi** and **Sponsor on GitHub**, following the active theme. The About dialog has the same two buttons. **Hide MooshieUI branding** in Appearance hides the card.
+
+### Maintenance
+- **ComfyUI v0.39.2**: new and updating installs get ComfyUI v0.39.2 (was v0.37.0).
+- **Dependency updates**: npm and Cargo dependencies refreshed, including the DOMPurify and source-map-js security fixes.
+
+---
+
 ## What's New in v2.3.20
 
 ### Anime Scenes (new, optional, uses your own cloud keys)
