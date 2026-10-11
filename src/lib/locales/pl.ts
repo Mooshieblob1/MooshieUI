@@ -2779,6 +2779,9 @@ const pl: Record<string, string> = {
   "settings.about.github_button": "Repozytorium GitHub",
   "settings.about.gpu_garden_button": "gpu.garden",
   "settings.about.kofi_button": "Wesprzyj na Ko-fi",
+  "settings.about.sponsors_button": "Sponsoruj na GitHub",
+  "settings.about.support_title": "Wesprzyj MooshieUI",
+  "settings.about.support_desc": "MooshieUI jest darmowy i zawsze będzie. Jeśli Ci pomaga, napiwek pokrywa koszty hostingu i budowania. Całkowicie dobrowolnie.",
   "settings.about.report_issue_button": "Zgłoś problem",
 
   // Issue report form

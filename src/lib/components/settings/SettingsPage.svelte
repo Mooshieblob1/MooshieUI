@@ -4535,6 +4535,31 @@
             <div class="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
               <p class="text-[11px] text-neutral-500">{locale.t('settings.about.data_dir_hint')}</p>
             </div>
+
+            <!-- Support (hidden with the theme's hide-branding toggle) -->
+            <div class="mooshie-branding rounded-lg border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 space-y-2">
+              <div class="flex items-center gap-2 text-indigo-400">
+                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                <p class="text-xs font-medium text-neutral-200">{locale.t('settings.about.support_title')}</p>
+              </div>
+              <p class="text-[11px] text-neutral-500">{locale.t('settings.about.support_desc')}</p>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  onclick={() => openExternalUrl('https://ko-fi.com/mooshieui')}
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 transition-colors cursor-pointer"
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>
+                  {locale.t('settings.about.kofi_button')}
+                </button>
+                <button
+                  onclick={() => openExternalUrl('https://github.com/sponsors/Mooshieblob1')}
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 transition-colors cursor-pointer"
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                  {locale.t('settings.about.sponsors_button')}
+                </button>
+              </div>
+            </div>
           </div>
         </section>
         {/if}
@@ -4826,6 +4851,14 @@
       >
         <svg class="w-4 h-4 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/></svg>
         {locale.t('settings.about.kofi_button')}
+      </button>
+
+      <button
+        onclick={() => openExternalUrl('https://github.com/sponsors/Mooshieblob1')}
+        class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm transition-colors cursor-pointer text-left"
+      >
+        <svg class="w-4 h-4 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+        {locale.t('settings.about.sponsors_button')}
       </button>
 
       <button

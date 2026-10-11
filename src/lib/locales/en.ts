@@ -2830,6 +2830,9 @@ const en: Record<string, string> = {
   "settings.about.github_button": "GitHub Repository",
   "settings.about.gpu_garden_button": "gpu.garden",
   "settings.about.kofi_button": "Support on Ko-fi",
+  "settings.about.sponsors_button": "Sponsor on GitHub",
+  "settings.about.support_title": "Support MooshieUI",
+  "settings.about.support_desc": "MooshieUI is free and always will be. If it helps you, a tip covers hosting and build costs. Completely optional.",
   "settings.about.report_issue_button": "Report an Issue",
 
   // Issue report form
