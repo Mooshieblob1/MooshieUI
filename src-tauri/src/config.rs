@@ -122,7 +122,9 @@ pub struct AppConfig {
     pub prompt_assistant_idle_timeout_secs: u64,
     /// Prompt assistant: true once the user has completed first-run setup.
     pub prompt_assistant_setup_done: bool,
-    /// Optional CivitAI API key for authenticated hash lookups and metadata fetching
+    /// Optional CivitAI API key for authenticated hash lookups and metadata
+    /// fetching. This and every other owner key field below may instead hold
+    /// `env:NAME`; read them through `civitai_key()` and its siblings.
     pub civitai_api_key: Option<String>,
     /// Optional NovelAI API key. Required before any NovelAI model can be used.
     #[serde(default)]
@@ -282,6 +284,25 @@ pub enum ServerMode {
     AutoLaunch,
     #[serde(alias = "Remote")]
     Remote,
+}
+
+/// The owner's keys as they are used. Any key field may hold `env:NAME`
+/// instead of the key (see [`crate::key_source`]), so code that sends a key
+/// reads it through these rather than the raw field.
+impl AppConfig {
+    pub fn civitai_key(&self) -> Option<String> {
+        crate::key_source::resolve(self.civitai_api_key.as_deref())
+    }
+
+    pub fn novelai_key(&self) -> Option<String> {
+        crate::key_source::resolve(self.novelai_api_key.as_deref())
+    }
+
+    /// Empty when no key is stored or the named variable is unset, matching
+    /// the raw field's "empty means keyless" convention.
+    pub fn llm_api_key(&self) -> String {
+        crate::key_source::resolve(Some(&self.llm_external_api_key)).unwrap_or_default()
+    }
 }
 
 impl Default for AppConfig {
@@ -785,13 +806,15 @@ pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
 /// an empty one in its full-config save is that redaction coming back rather
 /// than an intent to clear the owner's value. A non-empty value is a
 /// deliberate, write-only replacement (the CivitAI section is open to
-/// moderators) and goes through.
+/// moderators) and goes through, unless it names an environment variable:
+/// that is the owner's alone (see [`crate::key_source`]), so it is treated
+/// like the blank and the stored value stays.
 pub(crate) fn preserve_redacted_secrets(incoming: &mut AppConfig, current: &AppConfig) {
     for ((_, field), stored) in operator_secrets_mut(incoming)
         .into_iter()
         .zip(operator_secrets(current))
     {
-        if !is_set(field) {
+        if !is_set(field) || field.as_deref().is_some_and(crate::key_source::is_env_ref) {
             field.clone_from(stored);
         }
     }

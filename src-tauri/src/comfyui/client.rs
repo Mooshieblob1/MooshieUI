@@ -1555,6 +1555,16 @@ impl AppState {
         let mut req = self.http_client.get(url);
         if let Some(token) = huggingface_token_for_url(url) {
             req = req.bearer_auth(token);
+        } else if is_civitai_url(url)
+            && !reqwest::Url::parse(url).is_ok_and(|u| u.query_pairs().any(|(k, _)| k == "token"))
+        {
+            // The Model Hub appends `?token=` only when it holds the key
+            // itself; a key read from an environment variable never reaches
+            // it, so the configured key goes on here instead. reqwest drops
+            // the header if CivitAI redirects to another host.
+            if let Some(key) = self.config.read().await.civitai_key() {
+                req = req.bearer_auth(key);
+            }
         }
         // reqwest errors quote the full URL, which may carry `?token=`.
         let resp = req.send().await.map_err(reqwest::Error::without_url)?;
@@ -1732,7 +1742,7 @@ impl AppState {
             .get(url)
             .header(reqwest::header::RANGE, "bytes=0-0");
         if is_civitai_url(url) {
-            let key = self.config.read().await.civitai_api_key.clone();
+            let key = self.config.read().await.civitai_key();
             if let Some(key) = key.filter(|v| !v.trim().is_empty()) {
                 req = req.bearer_auth(key);
             }

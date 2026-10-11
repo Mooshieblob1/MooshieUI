@@ -3741,6 +3741,15 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(configured))
         }
+        // Open to every account, but only the owner (`username` is `None`
+        // for the desktop, localhost and admin) is told any variable names.
+        "api_key_env_status" => {
+            let status = match username {
+                None => crate::key_source::owner_status(&*state.config.read().await),
+                Some(_) => crate::key_source::KeyEnvStatus::default(),
+            };
+            serde_json::to_value(status).map_err(|e| e.to_string())
+        }
         "cloud_key_status" => {
             let status = crate::cloud::key_status(&state, username).await;
             serde_json::to_value(status).map_err(|e| e.to_string())
@@ -3917,6 +3926,7 @@ async fn dispatch_command(
         }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
+            crate::key_source::check(&api_key)?;
             let configured = !api_key.is_empty();
             match username {
                 // A named account writes only its own encrypted store. It can
@@ -4971,7 +4981,7 @@ async fn dispatch_command(
             if !commands::api::is_valid_civitai_hash(&hash) {
                 return Err("Invalid model hash".to_string());
             }
-            let api_key = state.config.read().await.civitai_api_key.clone();
+            let api_key = state.config.read().await.civitai_key();
             let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
             let mut req = state.http_client.get(&url);
             if let Some(ref key) = api_key {
@@ -4989,7 +4999,7 @@ async fn dispatch_command(
                 .to_string();
             let image_id =
                 commands::api::parse_civitai_image_id_pub(&image_ref).map_err(|e| e.to_string())?;
-            let api_key = state.config.read().await.civitai_api_key.clone();
+            let api_key = state.config.read().await.civitai_key();
             let url = format!(
                 "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
                 image_id
@@ -5051,7 +5061,7 @@ async fn dispatch_command(
                 (
                     config.comfyui_path.clone(),
                     config.extra_model_paths.clone(),
-                    config.civitai_api_key.clone(),
+                    config.civitai_key(),
                 )
             };
             let category = if command == "get_lora_civitai_info" {
@@ -6043,6 +6053,14 @@ async fn dispatch_command(
         #[cfg(any(feature = "desktop", feature = "server"))]
         "set_llm_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").to_string();
+            // Moderators may set this key, and also the base URL it is sent
+            // to, so naming a variable would let them send any of the host's
+            // environment to a server they run.
+            if crate::key_source::is_env_ref(&api_key) && caller_role != UserRole::Admin {
+                return Err(
+                    "Only the instance owner can read keys from environment variables.".into(),
+                );
+            }
             let s = crate::prompt_assistant::providers::store_key(&state.config, &api_key)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -6715,7 +6733,7 @@ pub async fn chat_any_headless(
             cfg.llm_external_enabled,
             cfg.llm_provider.clone(),
             cfg.llm_external_base_url.clone(),
-            cfg.llm_external_api_key.clone(),
+            cfg.llm_api_key(),
             cfg.llm_external_model.clone(),
         )
     };
@@ -8824,6 +8842,7 @@ mod nai_key_tests {
         for command in [
             "set_cloud_api_key",
             "cloud_key_status",
+            "api_key_env_status",
             "elevenlabs_subscription",
             "elevenlabs_list_voices",
             "elevenlabs_design_voice",
@@ -9155,5 +9174,22 @@ mod moderator_config_round_trip_tests {
         preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
         assert_eq!(incoming.webhook_url, None);
         assert_eq!(incoming.llm_external_api_key, current.llm_external_api_key);
+    }
+
+    #[test]
+    fn only_the_admin_can_point_the_civitai_key_at_the_environment() {
+        let current = owner_config();
+        let mut incoming = current.clone();
+        incoming.civitai_api_key = Some("env:FAL_KEY".into());
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Moderator);
+        assert_eq!(incoming.civitai_api_key, current.civitai_api_key);
+
+        let mut incoming = current.clone();
+        incoming.civitai_api_key = Some("env:CIVITAI_TOKEN".into());
+        preserve_config_secrets_for_role(&mut incoming, &current, UserRole::Admin);
+        assert_eq!(
+            incoming.civitai_api_key.as_deref(),
+            Some("env:CIVITAI_TOKEN")
+        );
     }
 }

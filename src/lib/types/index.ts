@@ -936,3 +936,19 @@ export type CloudProviderId = "elevenlabs" | "fal" | "segmind";
 
 /** Which cloud providers the current account has a key for (`cloud_key_status`). */
 export type CloudKeyStatus = Record<CloudProviderId, boolean>;
+
+/** Owner key fields that can read their key from an environment variable. */
+export type KeyEnvField = "civitai" | "novelai" | CloudProviderId | "llm";
+
+/** A key field that names a variable. Carries the name, never the value. */
+export interface EnvKeyRef {
+  name: string;
+  /** Whether the variable holds a value in MooshieUI's environment. */
+  set: boolean;
+}
+
+export interface KeyEnvStatus {
+  /** Only the instance owner may name variables; false for everyone else. */
+  available: boolean;
+  keys: Partial<Record<KeyEnvField, EnvKeyRef>>;
+}

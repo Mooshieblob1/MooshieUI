@@ -478,6 +478,17 @@ fn save_key_in(
     which: ProviderKey,
     api_key: Option<&str>,
 ) -> Result<(), String> {
+    // Reading a key from an environment variable is for the instance owner,
+    // whose keys live in config. On a hosted server the environment is the
+    // host's, so an account naming a variable would spend, or leak to a
+    // provider, a secret that is not theirs.
+    if api_key.is_some_and(crate::key_source::is_env_ref) {
+        return Err(
+            "Only the instance owner can read keys from environment variables. \
+                    Paste your own key instead."
+                .to_string(),
+        );
+    }
     // First, so a clear really clears: a legacy file left in place would still
     // hold the key the user just asked to remove.
     migrate_legacy_in(root, master, username);
@@ -726,6 +737,22 @@ mod tests {
         assert_eq!(
             load_nai_key_in(&root, &KEY, "alice").as_deref(),
             Some("pst-secret-token")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_account_cannot_name_an_environment_variable() {
+        let root = scratch("env-ref");
+        save_nai_key_in(&root, &KEY, "alice", Some("pst-own")).unwrap();
+        for which in ProviderKey::ALL {
+            let err = save_key_in(&root, &KEY, "alice", which, Some("env:FAL_KEY")).unwrap_err();
+            assert!(err.contains("instance owner"), "{err}");
+        }
+        // The refused save left the stored key alone.
+        assert_eq!(
+            load_nai_key_in(&root, &KEY, "alice").as_deref(),
+            Some("pst-own")
         );
         let _ = std::fs::remove_dir_all(&root);
     }

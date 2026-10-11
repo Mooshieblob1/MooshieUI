@@ -19,6 +19,8 @@
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
+  import KeyEnvToggle from "./KeyEnvToggle.svelte";
+  import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
@@ -1232,6 +1234,14 @@
   // redacted out of the config a browser client receives, so `config` can never
   // be the source of truth for this field.
   let novelaiKeyInput = $state("");
+  /** The NovelAI field holds an environment variable name, not a key. */
+  let novelaiEnvMode = $state(false);
+  /**
+   * The CivitAI field's mode. `null` until the user flips it, so it opens in
+   * variable mode when the stored key already names one.
+   */
+  let civitaiEnvChoice = $state<boolean | null>(null);
+  const civitaiEnvMode = $derived(civitaiEnvChoice ?? isEnvRef(config?.civitai_api_key));
   let novelaiKeySaving = $state(false);
   let novelaiKeyError = $state<string | null>(null);
 
@@ -1243,7 +1253,7 @@
    * cannot see. Clearing therefore has to go through the dedicated command.
    */
   async function saveNovelaiKey() {
-    const key = novelaiKeyInput.trim();
+    const key = toStoredKey(novelaiKeyInput, novelaiEnvMode);
     novelaiKeySaving = true;
     novelaiKeyError = null;
     try {
@@ -1257,6 +1267,8 @@
       }
       // Never keep the secret in component state once it is stored.
       novelaiKeyInput = "";
+      novelaiEnvMode = false;
+      void keyEnv.refresh();
     } catch (e) {
       novelaiKeyError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -4042,20 +4054,32 @@
             <div>
               <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.civitai.api_key')}</label>
               <input
-                type="password"
-                value={config.civitai_api_key ?? ""}
+                type={civitaiEnvMode ? "text" : "password"}
+                autocomplete="off"
+                spellcheck="false"
+                value={civitaiEnvMode
+                  ? (isEnvRef(config.civitai_api_key) ? (config.civitai_api_key ?? "").trim().slice(4) : "")
+                  : (isEnvRef(config.civitai_api_key) ? "" : config.civitai_api_key ?? "")}
                 oninput={(e) => {
                   if (config) {
-                    const v = (e.target as HTMLInputElement).value.trim();
+                    const v = toStoredKey((e.target as HTMLInputElement).value, civitaiEnvMode);
                     config.civitai_api_key = v || null;
                   }
                 }}
-                onchange={() => { autoSave(); }}
-                placeholder={config.civitai_api_key_configured && !config.civitai_api_key
-                  ? locale.t('settings.civitai.api_key_saved_placeholder')
-                  : locale.t('settings.civitai.api_key_placeholder')}
+                onchange={async () => { await autoSave(); void keyEnv.refresh(); }}
+                placeholder={civitaiEnvMode
+                  ? locale.t('settings.key_env.placeholder')
+                  : config.civitai_api_key_configured && !config.civitai_api_key
+                    ? locale.t('settings.civitai.api_key_saved_placeholder')
+                    : locale.t('settings.civitai.api_key_placeholder')}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
               />
+              {#if isAdmin}
+                <KeyEnvToggle
+                  field="civitai"
+                  bind:envMode={() => civitaiEnvMode, (v) => { civitaiEnvChoice = v; }}
+                />
+              {/if}
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
             </div>
           </div>
@@ -4079,10 +4103,13 @@
               <div class="flex gap-2">
                 <input
                   id="novelai-api-key"
-                  type="password"
+                  type={novelaiEnvMode ? "text" : "password"}
                   autocomplete="off"
+                  spellcheck="false"
                   bind:value={novelaiKeyInput}
-                  placeholder={novelai.apiKeyConfigured ? locale.t('settings.novelai.api_key_set') : locale.t('settings.novelai.api_key_placeholder')}
+                  placeholder={novelaiEnvMode
+                    ? locale.t('settings.key_env.placeholder')
+                    : novelai.apiKeyConfigured ? locale.t('settings.novelai.api_key_set') : locale.t('settings.novelai.api_key_placeholder')}
                   class="flex-1 min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
                 />
                 <button
@@ -4104,8 +4131,11 @@
               </div>
               {#if novelaiKeyError}
                 <p class="text-[10px] text-red-400 mt-1">{novelaiKeyError}</p>
-              {:else if novelai.apiKeyConfigured}
+              {:else if novelai.apiKeyConfigured && !keyEnv.ref('novelai')}
                 <p class="text-[10px] text-emerald-400 mt-1">{locale.t('settings.novelai.api_key_set_hint')}</p>
+              {/if}
+              {#if isAdmin}
+                <KeyEnvToggle field="novelai" bind:envMode={novelaiEnvMode} />
               {/if}
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
             </div>

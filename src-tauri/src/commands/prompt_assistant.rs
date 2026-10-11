@@ -149,7 +149,7 @@ async fn chat_any(
             cfg.llm_external_enabled,
             cfg.llm_provider.clone(),
             cfg.llm_external_base_url.clone(),
-            cfg.llm_external_api_key.clone(),
+            cfg.llm_api_key(),
             cfg.llm_external_model.clone(),
         )
     };

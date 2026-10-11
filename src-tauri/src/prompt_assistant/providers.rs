@@ -298,6 +298,7 @@ pub async fn store_key(
     config: &RwLock<AppConfig>,
     api_key: &str,
 ) -> Result<LlmProviderState, AppError> {
+    crate::key_source::check(api_key).map_err(AppError::LlmError)?;
     let selected = config.read().await.llm_provider.clone();
     if super::companion::is_companion(&selected) {
         if !api_key.trim().is_empty() {
@@ -638,7 +639,7 @@ pub async fn list_available_models(
         (
             cfg.llm_provider.clone(),
             cfg.llm_external_base_url.clone(),
-            cfg.llm_external_api_key.clone(),
+            cfg.llm_api_key(),
         )
     };
     super::server::list_models(client, &provider_id, &base_url, &api_key).await
