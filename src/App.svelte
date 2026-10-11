@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from "svelte";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe, userScopedKey } from "./lib/utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
@@ -16,7 +16,7 @@
   import { connection } from "./lib/stores/connection.svelte.js";
   import { startup } from "./lib/stores/startup.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
-  import { gallery, isVideoImage } from "./lib/stores/gallery.svelte.js";
+  import { gallery, isVideoImage, GALLERY_MAX_RATING } from "./lib/stores/gallery.svelte.js";
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
@@ -353,19 +353,6 @@
     node.focus();
   }
 
-  function loadMoreGallery(node: HTMLElement) {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          galleryRenderLimit += 48;
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(node);
-    return { destroy() { observer.disconnect(); } };
-  }
-
   // Reset zoom when lightbox opens (only on transition to open)
   let lbWasOpen = false;
   $effect(() => {
@@ -447,10 +434,41 @@
       if (e.key === "Escape") gallery.closeLightbox();
       if (e.key === "ArrowLeft") navigateLightbox("prev");
       if (e.key === "ArrowRight") navigateLightbox("next");
+      rateFromKeyboard(e);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   });
+
+  /**
+   * Lightbox shortcuts for culling: 1 to 5 set the star rating (0 clears it),
+   * F toggles favourite, N toggles the NSFW mark. Ignored while typing in a
+   * field or with a modifier held, so copy and paste still work.
+   */
+  function rateFromKeyboard(e: KeyboardEvent) {
+    const image = gallery.selectedImage;
+    if (!image || e.ctrlKey || e.metaKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    // The video player has its own keys (F is fullscreen there).
+    if (target?.closest("input, textarea, select, [contenteditable='true'], [data-video-player]")) return;
+    const key = e.key.toLowerCase();
+    if (/^[0-9]$/.test(key) && Number(key) <= GALLERY_MAX_RATING) {
+      gallery.setRating(image, Number(key));
+    } else if (key === "f") {
+      gallery.toggleFavourite(image);
+    } else if (key === "n") {
+      gallery.toggleNsfw(image);
+    } else {
+      return;
+    }
+    e.preventDefault();
+  }
+
+  /** The image the user chose to see despite the NSFW blur; reset by moving to another image. */
+  let lightboxRevealed = $state<OutputImage | null>(null);
+  const lightboxHidden = $derived(
+    !!gallery.selectedImage && gallery.shouldBlur(gallery.selectedImage) && lightboxRevealed !== gallery.selectedImage,
+  );
 
   function startMetadataResize(e: MouseEvent) {
     e.preventDefault();
@@ -714,9 +732,12 @@
     if (nextImage) void gallery.openLightbox(nextImage);
   }
 
-  /** The list the lightbox pages through: the sorted gallery, else the bottom panel's session images. */
+  /** What the gallery page shows, with its filters, search and sort. */
+  const visibleGalleryImages = $derived(gallery.visibleImages);
+
+  /** The list the lightbox pages through: the gallery as filtered and sorted, else the bottom panel's session images. */
   function lightboxPageList(image: OutputImage): OutputImage[] {
-    return sortedGalleryImages.includes(image) ? sortedGalleryImages : gallery.sessionImages;
+    return visibleGalleryImages.includes(image) ? visibleGalleryImages : gallery.sessionImages;
   }
 
   /**
@@ -732,6 +753,10 @@
     if (!image) return;
     const list = lightboxPageList(image);
     const idx = list.indexOf(image);
+    // Culling skips the prompt, but a linked folder's file is the user's own.
+    if (image.linked_folder && !confirm(locale.t("gallery.delete_linked_confirm", { folder: image.linked_folder }))) {
+      return;
+    }
     const neighbour = idx === -1 ? undefined : (list[idx + 1] ?? list[idx - 1]);
     if (neighbour) void gallery.openLightbox(neighbour);
     await gallery.deleteImage(image);
@@ -1000,66 +1025,6 @@
     startupStatusKind = "error";
   }
 
-  let galleryImagesPerRow = $state(5);
-  let gallerySortBy = $state<"date" | "name" | "size">("date");
-  let gallerySortDir = $state<"asc" | "desc">("desc");
-  let galleryGroupBy = $state<"none" | "date" | "month" | "mode" | "prompt" | "board">("none");
-  let galleryBoardFilter = $state<string>("all");
-  let newBoardName = $state("");
-  let galleryView = $state<"huge" | "large" | "small" | "details">("large");
-  const sortedGalleryImages = $derived.by(() => {
-    const sorted = [...gallery.images].sort((a, b) => {
-      if (gallerySortBy === "name") {
-        const cmp = a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
-        return gallerySortDir === "asc" ? cmp : -cmp;
-      }
-      if (gallerySortBy === "size") {
-        const cmp = getImageSize(a) - getImageSize(b);
-        return gallerySortDir === "asc" ? cmp : -cmp;
-      }
-      const cmp = getImageTimestamp(a) - getImageTimestamp(b);
-      return gallerySortDir === "asc" ? cmp : -cmp;
-    });
-    return galleryBoardFilter === "all"
-      ? sorted
-      : sorted.filter((image) => gallery.getBoard(image) === galleryBoardFilter);
-  });
-  const groupedGalleryImages = $derived.by(() => {
-    if (galleryGroupBy !== "none") {
-      const grouped = new Map<string, OutputImage[]>();
-      for (const image of sortedGalleryImages) {
-        const key =
-          galleryGroupBy === "date"
-            ? formatDateGroup(image.generated_at_ms)
-            : galleryGroupBy === "month"
-              ? formatMonthGroup(image.generated_at_ms)
-              : galleryGroupBy === "mode"
-                ? modeLabel(image.generation_mode)
-                : galleryGroupBy === "board"
-                  ? gallery.getBoard(image)
-                  : (image.prompt_id || locale.t("gallery.no_prompt_id"));
-        const bucket = grouped.get(key) ?? [];
-        bucket.push(image);
-        grouped.set(key, bucket);
-      }
-      return Array.from(grouped.entries()).map(([label, images]) => ({ label, images }));
-    } else {
-      return [{ label: locale.t("gallery.all_images"), images: sortedGalleryImages }];
-    }
-  });
-  let galleryRenderLimit = $state(48);
-  const galleryTotalCount = $derived(groupedGalleryImages.reduce((sum, g) => sum + g.images.length, 0));
-  const galleryGroupsVisible = $derived.by(() => {
-    let remaining = galleryRenderLimit;
-    const result: Array<{ label: string; images: OutputImage[] }> = [];
-    for (const group of groupedGalleryImages) {
-      if (remaining <= 0) break;
-      const images = group.images.slice(0, remaining);
-      remaining -= images.length;
-      if (images.length > 0) result.push({ label: group.label, images });
-    }
-    return result;
-  });
   let lightboxMetadata = $state<Record<string, string> | null>(null);
   let loadingLightboxMetadata = $state(false);
 
@@ -1080,10 +1045,6 @@
   let metadataPanelCollapsed = $state(false);
   const METADATA_MIN_WIDTH = 260;
   const METADATA_MAX_WIDTH = 600;
-  // Per LAN account (`userScopedKey`): `boardFilter` names one of the
-  // account's own boards.
-  const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
-
   /** Dir picker shown when manualSaveMode is on and 2+ dirs are configured. */
   let dirPickerImage = $state<OutputImage | null>(null);
 
@@ -1745,43 +1706,6 @@
     });
   }
 
-  function getImageTimestamp(image: OutputImage): number {
-    return image.generated_at_ms ?? 0;
-  }
-
-  function getImageSize(image: OutputImage): number {
-    return image.file_size_bytes ?? 0;
-  }
-
-  function formatDate(ts: number | undefined): string {
-    if (!ts) return locale.t("gallery.date.unknown");
-    return locale.formatDateTime(ts);
-  }
-
-  function formatDateGroup(ts: number | undefined): string {
-    if (!ts) return locale.t("gallery.date.unknown_date");
-    return new Date(ts).toLocaleDateString(locale.intlTag, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  }
-
-  function formatMonthGroup(ts: number | undefined): string {
-    if (!ts) return locale.t("gallery.date.unknown_month");
-    return new Date(ts).toLocaleDateString(locale.intlTag, {
-      year: "numeric",
-      month: "long",
-    });
-  }
-
-  function modeLabel(mode: OutputImage["generation_mode"]): string {
-    if (mode === "txt2img") return locale.t("gallery.mode.txt2img");
-    if (mode === "img2img") return locale.t("gallery.mode.img2img");
-    if (mode === "inpainting") return locale.t("gallery.mode.inpainting");
-    return locale.t("gallery.mode.unknown");
-  }
-
   function boardLabel(image: OutputImage): string {
     return gallery.getBoard(image);
   }
@@ -1790,13 +1714,6 @@
     gallery.setBoard(image, board);
   }
 
-  function addBoard() {
-    const name = newBoardName.trim();
-    if (!name) return;
-    gallery.addBoard(name);
-    galleryBoardFilter = name;
-    newBoardName = "";
-  }
 
   function parseSize(size?: string): { width: number; height: number } | null {
     if (!size) return null;
@@ -2081,78 +1998,6 @@
       gallery.showToast(locale.t("gallery.toast.failed_metadata"), "error");
     }
   }
-
-  function loadGalleryPrefs() {
-    try {
-      const raw = localStorage.getItem(userScopedKey(GALLERY_PREFS_KEY));
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        imagesPerRow?: number;
-        sortBy?: "date" | "name" | "size";
-        sortDir?: "asc" | "desc";
-        groupBy?: "none" | "date" | "month" | "mode" | "prompt" | "board";
-        boardFilter?: string;
-        view?: "huge" | "large" | "small" | "details";
-      };
-      if (typeof parsed.imagesPerRow === "number") {
-        galleryImagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
-      }
-      if (parsed.sortBy) gallerySortBy = parsed.sortBy;
-      if (parsed.sortDir) gallerySortDir = parsed.sortDir;
-      if (parsed.groupBy) galleryGroupBy = parsed.groupBy;
-      if (parsed.boardFilter) galleryBoardFilter = parsed.boardFilter;
-      if (parsed.view) galleryView = parsed.view;
-    } catch (e) {
-      console.error("Failed to load gallery preferences:", e);
-    }
-  }
-
-  function formatBytes(bytes: number | undefined): string {
-    if (!bytes || bytes <= 0) return "-";
-    return locale.formatBytes(bytes);
-  }
-
-  function viewColumns(view: "huge" | "large" | "small" | "details"): number {
-    if (view === "huge") return Math.max(2, galleryImagesPerRow - 2);
-    if (view === "small") return Math.min(10, galleryImagesPerRow + 2);
-    return galleryImagesPerRow;
-  }
-
-  const thumbSize = $derived(viewColumns(galleryView) <= 3 ? 480 : 384);
-
-  // Reset pagination when the user changes sort/filter/group (but NOT on new image additions).
-  $effect(() => {
-    void gallerySortBy;
-    void gallerySortDir;
-    void galleryGroupBy;
-    void galleryBoardFilter;
-    galleryRenderLimit = 48;
-  });
-
-  $effect(() => {
-    void galleryImagesPerRow;
-    void gallerySortBy;
-    void gallerySortDir;
-    void galleryGroupBy;
-    void galleryBoardFilter;
-    void galleryView;
-
-    try {
-      localStorage.setItem(
-        userScopedKey(GALLERY_PREFS_KEY),
-        JSON.stringify({
-          imagesPerRow: galleryImagesPerRow,
-          sortBy: gallerySortBy,
-          sortDir: gallerySortDir,
-          groupBy: galleryGroupBy,
-          boardFilter: galleryBoardFilter,
-          view: galleryView,
-        }),
-      );
-    } catch (e) {
-      console.error("Failed to save gallery preferences:", e);
-    }
-  });
 
   /** Recover output images from the server temp cache (browser mode) when the
    *  output_image SSE event was dropped or its fetch failed. Without this the
@@ -2728,7 +2573,7 @@
       document.documentElement.classList.add("dyslexic-font");
     }
 
-    loadGalleryPrefs();
+    gallery.loadViewPrefs();
     downloads.init();
     notifications.startPolling();
 
@@ -4244,6 +4089,41 @@
               </select>
             </div>
 
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <div class="flex items-center" role="group" aria-label={locale.t("gallery.rating")}>
+                {#each Array.from({ length: GALLERY_MAX_RATING }, (_, i) => i + 1) as stars}
+                  <button
+                    class="px-0.5 text-lg leading-none transition-colors {stars <= gallery.getRating(gallery.selectedImage) ? 'text-amber-300' : 'text-neutral-600 hover:text-neutral-400'}"
+                    title={locale.t("gallery.rate_stars", { count: String(stars) })}
+                    aria-label={locale.t("gallery.rate_stars", { count: String(stars) })}
+                    onclick={() => gallery.setRating(gallery.selectedImage!, gallery.getRating(gallery.selectedImage!) === stars ? 0 : stars)}
+                  >★</button>
+                {/each}
+              </div>
+              <div class="flex items-center gap-1">
+                <button
+                  class="px-2 py-1 rounded text-xs transition-colors {gallery.isFavourite(gallery.selectedImage) ? 'bg-pink-700/80 hover:bg-pink-600 text-white' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'}"
+                  aria-pressed={gallery.isFavourite(gallery.selectedImage)}
+                  title={locale.t(gallery.isFavourite(gallery.selectedImage) ? "gallery.unfavourite" : "gallery.favourite")}
+                  onclick={() => gallery.toggleFavourite(gallery.selectedImage!)}
+                >♥</button>
+                <button
+                  class="px-2 py-1 rounded text-[10px] font-semibold transition-colors {gallery.isNsfw(gallery.selectedImage) ? 'bg-red-900/80 hover:bg-red-800 text-red-200' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'}"
+                  aria-pressed={gallery.isNsfw(gallery.selectedImage)}
+                  title={locale.t(gallery.isNsfw(gallery.selectedImage) ? "gallery.mark_safe" : "gallery.mark_nsfw")}
+                  onclick={() => gallery.toggleNsfw(gallery.selectedImage!)}
+                >{locale.t("gallery.nsfw_badge")}</button>
+              </div>
+            </div>
+            <p class="mb-3 text-[10px] text-neutral-500">{locale.t("gallery.lightbox_shortcuts")}</p>
+
+            {#if gallery.selectedImage.linked_folder}
+              <div class="mb-3">
+                <div class="text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{locale.t("gallery.linked_folder")}</div>
+                <p class="text-neutral-300 break-all">{gallery.selectedImage.linked_folder}</p>
+              </div>
+            {/if}
+
             {#if gallery.selectedImage.generationTimeMs != null}
               <div class="mb-3 flex justify-between gap-2">
                 <span class="text-[10px] text-neutral-500 uppercase tracking-wider">{locale.t("gallery.generation_time")}</span>
@@ -4338,7 +4218,7 @@
       {/if}
 
       <!-- Arrow navigation -->
-      {#if gallery.selectedImage && (sortedGalleryImages.length > 1 || gallery.sessionImages.length > 1)}
+      {#if gallery.selectedImage && (visibleGalleryImages.length > 1 || gallery.sessionImages.length > 1)}
         <button
           class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 text-white transition-colors"
           onclick={() => navigateLightbox("prev")}
@@ -4713,6 +4593,17 @@
       {:else if gallery.lightboxLoading}
         <div class="flex items-center justify-center">
           <div class="w-8 h-8 border-2 border-neutral-500 border-t-indigo-400 rounded-full animate-spin"></div>
+        </div>
+      {/if}
+
+      <!-- NSFW cover. Sits over the image or player but under the controls
+           (z-10), so paging, rating and closing still work while it is up. -->
+      {#if lightboxHidden}
+        <div class="absolute inset-0 z-5 flex items-center justify-center bg-black/60 backdrop-blur-3xl">
+          <button
+            class="px-4 py-2 rounded-lg border border-neutral-600 bg-neutral-900/90 text-sm text-neutral-100 hover:border-neutral-400"
+            onclick={() => (lightboxRevealed = gallery.selectedImage)}
+          >{locale.t("gallery.nsfw_reveal")}</button>
         </div>
       {/if}
     </div>

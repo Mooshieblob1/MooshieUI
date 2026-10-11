@@ -15,6 +15,8 @@ pub mod jxl;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod kaloscope;
 pub mod key_source;
+#[cfg(any(feature = "desktop", test))]
+pub mod linked_folders;
 pub mod log_buffer;
 pub mod media_tools;
 pub mod metadata;
@@ -382,7 +384,14 @@ pub fn run() {
                     }
                 };
 
-                match commands::api::generate_thumbnail(&gallery_dir, &filename, max_size) {
+                let thumbnail = if linked_folders::is_token(&filename) {
+                    commands::api::resolve_desktop_gallery_path(&gallery_dir, &filename)
+                        .map_err(|e| format!("Read failed: {}", e))
+                        .and_then(|path| commands::api::generate_thumbnail_at(&path, max_size))
+                } else {
+                    commands::api::generate_thumbnail(&gallery_dir, &filename, max_size)
+                };
+                match thumbnail {
                     Ok(data) => {
                         responder.respond(
                             tauri::http::Response::builder()
@@ -453,7 +462,7 @@ pub fn run() {
                 };
 
                 let file_path =
-                    match commands::api::resolve_gallery_image_path(&gallery_dir, &filename) {
+                    match commands::api::resolve_desktop_gallery_path(&gallery_dir, &filename) {
                         Ok(p) => p,
                         Err(e) => {
                             log::warn!("Gallery image read failed for '{}': {}", filename, e);

@@ -188,7 +188,7 @@
                 <img
                   use:lazyThumbnail={{ image }}
                   alt={image.filename}
-                  class="w-full h-full object-cover"
+                  class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-lg scale-110' : ''}"
                 />
                 {#if isPicked(image)}
                   <span

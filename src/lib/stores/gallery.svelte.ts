@@ -32,6 +32,9 @@ import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 import { progress } from "./progress.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
+import { triggerSync } from "../utils/syncTrigger.js";
+import { matchesGallerySearch, parseGallerySearch } from "../utils/gallerySearch.js";
+import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
 import {
   buildArtistTagIndex,
@@ -189,6 +192,55 @@ function isWebpGalleryFile(filename: string | undefined): boolean {
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
 const GALLERY_SHOW_GEN_TIME_KEY = "mooshieui.gallery.showGenerationTime.v1";
+// Per LAN account (`userScopedKey`): `boardFilter` names one of the account's
+// own boards.
+const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
+const GALLERY_FAVOURITES_KEY = "mooshieui.gallery.favourites.v1";
+const GALLERY_RATINGS_KEY = "mooshieui.gallery.ratings.v1";
+const GALLERY_NSFW_KEY = "mooshieui.gallery.nsfw.v1";
+
+export type GallerySortBy = "date" | "name" | "size" | "rating";
+export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board";
+export type GalleryViewMode = "huge" | "large" | "small" | "details";
+/** Which images the NSFW filter keeps: everything, only safe ones, or only flagged ones. */
+export type GalleryNsfwFilter = "all" | "hide" | "only";
+/** Star ratings run from 1 to this; 0 means unrated. */
+export const GALLERY_MAX_RATING = 5;
+/** `sourceFilter` value for files saved by MooshieUI itself, as opposed to a linked folder. */
+export const GALLERY_SOURCE_OWN = "gallery";
+
+function readJson(key: string): unknown {
+  try {
+    const raw = localStorage.getItem(userScopedKey(key));
+    return raw ? JSON.parse(raw) : undefined;
+  } catch (e) {
+    console.error(`Failed to load ${key}:`, e);
+    return undefined;
+  }
+}
+
+function writeJson(key: string, value: unknown) {
+  try {
+    localStorage.setItem(userScopedKey(key), JSON.stringify(value));
+  } catch (e) {
+    console.error(`Failed to save ${key}:`, e);
+  }
+}
+
+/** Keep the entries of a persisted map whose values pass `valid`. */
+function filterRecord<T>(value: unknown, valid: (v: unknown) => v is T): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (valid(v)) out[key] = v;
+  }
+  return out;
+}
+
+const isTrue = (v: unknown): v is true => v === true;
+const isBool = (v: unknown): v is boolean => typeof v === "boolean";
+const isRating = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= GALLERY_MAX_RATING;
 
 type ToastType = "success" | "error" | "info" | "warning";
 type ToastOptions = {
@@ -259,6 +311,42 @@ class GalleryStore {
   toast = $state<GalleryToast | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
+  /** Favourited images, by the same key as `boardAssignments`. */
+  favourites = $state<Record<string, true>>({});
+  /** Star ratings (1 to GALLERY_MAX_RATING), by the same key as `boardAssignments`. */
+  ratings = $state<Record<string, number>>({});
+  /**
+   * The user's own NSFW calls, by the same key as `boardAssignments`: true
+   * marks an image NSFW, false marks it safe. Either one beats the keyword
+   * check, so a false positive can be cleared for good.
+   */
+  nsfwMarks = $state<Record<string, boolean>>({});
+  /** Flag unmarked images whose prompt contains one of `nsfwKeywords`. */
+  nsfwAutoFlag = $state(true);
+  nsfwKeywords = $state<string[]>([...DEFAULT_NSFW_KEYWORDS]);
+
+  // Gallery page view state. Lives here rather than in the page so the
+  // lightbox pages through exactly what the grid shows.
+  imagesPerRow = $state(5);
+  sortBy = $state<GallerySortBy>("date");
+  sortDir = $state<"asc" | "desc">("desc");
+  groupBy = $state<GalleryGroupBy>("none");
+  boardFilter = $state("all");
+  viewMode = $state<GalleryViewMode>("large");
+  /** Search text (see utils/gallerySearch.ts). Not persisted. */
+  searchQuery = $state("");
+  favouritesOnly = $state(false);
+  /** Hide images rated below this; 0 shows everything. */
+  minRating = $state(0);
+  nsfwFilter = $state<GalleryNsfwFilter>("all");
+  /** Blur NSFW thumbnails and hold the lightbox behind a reveal button. */
+  blurNsfw = $state(false);
+  /** "all", GALLERY_SOURCE_OWN, or the path of one linked folder. */
+  sourceFilter = $state("all");
+  /** True while embedded metadata is still being read, so search results may be incomplete. */
+  hydratingMetadata = $state(false);
+  private _nsfwMatcherKey = "";
+  private _nsfwMatcher: RegExp | null = null;
   /** Shown as a badge on thumbnails and the lightbox when true; persisted across sessions. */
   showGenerationTime = $state(false);
   /** Storage info from the server (browser mode only). */
@@ -318,6 +406,266 @@ class GalleryStore {
     this.loadBoardAssignments();
     this.loadCustomBoards();
     this.loadShowGenerationTime();
+    this.loadImageFlags();
+  }
+
+  private loadImageFlags() {
+    this.favourites = filterRecord(readJson(GALLERY_FAVOURITES_KEY), isTrue);
+    this.ratings = filterRecord(readJson(GALLERY_RATINGS_KEY), isRating);
+    this.applyNsfwPrefs(readJson(GALLERY_NSFW_KEY));
+  }
+
+  private applyNsfwPrefs(data: unknown) {
+    if (!data || typeof data !== "object") return;
+    const prefs = data as { marks?: unknown; autoFlag?: unknown; keywords?: unknown };
+    if (prefs.marks !== undefined) this.nsfwMarks = filterRecord(prefs.marks, isBool);
+    if (typeof prefs.autoFlag === "boolean") this.nsfwAutoFlag = prefs.autoFlag;
+    if (Array.isArray(prefs.keywords)) {
+      this.nsfwKeywords = prefs.keywords.filter((k): k is string => typeof k === "string" && !!k.trim());
+    }
+  }
+
+  private nsfwPrefs() {
+    return { marks: this.nsfwMarks, autoFlag: this.nsfwAutoFlag, keywords: this.nsfwKeywords };
+  }
+
+  private saveFavourites() {
+    writeJson(GALLERY_FAVOURITES_KEY, this.favourites);
+    triggerSync();
+  }
+
+  private saveRatings() {
+    writeJson(GALLERY_RATINGS_KEY, this.ratings);
+    triggerSync();
+  }
+
+  private saveNsfwPrefs() {
+    writeJson(GALLERY_NSFW_KEY, this.nsfwPrefs());
+    triggerSync();
+  }
+
+  /** Read the gallery page's view settings. Called when the page mounts. */
+  loadViewPrefs() {
+    const parsed = readJson(GALLERY_PREFS_KEY) as {
+      imagesPerRow?: number;
+      sortBy?: GallerySortBy;
+      sortDir?: "asc" | "desc";
+      groupBy?: GalleryGroupBy;
+      boardFilter?: string;
+      view?: GalleryViewMode;
+      favouritesOnly?: boolean;
+      minRating?: number;
+      nsfwFilter?: GalleryNsfwFilter;
+      blurNsfw?: boolean;
+      sourceFilter?: string;
+    } | undefined;
+    if (!parsed || typeof parsed !== "object") return;
+    if (typeof parsed.imagesPerRow === "number") this.imagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
+    if (parsed.sortBy) this.sortBy = parsed.sortBy;
+    if (parsed.sortDir) this.sortDir = parsed.sortDir;
+    if (parsed.groupBy) this.groupBy = parsed.groupBy;
+    if (parsed.boardFilter) this.boardFilter = parsed.boardFilter;
+    if (parsed.view) this.viewMode = parsed.view;
+    if (parsed.favouritesOnly !== undefined) this.favouritesOnly = parsed.favouritesOnly;
+    if (isRating(parsed.minRating)) this.minRating = parsed.minRating;
+    if (parsed.nsfwFilter) this.nsfwFilter = parsed.nsfwFilter;
+    if (parsed.blurNsfw !== undefined) this.blurNsfw = parsed.blurNsfw;
+    if (parsed.sourceFilter) this.sourceFilter = parsed.sourceFilter;
+  }
+
+  saveViewPrefs() {
+    writeJson(GALLERY_PREFS_KEY, {
+      imagesPerRow: this.imagesPerRow,
+      sortBy: this.sortBy,
+      sortDir: this.sortDir,
+      groupBy: this.groupBy,
+      boardFilter: this.boardFilter,
+      view: this.viewMode,
+      favouritesOnly: this.favouritesOnly,
+      minRating: this.minRating,
+      nsfwFilter: this.nsfwFilter,
+      blurNsfw: this.blurNsfw,
+      sourceFilter: this.sourceFilter,
+    });
+  }
+
+  /**
+   * The key every per-image assignment (board, favourite, rating, NSFW mark)
+   * is stored under: the gallery file once the image is saved, the run and
+   * file name before that.
+   */
+  private _assignmentKey(image: OutputImage): string {
+    return image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+  }
+
+  /** Carry an image's assignments over when its key changes (saved to disk, or renamed). */
+  private _moveAssignments(from: string, to: string) {
+    if (from === to) return;
+    const move = <T>(map: Record<string, T>): Record<string, T> | null => {
+      if (map[from] === undefined) return null;
+      const next = { ...map, [to]: map[from]! };
+      delete next[from];
+      return next;
+    };
+    const boards = move(this.boardAssignments);
+    if (boards) {
+      this.boardAssignments = boards;
+      this.saveBoardAssignments();
+    }
+    const favourites = move(this.favourites);
+    if (favourites) {
+      this.favourites = favourites;
+      this.saveFavourites();
+    }
+    const ratings = move(this.ratings);
+    if (ratings) {
+      this.ratings = ratings;
+      this.saveRatings();
+    }
+    const marks = move(this.nsfwMarks);
+    if (marks) {
+      this.nsfwMarks = marks;
+      this.saveNsfwPrefs();
+    }
+  }
+
+  /** Drop every assignment held for deleted images. */
+  private _forgetAssignments(keys: string[]) {
+    const drop = <T>(map: Record<string, T>): Record<string, T> | null => {
+      if (!keys.some((key) => map[key] !== undefined)) return null;
+      const next = { ...map };
+      for (const key of keys) delete next[key];
+      return next;
+    };
+    const boards = drop(this.boardAssignments);
+    if (boards) {
+      this.boardAssignments = boards;
+      this.saveBoardAssignments();
+    }
+    const favourites = drop(this.favourites);
+    if (favourites) {
+      this.favourites = favourites;
+      this.saveFavourites();
+    }
+    const ratings = drop(this.ratings);
+    if (ratings) {
+      this.ratings = ratings;
+      this.saveRatings();
+    }
+    const marks = drop(this.nsfwMarks);
+    if (marks) {
+      this.nsfwMarks = marks;
+      this.saveNsfwPrefs();
+    }
+  }
+
+  isFavourite(image: OutputImage): boolean {
+    return this.favourites[this._assignmentKey(image)] === true;
+  }
+
+  toggleFavourite(image: OutputImage) {
+    const key = this._assignmentKey(image);
+    const next = { ...this.favourites };
+    if (next[key]) delete next[key];
+    else next[key] = true;
+    this.favourites = next;
+    this.saveFavourites();
+  }
+
+  getRating(image: OutputImage): number {
+    return this.ratings[this._assignmentKey(image)] ?? 0;
+  }
+
+  /** Set a 1 to GALLERY_MAX_RATING star rating; 0 clears it. */
+  setRating(image: OutputImage, rating: number) {
+    const key = this._assignmentKey(image);
+    const next = { ...this.ratings };
+    if (isRating(rating)) next[key] = rating;
+    else delete next[key];
+    this.ratings = next;
+    this.saveRatings();
+  }
+
+  private get nsfwMatcher(): RegExp | null {
+    const key = this.nsfwKeywords.join("\n");
+    if (key !== this._nsfwMatcherKey) {
+      this._nsfwMatcherKey = key;
+      this._nsfwMatcher = buildNsfwMatcher(this.nsfwKeywords);
+    }
+    return this._nsfwMatcher;
+  }
+
+  /** The user's own mark if there is one, else the keyword check on the prompt. */
+  isNsfw(image: OutputImage): boolean {
+    const mark = this.nsfwMarks[this._assignmentKey(image)];
+    if (mark !== undefined) return mark;
+    if (!this.nsfwAutoFlag) return false;
+    const prompt = image.metadata?.positive_prompt;
+    return !!prompt && !!this.nsfwMatcher?.test(prompt);
+  }
+
+  shouldBlur(image: OutputImage): boolean {
+    return this.blurNsfw && this.isNsfw(image);
+  }
+
+  toggleNsfw(image: OutputImage) {
+    this.nsfwMarks = { ...this.nsfwMarks, [this._assignmentKey(image)]: !this.isNsfw(image) };
+    this.saveNsfwPrefs();
+  }
+
+  setNsfwAutoFlag(value: boolean) {
+    this.nsfwAutoFlag = value;
+    this.saveNsfwPrefs();
+  }
+
+  setNsfwKeywords(keywords: string[]) {
+    this.nsfwKeywords = keywords;
+    this.saveNsfwPrefs();
+  }
+
+  /** Whether `image` passes the board, source, favourite, rating and NSFW filters and the search. */
+  private _passesFilters(image: OutputImage, terms: ReturnType<typeof parseGallerySearch>): boolean {
+    if (this.boardFilter !== "all" && this.getBoard(image) !== this.boardFilter) return false;
+    if (this.sourceFilter !== "all") {
+      const source = image.linked_folder ?? GALLERY_SOURCE_OWN;
+      if (source !== this.sourceFilter) return false;
+    }
+    if (this.favouritesOnly && !this.isFavourite(image)) return false;
+    if (this.minRating > 0 && this.getRating(image) < this.minRating) return false;
+    if (this.nsfwFilter !== "all" && this.isNsfw(image) !== (this.nsfwFilter === "only")) return false;
+    return terms.length === 0 || matchesGallerySearch(terms, image);
+  }
+
+  /**
+   * The gallery as the gallery page shows it: filtered by board, source,
+   * favourites, rating, NSFW and search, then sorted. Not memoized; read it
+   * through a `$derived`.
+   */
+  get visibleImages(): OutputImage[] {
+    const terms = parseGallerySearch(this.searchQuery);
+    const dir = this.sortDir === "asc" ? 1 : -1;
+    const byDate = (a: OutputImage, b: OutputImage) => (a.generated_at_ms ?? 0) - (b.generated_at_ms ?? 0);
+    return this.images
+      .filter((image) => this._passesFilters(image, terms))
+      .sort((a, b) => {
+        if (this.sortBy === "name") {
+          return dir * a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
+        }
+        if (this.sortBy === "size") return dir * ((a.file_size_bytes ?? 0) - (b.file_size_bytes ?? 0));
+        if (this.sortBy === "rating") {
+          return dir * (this.getRating(a) - this.getRating(b) || byDate(a, b));
+        }
+        return dir * byDate(a, b);
+      });
+  }
+
+  /** Distinct linked folders among the loaded images, for the source filter. */
+  get linkedFolders(): string[] {
+    const folders = new Set<string>();
+    for (const image of this.images) {
+      if (image.linked_folder) folders.add(image.linked_folder);
+    }
+    return [...folders].sort((a, b) => a.localeCompare(b));
   }
 
   private loadShowGenerationTime() {
@@ -355,6 +703,7 @@ class GalleryStore {
     } catch (e) {
       console.error("Failed to save gallery boards:", e);
     }
+    triggerSync();
   }
 
   private loadCustomBoards() {
@@ -399,12 +748,11 @@ class GalleryStore {
   }
 
   getBoard(image: OutputImage): string {
-    const key = image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
-    return this.boardAssignments[key] || "Unsorted";
+    return this.boardAssignments[this._assignmentKey(image)] || "Unsorted";
   }
 
   setBoard(image: OutputImage, board: string) {
-    const key = image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+    const key = this._assignmentKey(image);
     const value = board.trim() || "Unsorted";
     if (value !== "Unsorted") this.addBoard(value);
     this.boardAssignments = {
@@ -488,7 +836,7 @@ class GalleryStore {
       let scanned = 0;
       for (const image of this.images) {
         scanned++;
-        const key = image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+        const key = this._assignmentKey(image);
         if (!overwrite) {
           const existing = this.boardAssignments[key];
           if (existing && existing !== "Unsorted") continue;
@@ -1067,7 +1415,11 @@ class GalleryStore {
             metadataMode,
           );
         }
+        const sessionKey = this._assignmentKey(img);
         img.gallery_filename = galleryFilename;
+        // A favourite or rating given while the save was in flight was stored
+        // under the session key; keep it now the image has a gallery file.
+        this._moveAssignments(sessionKey, galleryFilename);
         img.thumbnailUrl = await thumbnailUrl(galleryFilename);
         img.fullImageUrl = await fullImageUrl(galleryFilename);
         img.tempFilename = undefined;
@@ -1133,7 +1485,10 @@ class GalleryStore {
           let generationMode: GenerationMode | undefined;
           let isUpscaled = false;
           const modernParts = filename.split("__");
-          if (modernParts.length >= 3) {
+          if (entry.linked_folder) {
+            // A linked folder's file is named by an opaque token; show its own name.
+            origFilename = entry.display_name ?? filename;
+          } else if (modernParts.length >= 3) {
             promptId = modernParts[0] ?? "";
             generationMode = parseGenerationMode(modernParts[1] ?? "");
             origFilename = modernParts.slice(2).join("__");
@@ -1167,6 +1522,7 @@ class GalleryStore {
             generated_at_ms: entry.modified_ms,
             duration_seconds: entry.duration_seconds,
             fps: entry.fps,
+            linked_folder: entry.linked_folder,
           });
         } catch (e) {
           console.error(`Failed to parse gallery entry ${filename}:`, e);
@@ -1269,8 +1625,10 @@ class GalleryStore {
     // Reset on completion so images added after this run can be hydrated by a
     // later call. Without the reset the memoized promise stays resolved forever
     // and newly inserted images never get their metadata.
+    this.hydratingMetadata = true;
     this._metadataHydrationPromise = this._runMetadataHydration().finally(() => {
       this._metadataHydrationPromise = null;
+      this.hydratingMetadata = false;
     });
     return this._metadataHydrationPromise;
   }
@@ -1904,7 +2262,10 @@ class GalleryStore {
    * flows meant for deleting image after image.
    */
   async confirmDeleteImage(image: OutputImage): Promise<boolean> {
-    if (!confirm(locale.t("gallery.delete_confirm"))) return false;
+    const message = image.linked_folder
+      ? locale.t("gallery.delete_linked_confirm", { folder: image.linked_folder })
+      : locale.t("gallery.delete_confirm");
+    if (!confirm(message)) return false;
     await this.deleteImage(image);
     return true;
   }
@@ -1918,10 +2279,7 @@ class GalleryStore {
       const galleryFilename = await this.resolveGalleryFilename(image);
       if (galleryFilename) {
         await deleteGalleryImage(galleryFilename);
-        const nextAssignments = { ...this.boardAssignments };
-        delete nextAssignments[galleryFilename];
-        this.boardAssignments = nextAssignments;
-        this.saveBoardAssignments();
+        this._forgetAssignments([galleryFilename]);
       }
       if (image.url) {
         URL.revokeObjectURL(image.url);
@@ -1953,18 +2311,14 @@ class GalleryStore {
     const targets = new Set(only ? this.sessionImages.filter(only) : this.sessionImages);
     if (targets.size === 0) return;
 
-    const nextAssignments = { ...this.boardAssignments };
-    let assignmentsChanged = false;
+    const deleted: string[] = [];
     for (const image of targets) {
       try {
         // Wait out an in-flight save, as deleteImage() does.
         const galleryFilename = await this.resolveGalleryFilename(image);
         if (galleryFilename) {
           await deleteGalleryImage(galleryFilename);
-          if (nextAssignments[galleryFilename] !== undefined) {
-            delete nextAssignments[galleryFilename];
-            assignmentsChanged = true;
-          }
+          deleted.push(galleryFilename);
         }
         if (image.url) {
           URL.revokeObjectURL(image.url);
@@ -1974,10 +2328,7 @@ class GalleryStore {
       }
     }
 
-    if (assignmentsChanged) {
-      this.boardAssignments = nextAssignments;
-      this.saveBoardAssignments();
-    }
+    this._forgetAssignments(deleted);
     this.images = this.images.filter((i) => !targets.has(i));
     this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
     if (this.selectedImage && targets.has(this.selectedImage)) {
@@ -2005,6 +2356,8 @@ class GalleryStore {
       for (const image of this.images) {
         const current = image.gallery_filename;
         if (!current) continue;
+        // A linked folder's files belong to the user; never rename them.
+        if (image.linked_folder) continue;
         if (current.includes("__")) continue;
 
         const mode = image.generation_mode ?? this.inferModeFromFilename(image);
@@ -2014,6 +2367,7 @@ class GalleryStore {
         try {
           const renamed = await renameGalleryImage(current, newFilename);
           image.gallery_filename = renamed;
+          this._moveAssignments(current, renamed);
           image.generation_mode = mode;
           migrated += 1;
         } catch (e) {
@@ -2093,6 +2447,9 @@ class GalleryStore {
     return {
       boardAssignments: this.boardAssignments,
       customBoards: this.customBoards,
+      favourites: this.favourites,
+      ratings: this.ratings,
+      nsfw: this.nsfwPrefs(),
     };
   }
 
@@ -2108,6 +2465,18 @@ class GalleryStore {
           (name: unknown) => typeof name === "string" && !!name && name !== "Unsorted",
         );
         this.saveCustomBoards();
+      }
+      if (data?.favourites !== undefined) {
+        this.favourites = filterRecord(data.favourites, isTrue);
+        writeJson(GALLERY_FAVOURITES_KEY, this.favourites);
+      }
+      if (data?.ratings !== undefined) {
+        this.ratings = filterRecord(data.ratings, isRating);
+        writeJson(GALLERY_RATINGS_KEY, this.ratings);
+      }
+      if (data?.nsfw !== undefined) {
+        this.applyNsfwPrefs(data.nsfw);
+        writeJson(GALLERY_NSFW_KEY, this.nsfwPrefs());
       }
     } catch (e) {
       console.error("gallery: applyServerPrefs failed", e);

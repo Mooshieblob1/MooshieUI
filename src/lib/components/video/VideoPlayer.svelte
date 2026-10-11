@@ -319,6 +319,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={rootEl}
+  data-video-player
   class="relative w-full h-full flex items-center justify-center bg-black/60 rounded-xl overflow-hidden group"
   onmousemove={wake}
   onfocusin={wake}

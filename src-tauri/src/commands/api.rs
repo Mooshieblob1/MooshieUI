@@ -55,6 +55,13 @@ pub struct GalleryImageEntry {
     /// Frame rate for `.mp4` entries. `None` for images and for rows that
     /// predate the `fps` column; the player falls back to 24.
     pub fps: Option<f64>,
+    /// Linked-folder entries only: the folder as configured. `filename` is
+    /// then a `linked_folders` token, not a file in the gallery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_folder: Option<String>,
+    /// Linked-folder entries only: the file's path inside that folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2109,7 +2116,7 @@ pub async fn read_image_metadata(
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_desktop_gallery_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
@@ -2207,9 +2214,25 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
                 modified_ms,
                 duration_seconds: entry_meta.map(|m| m.duration_seconds),
                 fps: entry_meta.and_then(|m| m.fps),
+                linked_folder: None,
+                display_name: None,
             })
         })
         .collect();
+
+    // Linked folders can be large; walk them off the async runtime.
+    let linked = tokio::task::spawn_blocking(crate::linked_folders::list)
+        .await
+        .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?;
+    files.extend(linked.into_iter().map(|entry| GalleryImageEntry {
+        filename: entry.token,
+        size_bytes: entry.size_bytes,
+        modified_ms: entry.modified_ms,
+        duration_seconds: None,
+        fps: None,
+        linked_folder: Some(entry.folder),
+        display_name: Some(entry.display_name),
+    }));
 
     files.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
     Ok(files)
@@ -2230,7 +2253,7 @@ pub async fn copy_gallery_file_to(filename: String, dest_path: String) -> Result
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let src = resolve_gallery_image_path(&dir, &filename)
+    let src = resolve_desktop_gallery_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("Read failed: {}", e)))?;
     tokio::fs::copy(&src, &dest_path).await?;
     Ok(())
@@ -2244,7 +2267,7 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_desktop_gallery_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     Ok(bytes)
@@ -2268,7 +2291,12 @@ pub(crate) async fn load_gallery_image_png_from_dir(
     }
     let path = resolve_gallery_image_path(gallery_dir, filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
-    let bytes = std::fs::read(&path)?;
+    load_gallery_png_at(&path, filename).await
+}
+
+/// The file at `path` as PNG bytes; `filename` picks the decoder.
+async fn load_gallery_png_at(path: &std::path::Path, filename: &str) -> Result<Vec<u8>, AppError> {
+    let bytes = std::fs::read(path)?;
     if filename.ends_with(".jxl") || filename.ends_with(".webp") {
         let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
             let img = decode_gallery_image(&bytes)?;
@@ -2302,6 +2330,13 @@ pub(crate) async fn load_gallery_image_png_from_dir(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+    if crate::linked_folders::is_token(&filename) {
+        let dir = crate::config::gallery_dir()
+            .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+        let path = resolve_desktop_gallery_path(&dir, &filename)
+            .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
+        return load_gallery_png_at(&path, &filename).await;
+    }
     load_gallery_image_png_inner(filename).await
 }
 
@@ -2315,7 +2350,7 @@ pub async fn load_gallery_image_display(filename: String) -> Result<Vec<u8>, App
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_desktop_gallery_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
@@ -2382,6 +2417,21 @@ pub fn validate_gallery_filename(filename: &str) -> Result<(), GalleryPathResolv
         return Err(GalleryPathResolveError::InvalidFilename);
     }
     Ok(())
+}
+
+/// Desktop gallery commands also take linked-folder tokens (see
+/// `linked_folders`). The browser server keeps to `resolve_gallery_image_path`,
+/// so LAN accounts never reach the host's linked folders.
+#[cfg(feature = "desktop")]
+pub fn resolve_desktop_gallery_path(
+    base_dir: &std::path::Path,
+    filename: &str,
+) -> Result<std::path::PathBuf, GalleryPathResolveError> {
+    if crate::linked_folders::is_token(filename) {
+        validate_gallery_filename(filename)?;
+        return crate::linked_folders::resolve(filename).ok_or(GalleryPathResolveError::NotFound);
+    }
+    resolve_gallery_image_path(base_dir, filename)
 }
 
 /// Locate a gallery file under the root gallery dir or `users/{username}/` subdirs.
@@ -2580,7 +2630,12 @@ pub fn generate_thumbnail(
     let filename = filename.as_str();
     let path = resolve_gallery_image_path(gallery_dir, filename)
         .map_err(|e| format!("Read failed: {}", e))?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
+    generate_thumbnail_at(&path, max_size)
+}
+
+/// A WebP thumbnail of the image at `path`, at most `max_size` on its long side.
+pub fn generate_thumbnail_at(path: &std::path::Path, max_size: u32) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Read failed: {}", e))?;
 
     let img = decode_gallery_image(&bytes)?;
     // `size` comes from the request URL, and `thumbnail` scales up as well
@@ -2627,7 +2682,7 @@ pub fn transcode_jxl_to_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
 pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_desktop_gallery_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     Ok(path.to_string_lossy().into_owned())
 }
@@ -2640,7 +2695,7 @@ pub async fn delete_gallery_image(
 ) -> Result<(), AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    match resolve_gallery_image_path(&dir, &filename) {
+    match resolve_desktop_gallery_path(&dir, &filename) {
         Ok(path) => delete_gallery_file(state.inner(), &dir, &filename, &path).await?,
         Err(GalleryPathResolveError::NotFound) => {}
         Err(e) => return Err(AppError::Other(format!("{}: {}", e, filename))),
@@ -3175,7 +3230,7 @@ pub async fn copy_gallery_image_to_clipboard(
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_desktop_gallery_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
 
     if filename.ends_with(".jxl") || filename.ends_with(".webp") {
