@@ -653,6 +653,8 @@ export interface AppConfig {
   interrogator_detect_artists: boolean;
   /** Minimum Kaloscope softmax score for an artist tag (0-1). */
   interrogator_artist_threshold: number;
+  /** Ask the prompt assistant which saved characters are in an interrogated image. */
+  interrogator_detect_characters: boolean;
   prompt_assistant_model_id: string | null;
   prompt_assistant_idle_timeout_secs: number;
   prompt_assistant_setup_done: boolean;

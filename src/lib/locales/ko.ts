@@ -1579,6 +1579,14 @@ const ko: Record<string, string> = {
   "generation.interrogate.deselect_all": "모두 선택 해제",
   "generation.interrogate.apply_to_prompt": "프롬프트에 적용",
   "generation.interrogate.copy_aibooru": "AIBooru용 복사",
+  "generation.interrogate.saved_characters": "저장된 캐릭터 ({count})",
+  "generation.interrogate.saved_characters_hint": "하나를 고르면 이미 포함된 태그 대신 저장된 내용 그대로 추가합니다.",
+  "generation.interrogate.matching_characters": "저장된 캐릭터를 확인하는 중...",
+  "generation.interrogate.loading_assistant": "프롬프트 어시스턴트를 불러오는 중...",
+  "generation.interrogate.no_character_match": "이 모델의 저장된 캐릭터가 이미지에 없습니다.",
+  "generation.interrogate.character_match_invalid": "프롬프트 어시스턴트가 사용할 수 있는 답을 주지 않았습니다.",
+  "generation.interrogate.character_match_needs_llm": "저장된 캐릭터를 찾으려면 프롬프트 어시스턴트를 설정하세요.",
+  "generation.interrogate.set_up_assistant": "설정",
 
   // ── 진행 / 미리보기 ────────────────────────────────────
   "progress.generating": "생성 중...",
@@ -2151,6 +2159,9 @@ const ko: Record<string, string> = {
   "settings.interrogator.detect_artists": "아티스트 감지 (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "이미지를 그린 아티스트를 추정해 아티스트 태그를 최대 3개 추가합니다. 처음 사용할 때 {size} 모델을 다운로드합니다. 추정이 틀릴 수 있으니 사용하기 전에 확인하세요. Kaloscope 3.0은 DINOv3 License로 배포됩니다.",
   "settings.interrogator.artist_threshold": "아티스트 임계값",
+  "settings.interrogator.detect_characters": "저장된 캐릭터 감지",
+  "settings.interrogator.detect_characters_desc": "태깅 후 현재 모델용으로 저장한 캐릭터 중 이미지에 있는 캐릭터를 프롬프트 어시스턴트에 물어 제안합니다. 직접 고르기 전에는 아무것도 추가되지 않습니다.",
+  "settings.interrogator.detect_characters_needs_llm": "프롬프트 어시스턴트가 필요합니다.",
 
   "generation.controlnet.browse_or_drop": "찾아보기 또는 이미지 드롭",
   "generation.controlnet.paste": "붙여넣기",

@@ -1908,6 +1908,14 @@ const en: Record<string, string> = {
   "generation.interrogate.deselect_all": "Deselect All",
   "generation.interrogate.apply_to_prompt": "Apply to Prompt",
   "generation.interrogate.copy_aibooru": "Copy for AIBooru",
+  "generation.interrogate.saved_characters": "Saved characters ({count})",
+  "generation.interrogate.saved_characters_hint": "Pick one to add it as saved, in place of the tags it already covers.",
+  "generation.interrogate.matching_characters": "Checking your saved characters...",
+  "generation.interrogate.loading_assistant": "Loading the prompt assistant...",
+  "generation.interrogate.no_character_match": "None of your saved characters for this model are in the image.",
+  "generation.interrogate.character_match_invalid": "The prompt assistant didn't return a usable answer.",
+  "generation.interrogate.character_match_needs_llm": "Set up the prompt assistant to look for your saved characters.",
+  "generation.interrogate.set_up_assistant": "Set up",
 
   // ── Progress / Preview ──────────────────────────────────
   "progress.generating": "Generating...",
@@ -2697,6 +2705,9 @@ const en: Record<string, string> = {
   "settings.interrogator.detect_artists": "Detect artists (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Guesses who drew the image and adds up to 3 artist tags. Downloads a {size} model the first time. Guesses can be wrong, so check them before using them. Kaloscope 3.0 is released under the DINOv3 License.",
   "settings.interrogator.artist_threshold": "Artist Threshold",
+  "settings.interrogator.detect_characters": "Detect saved characters",
+  "settings.interrogator.detect_characters_desc": "After tagging, asks the prompt assistant which of your saved characters for the current model are in the image and suggests them. Nothing is added until you pick one.",
+  "settings.interrogator.detect_characters_needs_llm": "Needs the prompt assistant.",
 
   // Queue
   "settings.queue.title": "Queue",

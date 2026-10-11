@@ -30,11 +30,17 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { InterrogationResult, TagResult } from "../../types/index.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import { escapeArtistParens, isArtistTagToken } from "../../utils/artistTag.js";
+  import { getConfig } from "../../utils/api.js";
+  import { mapLlmError } from "../../utils/llmError.js";
+  import { normalizeTag, pickCandidates, type DetectTags } from "../../utils/characterDetect.js";
 
   interface Props {
     result: InterrogationResult | null;
@@ -68,6 +74,117 @@
       checkedCopyright = Object.fromEntries(result.copyright_tags.map((t) => [t.name, false]));
     }
   });
+
+  /** A saved character the prompt assistant found in the image. */
+  type SavedSuggestion = { character: SavedCharacter; covered: string[] };
+
+  // Saved character detection (Settings > Interrogator > Detect saved characters)
+  let detectEnabled = $state(false);
+  let detecting = $state(false);
+  let detectDone = $state(false);
+  let detectError = $state<string | null>(null);
+  let suggestions = $state<SavedSuggestion[]>([]);
+  let checkedSaved = $state<Record<string, boolean>>({});
+  /** Tag names each picked character switched off, so unpicking it can switch them back on. */
+  let hiddenBy: Record<string, string[]> = {};
+  /** Bumped per run, so a reply for an earlier image is dropped. */
+  let detectRun = 0;
+
+  const savedCount = $derived(savedCharacters.currentCharacters.length);
+
+  $effect(() => {
+    const r = result;
+    untrack(() => void detectSavedCharacters(r));
+  });
+
+  async function detectSavedCharacters(r: InterrogationResult | null) {
+    const run = ++detectRun;
+    suggestions = [];
+    checkedSaved = {};
+    hiddenBy = {};
+    detectError = null;
+    detectDone = false;
+    detecting = false;
+    if (!r) return;
+    let enabled = false;
+    try {
+      enabled = (await getConfig()).interrogator_detect_characters === true;
+    } catch { /* keep it off */ }
+    if (run !== detectRun) return;
+    detectEnabled = enabled;
+    const saved = savedCharacters.currentCharacters;
+    if (!enabled || saved.length === 0 || !promptAssistant.isAvailable) return;
+    const tags: DetectTags = {
+      character: r.character_tags.map((t) => t.name),
+      general: r.general_tags.map((t) => t.name),
+      copyright: r.copyright_tags.map((t) => t.name),
+    };
+    if (tags.character.length === 0 && tags.general.length === 0) return;
+    const candidates = pickCandidates(saved, tags).map((i) => saved[i]);
+    detecting = true;
+    try {
+      const found = await promptAssistant.detectCharacters(tags, candidates);
+      if (run !== detectRun) return;
+      suggestions = found.map((m) => ({ character: candidates[m.index], covered: m.covered }));
+      detectDone = true;
+    } catch (e) {
+      if (run !== detectRun) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      detectError = msg.includes("invalid_character_detect")
+        ? locale.t("generation.interrogate.character_match_invalid")
+        : mapLlmError(msg);
+    } finally {
+      if (run === detectRun) detecting = false;
+    }
+  }
+
+  /**
+   * Pick or unpick a suggested character. Picking switches off the tags its
+   * saved prompt already covers, so Apply doesn't write them twice; unpicking
+   * switches back on the ones it switched off, unless another picked
+   * character still covers them.
+   */
+  function toggleSaved(s: SavedSuggestion) {
+    if (!result) return;
+    const id = s.character.id;
+    const on = !checkedSaved[id];
+    checkedSaved = { ...checkedSaved, [id]: on };
+    const covered = new Set(s.covered);
+    if (on) {
+      const hidden: string[] = [];
+      const off = (map: Record<string, boolean>, list: TagResult[]) => {
+        const next = { ...map };
+        for (const t of list) {
+          if (next[t.name] && covered.has(normalizeTag(t.name))) {
+            next[t.name] = false;
+            hidden.push(t.name);
+          }
+        }
+        return next;
+      };
+      checkedCharacter = off(checkedCharacter, result.character_tags);
+      checkedGeneral = off(checkedGeneral, result.general_tags);
+      checkedCopyright = off(checkedCopyright, result.copyright_tags);
+      hiddenBy = { ...hiddenBy, [id]: hidden };
+    } else {
+      const restore = new Set(hiddenBy[id] ?? []);
+      const { [id]: _, ...rest } = hiddenBy;
+      hiddenBy = rest;
+      const stillCovered = new Set(
+        suggestions.filter((o) => checkedSaved[o.character.id]).flatMap((o) => o.covered),
+      );
+      const back = (map: Record<string, boolean>, list: TagResult[]) => {
+        const next = { ...map };
+        for (const t of list) {
+          if (restore.has(t.name) && !stillCovered.has(normalizeTag(t.name))) next[t.name] = true;
+        }
+        return next;
+      };
+      checkedCharacter = back(checkedCharacter, result.character_tags);
+      checkedGeneral = back(checkedGeneral, result.general_tags);
+      checkedCopyright = back(checkedCopyright, result.copyright_tags);
+    }
+  }
 
   // Rating display
   const ratingLabel = $derived.by(() => {
@@ -114,11 +231,14 @@
       checkedArtist = Object.fromEntries(result.artist_tags.map((t) => [t.name, false]));
       checkedGeneral = Object.fromEntries(result.general_tags.map((t) => [t.name, false]));
       checkedCopyright = Object.fromEntries(result.copyright_tags.map((t) => [t.name, false]));
+      checkedSaved = {};
+      hiddenBy = {};
     }
   }
 
   const anyChecked = $derived.by(() => {
     return (
+      Object.values(checkedSaved).some(Boolean) ||
       Object.values(checkedCharacter).some(Boolean) ||
       Object.values(checkedArtist).some(Boolean) ||
       Object.values(checkedGeneral).some(Boolean) ||
@@ -229,6 +349,12 @@
     }
 
     generation.positivePrompt = prompt;
+    // Picked saved characters go in as the Characters tab's Insert puts them:
+    // a NovelAI character box when there is room, else the prompt, with
+    // their UC. One already in the prompt is skipped.
+    for (const s of suggestions) {
+      if (checkedSaved[s.character.id]) savedCharacters.insert(s.character);
+    }
     onclose();
   }
 
@@ -393,6 +519,56 @@
               {ratingLabel.name.replace(/_/g, " ")}
             </span>
             <span class="text-xs text-neutral-500">({locale.formatPercent(ratingLabel.confidence * 100, 1)})</span>
+          </div>
+        {/if}
+
+        <!-- Saved characters the prompt assistant found -->
+        {#if detectEnabled && savedCount > 0}
+          <div>
+            <p class="flex items-center gap-1 text-sm font-medium text-teal-400 mb-2">
+              {locale.t('generation.interrogate.saved_characters', { count: suggestions.length })}
+            </p>
+            {#if !promptAssistant.isAvailable}
+              <p class="text-xs text-neutral-500">
+                {locale.t('generation.interrogate.character_match_needs_llm')}
+                <button onclick={() => { promptAssistant.setupModalOpen = true; }} class="underline text-neutral-400 hover:text-neutral-200">{locale.t('generation.interrogate.set_up_assistant')}</button>
+              </p>
+            {:else if detecting}
+              <div class="flex items-center gap-2 text-xs text-neutral-400">
+                <svg class="animate-spin h-3.5 w-3.5 text-teal-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"></path>
+                </svg>
+                {promptAssistant.stage === "loading_model"
+                  ? locale.t('generation.interrogate.loading_assistant')
+                  : locale.t('generation.interrogate.matching_characters')}
+              </div>
+            {:else if detectError}
+              <p class="text-xs text-red-400 break-words">
+                {detectError}
+                <button onclick={() => void detectSavedCharacters(result)} class="underline text-neutral-400 hover:text-neutral-200 ml-1">{locale.t('common.retry')}</button>
+              </p>
+            {:else if suggestions.length > 0}
+              <div class="flex flex-wrap gap-1.5">
+                {#each suggestions as s (s.character.id)}
+                  <button
+                    onclick={() => toggleSaved(s)}
+                    title={s.character.prompt}
+                    class="inline-flex items-center gap-1.5 pl-0.5 pr-2 py-0.5 rounded-full text-xs transition-colors border {checkedSaved[s.character.id] ? 'bg-teal-600/20 border-teal-500/50 text-teal-300' : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200'}"
+                  >
+                    {#if s.character.thumbnail}
+                      <img src={s.character.thumbnail} alt="" class="w-5 h-5 rounded-full object-cover" />
+                    {:else}
+                      <span class="w-1"></span>
+                    {/if}
+                    {s.character.name}
+                  </button>
+                {/each}
+              </div>
+              <p class="text-[10px] text-neutral-500 mt-1.5">{locale.t('generation.interrogate.saved_characters_hint')}</p>
+            {:else if detectDone}
+              <p class="text-xs text-neutral-500">{locale.t('generation.interrogate.no_character_match')}</p>
+            {/if}
           </div>
         {/if}
 

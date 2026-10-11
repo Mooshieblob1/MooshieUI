@@ -1601,6 +1601,14 @@ const fr: Record<string, string> = {
   "generation.interrogate.deselect_all": "Tout désélectionner",
   "generation.interrogate.apply_to_prompt": "Appliquer au prompt",
   "generation.interrogate.copy_aibooru": "Copier pour AIBooru",
+  "generation.interrogate.saved_characters": "Personnages enregistrés ({count})",
+  "generation.interrogate.saved_characters_hint": "Choisissez-en un pour l'ajouter tel qu'il est enregistré, à la place des tags qu'il couvre déjà.",
+  "generation.interrogate.matching_characters": "Vérification de vos personnages enregistrés...",
+  "generation.interrogate.loading_assistant": "Chargement de l'assistant de prompt...",
+  "generation.interrogate.no_character_match": "Aucun de vos personnages enregistrés pour ce modèle n'apparaît dans l'image.",
+  "generation.interrogate.character_match_invalid": "L'assistant de prompt n'a pas renvoyé de réponse exploitable.",
+  "generation.interrogate.character_match_needs_llm": "Configurez l'assistant de prompt pour rechercher vos personnages enregistrés.",
+  "generation.interrogate.set_up_assistant": "Configurer",
 
   // ── Progression / Aperçu ────────────────────────────────
   "progress.generating": "Génération en cours...",
@@ -2176,6 +2184,9 @@ const fr: Record<string, string> = {
   "settings.interrogator.detect_artists": "Détecter les artistes (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Devine qui a dessiné l'image et ajoute jusqu'à 3 tags d'artiste. Télécharge un modèle de {size} la première fois. Les suppositions peuvent être fausses, vérifie-les avant de les utiliser. Kaloscope 3.0 est publié sous la DINOv3 License.",
   "settings.interrogator.artist_threshold": "Seuil des artistes",
+  "settings.interrogator.detect_characters": "Détecter les personnages enregistrés",
+  "settings.interrogator.detect_characters_desc": "Après le tagging, demande à l'assistant de prompt lesquels de vos personnages enregistrés pour le modèle actuel figurent dans l'image et les suggère. Rien n'est ajouté tant que vous n'en choisissez pas un.",
+  "settings.interrogator.detect_characters_needs_llm": "Nécessite l'assistant de prompt.",
 
   "generation.controlnet.browse_or_drop": "Parcourir ou déposer une image",
   "generation.controlnet.paste": "Coller",

@@ -1600,6 +1600,14 @@ const de: Record<string, string> = {
   "generation.interrogate.deselect_all": "Alle abwählen",
   "generation.interrogate.apply_to_prompt": "Auf Prompt anwenden",
   "generation.interrogate.copy_aibooru": "Für AIBooru kopieren",
+  "generation.interrogate.saved_characters": "Gespeicherte Charaktere ({count})",
+  "generation.interrogate.saved_characters_hint": "Wähle einen aus, um ihn wie gespeichert einzufügen, statt der Tags, die er schon abdeckt.",
+  "generation.interrogate.matching_characters": "Deine gespeicherten Charaktere werden geprüft...",
+  "generation.interrogate.loading_assistant": "Prompt-Assistent wird geladen...",
+  "generation.interrogate.no_character_match": "Keiner deiner gespeicherten Charaktere für dieses Modell ist im Bild.",
+  "generation.interrogate.character_match_invalid": "Der Prompt-Assistent hat keine brauchbare Antwort geliefert.",
+  "generation.interrogate.character_match_needs_llm": "Richte den Prompt-Assistenten ein, um nach deinen gespeicherten Charakteren zu suchen.",
+  "generation.interrogate.set_up_assistant": "Einrichten",
 
   // ── Fortschritt / Vorschau ──────────────────────────────
   "progress.generating": "Generierung...",
@@ -2172,6 +2180,9 @@ const de: Record<string, string> = {
   "settings.interrogator.detect_artists": "Künstler erkennen (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Schätzt, wer das Bild gezeichnet hat, und fügt bis zu 3 Künstler-Tags hinzu. Lädt beim ersten Mal ein Modell mit {size} herunter. Die Schätzungen können falsch sein, prüfe sie also vor der Verwendung. Kaloscope 3.0 steht unter der DINOv3 License.",
   "settings.interrogator.artist_threshold": "Künstler-Schwellenwert",
+  "settings.interrogator.detect_characters": "Gespeicherte Charaktere erkennen",
+  "settings.interrogator.detect_characters_desc": "Fragt nach dem Taggen den Prompt-Assistenten, welche deiner gespeicherten Charaktere für das aktuelle Modell im Bild sind, und schlägt sie vor. Hinzugefügt wird erst, wenn du einen auswählst.",
+  "settings.interrogator.detect_characters_needs_llm": "Benötigt den Prompt-Assistenten.",
 
   "generation.controlnet.browse_or_drop": "Durchsuchen oder Bild ablegen",
   "generation.controlnet.paste": "Einfügen",

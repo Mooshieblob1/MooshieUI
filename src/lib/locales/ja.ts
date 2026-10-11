@@ -1601,6 +1601,14 @@ const ja: Record<string, string> = {
   "generation.interrogate.deselect_all": "すべて選択解除",
   "generation.interrogate.apply_to_prompt": "プロンプトに適用",
   "generation.interrogate.copy_aibooru": "AIBooru用にコピー",
+  "generation.interrogate.saved_characters": "保存済みキャラクター ({count})",
+  "generation.interrogate.saved_characters_hint": "選ぶと、そのキャラクターがすでに含むタグの代わりに、保存した内容で追加します。",
+  "generation.interrogate.matching_characters": "保存済みキャラクターを確認しています...",
+  "generation.interrogate.loading_assistant": "プロンプトアシスタントを読み込んでいます...",
+  "generation.interrogate.no_character_match": "このモデルの保存済みキャラクターは画像に見つかりませんでした。",
+  "generation.interrogate.character_match_invalid": "プロンプトアシスタントから使える回答が返りませんでした。",
+  "generation.interrogate.character_match_needs_llm": "保存済みキャラクターを探すには、プロンプトアシスタントを設定してください。",
+  "generation.interrogate.set_up_assistant": "設定",
 
   // ── 進捗 / プレビュー ──────────────────────────────────
   "progress.generating": "生成中...",
@@ -2176,6 +2184,9 @@ const ja: Record<string, string> = {
   "settings.interrogator.detect_artists": "アーティストを検出 (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "画像を描いたアーティストを推定し、最大3件のアーティストタグを追加します。初回は {size} のモデルをダウンロードします。推定は外れることがあるので、使う前に確認してください。Kaloscope 3.0 は DINOv3 License で公開されています。",
   "settings.interrogator.artist_threshold": "アーティストのしきい値",
+  "settings.interrogator.detect_characters": "保存済みキャラクターを検出",
+  "settings.interrogator.detect_characters_desc": "タグ付けの後、現在のモデル用に保存したキャラクターのうち画像に写っているものをプロンプトアシスタントに尋ね、候補として表示します。選ぶまで何も追加されません。",
+  "settings.interrogator.detect_characters_needs_llm": "プロンプトアシスタントが必要です。",
 
   "generation.controlnet.browse_or_drop": "参照またはドロップ",
   "generation.controlnet.paste": "貼り付け",

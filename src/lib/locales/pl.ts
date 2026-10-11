@@ -1862,6 +1862,14 @@ const pl: Record<string, string> = {
   "generation.interrogate.deselect_all": "Odznacz wszystkie",
   "generation.interrogate.apply_to_prompt": "Zastosuj do promptu",
   "generation.interrogate.copy_aibooru": "Kopiuj dla AIBooru",
+  "generation.interrogate.saved_characters": "Zapisane postacie ({count})",
+  "generation.interrogate.saved_characters_hint": "Wybierz jedną, aby dodać ją tak, jak jest zapisana, zamiast tagów, które już obejmuje.",
+  "generation.interrogate.matching_characters": "Sprawdzanie zapisanych postaci...",
+  "generation.interrogate.loading_assistant": "Wczytywanie asystenta promptów...",
+  "generation.interrogate.no_character_match": "Żadnej z zapisanych postaci dla tego modelu nie ma na obrazie.",
+  "generation.interrogate.character_match_invalid": "Asystent promptów nie zwrócił użytecznej odpowiedzi.",
+  "generation.interrogate.character_match_needs_llm": "Skonfiguruj asystenta promptów, aby wyszukiwał zapisane postacie.",
+  "generation.interrogate.set_up_assistant": "Skonfiguruj",
 
   // ── Progress / Preview ──────────────────────────────────
   "progress.generating": "Generowanie...",
@@ -2648,6 +2656,9 @@ const pl: Record<string, string> = {
   "settings.interrogator.detect_artists": "Wykrywaj artystów (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Zgaduje, kto narysował obraz, i dodaje do 3 tagów artystów. Za pierwszym razem pobiera model o rozmiarze {size}. Odgadnięcia mogą być błędne, więc sprawdź je przed użyciem. Kaloscope 3.0 jest udostępniony na licencji DINOv3 License.",
   "settings.interrogator.artist_threshold": "Próg artystów",
+  "settings.interrogator.detect_characters": "Wykrywaj zapisane postacie",
+  "settings.interrogator.detect_characters_desc": "Po otagowaniu pyta asystenta promptów, które z zapisanych postaci dla bieżącego modelu są na obrazie, i je podpowiada. Nic nie zostanie dodane, dopóki nie wybierzesz postaci.",
+  "settings.interrogator.detect_characters_needs_llm": "Wymaga asystenta promptów.",
 
   // Queue
   "settings.queue.title": "Kolejka",

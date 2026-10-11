@@ -1643,6 +1643,14 @@ const es: Record<string, string> = {
   "generation.interrogate.deselect_all": "Deseleccionar todo",
   "generation.interrogate.apply_to_prompt": "Aplicar al prompt",
   "generation.interrogate.copy_aibooru": "Copiar para AIBooru",
+  "generation.interrogate.saved_characters": "Personajes guardados ({count})",
+  "generation.interrogate.saved_characters_hint": "Elige uno para añadirlo tal como está guardado, en lugar de las etiquetas que ya cubre.",
+  "generation.interrogate.matching_characters": "Comprobando tus personajes guardados...",
+  "generation.interrogate.loading_assistant": "Cargando el asistente de prompts...",
+  "generation.interrogate.no_character_match": "Ninguno de tus personajes guardados para este modelo aparece en la imagen.",
+  "generation.interrogate.character_match_invalid": "El asistente de prompts no devolvió una respuesta útil.",
+  "generation.interrogate.character_match_needs_llm": "Configura el asistente de prompts para buscar tus personajes guardados.",
+  "generation.interrogate.set_up_assistant": "Configurar",
 
   // ── Progreso / Vista previa ─────────────────────────────
   "progress.generating": "Generando...",
@@ -2220,6 +2228,9 @@ const es: Record<string, string> = {
   "settings.interrogator.detect_artists": "Detectar artistas (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Adivina quién dibujó la imagen y añade hasta 3 etiquetas de artista. Descarga un modelo de {size} la primera vez. Las suposiciones pueden fallar, así que revísalas antes de usarlas. Kaloscope 3.0 se publica bajo la DINOv3 License.",
   "settings.interrogator.artist_threshold": "Umbral de artistas",
+  "settings.interrogator.detect_characters": "Detectar personajes guardados",
+  "settings.interrogator.detect_characters_desc": "Tras etiquetar, pregunta al asistente de prompts cuáles de tus personajes guardados para el modelo actual aparecen en la imagen y los sugiere. No se añade nada hasta que elijas uno.",
+  "settings.interrogator.detect_characters_needs_llm": "Necesita el asistente de prompts.",
 
   "generation.controlnet.browse_or_drop": "Buscar o soltar imagen",
   "generation.controlnet.paste": "Pegar",

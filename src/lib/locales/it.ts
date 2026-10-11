@@ -1579,6 +1579,14 @@ const it: Record<string, string> = {
   "generation.interrogate.deselect_all": "Deseleziona tutto",
   "generation.interrogate.apply_to_prompt": "Applica al prompt",
   "generation.interrogate.copy_aibooru": "Copia per AIBooru",
+  "generation.interrogate.saved_characters": "Personaggi salvati ({count})",
+  "generation.interrogate.saved_characters_hint": "Scegline uno per aggiungerlo come è salvato, al posto dei tag che copre già.",
+  "generation.interrogate.matching_characters": "Controllo dei tuoi personaggi salvati...",
+  "generation.interrogate.loading_assistant": "Caricamento dell'assistente prompt...",
+  "generation.interrogate.no_character_match": "Nessuno dei tuoi personaggi salvati per questo modello è nell'immagine.",
+  "generation.interrogate.character_match_invalid": "L'assistente prompt non ha restituito una risposta utilizzabile.",
+  "generation.interrogate.character_match_needs_llm": "Configura l'assistente prompt per cercare i tuoi personaggi salvati.",
+  "generation.interrogate.set_up_assistant": "Configura",
 
   // ── Progresso / Anteprima ───────────────────────────────
   "progress.generating": "Generazione...",
@@ -2151,6 +2159,9 @@ const it: Record<string, string> = {
   "settings.interrogator.detect_artists": "Rileva artisti (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Indovina chi ha disegnato l'immagine e aggiunge fino a 3 tag artista. Scarica un modello da {size} al primo utilizzo. Le ipotesi possono essere sbagliate, quindi controllale prima di usarle. Kaloscope 3.0 è distribuito con la DINOv3 License.",
   "settings.interrogator.artist_threshold": "Soglia artisti",
+  "settings.interrogator.detect_characters": "Rileva personaggi salvati",
+  "settings.interrogator.detect_characters_desc": "Dopo il tagging, chiede all'assistente prompt quali dei tuoi personaggi salvati per il modello attuale sono nell'immagine e li suggerisce. Non viene aggiunto nulla finché non ne scegli uno.",
+  "settings.interrogator.detect_characters_needs_llm": "Richiede l'assistente prompt.",
 
   "generation.controlnet.browse_or_drop": "Sfoglia o trascina immagine",
   "generation.controlnet.paste": "Incolla",

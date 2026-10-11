@@ -1138,7 +1138,7 @@
     { key: "notifications", labelKey: "settings.sections.notifications", keywords: "notification desktop os system toast alert sound unfocused background window focus" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
-    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope" },
+    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope saved characters detect llm match" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
@@ -4002,6 +4002,29 @@
               </div>
             </div>
             {/if}
+
+            <div class="flex items-center justify-between gap-3 pt-2 border-t border-neutral-800">
+              <div>
+                <label class="text-xs text-neutral-300 font-medium" for="interrogator-detect-characters">{locale.t('settings.interrogator.detect_characters')}</label>
+                <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.interrogator.detect_characters_desc')}</p>
+                {#if config.interrogator_detect_characters && !promptAssistant.isAvailable}
+                  <p class="text-[10px] text-amber-400 mt-1">
+                    {locale.t('settings.interrogator.detect_characters_needs_llm')}
+                    <button type="button" onclick={() => { promptAssistant.setupModalOpen = true; }} class="underline hover:text-amber-300">{locale.t('generation.interrogate.set_up_assistant')}</button>
+                  </p>
+                {/if}
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  id="interrogator-detect-characters"
+                  type="checkbox"
+                  bind:checked={config.interrogator_detect_characters}
+                  onchange={() => { autoSave(); }}
+                  class="sr-only peer"
+                />
+                <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
           </div>
         </section>
         {/if}

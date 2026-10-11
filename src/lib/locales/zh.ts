@@ -1579,6 +1579,14 @@ const zh: Record<string, string> = {
   "generation.interrogate.deselect_all": "取消全选",
   "generation.interrogate.apply_to_prompt": "应用到提示词",
   "generation.interrogate.copy_aibooru": "复制为 AIBooru 格式",
+  "generation.interrogate.saved_characters": "已保存的角色 ({count})",
+  "generation.interrogate.saved_characters_hint": "选择一个即可按保存的内容添加，替代它已涵盖的标签。",
+  "generation.interrogate.matching_characters": "正在检查你保存的角色...",
+  "generation.interrogate.loading_assistant": "正在加载提示词助手...",
+  "generation.interrogate.no_character_match": "图像中没有你为此模型保存的角色。",
+  "generation.interrogate.character_match_invalid": "提示词助手没有返回可用的结果。",
+  "generation.interrogate.character_match_needs_llm": "设置提示词助手后即可查找你保存的角色。",
+  "generation.interrogate.set_up_assistant": "设置",
 
   // ── 进度 / 预览 ────────────────────────────────────────
   "progress.generating": "生成中...",
@@ -2151,6 +2159,9 @@ const zh: Record<string, string> = {
   "settings.interrogator.detect_artists": "识别画师 (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "推测图像的画师，并添加最多 3 个画师标签。首次使用时会下载 {size} 的模型。推测可能有误，使用前请先核对。Kaloscope 3.0 采用 DINOv3 License 发布。",
   "settings.interrogator.artist_threshold": "画师阈值",
+  "settings.interrogator.detect_characters": "检测已保存的角色",
+  "settings.interrogator.detect_characters_desc": "打标签后，询问提示词助手图像中有哪些你为当前模型保存的角色，并给出建议。在你选择之前不会添加任何内容。",
+  "settings.interrogator.detect_characters_needs_llm": "需要提示词助手。",
 
   "generation.controlnet.browse_or_drop": "浏览或拖放图像",
   "generation.controlnet.paste": "粘贴",

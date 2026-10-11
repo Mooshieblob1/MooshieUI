@@ -1579,6 +1579,14 @@ const pt: Record<string, string> = {
   "generation.interrogate.deselect_all": "Desmarcar Tudo",
   "generation.interrogate.apply_to_prompt": "Aplicar ao Prompt",
   "generation.interrogate.copy_aibooru": "Copiar para AIBooru",
+  "generation.interrogate.saved_characters": "Personagens salvos ({count})",
+  "generation.interrogate.saved_characters_hint": "Escolha um para adicioná-lo como está salvo, no lugar das tags que ele já cobre.",
+  "generation.interrogate.matching_characters": "Verificando seus personagens salvos...",
+  "generation.interrogate.loading_assistant": "Carregando o assistente de prompt...",
+  "generation.interrogate.no_character_match": "Nenhum dos seus personagens salvos para este modelo está na imagem.",
+  "generation.interrogate.character_match_invalid": "O assistente de prompt não retornou uma resposta utilizável.",
+  "generation.interrogate.character_match_needs_llm": "Configure o assistente de prompt para procurar seus personagens salvos.",
+  "generation.interrogate.set_up_assistant": "Configurar",
 
   // ── Progresso / Prévia ──────────────────────────────────
   "progress.generating": "Gerando...",
@@ -2151,6 +2159,9 @@ const pt: Record<string, string> = {
   "settings.interrogator.detect_artists": "Detectar artistas (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Tenta adivinhar quem desenhou a imagem e adiciona até 3 tags de artista. Baixa um modelo de {size} na primeira vez. Os palpites podem estar errados, então confira antes de usar. O Kaloscope 3.0 é distribuído sob a DINOv3 License.",
   "settings.interrogator.artist_threshold": "Limite de artistas",
+  "settings.interrogator.detect_characters": "Detectar personagens salvos",
+  "settings.interrogator.detect_characters_desc": "Depois de marcar as tags, pergunta ao assistente de prompt quais dos seus personagens salvos para o modelo atual estão na imagem e os sugere. Nada é adicionado até você escolher um.",
+  "settings.interrogator.detect_characters_needs_llm": "Requer o assistente de prompt.",
 
   "generation.controlnet.browse_or_drop": "Navegar ou soltar imagem",
   "generation.controlnet.paste": "Colar",

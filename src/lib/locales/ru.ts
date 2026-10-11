@@ -1579,6 +1579,14 @@ const ru: Record<string, string> = {
   "generation.interrogate.deselect_all": "Снять выделение",
   "generation.interrogate.apply_to_prompt": "Применить к промпту",
   "generation.interrogate.copy_aibooru": "Копировать для AIBooru",
+  "generation.interrogate.saved_characters": "Сохранённые персонажи ({count})",
+  "generation.interrogate.saved_characters_hint": "Выберите персонажа, чтобы добавить его в сохранённом виде вместо тегов, которые он уже покрывает.",
+  "generation.interrogate.matching_characters": "Проверка сохранённых персонажей...",
+  "generation.interrogate.loading_assistant": "Загрузка помощника промптов...",
+  "generation.interrogate.no_character_match": "Ни одного из сохранённых персонажей для этой модели на изображении нет.",
+  "generation.interrogate.character_match_invalid": "Помощник промптов не дал пригодного ответа.",
+  "generation.interrogate.character_match_needs_llm": "Настройте помощника промптов, чтобы искать сохранённых персонажей.",
+  "generation.interrogate.set_up_assistant": "Настроить",
 
   // ── Прогресс / Предпросмотр ─────────────────────────────
   "progress.generating": "Генерация...",
@@ -2151,6 +2159,9 @@ const ru: Record<string, string> = {
   "settings.interrogator.detect_artists": "Определять художников (Kaloscope 3.0)",
   "settings.interrogator.detect_artists_desc": "Угадывает, кто нарисовал изображение, и добавляет до 3 тегов художников. При первом запуске скачивает модель размером {size}. Догадки могут быть ошибочными, поэтому проверяйте их перед использованием. Kaloscope 3.0 распространяется по лицензии DINOv3 License.",
   "settings.interrogator.artist_threshold": "Порог художников",
+  "settings.interrogator.detect_characters": "Находить сохранённых персонажей",
+  "settings.interrogator.detect_characters_desc": "После разметки тегами спрашивает помощника промптов, кто из ваших сохранённых персонажей для текущей модели есть на изображении, и предлагает их. Ничего не добавляется, пока вы не выберете персонажа.",
+  "settings.interrogator.detect_characters_needs_llm": "Нужен помощник промптов.",
 
   "generation.controlnet.browse_or_drop": "Обзор или перетащите изображение",
   "generation.controlnet.paste": "Вставить",

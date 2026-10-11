@@ -119,6 +119,9 @@ pub struct AppConfig {
     pub interrogator_detect_artists: bool,
     /// Interrogator: minimum Kaloscope softmax score for an artist tag (0.0–1.0).
     pub interrogator_artist_threshold: f32,
+    /// Interrogator: ask the prompt assistant LLM which saved characters are in
+    /// the image and suggest them. The saved characters live in the frontend.
+    pub interrogator_detect_characters: bool,
     /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
     pub prompt_assistant_model_id: Option<String>,
     /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
@@ -340,6 +343,7 @@ impl Default for AppConfig {
             interrogator_detect_artists: false,
             // Correct guesses on test images scored 0.24-0.86, wrong ones about 0.01.
             interrogator_artist_threshold: 0.10,
+            interrogator_detect_characters: false,
             prompt_assistant_model_id: None,
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,

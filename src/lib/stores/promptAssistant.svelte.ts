@@ -104,6 +104,14 @@ import {
   type SavedCharacterHint,
 } from "../utils/characterExtract.js";
 import {
+  CHARACTER_DETECT_RETRY,
+  characterDetectRequest,
+  parseDetectedCharacters,
+  type DetectCandidate,
+  type DetectedCharacter,
+  type DetectTags,
+} from "../utils/characterDetect.js";
+import {
   CHARACTER_MERGE_RETRY,
   characterMergeRequest,
   parseCharacterMerge,
@@ -480,6 +488,35 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
         }
         throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Find which of `candidates` (saved characters) are in an interrogated
+   * image, from the tagger's tags, for the interrogator's suggestions. One
+   * retry when the reply is not the JSON asked for; an empty list means none
+   * matched.
+   */
+  async detectCharacters(tags: DetectTags, candidates: DetectCandidate[]): Promise<DetectedCharacter[]> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    const request = characterDetectRequest(tags, candidates);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseDetectedCharacters(
+            await callExternalLlm(request.system, user, request.maxTokens),
+            tags,
+            candidates,
+          );
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${CHARACTER_DETECT_RETRY}`;
+        }
+        throw new Error("invalid_character_detect");
       });
     } finally {
       this.isGenerating = false;
