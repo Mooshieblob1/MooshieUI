@@ -2778,6 +2778,7 @@ const pl: Record<string, string> = {
   "settings.about.modal_tagline": "Przyjazny interfejs do generowania obrazów AI na komputerze.",
   "settings.about.github_button": "Repozytorium GitHub",
   "settings.about.gpu_garden_button": "gpu.garden",
+  "settings.about.kofi_button": "Wesprzyj na Ko-fi",
   "settings.about.report_issue_button": "Zgłoś problem",
 
   // Issue report form

@@ -9,6 +9,7 @@ Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity beh
 
 ![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI?v=2)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Mooshieblob1)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/mooshieui)
 
 <p align="center">
   <img src="src/lib/assets/logo.png" alt="Logo" width="200">
@@ -21,7 +22,11 @@ Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity beh
 </p>
 
 <p align="center">
-  <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship keeps the updates coming. No pressure, just gratitude. 🙏 (<a href="#-support--where-the-money-goes">where does the money go?</a>)</em>
+  <a href="https://ko-fi.com/R1F628M29D"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support MooshieUI on Ko-fi"></a>
+</p>
+
+<p align="center">
+  <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship or a Ko-fi tip keeps the updates coming. No pressure, just gratitude. 🙏 (<a href="#-support--where-the-money-goes">where does the money go?</a>)</em>
 </p>
 
 ![MooshieUI Screenshot](docs/screenshot.avif)
@@ -165,17 +170,19 @@ bash scripts/setup-hooks.sh
 
 First off, to be clear: **this is not meant to be income.** MooshieUI is a passion project. I build it in my spare time around a regular day job, I don't expect to earn anything from it, and right now the running costs come straight out of my own pocket.
 
-If you [sponsor the project](https://github.com/sponsors/Mooshieblob1), here is exactly where it goes:
+If you support the project through [GitHub Sponsors](https://github.com/sponsors/Mooshieblob1) or [Ko-fi](https://ko-fi.com/mooshieui), here is exactly where it goes:
 
 - **Domain & hosting** - keeping the project site and download links online.
 - **SaaS & dev tooling** - the paid services and tools used to actually build and ship MooshieUI.
 - **GitHub Pro+** - CI/CD minutes for the build, release, and security-scan pipelines.
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/R1F628M29D)
+
 The goal is simply to stop the project from costing me money to keep alive. Anything beyond covering costs just goes right back into building more features, faster.
 
 Longer term, the ideal is that MooshieUI can outlast my own availability. I intend to support this project for as long as I can, but every maintainer has lulls, and life can pull you away for a stretch. A small buffer means the domain, hosting, and infrastructure stay paid up through those quiet periods, so the project stays online and usable even when I am not actively maintaining it.
 
-Sponsoring is completely optional and the app will always be free and open source either way. Thank you for even considering it. 🙏
+Ko-fi is there for anyone who can't use GitHub Sponsors: it takes PayPal and cards, and you don't need an account. Supporting is completely optional and the app will always be free and open source either way. Thank you for even considering it. 🙏
 
 ---
 

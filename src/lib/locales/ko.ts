@@ -2485,6 +2485,7 @@ const ko: Record<string, string> = {
   "settings.about.modal_tagline": "A friendly desktop interface for AI image generation.",
   "settings.about.github_button": "GitHub Repository",
   "settings.about.gpu_garden_button": "gpu.garden",
+  "settings.about.kofi_button": "Ko-fi로 후원하기",
   "settings.about.report_issue_button": "Report an Issue",
   "settings.about.report_title": "Report an Issue",
   "settings.about.report_name_label": "Your Name",
