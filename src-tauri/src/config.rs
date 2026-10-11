@@ -269,6 +269,10 @@ pub struct AppConfig {
     /// persist the clip. Mirrors the image-side `manualSaveMode` toggle.
     #[serde(default)]
     pub manual_save_mode: bool,
+    /// Folders outside the gallery that the desktop gallery shows in place,
+    /// without copying (see `linked_folders`). Desktop only.
+    #[serde(default)]
+    pub linked_gallery_folders: Vec<String>,
 }
 
 /// Default report proxy endpoint. In-app error reports post here unless the
@@ -384,6 +388,7 @@ impl Default for AppConfig {
             report_endpoint: default_report_endpoint(),
             gallery_never_expire: false,
             manual_save_mode: false,
+            linked_gallery_folders: Vec::new(),
         }
     }
 }
@@ -503,6 +508,23 @@ pub fn gallery_dir() -> Option<PathBuf> {
         }
     }
     Some(data_dir.join("gallery"))
+}
+
+/// The linked gallery folders from the persisted config, blank entries dropped.
+/// Read from disk on each call, like `gallery_dir()`, so the URI scheme
+/// handlers need no app state.
+pub fn linked_gallery_folders() -> Vec<String> {
+    let Some(data_dir) = app_data_dir() else {
+        return Vec::new();
+    };
+    read_config_file(&data_dir.join("config.json"))
+        .map(|cfg| {
+            cfg.linked_gallery_folders
+                .into_iter()
+                .filter(|f| !f.trim().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 const APP_IDENTIFIER: &str = "com.mooshieui.desktop";

@@ -9,6 +9,7 @@
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { DEFAULT_NSFW_KEYWORDS, parseNsfwKeywords } from "../../utils/galleryNsfw.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
@@ -179,6 +180,9 @@
   let importBusy = $state(false);
   let importResult = $state<ImportResult | null>(null);
   let importError = $state<string | null>(null);
+  let linkedFoldersBusy = $state(false);
+  // The NSFW keyword box is edited as text and parsed when it loses focus.
+  let nsfwKeywordsText = $state(gallery.nsfwKeywords.join(", "));
 
   // Log export state
   let exportingLogs = $state(false);
@@ -793,6 +797,42 @@
     } finally {
       importBusy = false;
     }
+  }
+
+  /** Save a new linked-folder list, then relist the gallery so it shows (or drops) their images. */
+  async function saveLinkedFolders(folders: string[]) {
+    if (!config) return;
+    linkedFoldersBusy = true;
+    try {
+      config.linked_gallery_folders = folders;
+      await autoSave();
+      await gallery.loadFromDisk();
+    } finally {
+      linkedFoldersBusy = false;
+    }
+  }
+
+  async function handleAddLinkedFolder() {
+    const selected = await openDirectoryDialog(locale.t('settings.gallery.linked_dialog_title'));
+    if (!selected) return;
+    const current = config?.linked_gallery_folders ?? [];
+    if (current.includes(selected)) return;
+    await saveLinkedFolders([...current, selected]);
+  }
+
+  async function handleRemoveLinkedFolder(folder: string) {
+    await saveLinkedFolders((config?.linked_gallery_folders ?? []).filter((f) => f !== folder));
+  }
+
+  function commitNsfwKeywords() {
+    const keywords = parseNsfwKeywords(nsfwKeywordsText);
+    gallery.setNsfwKeywords(keywords);
+    nsfwKeywordsText = keywords.join(", ");
+  }
+
+  function resetNsfwKeywords() {
+    gallery.setNsfwKeywords([...DEFAULT_NSFW_KEYWORDS]);
+    nsfwKeywordsText = DEFAULT_NSFW_KEYWORDS.join(", ");
   }
 
   async function handleBrowseGalleryPath() {
@@ -3601,6 +3641,39 @@
               {/if}
             </div>
 
+            {#if isTauri}
+            <!-- Linked folders: shown in the gallery in place, not copied -->
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs text-neutral-400">{locale.t('settings.gallery.linked_label')}</span>
+                <button
+                  class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:opacity-50"
+                  disabled={linkedFoldersBusy}
+                  onclick={handleAddLinkedFolder}
+                >
+                  {locale.t('settings.gallery.linked_add')}
+                </button>
+              </div>
+              <p class="text-[10px] text-neutral-500 mb-2">{locale.t('settings.gallery.linked_desc')}</p>
+              {#each config.linked_gallery_folders ?? [] as folder (folder)}
+                <div class="flex gap-1.5 mb-1.5 items-center">
+                  <div class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-300 truncate select-text" title={folder}>{folder}</div>
+                  <button
+                    class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors text-xs disabled:opacity-50"
+                    disabled={linkedFoldersBusy}
+                    onclick={() => handleRemoveLinkedFolder(folder)}
+                    title={locale.t('settings.gallery.linked_remove')}
+                    aria-label={locale.t('settings.gallery.linked_remove')}
+                  >
+                    &times;
+                  </button>
+                </div>
+              {:else}
+                <p class="text-[11px] text-neutral-500 italic">{locale.t('settings.gallery.linked_none')}</p>
+              {/each}
+            </div>
+            {/if}
+
             <div class="rounded-lg bg-neutral-800/50 border border-neutral-700/50 p-3">
               <p class="text-[11px] text-neutral-400 leading-relaxed">
                 <strong class="text-neutral-300">{locale.t('settings.gallery.supported_sources').split(':')[0]}:</strong> {locale.t('settings.gallery.supported_sources').split(':').slice(1).join(':').trim()}
@@ -3610,6 +3683,38 @@
               </p>
             </div>
             {/if}
+
+            <!-- NSFW auto-flag (visible to all users; per account) -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={gallery.nsfwAutoFlag}
+                  onchange={(e) => gallery.setNsfwAutoFlag((e.target as HTMLInputElement).checked)}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.gallery.nsfw_auto_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.gallery.nsfw_auto_desc')}</p>
+              {#if gallery.nsfwAutoFlag}
+                <div class="ml-6 mt-2">
+                  <label for="nsfw-keywords" class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.nsfw_keywords_label')}</label>
+                  <textarea
+                    id="nsfw-keywords"
+                    rows="2"
+                    bind:value={nsfwKeywordsText}
+                    onblur={commitNsfwKeywords}
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  ></textarea>
+                  <button
+                    class="mt-1 px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-neutral-500 transition-colors"
+                    onclick={resetNsfwKeywords}
+                  >
+                    {locale.t('settings.gallery.nsfw_keywords_reset')}
+                  </button>
+                </div>
+              {/if}
+            </div>
 
             <!-- Artist image cache (visible to all users) -->
             <div>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
-  import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
+  import { gallery, isVideoImage, GALLERY_MAX_RATING, GALLERY_SOURCE_OWN } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
@@ -12,9 +12,9 @@
   import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import { prepareOutputImageForEditMode } from "../../utils/editImagePreparation.js";
   import { uploadImageBytes } from "../../utils/api.js";
-  import { userScopedKey } from "../../utils/ipc.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import { UPSCALE_FACTOR } from "../../utils/novelaiEnhance.js";
+  import type { GalleryViewMode } from "../../stores/gallery.svelte.js";
   import type { OutputImage } from "../../types/index.js";
 
   interface Props {
@@ -23,18 +23,13 @@
 
   let { onSwitchToGenerate }: Props = $props();
 
-  // Per LAN account (`userScopedKey`): `boardFilter` names one of the
-  // account's own boards.
-  const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
-
-  let galleryImagesPerRow = $state(5);
-  let gallerySortBy = $state<"date" | "name" | "size">("date");
-  let gallerySortDir = $state<"asc" | "desc">("desc");
-  let galleryGroupBy = $state<"none" | "date" | "month" | "mode" | "prompt" | "board">("none");
-  let galleryBoardFilter = $state<string>("all");
   let newBoardName = $state("");
-  let galleryView = $state<"huge" | "large" | "small" | "details">("large");
   let galleryRenderLimit = $state(48);
+  // The search box writes to the store after a short pause, so a large
+  // gallery is not re-filtered on every keystroke.
+  let searchInput = $state(gallery.searchQuery);
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let showSearchHelp = $state(false);
   let dirPickerImage = $state<OutputImage | null>(null);
   // Touch screens have no hover, so a tile's action tray stays hidden until its
   // Actions toggle opens it. One tile at a time.
@@ -49,10 +44,6 @@
     );
     observer.observe(node);
     return { destroy() { observer.disconnect(); } };
-  }
-
-  function getImageTimestamp(image: OutputImage): number {
-    return image.generated_at_ms ?? 0;
   }
 
   /** Compare button label: pin the first image, then pick the second (issue #517). */
@@ -73,10 +64,6 @@
     return touchActionsImage === image
       ? "opacity-100"
       : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-has-[:focus-visible]:opacity-100 group-has-[:focus-visible]:pointer-events-auto";
-  }
-
-  function getImageSize(image: OutputImage): number {
-    return image.file_size_bytes ?? 0;
   }
 
   function formatDate(ts: number | undefined): string {
@@ -122,10 +109,10 @@
     return `${m}:${String(s).padStart(2, "0")}`;
   }
 
-  function viewColumns(view: "huge" | "large" | "small" | "details"): number {
-    if (view === "huge") return Math.max(2, galleryImagesPerRow - 2);
-    if (view === "small") return Math.min(10, galleryImagesPerRow + 2);
-    return galleryImagesPerRow;
+  function viewColumns(view: GalleryViewMode): number {
+    if (view === "huge") return Math.max(2, gallery.imagesPerRow - 2);
+    if (view === "small") return Math.min(10, gallery.imagesPerRow + 2);
+    return gallery.imagesPerRow;
   }
 
   function boardLabel(image: OutputImage): string {
@@ -140,29 +127,29 @@
     const name = newBoardName.trim();
     if (!name) return;
     gallery.addBoard(name);
-    galleryBoardFilter = name;
+    gallery.boardFilter = name;
     newBoardName = "";
   }
 
-  function loadGalleryPrefs() {
-    try {
-      const raw = localStorage.getItem(userScopedKey(GALLERY_PREFS_KEY));
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        imagesPerRow?: number;
-        sortBy?: "date" | "name" | "size";
-        sortDir?: "asc" | "desc";
-        groupBy?: "none" | "date" | "month" | "mode" | "prompt" | "board";
-        boardFilter?: string;
-        view?: "huge" | "large" | "small" | "details";
-      };
-      if (typeof parsed.imagesPerRow === "number") galleryImagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
-      if (parsed.sortBy) gallerySortBy = parsed.sortBy;
-      if (parsed.sortDir) gallerySortDir = parsed.sortDir;
-      if (parsed.groupBy) galleryGroupBy = parsed.groupBy;
-      if (parsed.boardFilter) galleryBoardFilter = parsed.boardFilter;
-      if (parsed.view) galleryView = parsed.view;
-    } catch {}
+  function onSearchInput(value: string) {
+    searchInput = value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      gallery.searchQuery = value;
+      searchTimer = null;
+    }, 150);
+  }
+
+  function clearSearch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = null;
+    searchInput = "";
+    gallery.searchQuery = "";
+  }
+
+  /** Short label for a linked folder: its last path segment. */
+  function folderLabel(folder: string): string {
+    return folder.split(/[\\/]/).filter(Boolean).pop() ?? folder;
   }
 
   async function loadImageForMode(image: OutputImage, mode: "img2img" | "inpainting") {
@@ -250,34 +237,28 @@
     }
   }
 
-  const sortedGalleryImages = $derived.by(() => {
-    const sorted = [...gallery.images].sort((a, b) => {
-      if (gallerySortBy === "name") {
-        const cmp = a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
-        return gallerySortDir === "asc" ? cmp : -cmp;
-      }
-      if (gallerySortBy === "size") {
-        const cmp = getImageSize(a) - getImageSize(b);
-        return gallerySortDir === "asc" ? cmp : -cmp;
-      }
-      const cmp = getImageTimestamp(a) - getImageTimestamp(b);
-      return gallerySortDir === "asc" ? cmp : -cmp;
-    });
-    return galleryBoardFilter === "all" ? sorted : sorted.filter((image) => gallery.getBoard(image) === galleryBoardFilter);
-  });
+  const visibleImages = $derived(gallery.visibleImages);
+  const filtersActive = $derived(
+    gallery.searchQuery.trim() !== "" ||
+      gallery.boardFilter !== "all" ||
+      gallery.sourceFilter !== "all" ||
+      gallery.favouritesOnly ||
+      gallery.minRating > 0 ||
+      gallery.nsfwFilter !== "all",
+  );
 
   const groupedGalleryImages = $derived.by(() => {
-    if (galleryGroupBy !== "none") {
+    if (gallery.groupBy !== "none") {
       const grouped = new Map<string, OutputImage[]>();
-      for (const image of sortedGalleryImages) {
+      for (const image of visibleImages) {
         const key =
-          galleryGroupBy === "date"
+          gallery.groupBy === "date"
             ? formatDateGroup(image.generated_at_ms)
-            : galleryGroupBy === "month"
+            : gallery.groupBy === "month"
               ? formatMonthGroup(image.generated_at_ms)
-              : galleryGroupBy === "mode"
+              : gallery.groupBy === "mode"
                 ? modeLabel(image.generation_mode)
-                : galleryGroupBy === "board"
+                : gallery.groupBy === "board"
                   ? gallery.getBoard(image)
                   : (image.prompt_id || locale.t("gallery.no_prompt_id"));
         const bucket = grouped.get(key) ?? [];
@@ -286,7 +267,7 @@
       }
       return Array.from(grouped.entries()).map(([label, images]) => ({ label, images }));
     }
-    return [{ label: locale.t("gallery.all_images"), images: sortedGalleryImages }];
+    return [{ label: locale.t("gallery.all_images"), images: visibleImages }];
   });
 
   const galleryTotalCount = $derived(groupedGalleryImages.reduce((sum, g) => sum + g.images.length, 0));
@@ -302,38 +283,40 @@
     return result;
   });
 
-  const thumbSize = $derived(viewColumns(galleryView) <= 3 ? 480 : 384);
+  const thumbSize = $derived(viewColumns(gallery.viewMode) <= 3 ? 480 : 384);
 
-  if (typeof window !== "undefined") loadGalleryPrefs();
+  if (typeof window !== "undefined") gallery.loadViewPrefs();
 
   $effect(() => {
-    void gallerySortBy;
-    void gallerySortDir;
-    void galleryGroupBy;
-    void galleryBoardFilter;
+    void gallery.sortBy;
+    void gallery.sortDir;
+    void gallery.groupBy;
+    void gallery.boardFilter;
+    void gallery.searchQuery;
+    void gallery.sourceFilter;
+    void gallery.favouritesOnly;
+    void gallery.minRating;
+    void gallery.nsfwFilter;
     galleryRenderLimit = 48;
   });
 
   $effect(() => {
-    void galleryImagesPerRow;
-    void gallerySortBy;
-    void gallerySortDir;
-    void galleryGroupBy;
-    void galleryBoardFilter;
-    void galleryView;
-    try {
-      localStorage.setItem(
-        userScopedKey(GALLERY_PREFS_KEY),
-        JSON.stringify({
-          imagesPerRow: galleryImagesPerRow,
-          sortBy: gallerySortBy,
-          sortDir: gallerySortDir,
-          groupBy: galleryGroupBy,
-          boardFilter: galleryBoardFilter,
-          view: galleryView,
-        }),
-      );
-    } catch {}
+    void gallery.imagesPerRow;
+    void gallery.sortBy;
+    void gallery.sortDir;
+    void gallery.groupBy;
+    void gallery.boardFilter;
+    void gallery.viewMode;
+    void gallery.favouritesOnly;
+    void gallery.minRating;
+    void gallery.nsfwFilter;
+    void gallery.blurNsfw;
+    void gallery.sourceFilter;
+    gallery.saveViewPrefs();
+  });
+
+  $effect(() => () => {
+    if (searchTimer) clearTimeout(searchTimer);
   });
 </script>
 
@@ -374,22 +357,74 @@
       {/if}
 
       <div class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 space-y-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <input
+                type="text"
+                value={searchInput}
+                oninput={(e) => onSearchInput((e.target as HTMLInputElement).value)}
+                onkeydown={(e) => { if (e.key === "Escape" && searchInput) { e.stopPropagation(); clearSearch(); } }}
+                placeholder={locale.t("gallery.search.placeholder")}
+                aria-label={locale.t("gallery.search.label")}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg pl-3 pr-9 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+              />
+              {#if searchInput}
+                <button
+                  class="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded text-neutral-400 hover:text-neutral-100"
+                  onclick={clearSearch}
+                  title={locale.t("gallery.search.clear")}
+                  aria-label={locale.t("gallery.search.clear")}
+                >&times;</button>
+              {/if}
+            </div>
+            <button
+              class="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border text-sm transition-colors {showSearchHelp ? 'border-indigo-500 text-indigo-300' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500'}"
+              onclick={() => (showSearchHelp = !showSearchHelp)}
+              aria-expanded={showSearchHelp}
+              title={locale.t("gallery.search.help_title")}
+              aria-label={locale.t("gallery.search.help_title")}
+            >?</button>
+          </div>
+          {#if showSearchHelp}
+            <ul class="mt-2 space-y-0.5 text-[11px] text-neutral-400 leading-relaxed">
+              <li>{locale.t("gallery.search.help_words")}</li>
+              <li>{locale.t("gallery.search.help_phrase")}</li>
+              <li>{locale.t("gallery.search.help_exclude")}</li>
+              <li>{locale.t("gallery.search.help_fields")}</li>
+              <li>{locale.t("gallery.search.help_numbers")}</li>
+              <li>{locale.t("gallery.search.help_tags")}</li>
+            </ul>
+          {/if}
+          {#if filtersActive || (gallery.hydratingMetadata && gallery.searchQuery.trim())}
+            <div class="mt-1.5 flex flex-wrap gap-x-3 text-[11px] text-neutral-500">
+              {#if filtersActive}
+                <span>{locale.t("gallery.search.result_count", { shown: String(galleryTotalCount), total: String(gallery.images.length) })}</span>
+              {/if}
+              {#if gallery.hydratingMetadata && gallery.searchQuery.trim()}
+                <span class="text-amber-400/80">{locale.t("gallery.search.reading_metadata")}</span>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
           <div class="lg:col-span-2">
-            <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.images_per_row")} {viewColumns(galleryView)}</div>
-            <input type="range" bind:value={galleryImagesPerRow} min="2" max="8" step="1" class="w-full accent-indigo-500" disabled={galleryView === "details"} />
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.images_per_row")} {viewColumns(gallery.viewMode)}</div>
+            <input type="range" bind:value={gallery.imagesPerRow} min="2" max="8" step="1" class="w-full accent-indigo-500" disabled={gallery.viewMode === "details"} />
           </div>
           <div>
             <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.sort_by")}</div>
-            <select bind:value={gallerySortBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+            <select bind:value={gallery.sortBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
               <option value="date">{locale.t("gallery.sort_date")}</option>
               <option value="name">{locale.t("gallery.sort_name")}</option>
               <option value="size">{locale.t("gallery.sort_size")}</option>
+              <option value="rating">{locale.t("gallery.sort_rating")}</option>
             </select>
           </div>
           <div>
             <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.group_by")}</div>
-            <select bind:value={galleryGroupBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+            <select bind:value={gallery.groupBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
               <option value="none">{locale.t("gallery.group_none")}</option>
               <option value="date">{locale.t("gallery.group_date")}</option>
               <option value="month">{locale.t("gallery.group_month")}</option>
@@ -403,7 +438,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
           <div>
             <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.board_filter")}</div>
-            <select bind:value={galleryBoardFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+            <select bind:value={gallery.boardFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
               <option value="all">{locale.t("gallery.all_boards")}</option>
               <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
               {#each gallery.boards as board}
@@ -420,14 +455,56 @@
           </div>
         </div>
 
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+          <div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.rating_filter")}</div>
+            <select bind:value={gallery.minRating} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+              <option value={0}>{locale.t("gallery.rating_any")}</option>
+              {#each Array.from({ length: GALLERY_MAX_RATING }, (_, i) => i + 1) as stars}
+                <option value={stars}>{locale.t("gallery.rating_at_least", { stars: "★".repeat(stars) })}</option>
+              {/each}
+            </select>
+          </div>
+          <div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.nsfw_filter")}</div>
+            <select bind:value={gallery.nsfwFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+              <option value="all">{locale.t("gallery.nsfw_show_all")}</option>
+              <option value="hide">{locale.t("gallery.nsfw_hide")}</option>
+              <option value="only">{locale.t("gallery.nsfw_only")}</option>
+            </select>
+          </div>
+          {#if gallery.linkedFolders.length > 0}
+            <div>
+              <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.source_filter")}</div>
+              <select bind:value={gallery.sourceFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+                <option value="all">{locale.t("gallery.source_all")}</option>
+                <option value={GALLERY_SOURCE_OWN}>{locale.t("gallery.source_own")}</option>
+                {#each gallery.linkedFolders as folder}
+                  <option value={folder} title={folder}>{folderLabel(folder)}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+          <div class="flex flex-wrap items-center gap-2 {gallery.linkedFolders.length > 0 ? '' : 'lg:col-span-2'}">
+            <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
+              <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.favouritesOnly} />
+              {locale.t("gallery.favourites_only")}
+            </label>
+            <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500" title={locale.t("gallery.blur_nsfw_tooltip")}>
+              <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.blurNsfw} />
+              {locale.t("gallery.blur_nsfw")}
+            </label>
+          </div>
+        </div>
+
         <div>
           <div class="text-xs text-neutral-400 mb-2">{locale.t("gallery.view")}</div>
           <div class="flex flex-wrap gap-2">
-            <button onclick={() => (gallerySortDir = gallerySortDir === "asc" ? "desc" : "asc")} class="px-3 py-1.5 text-xs rounded border transition-colors border-neutral-700 text-neutral-300 hover:border-neutral-500">{gallerySortDir === "asc" ? locale.t("gallery.ascending") : locale.t("gallery.descending")}</button>
-            <button onclick={() => (galleryView = "huge")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'huge' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.huge_icons")}</button>
-            <button onclick={() => (galleryView = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.large_icons")}</button>
-            <button onclick={() => (galleryView = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.small_icons")}</button>
-            <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
+            <button onclick={() => (gallery.sortDir = gallery.sortDir === "asc" ? "desc" : "asc")} class="px-3 py-1.5 text-xs rounded border transition-colors border-neutral-700 text-neutral-300 hover:border-neutral-500">{gallery.sortDir === "asc" ? locale.t("gallery.ascending") : locale.t("gallery.descending")}</button>
+            <button onclick={() => (gallery.viewMode = "huge")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.viewMode === 'huge' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.huge_icons")}</button>
+            <button onclick={() => (gallery.viewMode = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.viewMode === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.large_icons")}</button>
+            <button onclick={() => (gallery.viewMode = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.viewMode === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.small_icons")}</button>
+            <button onclick={() => (gallery.viewMode = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.viewMode === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
             <button onclick={rescanGalleryMetadata} disabled={gallery.loading || gallery.refreshing} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200 disabled:opacity-50">{locale.t("gallery.rescan_metadata")}</button>
             <button onclick={sortGalleryByArtist} disabled={gallery.autoSorting} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50">{gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}</button>
             <label class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
@@ -443,22 +520,31 @@
         </div>
       </div>
 
+      {#if galleryTotalCount === 0}
+        <div class="py-12 text-center text-sm text-neutral-500">{locale.t("gallery.no_matches")}</div>
+      {/if}
+
       {#each galleryGroupsVisible as group}
         <section class="space-y-2">
-          {#if galleryGroupBy !== "none"}
+          {#if gallery.groupBy !== "none"}
             <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
           {/if}
-          {#if galleryView === "details"}
+          {#if gallery.viewMode === "details"}
             <div class="rounded-xl border border-neutral-800 overflow-hidden">
-              <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 bg-neutral-900 text-[11px] uppercase tracking-wide text-neutral-500 border-b border-neutral-800">
+              <div class="grid grid-cols-[72px_1fr_150px_120px_420px] gap-2 px-3 py-2 bg-neutral-900 text-[11px] uppercase tracking-wide text-neutral-500 border-b border-neutral-800">
                 <div>{locale.t("gallery.col_preview")}</div><div>{locale.t("gallery.col_name")}</div><div>{locale.t("gallery.col_date")}</div><div>{locale.t("gallery.col_size")}</div><div>{locale.t("gallery.col_actions")}</div>
               </div>
               {#each group.images as image}
-                <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0">
+                <div class="grid grid-cols-[72px_1fr_150px_120px_420px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0">
                   <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={() => gallery.openLightbox(image)}>
-                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover" />
+                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-md scale-110' : ''}" />
                   </button>
-                  <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
+                  <div class="min-w-0">
+                    <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
+                    {#if image.linked_folder}
+                      <div class="text-[10px] text-neutral-500 truncate" title={image.linked_folder}>{image.linked_folder}</div>
+                    {/if}
+                  </div>
                   <div class="text-xs text-neutral-400">
                     {formatDate(image.generated_at_ms)}
                     {#if gallery.showGenerationTime && image.generationTimeMs != null}
@@ -467,6 +553,30 @@
                   </div>
                   <div class="text-xs text-neutral-400">{formatBytes(image.file_size_bytes)}</div>
                   <div class="flex flex-wrap gap-1">
+                    <button
+                      class="px-2 py-1 text-[11px] rounded {gallery.isFavourite(image) ? 'bg-pink-700/80 hover:bg-pink-600 text-white' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'}"
+                      aria-pressed={gallery.isFavourite(image)}
+                      title={locale.t(gallery.isFavourite(image) ? "gallery.unfavourite" : "gallery.favourite")}
+                      onclick={() => gallery.toggleFavourite(image)}
+                    >♥</button>
+                    <select
+                      class="px-2 py-1 text-[11px] rounded bg-neutral-800 border border-neutral-700 text-amber-300"
+                      value={gallery.getRating(image)}
+                      title={locale.t("gallery.rating")}
+                      aria-label={locale.t("gallery.rating")}
+                      onchange={(e) => gallery.setRating(image, Number((e.target as HTMLSelectElement).value))}
+                    >
+                      <option value={0}>{locale.t("gallery.rating_none")}</option>
+                      {#each Array.from({ length: GALLERY_MAX_RATING }, (_, i) => i + 1) as stars}
+                        <option value={stars}>{"★".repeat(stars)}</option>
+                      {/each}
+                    </select>
+                    <button
+                      class="px-2 py-1 text-[11px] rounded {gallery.isNsfw(image) ? 'bg-red-900/80 hover:bg-red-800 text-red-200' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'}"
+                      aria-pressed={gallery.isNsfw(image)}
+                      title={locale.t(gallery.isNsfw(image) ? "gallery.mark_safe" : "gallery.mark_nsfw")}
+                      onclick={() => gallery.toggleNsfw(image)}
+                    >{locale.t("gallery.nsfw_badge")}</button>
                     <select class="px-2 py-1 text-[11px] rounded bg-neutral-800 border border-neutral-700 text-neutral-200" value={boardLabel(image)} onchange={(e) => assignBoard(image, (e.target as HTMLSelectElement).value)}>
                       <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
                       {#each gallery.boards as board}
@@ -495,16 +605,21 @@
               {/each}
             </div>
           {:else}
-            <div class="grid gap-3" style="grid-template-columns: repeat({viewColumns(galleryView)}, minmax(0, 1fr));">
+            <div class="grid gap-3" style="grid-template-columns: repeat({viewColumns(gallery.viewMode)}, minmax(0, 1fr));">
               {#each group.images as image}
-                <div class="group relative rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors {galleryView === 'huge' ? 'aspect-4/3' : 'aspect-square'}">
+                <div class="group relative rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors {gallery.viewMode === 'huge' ? 'aspect-4/3' : 'aspect-square'}">
                   <button
                     class="w-full h-full"
                     title={isVideoImage(image) ? locale.t("gallery.play_video") : image.filename}
                     onclick={() => gallery.openLightbox(image)}
                   >
-                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover" />
+                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
                   </button>
+                  {#if gallery.shouldBlur(image)}
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <span class="px-2 py-0.5 rounded bg-black/70 text-[11px] font-semibold text-red-300">{locale.t("gallery.nsfw_badge")}</span>
+                    </div>
+                  {/if}
                   {#if isVideoImage(image)}
                     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                       <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
@@ -524,7 +639,15 @@
                       {formatGenerationTime(image.generationTimeMs, locale.current)}
                     </div>
                   {/if}
-                  <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">{boardLabel(image)}</div>
+                  <div class="absolute top-1 left-1 flex items-center gap-1 pointer-events-none">
+                    <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200">{boardLabel(image)}</div>
+                    {#if gallery.isFavourite(image)}
+                      <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-pink-400" title={locale.t("gallery.favourite")}>♥</div>
+                    {/if}
+                    {#if gallery.getRating(image) > 0}
+                      <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-amber-300" title={locale.t("gallery.rating")}>★{gallery.getRating(image)}</div>
+                    {/if}
+                  </div>
                   {#if generation.manualSaveMode && !image.gallery_filename}
                     <div class="absolute top-0 right-0 pt-1 pr-1 transition-opacity {tileOverlayClass(image)}">
                       <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow" title={locale.t("gallery.save_to_folder")} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
@@ -564,6 +687,8 @@
                       <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow" title={locale.t("gallery.copy")} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg></button>
                       <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500 text-neutral-100' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" title={comparePinTitle(image)} onclick={(e) => { e.stopPropagation(); gallery.toggleComparePin(image); }}>⇄</button>
                     {/if}
+                    <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.isFavourite(image) ? 'bg-pink-700/90 hover:bg-pink-600 text-white' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isFavourite(image)} title={locale.t(gallery.isFavourite(image) ? "gallery.unfavourite" : "gallery.favourite")} onclick={(e) => { e.stopPropagation(); gallery.toggleFavourite(image); }}>♥</button>
+                    <button class="w-7 h-7 flex items-center justify-center rounded shadow text-[9px] font-bold {gallery.isNsfw(image) ? 'bg-red-900/90 hover:bg-red-800 text-red-200' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isNsfw(image)} title={locale.t(gallery.isNsfw(image) ? "gallery.mark_safe" : "gallery.mark_nsfw")} onclick={(e) => { e.stopPropagation(); gallery.toggleNsfw(image); }}>{locale.t("gallery.nsfw_badge")}</button>
                     <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow disabled:opacity-50" disabled={gallery.saving} title={locale.t(isVideoImage(image) ? "gallery.save_video_as" : "gallery.save_as")} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>↓</button>
                     <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.confirmDeleteImage(image); }}>×</button>
                   </div>

@@ -583,6 +583,11 @@ export interface OutputImage {
   /** Total wall-clock generation time in ms for this image (top-left badge). */
   generationTimeMs?: number;
   metadata?: Record<string, string> | null;
+  /**
+   * The linked folder this file lives in, for files the gallery shows in place
+   * from a folder outside it. Unset for MooshieUI's own gallery files.
+   */
+  linked_folder?: string;
 }
 
 export interface GalleryImageEntry {
@@ -593,6 +598,10 @@ export interface GalleryImageEntry {
   duration_seconds?: number;
   /** Frame rate for video entries; the player falls back to 24 when absent. */
   fps?: number;
+  /** Linked-folder entries only: the folder, as configured in Settings. */
+  linked_folder?: string;
+  /** Linked-folder entries only: the file's path inside that folder. */
+  display_name?: string;
 }
 
 /** How the A/B comparison viewer blends the two images. */
@@ -734,6 +743,8 @@ export interface AppConfig {
    * image-side `manualSaveMode` toggle.
    */
   manual_save_mode: boolean;
+  /** Folders the desktop gallery shows in place, without copying. Desktop only. */
+  linked_gallery_folders?: string[];
 }
 
 export interface ThemeTone {
