@@ -2,13 +2,13 @@
 
 This guide describes how to land changes on `main` via pull request. `main` is branch-protected: do not push directly to it.
 
-For architecture and agent-specific conventions, see [AGENTS.md](AGENTS.md). For automated bot review triage during releases, see [docs/BOT_REVIEW_TRIAGE.md](docs/BOT_REVIEW_TRIAGE.md).
+For architecture and agent-specific conventions, see [AGENTS.md](../AGENTS.md). For automated bot review triage during releases, see [docs/BOT_REVIEW_TRIAGE.md](BOT_REVIEW_TRIAGE.md).
 
 ---
 
 ## 1. Fork, clone, and develop
 
-Follow [Build from source](README.md#build-from-source) and the prerequisites in [CONTRIBUTING.md](CONTRIBUTING.md):
+Follow [Build from source](../README.md#build-from-source) and the prerequisites in [CONTRIBUTING.md](../.github/CONTRIBUTING.md):
 
 ```bash
 git clone https://github.com/<your-user>/MooshieUI.git
@@ -38,7 +38,7 @@ Every PR runs **GlassWorm Infection Audit** CI. Install the same checks locally 
 bash scripts/setup-hooks.sh
 ```
 
-This enables `.githooks/pre-commit` (Unicode steganography, tampered git dates, suspicious `eval()` patterns, and related checks). See [Security](README.md#-security) in the README for details.
+This enables `.githooks/pre-commit` (Unicode steganography, tampered git dates, suspicious `eval()` patterns, and related checks). See [Security](../README.md#-security) in the README for details.
 
 ---
 
@@ -65,7 +65,7 @@ The Rust suite is green on `main`. If `cargo test` fails, treat it as a regressi
 - **Svelte 5:** No `<style>` blocks; use `onclick` not `on:click`; state stores use `.svelte.ts` and runes, not `svelte/store`.
 - **New Tauri commands:** Return `Result<T, AppError>` and add a matching `ipcInvoke` wrapper in `src/lib/utils/api.ts`.
 
-More rule tables live in [`.agents/skills/pre-commit-check/reference.md`](.agents/skills/pre-commit-check/reference.md) (used by maintainers and coding agents).
+More rule tables live in [`.agents/skills/pre-commit-check/reference.md`](../.agents/skills/pre-commit-check/reference.md) (used by maintainers and coding agents).
 
 ---
 
@@ -112,7 +112,7 @@ git pull origin main
 
 ## 6. Releases (maintainers only)
 
-Version bumps, `CHANGELOG.md`, `RELEASE_NOTES.md`, git tags, and GitHub Releases are **not** part of regular contribution PRs.
+Version bumps, `CHANGELOG.md`, `docs/RELEASE_NOTES.md`, git tags, and GitHub Releases are **not** part of regular contribution PRs.
 
 Releases follow a separate workflow: bump `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together; update changelog files; open `release/vX.Y.Z`; merge; then tag `vX.Y.Z` on `main` to trigger Build & Release CI.
 

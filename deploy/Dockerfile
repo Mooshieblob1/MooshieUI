@@ -112,7 +112,7 @@ RUN case "$(uname -m)" in \
     rm /tmp/uv.tar.gz
 
 # Unprivileged runtime user, with fixed ids so volume ownership is predictable
-# (k8s/deployment.yaml runs as the same uid and sets fsGroup to the same gid).
+# (deploy/k8s/deployment.yaml runs as the same uid and sets fsGroup to the same gid).
 # The server keeps writing into ComfyUI at runtime (custom node deploys, pip
 # installs into its venv, outputs), so the ComfyUI tree and /data belong to this
 # user. The steps that create them run as it, rather than a chown afterwards,
@@ -194,7 +194,7 @@ COPY --from=frontend /build/dist /app/dist
 # build links libcuda.so.1 (the driver stub), so the container must be run with
 # GPU access (--gpus all); on a CPU-only host enhance/compose will fail to load.
 COPY --from=llama /app/ /app/llama/
-COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY --chmod=755 deploy/docker-entrypoint.sh /app/docker-entrypoint.sh
 
 # Create data directory and default config (as the runtime user, so a fresh
 # named volume starts out owned by it).

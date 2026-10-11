@@ -259,7 +259,7 @@ jobs:
           INCLUDE_MACOS: ${{ needs.build-macos.result == 'success' }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          # Build release body: installer blurb + changelog from RELEASE_NOTES.md
+          # Build release body: installer blurb + changelog from docs/RELEASE_NOTES.md
           printf '%s\n' \
             '**One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.' \
             '' \
@@ -281,10 +281,13 @@ jobs:
               '' >> /tmp/release-body.md
           fi
 
-          # Append only this version's section from RELEASE_NOTES.md
-          if [ -f RELEASE_NOTES.md ]; then
+          # Append only this version's section from the release notes (older tags
+          # keep RELEASE_NOTES.md at the repo root)
+          notes=docs/RELEASE_NOTES.md
+          [ -f "$notes" ] || notes=RELEASE_NOTES.md
+          if [ -f "$notes" ]; then
             # Extract from "## What's New in vX.Y.Z" until the next "---" or next version heading
-            sed -n "/^## What's New in ${TAG}/,/^---$/p" RELEASE_NOTES.md | sed '$ { /^---$/d }' >> /tmp/release-body.md
+            sed -n "/^## What's New in ${TAG}/,/^---$/p" "$notes" | sed '$ { /^---$/d }' >> /tmp/release-body.md
           fi
 
           if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
@@ -456,10 +459,22 @@ jobs:
             type=raw,value=${{ steps.docker-vars.outputs.short_sha }}
             type=raw,value=latest
 
+      # Older tags keep the Dockerfile at the repo root; a manual
+      # re-run for one of them checks out that older layout.
+      - name: Locate Dockerfile
+        id: dockerfile
+        run: |
+          if [ -f deploy/Dockerfile ]; then
+            echo "path=deploy/Dockerfile" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=Dockerfile" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push Docker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: ${{ steps.dockerfile.outputs.path }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -10,7 +10,7 @@ Use Node.js 22.12+ or 24+, stable Rust, and the Tauri v2 prerequisites for your
 platform. The locked Svelte Vite plugin requires Node `^20.19 || ^22.12 || >=24`;
 Node 18 is not supported by the current frontend toolchain. Installation and
 experimental Mac scope are covered in the [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation)
-and [Mac guide](docs/MACOS.md).
+and [Mac guide](../docs/MACOS.md).
 
 ```bash
 npm install
@@ -80,7 +80,7 @@ clean.
 
 ### Scope (human-reviewed)
 
-Read `SCOPE.md`. Every PR states how it fits the charter, and every non-trivial
+Read [docs/SCOPE.md](../docs/SCOPE.md). Every PR states how it fits the charter, and every non-trivial
 feature should start as an issue so scope is agreed before you build. Out-of-scope
 changes are declined regardless of quality.
 
@@ -95,7 +95,7 @@ changes are declined regardless of quality.
   `#[cfg(feature = "desktop")]`.
 - Document user-facing changes in the [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki)
   and relevant repository guides. The wiki is a separate repository; see the
-  [documentation maintenance notes](docs/README.md#keeping-documentation-current).
+  [documentation maintenance notes](../docs/README.md#keeping-documentation-current).
 
 ## What CI checks and how to fix each
 

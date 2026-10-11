@@ -2,7 +2,7 @@
 
 Research date: 2026-10-11. Status: **proposal, not implemented.** A working prototype of the full pipeline was built and run outside the app (standalone Python scripts against the same APIs) on 2026-10-10/11. Every cost, failure and workaround below comes from that run unless marked otherwise.
 
-Audience: the agents and maintainer who implement MooshieUI. Read `CLAUDE.md`, `AGENTS.md` and `SCOPE.md` first; nothing here overrides them.
+Audience: the agents and maintainer who implement MooshieUI. Read `CLAUDE.md`, `AGENTS.md` and `docs/SCOPE.md` first; nothing here overrides them.
 
 ---
 
@@ -23,7 +23,7 @@ Audience: the agents and maintainer who implement MooshieUI. Read `CLAUDE.md`, `
 
 ## 2. Scope (needs a maintainer decision before code)
 
-`SCOPE.md` currently describes MooshieUI as ComfyUI plus "optional NovelAI image generation using the user's own API key", and says MooshieUI is "not a video editor ... does not cut, composite, or grade footage". This feature touches both lines. `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md` require a feature issue and a scope statement on the PR.
+`docs/SCOPE.md` currently describes MooshieUI as ComfyUI plus "optional NovelAI image generation using the user's own API key", and says MooshieUI is "not a video editor ... does not cut, composite, or grade footage". This feature touches both lines. `.github/CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md` require a feature issue and a scope statement on the PR.
 
 Arguments for fitting the charter, to put in the feature issue:
 

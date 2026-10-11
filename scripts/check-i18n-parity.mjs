@@ -93,7 +93,7 @@ for (const [f, keys] of Object.entries(untranslated).sort()) {
 
 if (failed) {
   console.error(
-    "\ni18n parity FAILED. Every key and {placeholder} in en.ts must exist in all locale files. See CONTRIBUTING.md (i18n).",
+    "\ni18n parity FAILED. Every key and {placeholder} in en.ts must exist in all locale files. See .github/CONTRIBUTING.md (i18n).",
   );
   process.exit(1);
 }

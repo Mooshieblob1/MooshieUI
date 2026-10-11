@@ -50,7 +50,7 @@ Update version in:
 
 ### 3. Changelog files
 
-Prepend to **both** `RELEASE_NOTES.md` and `CHANGELOG.md`:
+Prepend to **both** `docs/RELEASE_NOTES.md` and `CHANGELOG.md`:
 
 ```markdown
 ## What's New in vX.Y.Z
@@ -116,7 +116,7 @@ Prune any stale local branches.
 ```
 - [ ] Stale release/* branches cleaned up
 - [ ] Three version files match X.Y.Z
-- [ ] RELEASE_NOTES.md + CHANGELOG.md updated
+- [ ] docs/RELEASE_NOTES.md + CHANGELOG.md updated
 - [ ] Release PR merged to main
 - [ ] Tag vX.Y.Z pushed
 - [ ] Release workflow running on GitHub

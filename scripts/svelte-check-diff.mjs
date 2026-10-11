@@ -58,7 +58,7 @@ function a11yMarkdown(a11y) {
   return (
     "### a11y advisory (non-blocking)\n\n" +
     "These accessibility warnings are in files this PR changed. They do not block " +
-    "the merge, but please fix what you can. See CONTRIBUTING.md (a11y).\n\n" +
+    "the merge, but please fix what you can. See .github/CONTRIBUTING.md (a11y).\n\n" +
     "| Location | Warning |\n|---|---|\n" +
     rows +
     "\n"
@@ -77,7 +77,7 @@ function report(result, blockOnErrors) {
   for (const w of a11y) console.log(`  ${w.file}:${w.line}:${w.col}  ${w.msg}`);
   if (blockOnErrors && errors.length) {
     console.error(
-      `\nFAILED: ${errors.length} svelte-check error(s) in files this PR changed. See CONTRIBUTING.md.`,
+      `\nFAILED: ${errors.length} svelte-check error(s) in files this PR changed. See .github/CONTRIBUTING.md.`,
     );
     return 1;
   }

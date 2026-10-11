@@ -10,7 +10,7 @@ agent: agent
 
 Non-release path: **PR → GlassWorm CI → squash merge → sync main**. Run autonomously; do not pause for confirmation unless blocked.
 
-**Does not:** bump version, edit `RELEASE_NOTES.md` / `CHANGELOG.md`, create tags, or run full release build CI.
+**Does not:** bump version, edit `docs/RELEASE_NOTES.md` / `CHANGELOG.md`, create tags, or run full release build CI.
 
 ## Inputs
 
