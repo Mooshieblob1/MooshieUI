@@ -115,6 +115,10 @@ pub struct AppConfig {
     /// MooshieUI never downloads or deletes files from these paths.
     #[serde(default)]
     pub interrogator_custom_models: Vec<CustomInterrogatorModel>,
+    /// Interrogator: also guess the artist with Kaloscope 3.0 (extra 169 MB download).
+    pub interrogator_detect_artists: bool,
+    /// Interrogator: minimum Kaloscope softmax score for an artist tag (0.0–1.0).
+    pub interrogator_artist_threshold: f32,
     /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
     pub prompt_assistant_model_id: Option<String>,
     /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
@@ -333,6 +337,9 @@ impl Default for AppConfig {
             interrogator_character_threshold: 0.85,
             interrogator_model: crate::interrogator::DEFAULT_INTERROGATOR_MODEL.to_string(),
             interrogator_custom_models: vec![],
+            interrogator_detect_artists: false,
+            // Correct guesses on test images scored 0.24-0.86, wrong ones about 0.01.
+            interrogator_artist_threshold: 0.10,
             prompt_assistant_model_id: None,
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,

@@ -2148,6 +2148,9 @@ const ko: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "WD v3 계열 태거의 model.onnx와 selected_tags.csv가 포함된 로컬 폴더를 추가합니다.",
   "settings.interrogator.adding": "추가 중...",
   "settings.interrogator.custom_path_placeholder": "폴더 경로...",
+  "settings.interrogator.detect_artists": "아티스트 감지 (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "이미지를 그린 아티스트를 추정해 아티스트 태그를 최대 3개 추가합니다. 처음 사용할 때 {size} 모델을 다운로드합니다. 추정이 틀릴 수 있으니 사용하기 전에 확인하세요. Kaloscope 3.0은 DINOv3 License로 배포됩니다.",
+  "settings.interrogator.artist_threshold": "아티스트 임계값",
 
   "generation.controlnet.browse_or_drop": "찾아보기 또는 이미지 드롭",
   "generation.controlnet.paste": "붙여넣기",

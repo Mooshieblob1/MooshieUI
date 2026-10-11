@@ -95,6 +95,9 @@ pub struct InterrogatorModelStatus {
     pub input_size: u32,
     pub downloaded: bool,
     pub is_custom: bool,
+    /// The Kaloscope artist detector: listed so Settings can show and delete
+    /// its download, but never offered as a tagger in the model picker.
+    pub is_artist_detector: bool,
 }
 
 /// Status of every selectable model (built-in + custom), given the root that
@@ -113,6 +116,7 @@ pub fn model_statuses_with_custom(
             input_size: info.input_size,
             downloaded: is_model_downloaded_at(&root_dir.join(info.id)),
             is_custom: false,
+            is_artist_detector: false,
         })
         .collect();
     for custom in custom_models {
@@ -124,8 +128,19 @@ pub fn model_statuses_with_custom(
             input_size: 0,
             downloaded: is_model_downloaded_at(&std::path::PathBuf::from(&custom.path)),
             is_custom: true,
+            is_artist_detector: false,
         });
     }
+    statuses.push(InterrogatorModelStatus {
+        id: crate::kaloscope::MODEL_ID.to_string(),
+        label: crate::kaloscope::MODEL_LABEL.to_string(),
+        repo: Some(crate::kaloscope::REPO.to_string()),
+        size_bytes: crate::kaloscope::MODEL_SIZE_BYTES,
+        input_size: crate::kaloscope::INPUT_SIZE,
+        downloaded: crate::kaloscope::is_downloaded_at(root_dir),
+        is_custom: false,
+        is_artist_detector: true,
+    });
     statuses
 }
 
@@ -198,6 +213,8 @@ pub struct InterrogatorState {
     /// Spatial size detected from the ONNX graph at load time (pixels, square).
     /// Defaults to 448 (the WD v3 standard) and is overwritten by `load_session`.
     input_size: u32,
+    /// Optional Kaloscope artist pass; its files live in root_dir/kaloscope-3.
+    artist: crate::kaloscope::ArtistDetector,
 }
 
 impl Default for InterrogatorState {
@@ -220,6 +237,7 @@ impl InterrogatorState {
             model_id: DEFAULT_INTERROGATOR_MODEL.to_string(),
             active_model_dir: default_dir,
             input_size: 448,
+            artist: crate::kaloscope::ArtistDetector::default(),
         }
     }
 
@@ -280,8 +298,35 @@ impl InterrogatorState {
         is_ort_library_present_at(&self.root_dir)
     }
 
-    pub fn session_not_loaded(&self) -> bool {
-        self.session.is_none()
+    /// True when a run would have to load something first: the tagger, or the
+    /// artist detector when `detect_artists` is set. Callers use it to show the
+    /// "loading model" stage.
+    pub fn needs_load(&self, detect_artists: bool) -> bool {
+        self.session.is_none() || (detect_artists && !self.artist.is_loaded())
+    }
+
+    /// Drop whatever cached session reads `model_id`'s files, after those files
+    /// were deleted, so the next run re-downloads instead of failing.
+    pub fn forget_deleted_model(&mut self, model_id: &str) {
+        if model_id == crate::kaloscope::MODEL_ID {
+            self.artist.unload();
+        } else if model_id == self.model_id {
+            self.unload_session();
+        }
+    }
+
+    /// Load the shared ONNX Runtime library. Safe to call more than once.
+    fn init_ort(&self) -> Result<(), AppError> {
+        let lib_path = self.ort_library_path();
+        let builder = ort::init_from(&lib_path).map_err(|e| {
+            AppError::InterrogatorError(format!(
+                "Failed to load ONNX Runtime library at '{}': {}",
+                lib_path.display(),
+                e
+            ))
+        })?;
+        builder.commit();
+        Ok(())
     }
 
     /// Load the ONNX session and tag list, caching for subsequent calls.
@@ -294,15 +339,7 @@ impl InterrogatorState {
         let t = Instant::now();
 
         // Initialize ONNX Runtime from downloaded shared library
-        let lib_path = self.ort_library_path();
-        let builder = ort::init_from(&lib_path).map_err(|e| {
-            AppError::InterrogatorError(format!(
-                "Failed to load ONNX Runtime library at '{}': {}",
-                lib_path.display(),
-                e
-            ))
-        })?;
-        builder.commit();
+        self.init_ort()?;
 
         // Parse tag CSV
         self.tag_list = parse_tags_csv(&self.tags_path())?;
@@ -408,18 +445,51 @@ impl InterrogatorState {
         Ok(())
     }
 
-    /// Run inference on raw bytes (decodes first, then delegates).
-    pub fn run_inference(
+    /// Decode `image_bytes`, then run `interrogate`.
+    pub fn interrogate_bytes(
         &mut self,
         image_bytes: &[u8],
         general_threshold: f32,
         character_threshold: f32,
+        artist_threshold: Option<f32>,
     ) -> Result<InterrogationResult, AppError> {
         let t = Instant::now();
         let img = image::load_from_memory(image_bytes)
             .map_err(|e| AppError::InterrogatorError(format!("Failed to decode image: {}", e)))?;
         eprintln!("[interrogator] Image decoded in {:.1?}", t.elapsed());
-        self.run_inference_from_image(img, general_threshold, character_threshold)
+        self.interrogate(
+            img,
+            general_threshold,
+            character_threshold,
+            artist_threshold,
+        )
+    }
+
+    /// Run the tagger and, when `artist_threshold` is set, Kaloscope artist
+    /// detection, merging its artists into `artist_tags`. The tagger session
+    /// must already be loaded (`load_session`); the artist detector loads on
+    /// first use. Its files must already be downloaded.
+    pub fn interrogate(
+        &mut self,
+        img: image::DynamicImage,
+        general_threshold: f32,
+        character_threshold: f32,
+        artist_threshold: Option<f32>,
+    ) -> Result<InterrogationResult, AppError> {
+        let artists = match artist_threshold {
+            Some(threshold) => {
+                if !self.artist.is_loaded() {
+                    self.init_ort()?;
+                    self.artist.load(&self.root_dir)?;
+                }
+                self.artist.detect(&img, threshold)?
+            }
+            None => Vec::new(),
+        };
+        let mut result =
+            self.run_inference_from_image(img, general_threshold, character_threshold)?;
+        merge_artist_tags(&mut result.artist_tags, artists);
+        Ok(result)
     }
 
     /// Run inference on an already-decoded DynamicImage.
@@ -622,6 +692,18 @@ impl InterrogatorState {
     }
 }
 
+/// Add detected artists to the tagger's own artist tags (custom taggers may
+/// have an artist category), keeping the higher confidence for duplicates.
+fn merge_artist_tags(tags: &mut Vec<TagResult>, detected: Vec<TagResult>) {
+    for artist in detected {
+        match tags.iter_mut().find(|t| t.name == artist.name) {
+            Some(existing) => existing.confidence = existing.confidence.max(artist.confidence),
+            None => tags.push(artist),
+        }
+    }
+    tags.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+}
+
 // ---------------------------------------------------------------------------
 // Path-based download/status helpers.
 //
@@ -693,6 +775,9 @@ pub fn delete_model_files_at(
     model_id: &str,
     custom_models: &[config::CustomInterrogatorModel],
 ) -> Result<(), AppError> {
+    if model_id == crate::kaloscope::MODEL_ID {
+        return crate::kaloscope::delete_files_at(root_dir);
+    }
     if custom_models.iter().any(|m| m.id == model_id) {
         return Err(AppError::InterrogatorError(format!(
             "Cannot delete files for custom model '{}'. Use remove_custom_interrogator_model to deregister it without touching disk.",
@@ -836,7 +921,7 @@ fn parse_tags_csv(path: &std::path::Path) -> Result<Vec<TagDef>, AppError> {
 
 /// Download a file with progress events emitted to the frontend.
 #[cfg(feature = "desktop")]
-async fn download_with_progress(
+pub(crate) async fn download_with_progress(
     app: &AppHandle,
     client: &reqwest::Client,
     url: &str,
@@ -954,7 +1039,7 @@ fn commit_partial_download(
 }
 
 /// Simple download without progress events (for browser mode headless usage).
-async fn download_simple(
+pub(crate) async fn download_simple(
     client: &reqwest::Client,
     url: &str,
     dest: &std::path::Path,
@@ -1134,6 +1219,45 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn merge_artist_tags_dedupes_and_sorts() {
+        let tag = |name: &str, confidence: f32| TagResult {
+            name: name.to_string(),
+            confidence,
+        };
+        let mut tags = vec![tag("a", 0.6), tag("b", 0.2)];
+        merge_artist_tags(&mut tags, vec![tag("b", 0.9), tag("c", 0.3)]);
+        let got: Vec<(&str, f32)> = tags
+            .iter()
+            .map(|t| (t.name.as_str(), t.confidence))
+            .collect();
+        assert_eq!(got, vec![("b", 0.9), ("a", 0.6), ("c", 0.3)]);
+    }
+
+    #[test]
+    fn statuses_list_the_artist_detector_last_and_deletes_it() {
+        let root = scratch_dir("artist-status");
+        let statuses = model_statuses_with_custom(&root, &[]);
+        let last = statuses.last().unwrap();
+        assert!(last.is_artist_detector && !last.downloaded);
+        assert_eq!(last.id, crate::kaloscope::MODEL_ID);
+        assert_eq!(statuses.iter().filter(|s| s.is_artist_detector).count(), 1);
+
+        let dir = crate::kaloscope::model_dir(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::kaloscope::MODEL_FILENAME), b"x").unwrap();
+        std::fs::write(dir.join(crate::kaloscope::LABELS_FILENAME), b"[]").unwrap();
+        assert!(
+            model_statuses_with_custom(&root, &[])
+                .last()
+                .unwrap()
+                .downloaded
+        );
+        delete_model_files_at(&root, crate::kaloscope::MODEL_ID, &[]).unwrap();
+        assert!(!dir.exists());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

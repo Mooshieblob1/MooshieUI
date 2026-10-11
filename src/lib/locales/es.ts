@@ -2217,6 +2217,9 @@ const es: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "Añade una carpeta local que contenga model.onnx y selected_tags.csv de un tagger de la familia WD v3.",
   "settings.interrogator.adding": "Añadiendo...",
   "settings.interrogator.custom_path_placeholder": "Ruta a la carpeta...",
+  "settings.interrogator.detect_artists": "Detectar artistas (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "Adivina quién dibujó la imagen y añade hasta 3 etiquetas de artista. Descarga un modelo de {size} la primera vez. Las suposiciones pueden fallar, así que revísalas antes de usarlas. Kaloscope 3.0 se publica bajo la DINOv3 License.",
+  "settings.interrogator.artist_threshold": "Umbral de artistas",
 
   "generation.controlnet.browse_or_drop": "Buscar o soltar imagen",
   "generation.controlnet.paste": "Pegar",

@@ -2148,6 +2148,9 @@ const ru: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "Добавьте локальную папку, содержащую model.onnx и selected_tags.csv из теггера семейства WD v3.",
   "settings.interrogator.adding": "Добавление...",
   "settings.interrogator.custom_path_placeholder": "Путь к папке...",
+  "settings.interrogator.detect_artists": "Определять художников (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "Угадывает, кто нарисовал изображение, и добавляет до 3 тегов художников. При первом запуске скачивает модель размером {size}. Догадки могут быть ошибочными, поэтому проверяйте их перед использованием. Kaloscope 3.0 распространяется по лицензии DINOv3 License.",
+  "settings.interrogator.artist_threshold": "Порог художников",
 
   "generation.controlnet.browse_or_drop": "Обзор или перетащите изображение",
   "generation.controlnet.paste": "Вставить",

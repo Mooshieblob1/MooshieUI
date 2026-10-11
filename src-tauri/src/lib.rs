@@ -12,6 +12,8 @@ pub mod http_range;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
 pub mod jxl;
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub mod kaloscope;
 pub mod key_source;
 pub mod log_buffer;
 pub mod media_tools;

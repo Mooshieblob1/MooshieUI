@@ -1138,7 +1138,7 @@
     { key: "notifications", labelKey: "settings.sections.notifications", keywords: "notification desktop os system toast alert sound unfocused background window focus" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
-    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space" },
+    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
@@ -3835,7 +3835,7 @@
                 onchange={() => { autoSave(); }}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
               >
-                {#each interrogatorModels as m (m.id)}
+                {#each interrogatorModels.filter((m) => !m.is_artist_detector) as m (m.id)}
                   <option value={m.id}>
                     {m.label}{m.is_custom ? ' ' + locale.t('settings.interrogator.custom_tag') : ' (' + locale.formatBytes(m.size_bytes) + ')'}
                   </option>
@@ -3961,6 +3961,47 @@
                 <span>{locale.t('settings.interrogator.fewer_tags')}</span>
               </div>
             </div>
+
+            <div class="flex items-center justify-between gap-3 pt-2 border-t border-neutral-800">
+              <div>
+                <label class="text-xs text-neutral-300 font-medium" for="interrogator-detect-artists">{locale.t('settings.interrogator.detect_artists')}</label>
+                <p class="text-[10px] text-neutral-500 mt-0.5">
+                  {locale.t('settings.interrogator.detect_artists_desc', { size: locale.formatBytes(interrogatorModels.find((m) => m.is_artist_detector)?.size_bytes ?? 169_079_820) })}
+                </p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  id="interrogator-detect-artists"
+                  type="checkbox"
+                  bind:checked={config.interrogator_detect_artists}
+                  onchange={() => { autoSave(); }}
+                  class="sr-only peer"
+                />
+                <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
+            {#if config.interrogator_detect_artists}
+            <div>
+              <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                {locale.t('settings.interrogator.artist_threshold')}
+                <span class="text-neutral-300">{locale.formatDecimal(config.interrogator_artist_threshold, 2)}</span>
+              </label>
+              <input
+                type="range"
+                bind:value={config.interrogator_artist_threshold}
+                onchange={() => { autoSave(); }}
+                min="0.01"
+                max="0.9"
+                step="0.01"
+                class="w-full accent-indigo-500"
+              />
+              <div class="flex justify-between text-[10px] text-neutral-600 mt-0.5">
+                <span>{locale.t('settings.interrogator.more_tags')}</span>
+                <span>{locale.t('settings.interrogator.fewer_tags')}</span>
+              </div>
+            </div>
+            {/if}
           </div>
         </section>
         {/if}

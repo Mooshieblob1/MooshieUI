@@ -2148,6 +2148,9 @@ const zhTw: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "新增包含 WD v3 系列標記器的 model.onnx 和 selected_tags.csv 的本機資料夾。",
   "settings.interrogator.adding": "新增中...",
   "settings.interrogator.custom_path_placeholder": "資料夾路徑...",
+  "settings.interrogator.detect_artists": "辨識畫師 (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "推測圖像的畫師，並新增最多 3 個畫師標籤。首次使用時會下載 {size} 的模型。推測可能有誤，使用前請先核對。Kaloscope 3.0 採用 DINOv3 License 發布。",
+  "settings.interrogator.artist_threshold": "畫師閾值",
 
   "generation.controlnet.browse_or_drop": "瀏覽或拖放圖像",
   "generation.controlnet.paste": "貼上",

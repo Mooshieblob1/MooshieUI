@@ -2148,6 +2148,9 @@ const it: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "Aggiungi una cartella locale contenente model.onnx e selected_tags.csv da un tagger della famiglia WD v3.",
   "settings.interrogator.adding": "Aggiunta in corso...",
   "settings.interrogator.custom_path_placeholder": "Percorso alla cartella...",
+  "settings.interrogator.detect_artists": "Rileva artisti (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "Indovina chi ha disegnato l'immagine e aggiunge fino a 3 tag artista. Scarica un modello da {size} al primo utilizzo. Le ipotesi possono essere sbagliate, quindi controllale prima di usarle. Kaloscope 3.0 è distribuito con la DINOv3 License.",
+  "settings.interrogator.artist_threshold": "Soglia artisti",
 
   "generation.controlnet.browse_or_drop": "Sfoglia o trascina immagine",
   "generation.controlnet.paste": "Incolla",

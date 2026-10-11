@@ -5786,10 +5786,11 @@ async fn dispatch_command(
             };
             crate::interrogator::delete_model_files_at(&root_dir, &model_id, &custom_models)
                 .map_err(|e| e.to_string())?;
-            let mut guard = state.interrogator.write().await;
-            if guard.model_id() == model_id {
-                guard.unload_session();
-            }
+            state
+                .interrogator
+                .write()
+                .await
+                .forget_deleted_model(&model_id);
             Ok(serde_json::Value::Null)
         }
         "add_custom_interrogator_model" => {
@@ -6638,13 +6639,16 @@ async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
-    let (model_id, custom_models, general_threshold, character_threshold) = {
+    let (model_id, custom_models, general_threshold, character_threshold, artist_threshold) = {
         let config = state.config.read().await;
         (
             config.interrogator_model.clone(),
             config.interrogator_custom_models.clone(),
             config.interrogator_general_threshold,
             config.interrogator_character_threshold,
+            config
+                .interrogator_detect_artists
+                .then_some(config.interrogator_artist_threshold),
         )
     };
 
@@ -6671,6 +6675,18 @@ async fn run_interrogation_headless(
                 .map_err(|e| e.to_string())?;
         }
     }
+    if artist_threshold.is_some() {
+        if !crate::kaloscope::is_downloaded_at(&root_dir) {
+            crate::kaloscope::ensure_downloaded_headless_at(&state.http_client, &root_dir)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        if !crate::interrogator::is_ort_library_present_at(&root_dir) {
+            crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &root_dir)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
     let event_tx = state.event_tx.clone();
     let interrogator = state.interrogator.clone();
@@ -6679,8 +6695,7 @@ async fn run_interrogation_headless(
         // Switching models drops any cached session, so this must precede the
         // load check or a stale session would be reported as already loaded.
         guard.set_model(&model_id, model_dir);
-        let is_first_load = guard.session_not_loaded();
-        if is_first_load {
+        if guard.needs_load(artist_threshold.is_some()) {
             let _ = event_tx.send(crate::state::BroadcastEvent {
                 event: "interrogator:stage".to_string(),
                 payload: serde_json::json!("loading_model"),
@@ -6692,7 +6707,12 @@ async fn run_interrogation_headless(
             payload: serde_json::json!("running_inference"),
         });
         guard
-            .run_inference(&image_bytes, general_threshold, character_threshold)
+            .interrogate_bytes(
+                &image_bytes,
+                general_threshold,
+                character_threshold,
+                artist_threshold,
+            )
             .map_err(|e| e.to_string())
     })
     .await

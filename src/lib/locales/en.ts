@@ -2694,6 +2694,9 @@ const en: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "Add a local folder containing model.onnx and selected_tags.csv from a WD v3-family tagger.",
   "settings.interrogator.adding": "Adding...",
   "settings.interrogator.custom_path_placeholder": "Path to folder...",
+  "settings.interrogator.detect_artists": "Detect artists (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "Guesses who drew the image and adds up to 3 artist tags. Downloads a {size} model the first time. Guesses can be wrong, so check them before using them. Kaloscope 3.0 is released under the DINOv3 License.",
+  "settings.interrogator.artist_threshold": "Artist Threshold",
 
   // Queue
   "settings.queue.title": "Queue",

@@ -2173,6 +2173,9 @@ const ja: Record<string, string> = {
   "settings.interrogator.add_custom_desc": "WD v3 ファミリータガーの model.onnx と selected_tags.csv を含むローカルフォルダを追加します。",
   "settings.interrogator.adding": "追加中...",
   "settings.interrogator.custom_path_placeholder": "フォルダへのパス...",
+  "settings.interrogator.detect_artists": "アーティストを検出 (Kaloscope 3.0)",
+  "settings.interrogator.detect_artists_desc": "画像を描いたアーティストを推定し、最大3件のアーティストタグを追加します。初回は {size} のモデルをダウンロードします。推定は外れることがあるので、使う前に確認してください。Kaloscope 3.0 は DINOv3 License で公開されています。",
+  "settings.interrogator.artist_threshold": "アーティストのしきい値",
 
   "generation.controlnet.browse_or_drop": "参照またはドロップ",
   "generation.controlnet.paste": "貼り付け",

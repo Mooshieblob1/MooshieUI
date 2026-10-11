@@ -14,6 +14,8 @@ struct RunSettings {
     model_dir: PathBuf,
     general_threshold: f32,
     character_threshold: f32,
+    /// Set when Kaloscope artist detection is enabled.
+    artist_threshold: Option<f32>,
 }
 
 /// Read the selected model, resolve its directory (custom or built-in), and make
@@ -25,13 +27,16 @@ async fn prepare_run(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
 ) -> Result<RunSettings, AppError> {
-    let (model_id, custom_models, general_threshold, character_threshold) = {
+    let (model_id, custom_models, general_threshold, character_threshold, artist_threshold) = {
         let config = state.config.read().await;
         (
             config.interrogator_model.clone(),
             config.interrogator_custom_models.clone(),
             config.interrogator_general_threshold,
             config.interrogator_character_threshold,
+            config
+                .interrogator_detect_artists
+                .then_some(config.interrogator_artist_threshold),
         )
     };
 
@@ -54,12 +59,21 @@ async fn prepare_run(
             crate::interrogator::ensure_ort_library_at(app, &state.http_client, &root_dir).await?;
         }
     }
+    if artist_threshold.is_some() {
+        if !crate::kaloscope::is_downloaded_at(&root_dir) {
+            crate::kaloscope::ensure_downloaded_at(app, &state.http_client, &root_dir).await?;
+        }
+        if !crate::interrogator::is_ort_library_present_at(&root_dir) {
+            crate::interrogator::ensure_ort_library_at(app, &state.http_client, &root_dir).await?;
+        }
+    }
 
     Ok(RunSettings {
         model_id,
         model_dir,
         general_threshold,
         character_threshold,
+        artist_threshold,
     })
 }
 
@@ -78,16 +92,16 @@ async fn run_interrogation(
         // Switching models drops any cached session, so this must precede the
         // load check or a stale session would be reported as already loaded.
         guard.set_model(&settings.model_id, settings.model_dir);
-        let is_first_load = guard.session_not_loaded();
-        if is_first_load {
+        if guard.needs_load(settings.artist_threshold.is_some()) {
             app2.emit("interrogator:stage", "loading_model").ok();
         }
         guard.load_session()?;
         app2.emit("interrogator:stage", "running_inference").ok();
-        guard.run_inference(
+        guard.interrogate_bytes(
             &image_bytes,
             settings.general_threshold,
             settings.character_threshold,
+            settings.artist_threshold,
         )
     })
     .await
@@ -107,16 +121,16 @@ async fn run_interrogation_from_image(
     tokio::task::spawn_blocking(move || {
         let mut guard = interrogator.blocking_write();
         guard.set_model(&settings.model_id, settings.model_dir);
-        let is_first_load = guard.session_not_loaded();
-        if is_first_load {
+        if guard.needs_load(settings.artist_threshold.is_some()) {
             app2.emit("interrogator:stage", "loading_model").ok();
         }
         guard.load_session()?;
         app2.emit("interrogator:stage", "running_inference").ok();
-        guard.run_inference_from_image(
+        guard.interrogate(
             img,
             settings.general_threshold,
             settings.character_threshold,
+            settings.artist_threshold,
         )
     })
     .await
@@ -209,9 +223,10 @@ pub async fn list_interrogator_models(
     ))
 }
 
-/// Delete a downloaded built-in tagger's files to reclaim disk space. Deleting
-/// the model that is currently loaded also drops the cached session, so the next
-/// run re-downloads it rather than inferring against files that no longer exist.
+/// Delete a downloaded built-in tagger's (or the Kaloscope artist detector's)
+/// files to reclaim disk space. Deleting a model that is currently loaded also
+/// drops its cached session, so the next run re-downloads it rather than
+/// inferring against files that no longer exist.
 /// Custom models are rejected -- use `remove_custom_interrogator_model` instead.
 #[tauri::command]
 pub async fn delete_interrogator_model(
@@ -228,10 +243,11 @@ pub async fn delete_interrogator_model(
     };
     crate::interrogator::delete_model_files_at(&root_dir, &model_id, &custom_models)?;
 
-    let mut guard = state.interrogator.write().await;
-    if guard.model_id() == model_id {
-        guard.unload_session();
-    }
+    state
+        .interrogator
+        .write()
+        .await
+        .forget_deleted_model(&model_id);
     Ok(())
 }
 

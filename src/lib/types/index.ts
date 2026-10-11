@@ -649,6 +649,10 @@ export interface AppConfig {
   interrogator_character_threshold: number;
   /** Id of the selected tagger from the backend's model registry. */
   interrogator_model: string;
+  /** Also guess the artist with Kaloscope 3.0 when interrogating. */
+  interrogator_detect_artists: boolean;
+  /** Minimum Kaloscope softmax score for an artist tag (0-1). */
+  interrogator_artist_threshold: number;
   prompt_assistant_model_id: string | null;
   prompt_assistant_idle_timeout_secs: number;
   prompt_assistant_setup_done: boolean;
@@ -812,6 +816,8 @@ export interface InterrogatorModelStatus {
   input_size: number;
   downloaded: boolean;
   is_custom: boolean;
+  /** The Kaloscope artist detector: shown in the downloaded list, never in the tagger picker. */
+  is_artist_detector: boolean;
 }
 
 export interface GpuWorkerInfo {
