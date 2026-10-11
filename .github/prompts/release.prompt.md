@@ -107,7 +107,7 @@ Select-String -Pattern '"X.Y.Z"|version = "X.Y.Z"' package.json, src-tauri/Cargo
 
 ### 5. Changelog files
 
-Prepend to **both** `RELEASE_NOTES.md` and `CHANGELOG.md`:
+Prepend to **both** `docs/RELEASE_NOTES.md` and `CHANGELOG.md`:
 
 ```markdown
 ## What's New in vX.Y.Z
@@ -244,7 +244,7 @@ No manual About edit — version from `__APP_VERSION__`; release notes from GitH
 - [ ] Bot comments triaged on open PRs + recent merges (Fix/Skip/Defer documented)
 - [ ] Pre-commit-check passed
 - [ ] Three version files match X.Y.Z
-- [ ] RELEASE_NOTES.md + CHANGELOG.md updated
+- [ ] docs/RELEASE_NOTES.md + CHANGELOG.md updated
 - [ ] cargo check + npm run build passed
 - [ ] Release PR merged to main
 - [ ] Post-merge bot pass completed (no unaddressed Fix items)

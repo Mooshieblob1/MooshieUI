@@ -45,14 +45,15 @@ Local implementation plans and specs may also exist under `docs/superpowers/`. T
 | Topic | Path |
 |-------|------|
 | User-facing readme | [README.md](../README.md) |
-| Contributing / PR workflow | [push-instructions.md](../push-instructions.md) |
-| Contributor checks / scope | [CONTRIBUTING.md](../CONTRIBUTING.md), [SCOPE.md](../SCOPE.md) |
-| Changelog / release notes | [CHANGELOG.md](../CHANGELOG.md), [RELEASE_NOTES.md](../RELEASE_NOTES.md) |
+| Contributing / PR workflow | [push-instructions.md](push-instructions.md) |
+| Contributor checks / scope | [CONTRIBUTING.md](../.github/CONTRIBUTING.md), [SCOPE.md](SCOPE.md) |
+| Changelog / release notes | [CHANGELOG.md](../CHANGELOG.md), [RELEASE_NOTES.md](RELEASE_NOTES.md) |
 | Agent entry | [AGENTS.md](../AGENTS.md) |
 | Copilot / Gemini overview | [GEMINI.md](../GEMINI.md), [.github/copilot-instructions.md](../.github/copilot-instructions.md) |
 | Full agent conventions | [.github/instructions/mooshieui.instructions.md](../.github/instructions/mooshieui.instructions.md) |
 | Layer-specific rules | [.github/instructions/](../.github/instructions/) |
 | Smoke test runbook | [scripts/SMOKE_TEST_RUNBOOK.md](../scripts/SMOKE_TEST_RUNBOOK.md) |
+| Self-host deployment (Docker image, Kubernetes) | [deploy/](../deploy/) |
 
 ## Keeping documentation current
 

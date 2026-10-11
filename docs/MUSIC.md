@@ -427,5 +427,5 @@ inference, installed Tauri/WebView behavior or musical quality on a particular G
 See the [integration record](research/yue2-integration.md) for dated evidence.
 
 The ABC interpreter adapts the upstream skill helper under Apache-2.0; the
-[license](../third-party/yue2-music-LICENSE.txt) is also included in packaged web
+[license](../public/licenses/yue2-music-LICENSE.txt) is also included in packaged web
 assets at `licenses/yue2-music-LICENSE.txt`.

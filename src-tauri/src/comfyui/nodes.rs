@@ -2233,7 +2233,7 @@ mod tests {
     /// or the server image and the desktop app run different third-party code.
     #[test]
     fn dockerfile_node_pins_match() {
-        const DOCKERFILE: &str = include_str!("../../../Dockerfile");
+        const DOCKERFILE: &str = include_str!("../../../deploy/Dockerfile");
         let packages = all_node_packages();
         let mut seen = 0;
         for line in DOCKERFILE.lines() {

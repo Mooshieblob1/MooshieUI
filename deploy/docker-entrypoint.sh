@@ -38,7 +38,7 @@ for dir in /data /data/models; do
         echo "  Hand the volume to the image's user once, e.g.:" >&2
         echo "    docker run --rm --user 0 -v <volume-or-host-path>:$dir --entrypoint chown <image> -R 10001:10001 $dir" >&2
         echo "  or, for a host directory: sudo chown -R 10001:10001 <host-path>" >&2
-        echo "  On Kubernetes, set the pod securityContext fsGroup: 10001 (see k8s/deployment.yaml)." >&2
+        echo "  On Kubernetes, set the pod securityContext fsGroup: 10001 (see deploy/k8s/deployment.yaml)." >&2
         exit 1
     fi
 done

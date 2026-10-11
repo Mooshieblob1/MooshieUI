@@ -10,10 +10,8 @@
 /src-tauri/            @Mooshieblob1
 /comfyui-nodes/        @Mooshieblob1
 /report-proxy/         @Mooshieblob1
-/k8s/                  @Mooshieblob1
-/Dockerfile            @Mooshieblob1
+/deploy/               @Mooshieblob1
 /docker-compose.yml    @Mooshieblob1
-/docker-entrypoint.sh  @Mooshieblob1
 /package.json          @Mooshieblob1
 /package-lock.json     @Mooshieblob1
 /pnpm-lock.yaml        @Mooshieblob1

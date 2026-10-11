@@ -30,7 +30,7 @@ async fn main() {
     match (&admin_user, &admin_pass) {
         (Some(user), Some(pass)) if !user.trim().is_empty() && pass.len() >= 4 => {
             // Refuse the placeholder passwords the shipped docker-compose.yml
-            // and k8s/secret.yaml carry: they must not be accepted even with a
+            // and deploy/k8s/secret.yaml carry: they must not be accepted even with a
             // forced-change flag because the account would be reachable with a
             // known credential the moment it is created.
             if is_placeholder_password(pass) {
@@ -227,7 +227,7 @@ async fn shutdown_signal() {
 }
 
 /// Placeholder admin passwords shipped in `docker-compose.yml` and
-/// `k8s/secret.yaml`. Anyone who read those files knows them.
+/// `deploy/k8s/secret.yaml`. Anyone who read those files knows them.
 fn is_placeholder_password(pass: &str) -> bool {
     ["changeme", "replace_me"]
         .iter()

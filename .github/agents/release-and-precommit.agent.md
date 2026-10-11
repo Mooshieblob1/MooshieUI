@@ -199,7 +199,7 @@ If Phase 1 completes successfully (or if the user explicitly overrides to force 
    - `package.json` (`"version": "X.Y.Z"`)
    - `src-tauri/Cargo.toml` (`version = "X.Y.Z"`)
    - `src-tauri/tauri.conf.json` (`"version": "X.Y.Z"`)
-3. Prepend the new version notes into `RELEASE_NOTES.md` and `CHANGELOG.md` under the heading `## What's New in vX.Y.Z`.
+3. Prepend the new version notes into `docs/RELEASE_NOTES.md` and `CHANGELOG.md` under the heading `## What's New in vX.Y.Z`.
 4. Commit changes: `git -c core.hooksPath=/dev/null commit -am "vX.Y.Z: release"`
 5. Tag the commit: `git tag vX.Y.Z`
 
@@ -250,7 +250,7 @@ Read the `.sig` files collected. Generate `release-files/latest.json`:
 ```
 
 ### 6. Create GitHub Release
-Extract the latest version's changelog from `RELEASE_NOTES.md` to `release-body.md`. Create the GitHub release via `gh` CLI:
+Extract the latest version's changelog from `docs/RELEASE_NOTES.md` to `release-body.md`. Create the GitHub release via `gh` CLI:
 ```powershell
 gh release create "vX.Y.Z" --title "MooshieUI vX.Y.Z" --notes-file release-body.md ./release-files/*
 ```

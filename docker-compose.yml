@@ -1,6 +1,8 @@
 services:
   mooshieui:
-    build: .
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
     image: ghcr.io/mooshieblob1/mooshieui:latest
     ports:
       - "${MOOSHIEUI_PORT:-3200}:3200"

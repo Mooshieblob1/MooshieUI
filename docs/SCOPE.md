@@ -22,7 +22,7 @@ open an issue with the feature template and ask.
   provider credentials.
 - Windows/Linux releases and experimental Apple Silicon macOS candidates,
   with native desktop and embedded browser-server modes sharing one codebase.
-  See [Mac support status](docs/MACOS.md).
+  See [Mac support status](MACOS.md).
 - Localized (i18n across all supported locales) and accessible (a11y).
 
 ## What MooshieUI is not

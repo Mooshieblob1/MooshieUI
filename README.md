@@ -59,7 +59,7 @@ Technical references and project planning documents are indexed in [docs/README.
 
 ## ✨ Highlights
 
-> **v2.3.6:** Build music styles from reference songs or audio, sign in to supported Prompt Assistant accounts, and use new H3 Turbo presets. See [the release notes](RELEASE_NOTES.md).
+> **v2.3.6:** Build music styles from reference songs or audio, sign in to supported Prompt Assistant accounts, and use new H3 Turbo presets. See [the release notes](docs/RELEASE_NOTES.md).
 
 - **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext and Anima ReStyler.
 - **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
@@ -110,7 +110,7 @@ Open `http://localhost:3200` (or the host port set by `MOOSHIEUI_PORT`) and sign
 
 ### Build from source
 
-Use Node.js 22.12+ or 24+, stable Rust, and the platform's Tauri v2 build prerequisites. See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and both Rust build targets.
+Use Node.js 22.12+ or 24+, stable Rust, and the platform's Tauri v2 build prerequisites. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for validation and both Rust build targets.
 
 ```bash
 git clone https://github.com/Mooshieblob1/MooshieUI.git
@@ -181,7 +181,7 @@ Sponsoring is completely optional and the app will always be free and open sourc
 
 ## 🤝 Contributing
 
-Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks. See **[push-instructions.md](push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, and CI).
+Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks. See **[docs/push-instructions.md](docs/push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, and CI).
 
 ---
 

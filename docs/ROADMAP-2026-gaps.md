@@ -2,7 +2,7 @@
 
 This document retains the original gap-analysis topics and records their status
 against **v2.3.1**. Proposals are not release commitments. The current project
-charter is [SCOPE.md](../SCOPE.md); user instructions live in the
+charter is [SCOPE.md](SCOPE.md); user instructions live in the
 [wiki](https://github.com/Mooshieblob1/MooshieUI/wiki).
 
 ## Status of the original roadmap

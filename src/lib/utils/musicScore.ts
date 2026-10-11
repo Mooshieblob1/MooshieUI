@@ -2,7 +2,7 @@
  * Bounded YuE2/SheetSage2 ABC interpreter. Musical semantics adapted from
  * yue2-music/scripts/abc_tools.py,
  * Apache-2.0. Upstream revision: 88da114a67df892af0329472073b96a5ef700b93.
- * See third-party/yue2-music-LICENSE.txt. This is not a general ABC parser.
+ * See public/licenses/yue2-music-LICENSE.txt. This is not a general ABC parser.
  * Durations use exact binary fractions (power-of-two units up to 1/1024).
  */
 export const SCORE_VOICES = ["Vocal", "Ins"] as const;

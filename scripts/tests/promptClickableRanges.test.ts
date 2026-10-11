@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   getPromptClickableSegments,
   type PromptClickableSegment,
-} from "../src/lib/utils/promptClickableRanges.ts";
+} from "../../src/lib/utils/promptClickableRanges.ts";
 
 function summarize(segments: PromptClickableSegment[], raw: string) {
   return segments.map((segment) => ({

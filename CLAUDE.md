@@ -62,7 +62,7 @@ Project skills live in `.claude/skills/` (synced from canonical `.agents/skills/
 - **Pre-commit hook is bash** (GlassWorm scan in `.githooks/pre-commit`) and hangs in PowerShell — on Windows, prefix every git command with `git -c core.hooksPath=/dev/null`.
 - **Branch protection on `main`** — land via PR; CI gate is the "GlassWorm Infection Audit" check.
 - **Tags are protected** (no delete/force-update). If a tag push fails to trigger the release workflow, use `gh workflow run release.yml -f tag=vX.Y.Z`.
-- Prepend release notes to **both** `RELEASE_NOTES.md` and `CHANGELOG.md`. The About UI needs no manual edit (`__APP_VERSION__` + GitHub Releases API).
+- Prepend release notes to **both** `docs/RELEASE_NOTES.md` and `CHANGELOG.md`. The About UI needs no manual edit (`__APP_VERSION__` + GitHub Releases API).
 - Bot PR comment triage rules: `docs/BOT_REVIEW_TRIAGE.md` (Fix / Skip / Defer).
 
 ## Other Non-Obvious Items
