@@ -28,6 +28,7 @@ import {
 import { styleEditors } from "./styleEditors.svelte.js";
 import { artistInsert } from "./artistInsert.svelte.js";
 import { locale } from "./locale.svelte.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import { artistFavourites } from "../artist-gallery/favourites.svelte.js";
 import { submitGeneration } from "../utils/generationSubmit.js";
 import { classifyGenerationError } from "../utils/generationErrors.js";
@@ -745,51 +746,74 @@ class StyleCreatorStore {
     try {
       const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (!raw) return;
-      const data = JSON.parse(raw);
-      if (data.count !== undefined) this.count = clampCount(data.count);
-      if (data.favouritesOnly !== undefined) this.favouritesOnly = !!data.favouritesOnly;
-      if (data.varyWeights !== undefined) this.varyWeights = !!data.varyWeights;
-      if (data.pairInNai !== undefined) this.pairInNai = !!data.pairInNai;
-      if (data.viewerSideBySide !== undefined) this.viewerSideBySide = !!data.viewerSideBySide;
-      if (data.anchor?.artists !== undefined && Array.isArray(data.anchor.artists)) {
-        this.anchor = data.anchor.artists
-          .filter((a: any) => a && typeof a.tag === "string" && a.tag.trim())
-          .map((a: any) => ({
-            tag: a.tag,
-            slug: typeof a.slug === "string" ? a.slug : undefined,
-            weight: typeof a.weight === "number" && Number.isFinite(a.weight) ? a.weight : 1,
-          }));
-      }
-      if (data.anchor?.styleId !== undefined) {
-        this.anchorStyleId = typeof data.anchor.styleId === "string" ? data.anchor.styleId : null;
-      }
-      if (data.history !== undefined && Array.isArray(data.history)) {
-        this.history = new Set(data.history.filter((k: unknown) => typeof k === "string"));
-      }
+      this.hydrate(JSON.parse(raw));
     } catch (e) {
       console.error("styleCreator: load failed", e);
     }
   }
 
+  private hydrate(data: any): void {
+    if (!data || typeof data !== "object") return;
+    if (data.count !== undefined) this.count = clampCount(data.count);
+    if (data.favouritesOnly !== undefined) this.favouritesOnly = !!data.favouritesOnly;
+    if (data.varyWeights !== undefined) this.varyWeights = !!data.varyWeights;
+    if (data.pairInNai !== undefined) this.pairInNai = !!data.pairInNai;
+    if (data.viewerSideBySide !== undefined) this.viewerSideBySide = !!data.viewerSideBySide;
+    if (data.anchor?.artists !== undefined && Array.isArray(data.anchor.artists)) {
+      this.anchor = data.anchor.artists
+        .filter((a: any) => a && typeof a.tag === "string" && a.tag.trim())
+        .map((a: any) => ({
+          tag: a.tag,
+          slug: typeof a.slug === "string" ? a.slug : undefined,
+          weight: typeof a.weight === "number" && Number.isFinite(a.weight) ? a.weight : 1,
+        }));
+    }
+    if (data.anchor?.styleId !== undefined) {
+      this.anchorStyleId = typeof data.anchor.styleId === "string" ? data.anchor.styleId : null;
+    }
+    if (data.history !== undefined && Array.isArray(data.history)) {
+      this.history = new Set(data.history.filter((k: unknown) => typeof k === "string"));
+    }
+  }
+
+  private persisted() {
+    return {
+      count: this.count,
+      favouritesOnly: this.favouritesOnly,
+      varyWeights: this.varyWeights,
+      pairInNai: this.pairInNai,
+      viewerSideBySide: this.viewerSideBySide,
+      anchor: {
+        artists: this.anchor.map((a) => ({ tag: a.tag, slug: a.slug, weight: a.weight })),
+        styleId: this.anchorStyleId,
+      },
+      history: [...this.history],
+    };
+  }
+
   saveSettings(): void {
+    this.writeLocal();
+    triggerSync();
+  }
+
+  private writeLocal(): void {
     try {
-      localStorage.setItem(
-        userScopedKey(STORAGE_KEY),
-        JSON.stringify({
-          count: this.count,
-          favouritesOnly: this.favouritesOnly,
-          varyWeights: this.varyWeights,
-          pairInNai: this.pairInNai,
-          viewerSideBySide: this.viewerSideBySide,
-          anchor: {
-            artists: this.anchor.map((a) => ({ tag: a.tag, slug: a.slug, weight: a.weight })),
-            styleId: this.anchorStyleId,
-          },
-          history: [...this.history],
-        }),
-      );
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(this.persisted()));
     } catch (e) {
       console.error("styleCreator: save failed", e);
+    }
+  }
+
+  collectPrefs(): unknown {
+    return this.persisted();
+  }
+
+  applyServerPrefs(data: unknown): void {
+    try {
+      this.hydrate(data);
+      this.writeLocal();
+    } catch (e) {
+      console.error("styleCreator: applyServerPrefs failed", e);
     }
   }
 }

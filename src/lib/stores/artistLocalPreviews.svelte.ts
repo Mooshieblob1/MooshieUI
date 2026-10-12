@@ -1,5 +1,6 @@
 import type { ArtistPreviewVariant } from "../artist-gallery/previewRecipe.js";
 import { userScopedKey } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 
 /**
  * Locally generated artist previews.
@@ -28,6 +29,20 @@ function runKey(slug: string, variant: ArtistPreviewVariant): string {
   return `${slug}::p${variant}`;
 }
 
+function sanitizePreviews(parsed: unknown): Record<string, LocalPreviewSlot> {
+  const clean: Record<string, LocalPreviewSlot> = {};
+  if (!parsed || typeof parsed !== "object") return clean;
+  for (const [slug, slot] of Object.entries(parsed)) {
+    if (!slot || typeof slot !== "object") continue;
+    const s = slot as LocalPreviewSlot;
+    const next: LocalPreviewSlot = {};
+    if (typeof s.p1 === "string" && s.p1) next.p1 = s.p1;
+    if (typeof s.p2 === "string" && s.p2) next.p2 = s.p2;
+    if (next.p1 || next.p2) clean[slug] = next;
+  }
+  return clean;
+}
+
 class ArtistLocalPreviewsStore {
   /** slug -> gallery filenames, one per variant. Persisted. */
   previews = $state<Record<string, LocalPreviewSlot>>({});
@@ -45,29 +60,32 @@ class ArtistLocalPreviewsStore {
     try {
       const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
       if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return;
-      const clean: Record<string, LocalPreviewSlot> = {};
-      for (const [slug, slot] of Object.entries(parsed)) {
-        if (!slot || typeof slot !== "object") continue;
-        const s = slot as LocalPreviewSlot;
-        const next: LocalPreviewSlot = {};
-        if (typeof s.p1 === "string" && s.p1) next.p1 = s.p1;
-        if (typeof s.p2 === "string" && s.p2) next.p2 = s.p2;
-        if (next.p1 || next.p2) clean[slug] = next;
-      }
-      this.previews = clean;
+      this.previews = sanitizePreviews(JSON.parse(raw));
     } catch {
       /* localStorage unavailable or corrupt; start empty */
     }
   }
 
   private persist(): void {
+    this.writeLocal();
+    triggerSync();
+  }
+
+  private writeLocal(): void {
     try {
       localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(this.previews));
     } catch {
       /* ignore */
     }
+  }
+
+  collectPrefs(): unknown {
+    return this.previews;
+  }
+
+  applyServerPrefs(data: unknown): void {
+    this.previews = sanitizePreviews(data);
+    this.writeLocal();
   }
 
   isRunning(slug: string, variant: ArtistPreviewVariant): boolean {

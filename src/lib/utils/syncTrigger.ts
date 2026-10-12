@@ -5,9 +5,8 @@
  * Stores call triggerSync() after every local save.
  * prefsSync registers itself as the handler on initialisation.
  *
- * In Tauri desktop mode (no shared server) the handler is never registered
- * so triggerSync() is effectively a no-op — local persistence still works
- * exactly as before via ipcStore / localStorage.
+ * Desktop and browser mode both register it; the pushes land in the one
+ * shared copy of the user's data that both modes read.
  */
 
 let _handler: (() => void) | null = null;
@@ -18,9 +17,9 @@ export function registerSyncHandler(handler: () => void): void {
 }
 
 /**
- * Trigger a debounced push of all store state to the server.
+ * Trigger a debounced push of changed store state to the shared copy.
  * Safe to call unconditionally — is a no-op until registerSyncHandler() has
- * been called, and always a no-op in pure Tauri / offline mode.
+ * been called (and in plain Vite dev, where there is no backend).
  */
 export function triggerSync(): void {
   _handler?.();

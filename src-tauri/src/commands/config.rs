@@ -218,3 +218,17 @@ pub async fn switch_to_browser_mode(
     log::info!("switch_to_browser_mode: done");
     Ok(())
 }
+
+/// The desktop owner's saved preferences, the same file browser mode on this
+/// machine reads, so both modes share one copy. `None` when nothing is saved.
+#[tauri::command]
+pub async fn get_user_prefs() -> Result<Option<crate::user_prefs::UserPrefs>, AppError> {
+    Ok(crate::user_prefs::load(crate::user_prefs::OWNER_KEY).await)
+}
+
+/// Update the desktop owner's saved preferences (categories left out are
+/// kept) and return the new `updated_at`.
+#[tauri::command]
+pub async fn save_user_prefs(prefs: crate::user_prefs::UserPrefs) -> Result<String, AppError> {
+    Ok(crate::user_prefs::update(crate::user_prefs::OWNER_KEY, prefs).await?)
+}

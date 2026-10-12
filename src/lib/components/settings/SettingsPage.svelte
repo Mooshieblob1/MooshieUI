@@ -1144,13 +1144,6 @@
       updateError = String(e);
     }
   }
-  let dyslexicFont = $state(localStorage.getItem("mooshieui.dyslexicFont") === "true");
-
-  $effect(() => {
-    document.documentElement.classList.toggle("dyslexic-font", dyslexicFont);
-    localStorage.setItem("mooshieui.dyslexicFont", String(dyslexicFont));
-  });
-
   // Active settings category (sidebar), persisted across tab switches
   const ACTIVE_CATEGORY_KEY = "mooshieui.settings.activeCategory.v1";
   let activeCategory = $state(loadActiveCategory());
@@ -2788,7 +2781,8 @@
             <input
               type="checkbox"
               id="dyslexic-font"
-              bind:checked={dyslexicFont}
+              bind:checked={accessibility.dyslexicFont}
+              onchange={() => accessibility.saveSettings()}
               class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
             />
             <div>

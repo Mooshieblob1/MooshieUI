@@ -1,3 +1,4 @@
+import { triggerSync } from "../utils/syncTrigger.js";
 import { userScopedKey } from "../utils/ipc.js";
 import {
   elevenlabsDeleteVoice,
@@ -262,11 +263,15 @@ class AnimeSceneStore {
     return s?.voice_limit != null && s.voice_slots_used != null && s.voice_slots_used >= s.voice_limit;
   }
 
-  loadSettings() {
+  /** Restore the saved scene, from `from` when given, else from local storage. */
+  loadSettings(from?: Partial<Persisted>) {
     try {
-      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
-      if (!raw) return;
-      const p = JSON.parse(raw) as Partial<Persisted>;
+      let p = from;
+      if (!p) {
+        const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
+        if (!raw) return;
+        p = JSON.parse(raw) as Partial<Persisted>;
+      }
       if (typeof p.characterName === "string") this.characterName = p.characterName;
       if (typeof p.isMinor === "boolean") this.isMinor = p.isMinor;
       if (typeof p.designLocked === "boolean") this.designLocked = p.designLocked;
@@ -316,8 +321,8 @@ class AnimeSceneStore {
     }
   }
 
-  saveSettings() {
-    const data: Persisted = {
+  private persisted(): Persisted {
+    return {
       characterName: this.characterName,
       isMinor: this.isMinor,
       designLocked: this.designLocked,
@@ -332,11 +337,33 @@ class AnimeSceneStore {
       video: this.video,
       clips: this.clips,
     };
+  }
+
+  saveSettings() {
+    this.writeLocal();
+    triggerSync();
+  }
+
+  private writeLocal() {
     try {
-      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(data));
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(this.persisted()));
     } catch {
       /* storage full or blocked: the scene still works for this session */
     }
+  }
+
+  collectPrefs(): unknown {
+    return this.persisted();
+  }
+
+  applyServerPrefs(data: unknown) {
+    if (!data || typeof data !== "object") return;
+    try {
+      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(data));
+    } catch {
+      /* storage full or blocked: still hydrate below from the data itself */
+    }
+    this.loadSettings(data as Partial<Persisted>);
   }
 
   /** Start a new scene. Clears the character, its minor flag and any lock. */

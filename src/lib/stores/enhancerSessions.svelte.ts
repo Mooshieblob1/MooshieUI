@@ -1,4 +1,5 @@
 import { userScopedKey } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import {
   appendTurn,
   emptySessions,
@@ -65,7 +66,21 @@ class EnhancerSessionsStore {
     this.save();
   }
 
+  collectPrefs(): unknown {
+    return this.sessions;
+  }
+
+  applyServerPrefs(data: unknown): void {
+    this.sessions = parseStoredSessions(JSON.stringify(data ?? null));
+    this.writeLocal();
+  }
+
   private save(): void {
+    this.writeLocal();
+    triggerSync();
+  }
+
+  private writeLocal(): void {
     try {
       localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(this.sessions));
     } catch (e) {

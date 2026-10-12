@@ -177,6 +177,12 @@
     });
   }
 
+  // The dyslexia-friendly font follows the accessibility setting, which a
+  // save from the other mode (desktop or browser) can change too.
+  $effect(() => {
+    document.documentElement.classList.toggle("dyslexic-font", accessibility.dyslexicFont);
+  });
+
   // Re-check what the picked VAE and text encoder files really are whenever a
   // pick changes, so the model panel can flag e.g. a text encoder chosen as VAE.
   $effect(() => {
@@ -2568,11 +2574,6 @@
       } catch {}
     }
 
-    // Apply dyslexic font if enabled
-    if (localStorage.getItem("mooshieui.dyslexicFont") === "true") {
-      document.documentElement.classList.add("dyslexic-font");
-    }
-
     gallery.loadViewPrefs();
     downloads.init();
     notifications.startPolling();
@@ -2682,12 +2683,10 @@
     await syncManualSaveModeToConfig();
     startupStatus = locale.t("app.status.starting_comfyui");
 
-    // Browser/LAN mode: pull the server-side preference snapshot (or seed it
-    // from current local state) once local settings have loaded and the auth
-    // token is available. No-op in Tauri desktop mode.
-    if (isBrowserMode) {
-      void prefsSync.loadAndApply().then(syncManualSaveModeToConfig);
-    }
+    // Pull the user's shared saved data (one copy for desktop and browser
+    // mode, merging this mode's old separate copy in on its first start) once
+    // local settings have loaded and the auth token is available.
+    void prefsSync.loadAndApply().then(syncManualSaveModeToConfig);
 
     // Prompt assistant: detect hardware + pre-select recommended model at launch.
     promptAssistant.init();

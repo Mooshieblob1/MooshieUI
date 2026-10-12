@@ -711,6 +711,8 @@ pub fn run() {
             commands::cloud::scene_exact_voice,
             commands::config::get_config,
             commands::config::update_config,
+            commands::config::get_user_prefs,
+            commands::config::save_user_prefs,
             commands::config::get_gallery_path,
             commands::config::set_gallery_path,
             commands::config::switch_to_browser_mode,
