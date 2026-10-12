@@ -304,6 +304,10 @@
   let lanAuthError = $state<string | null>(null);
   let lanAuthBusy = $state(false);
   let lanAddresses = $state<string[]>([]);
+  let lanHostnameUrl = $state<string | null>(null);
+  let lanListening = $state(true);
+  let copiedLanUrl = $state<string | null>(null);
+  let copiedLanTimer: ReturnType<typeof setTimeout> | undefined;
   let showAddAccountModal = $state(false);
 
   // Account list: search, sort, and delete modal
@@ -577,9 +581,23 @@
       const resp = await fetch("/internal-api/_auth/lan_info", { headers: authHeaders() });
       const data = await resp.json();
       lanAddresses = data.addresses ?? [];
+      lanHostnameUrl = data.hostname_url ?? null;
+      lanListening = data.listening !== false;
     } catch {
       lanAddresses = [];
+      lanHostnameUrl = null;
     }
+  }
+
+  async function copyLanUrl(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      return;
+    }
+    copiedLanUrl = url;
+    clearTimeout(copiedLanTimer);
+    copiedLanTimer = setTimeout(() => { copiedLanUrl = null; }, 1500);
   }
 
   async function createLanAccount() {
@@ -1477,6 +1495,7 @@
 
   onDestroy(() => {
     stopQueuePolling();
+    clearTimeout(copiedLanTimer);
   });
 
   // Poll account list every 10s to refresh online/offline indicators (admin/mod).
@@ -2111,7 +2130,7 @@
                   <input
                     type="checkbox"
                     bind:checked={config.lan_enabled}
-                    onchange={() => { checkRestartNeeded(); autoSave(); }}
+                    onchange={() => { checkRestartNeeded(); void autoSave().then(loadLanInfo); }}
                     class="sr-only peer"
                   />
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
@@ -2158,15 +2177,27 @@
                     {locale.t('settings.lan.warning')}
                   </p>
 
-                  <!-- LAN address -->
-                  {#if lanAddresses.length > 0}
-                    <div class="bg-neutral-800 rounded-lg px-3 py-2">
-                      <p class="text-xs text-neutral-400 mb-1">{locale.t('settings.lan.access_at')}</p>
-                      {#each lanAddresses as addr}
-                        <p class="text-sm text-indigo-400 font-mono select-all">{addr}</p>
-                      {/each}
-                    </div>
-                  {/if}
+                  <!-- LAN address: the mooshieui.local name first, then the IPs as a fallback -->
+                  <div class="bg-neutral-800 rounded-lg px-3 py-2 space-y-1">
+                    <p class="text-xs text-neutral-400">{locale.t('settings.lan.access_at')}</p>
+                    {#each lanHostnameUrl ? [lanHostnameUrl, ...lanAddresses] : lanAddresses as addr (addr)}
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="text-sm text-indigo-400 font-mono select-all truncate">{addr}</span>
+                        <button
+                          class="ml-auto shrink-0 px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
+                          onclick={() => copyLanUrl(addr)}
+                        >{copiedLanUrl === addr ? locale.t('common.copied') : locale.t('common.copy')}</button>
+                      </div>
+                    {:else}
+                      <p class="text-xs text-neutral-500">{locale.t('settings.lan.no_address')}</p>
+                    {/each}
+                    {#if lanHostnameUrl && lanAddresses.length > 0}
+                      <p class="text-[10px] text-neutral-500">{locale.t('settings.lan.hostname_hint')}</p>
+                    {/if}
+                    {#if !lanListening}
+                      <p class="text-[10px] text-amber-400">{locale.t('settings.lan.restart_to_share')}</p>
+                    {/if}
+                  </div>
 
                   <!-- Existing accounts -->
                   {#if lanAccounts.length > 0}

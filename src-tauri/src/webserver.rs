@@ -1345,6 +1345,11 @@ pub async fn start_server(
 
     let tls_config = resolve_tls_config(&web_state.app).await;
     let actual_port = bind_addr.port();
+    crate::lan_discovery::server_started(crate::lan_discovery::ServerEndpoint {
+        port: actual_port,
+        https: tls_config.is_some(),
+        lan: lan_enabled,
+    });
     let handle = if let Some(tls_config) = tls_config {
         std::mem::drop(listener);
         tokio::spawn(async move {
@@ -7540,7 +7545,8 @@ async fn auth_set_modelhub_access_handler(
     }
 }
 
-/// GET /internal-api/_auth/lan_info — return the machine's LAN IPs and port. Admin only.
+/// GET /internal-api/_auth/lan_info — the URLs other devices on the network
+/// can open: the mDNS name (desktop builds) and the PC's LAN IPs. Admin only.
 async fn auth_lan_info_handler(
     AxumState(state): AxumState<SharedState>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
@@ -7550,43 +7556,32 @@ async fn auth_lan_info_handler(
     if role != UserRole::Admin {
         return forbidden_response("Only the admin (localhost) can view LAN info.");
     }
-    let port = {
-        let cfg = state.app.config.read().await;
-        cfg.ui_server_port
+    let (endpoint, hostname) = crate::lan_discovery::snapshot();
+    let endpoint = match endpoint {
+        Some(ep) => ep,
+        None => crate::lan_discovery::ServerEndpoint {
+            port: state.app.config.read().await.ui_server_port,
+            https: false,
+            lan: state.lan_enabled,
+        },
     };
-    let ips = get_lan_ips();
-    let addresses: Vec<String> = ips
+    let addresses: Vec<String> = crate::lan_discovery::lan_ipv4_addrs()
         .iter()
-        .map(|ip| format!("http://{}:{}", ip, port))
+        .map(|ip| crate::lan_discovery::url_for(&ip.to_string(), &endpoint))
         .collect();
+    let hostname_url = hostname.map(|h| crate::lan_discovery::url_for(&h, &endpoint));
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "addresses": addresses,
-            "port": port,
+            "hostname_url": hostname_url,
+            "port": endpoint.port,
+            // False until a restart after LAN access is switched on: the
+            // listener is still bound to 127.0.0.1, so the URLs don't work yet.
+            "listening": endpoint.lan,
         })),
     )
         .into_response()
-}
-
-/// Detect LAN-routable IPv4 addresses by probing a UDP socket.
-fn get_lan_ips() -> Vec<String> {
-    let mut ips = Vec::new();
-    // Primary method: connect a UDP socket to a public IP to find the default route
-    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-        if socket.connect("8.8.8.8:80").is_ok() {
-            if let Ok(addr) = socket.local_addr() {
-                let ip = addr.ip().to_string();
-                if ip != "0.0.0.0" && ip != "127.0.0.1" {
-                    ips.push(ip);
-                }
-            }
-        }
-    }
-    if ips.is_empty() {
-        ips.push("<unknown>".to_string());
-    }
-    ips
 }
 
 /// Resolve the gallery directory for a given user.

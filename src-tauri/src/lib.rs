@@ -15,6 +15,7 @@ pub mod jxl;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod kaloscope;
 pub mod key_source;
+pub mod lan_discovery;
 #[cfg(any(feature = "desktop", test))]
 pub mod linked_folders;
 pub mod log_buffer;

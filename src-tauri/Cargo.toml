@@ -30,6 +30,7 @@ desktop = [
     "dep:webkit2gtk",
     "dep:ort",
     "dep:csv",
+    "dep:mdns-sd",
 ]
 server = ["dep:ort", "dep:csv"]
 
@@ -90,6 +91,10 @@ sysinfo = "0.39"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 chacha20poly1305 = "0.10"
 trash = "5.2"
+# LAN mode: list the PC's addresses, and advertise mooshieui.local over mDNS
+# (desktop only; hosted servers never share a multicast network with users).
+if-addrs = "0.15"
+mdns-sd = { version = "0.21", default-features = false, features = ["logging"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", optional = true }
