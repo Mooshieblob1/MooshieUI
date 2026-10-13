@@ -63,7 +63,7 @@ jobs:
           npm run build
           npm run check:i18n
           npx svelte-check --output machine > svelte-check.txt 2>&1 || true
-          # Existing type debt is reported; PR Guardrails separately blocks new errors.
+          # Reported only; PR Guardrails blocks on any svelte-check error.
           tail -n 1 svelte-check.txt
           python3 -m unittest discover -s scripts -p 'test_*artifacts.py'
       - name: Verify release version

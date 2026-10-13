@@ -44,13 +44,11 @@ npm run check
 This runs, in order:
 1. `npm run build` (must pass),
 2. `npm run check:i18n` (i18n parity, must pass),
-3. `npm run check:types` (svelte-check, informational).
+3. `npm run check:types` (svelte-check, must pass with no errors).
 
-Note on `check:types`: the project has a known baseline of pre-existing
-svelte-check errors and warnings, so this pass still prints errors today. It does
-not fail `npm run check` (it is a heads-up, not a hard gate locally). What
-matters: do not add new type errors or a11y warnings in the files you change. CI
-enforces exactly that (see below).
+Note on `check:types`: main has no svelte-check errors, so any error fails both
+`npm run check` and CI. Warnings (including a11y) are reported but don't fail;
+don't add new ones in the files you change.
 
 ## The three core guidelines
 
@@ -104,8 +102,10 @@ changes are declined regardless of quality.
 | GlassWorm Infection Audit | Yes | Security/steganography scan | Remove flagged content; see the check log |
 | Guardrails: build | Yes | `npm run build` failed | Run `npm run build` locally and fix the error |
 | Guardrails: i18n | Yes | Missing key/placeholder in a locale | Run `npm run check:i18n`; add the key to all locales |
-| Guardrails: types | Yes | New svelte-check error in a file you changed | Run `npm run check:types`; fix errors in your changed files |
+| Guardrails: types | Yes | Any svelte-check error, in any file | Run `npm run check:types`; fix the errors it lists |
+| Rust checks | Yes | `cargo fmt`, `cargo test` or `cargo clippy` failed on Linux, or the server build broke | Run the commands from the check log locally (see CLAUDE.md, Build & Run) |
 | a11y advisory | No | a11y warnings in changed files | See the job summary; fix what you can |
 
-The types check is diff-scoped: it only fails on errors in the files your PR
-changed, not the pre-existing baseline.
+The types check covers every file, so an error in a file your PR didn't touch
+(for example a `.svelte` file broken by a type change in a `.ts` file) still
+fails it.

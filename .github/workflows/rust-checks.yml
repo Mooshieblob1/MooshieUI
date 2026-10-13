@@ -1,0 +1,97 @@
+name: Rust Checks
+
+# Fast Linux signal for the Rust crate on every PR that touches it. The macOS
+# Native Validation job runs the same tests, but it's one long Apple Silicon
+# build; this catches a broken test, a clippy error or a server-build break in
+# minutes.
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/rust-checks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Rust (desktop build, fmt, clippy, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: src-tauri
+          key: rust-checks-desktop
+
+      # tauri::generate_context! needs frontendDist (../dist) to exist at compile
+      # time. The Rust checks don't use the frontend, so an empty folder is enough.
+      - name: Placeholder frontend dist
+        run: mkdir -p dist
+
+      - name: cargo fmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      # Clippy warnings are reported but don't fail yet (the crate has existing
+      # ones); clippy errors do.
+      - name: cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets
+
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  server:
+    name: Rust (server build, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: src-tauri
+          key: rust-checks-server
+
+      # The server binary is built without tauri. Anything that uses tauri
+      # outside a `desktop` feature gate compiles fine in the desktop build and
+      # only breaks here (otherwise first seen at release time).
+      - name: cargo clippy (server features)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --no-default-features --features server --all-targets

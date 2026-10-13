@@ -8,6 +8,7 @@
     "shell:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-write-text-file",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-read-image",

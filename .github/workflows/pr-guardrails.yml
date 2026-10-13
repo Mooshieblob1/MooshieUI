@@ -35,15 +35,11 @@ jobs:
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 
-      - name: Compute changed files
-        run: |
-          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt
-          echo "Changed files:"; cat changed.txt
-
-      - name: svelte-check (diff-scoped, blocking)
-        run: |
-          npx svelte-check --output machine > sc.txt 2>&1 || true
-          node scripts/svelte-check-diff.mjs --machine sc.txt --changed changed.txt
+      # main has no svelte-check errors, so any error fails the PR, including one
+      # in a file the PR didn't touch (e.g. a .ts type change that breaks a
+      # .svelte consumer). Warnings (a11y included) stay advisory.
+      - name: svelte-check (blocking on errors)
+        run: npm run check:types -- --threshold error
 
   a11y-advisory:
     name: a11y advisory (non-blocking)
