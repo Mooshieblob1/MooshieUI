@@ -1,3 +1,16 @@
+## What's New in v2.3.22
+
+### LAN Mode
+- **Copyable addresses and a mooshieui.local name**: the LAN section now lists `http://mooshieui.local:PORT` first, then this PC's network addresses, each with a Copy button. Addresses use the real port and scheme (including a fallback port or HTTPS), and VPN, VM and container adapters are skipped. If a device can't open the `.local` name (some Android phones and Windows PCs), use the IP address instead. After turning LAN access on, a note asks you to restart so the addresses become reachable.
+- **Windows Firewall set up for you**: turning on LAN access on Windows checks the firewall and, if other devices would be blocked, adds an allow rule for MooshieUI after one admin prompt. The LAN section shows the firewall state, an **Allow in firewall** button if it is still closed, and a warning when Windows treats your network as Public. Public networks stay blocked.
+- **Access from outside your home network (opt-in)**: a new **Allow access from outside your home network** toggle, off by default, asks your router (UPnP) to forward the port to this PC and shows the public address with a Copy button. The port closes again when you turn it off or close MooshieUI. The section warns that the sign-in page is then reachable from the internet, and explains when no router answers, the port is taken, or your router has no public address of its own.
+- **Hardening**: admin commands that read or write files at a path sent by the client now only run from the PC running MooshieUI, so a stolen admin password can't be used to read or write arbitrary files.
+
+### Desktop and Browser Mode
+- **Saved data is shared between both modes**: saved characters, prompt presets, artist styles and favourites, LoRA presets, prompt history, notes, gallery boards, favourites and ratings, and settings saved in the desktop app now show up in browser mode and the other way round, even with both open. Data you already had in both modes is merged once on first start after updating, and a backup of the previous file is kept. Window layout, caches and generation tabs stay separate.
+
+---
+
 ## What's New in v2.3.21
 
 ### Gallery
