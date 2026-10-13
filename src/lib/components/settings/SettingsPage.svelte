@@ -306,6 +306,17 @@
   let lanAddresses = $state<string[]>([]);
   let lanHostnameUrl = $state<string | null>(null);
   let lanListening = $state(true);
+  type LanFirewallStatus = { state: "unsupported" | "allowed" | "missing" | "blocked" | "unknown"; public_network: boolean; can_fix: boolean };
+  let lanFirewall = $state<LanFirewallStatus | null>(null);
+  let lanFirewallBusy = $state(false);
+  let lanFirewallError = $state<string | null>(null);
+  const lanFirewallStateKeys: Record<LanFirewallStatus["state"], string> = {
+    unsupported: "",
+    allowed: "settings.lan.firewall_allowed",
+    missing: "settings.lan.firewall_missing",
+    blocked: "settings.lan.firewall_blocked",
+    unknown: "settings.lan.firewall_unknown",
+  };
   let copiedLanUrl = $state<string | null>(null);
   let copiedLanTimer: ReturnType<typeof setTimeout> | undefined;
   let showAddAccountModal = $state(false);
@@ -586,6 +597,48 @@
     } catch {
       lanAddresses = [];
       lanHostnameUrl = null;
+    }
+  }
+
+  async function loadLanFirewall() {
+    try {
+      const resp = await fetch("/internal-api/_auth/lan_firewall", { headers: authHeaders() });
+      lanFirewall = resp.ok ? await resp.json() : null;
+    } catch {
+      lanFirewall = null;
+    }
+  }
+
+  /** Add the Windows Firewall rule. Windows shows its admin prompt on this PC. */
+  async function allowLanFirewall() {
+    lanFirewallBusy = true;
+    lanFirewallError = null;
+    try {
+      const resp = await fetch("/internal-api/_auth/lan_firewall", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: "{}",
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok) {
+        lanFirewall = data;
+      } else {
+        lanFirewallError = locale.t(data.code === "cancelled" ? "settings.lan.firewall_cancelled" : "settings.lan.firewall_failed");
+      }
+    } catch {
+      lanFirewallError = locale.t("settings.lan.firewall_failed");
+    } finally {
+      lanFirewallBusy = false;
+    }
+  }
+
+  /** Turning LAN access on opens the firewall straight away, so the first
+   *  restart doesn't stop on Windows' own prompt (where Cancel blocks the app). */
+  async function onLanToggled() {
+    if (!config?.lan_enabled) return;
+    await loadLanFirewall();
+    if (lanFirewall?.can_fix && (lanFirewall.state === "missing" || lanFirewall.state === "blocked")) {
+      await allowLanFirewall();
     }
   }
 
@@ -1488,6 +1541,7 @@
     if (isBrowserMode) {
       loadLanAccounts();
       loadLanInfo();
+      void loadLanFirewall();
       void refreshPasswordSecurityStatus();
     }
     startQueuePolling();
@@ -2130,7 +2184,7 @@
                   <input
                     type="checkbox"
                     bind:checked={config.lan_enabled}
-                    onchange={() => { checkRestartNeeded(); void autoSave().then(loadLanInfo); }}
+                    onchange={() => { checkRestartNeeded(); void autoSave().then(loadLanInfo).then(onLanToggled); }}
                     class="sr-only peer"
                   />
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
@@ -2198,6 +2252,31 @@
                       <p class="text-[10px] text-amber-400">{locale.t('settings.lan.restart_to_share')}</p>
                     {/if}
                   </div>
+
+                  <!-- Windows Firewall: the usual reason other devices can't connect -->
+                  {#if lanFirewall && lanFirewall.state !== "unsupported"}
+                    <div class="bg-neutral-800 rounded-lg px-3 py-2 space-y-1">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <p class="text-xs {lanFirewall.state === 'allowed' ? 'text-green-400' : 'text-amber-400'}">{locale.t(lanFirewallStateKeys[lanFirewall.state])}</p>
+                        {#if lanFirewall.can_fix && lanFirewall.state !== "allowed"}
+                          <button
+                            class="ml-auto shrink-0 px-2 py-0.5 text-[10px] rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+                            disabled={lanFirewallBusy}
+                            onclick={allowLanFirewall}
+                          >{lanFirewallBusy ? locale.t('settings.lan.firewall_waiting') : locale.t('settings.lan.firewall_allow')}</button>
+                        {/if}
+                      </div>
+                      {#if lanFirewall.state !== "allowed"}
+                        <p class="text-[10px] text-neutral-500">{locale.t(lanFirewall.can_fix ? 'settings.lan.firewall_allow_hint' : 'settings.lan.firewall_remote')}</p>
+                      {/if}
+                      {#if lanFirewall.public_network}
+                        <p class="text-[10px] text-amber-400">{locale.t('settings.lan.firewall_public_network')}</p>
+                      {/if}
+                      {#if lanFirewallError}
+                        <p class="text-[10px] text-red-400">{lanFirewallError}</p>
+                      {/if}
+                    </div>
+                  {/if}
 
                   <!-- Existing accounts -->
                   {#if lanAccounts.length > 0}

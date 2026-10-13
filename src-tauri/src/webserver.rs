@@ -1082,6 +1082,10 @@ pub async fn start_server(
         )
         .route("/internal-api/_auth/logout", post(auth_logout_handler))
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
+        .route(
+            "/internal-api/_auth/lan_firewall",
+            get(auth_lan_firewall_status_handler).post(auth_lan_firewall_allow_handler),
+        )
         // Per-user preference sync (cross-device prefs in browser/LAN mode)
         .route(
             "/internal-api/_user/prefs",
@@ -7582,6 +7586,66 @@ async fn auth_lan_info_handler(
         })),
     )
         .into_response()
+}
+
+/// GET /internal-api/_auth/lan_firewall — whether Windows Firewall lets other
+/// devices reach this app on private networks. Admin only. `can_fix` is true
+/// for a request made on this PC, since the fix shows a UAC prompt there.
+async fn auth_lan_firewall_status_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) != UserRole::Admin {
+        return forbidden_response("Only the admin can view firewall status.");
+    }
+    let status = crate::lan_firewall::status().await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "state": status.state,
+            "public_network": status.public_network,
+            "can_fix": is_localhost(&remote),
+        })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_auth/lan_firewall — add the Windows Firewall allow rule
+/// for LAN mode. Only from this PC: the UAC prompt it raises appears here,
+/// where a remote admin could neither see nor answer it.
+async fn auth_lan_firewall_allow_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) != UserRole::Admin || !is_localhost(&remote) {
+        return forbidden_response("Firewall changes can only be made on this PC.");
+    }
+    match crate::lan_firewall::allow().await {
+        Ok(status) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "state": status.state,
+                "public_network": status.public_network,
+                "can_fix": true,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            let code = match e {
+                crate::lan_firewall::AllowError::Cancelled => "cancelled",
+                crate::lan_firewall::AllowError::Unsupported => "unsupported",
+                crate::lan_firewall::AllowError::Failed(_) => "failed",
+            };
+            log::warn!("lan_firewall: {e}");
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({ "error": e.to_string(), "code": code })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Resolve the gallery directory for a given user.
