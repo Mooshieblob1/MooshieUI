@@ -17,6 +17,7 @@ pub mod kaloscope;
 pub mod key_source;
 pub mod lan_discovery;
 pub mod lan_firewall;
+pub mod lan_upnp;
 #[cfg(any(feature = "desktop", test))]
 pub mod linked_folders;
 pub mod log_buffer;
@@ -807,6 +808,7 @@ pub fn run() {
                 prompt_assistant::companion::shutdown().await;
                 commands::music_link::shutdown(&state).await;
                 commands::music_audio_style::shutdown(&state).await;
+                lan_upnp::shutdown().await;
             });
             state.output_owners.flush();
             let keep_alive = {

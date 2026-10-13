@@ -31,6 +31,7 @@ desktop = [
     "dep:ort",
     "dep:csv",
     "dep:mdns-sd",
+    "dep:igd-next",
 ]
 server = ["dep:ort", "dep:csv"]
 
@@ -94,6 +95,8 @@ trash = "5.2"
 # LAN mode: list the PC's addresses, and advertise mooshieui.local over mDNS
 # (desktop only; hosted servers never share a multicast network with users).
 if-addrs = "0.15"
+# UPnP router port mapping for the opt-in internet access toggle.
+igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"], optional = true }
 mdns-sd = { version = "0.21", default-features = false, features = ["logging"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

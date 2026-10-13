@@ -692,6 +692,8 @@ export interface AppConfig {
   lan_enabled: boolean;
   /** Requests from this computer are the admin without signing in (browser mode). */
   trust_localhost: boolean;
+  /** Ask the router (UPnP) to forward the LAN port for access from outside (browser mode, LAN on). */
+  upnp_enabled: boolean;
   /** Shut the backend down when the browser tab stops sending heartbeats (browser mode). */
   browser_auto_shutdown: boolean;
   attention_backend: string;

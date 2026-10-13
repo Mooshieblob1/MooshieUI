@@ -462,6 +462,7 @@ fn preserve_config_secrets_for_role(
             .report_endpoint
             .clone_from(&current.report_endpoint);
         incoming.lan_enabled = current.lan_enabled;
+        incoming.upnp_enabled = current.upnp_enabled;
         incoming.trust_localhost = current.trust_localhost;
         incoming.browser_mode = current.browser_mode;
         incoming.ui_server_port = current.ui_server_port;
@@ -1354,6 +1355,7 @@ pub async fn start_server(
         https: tls_config.is_some(),
         lan: lan_enabled,
     });
+    crate::lan_upnp::sync(web_state.app.config.read().await.upnp_enabled);
     let handle = if let Some(tls_config) = tls_config {
         std::mem::drop(listener);
         tokio::spawn(async move {
@@ -2662,6 +2664,23 @@ fn ensure_prompt_owned(
     }
 }
 
+/// Admin commands that take a raw host path from the client. The browser UI
+/// never sends one (they follow a native file dialog, which only the desktop
+/// window has), so only a caller on this PC may use them: an admin password
+/// stolen over LAN or the internet must not turn into arbitrary file access.
+/// An empty `set_gallery_path` (reset to the default folder) stays allowed.
+fn takes_host_path(command: &str, args: &serde_json::Value) -> bool {
+    match command {
+        "save_text_file"
+        | "save_image_file"
+        | "upload_image"
+        | "read_image_metadata_path"
+        | "import_image_directory" => true,
+        "set_gallery_path" => !args["path"].as_str().unwrap_or("").trim().is_empty(),
+        _ => false,
+    }
+}
+
 async fn dispatch_command(
     state: Arc<AppState>,
     auth: &Arc<AuthState>,
@@ -2671,6 +2690,9 @@ async fn dispatch_command(
     caller_role: UserRole,
     caller_is_local: bool,
 ) -> Result<serde_json::Value, String> {
+    if !caller_is_local && takes_host_path(command, args) {
+        return Err("This action only works on the PC running MooshieUI.".to_string());
+    }
     match command {
         // --- Config ---
         "get_config" => {
@@ -2701,7 +2723,10 @@ async fn dispatch_command(
                 config::local_trust_enabled(new_config.trust_localhost),
                 std::sync::atomic::Ordering::SeqCst,
             );
+            let upnp_enabled = new_config.upnp_enabled;
             *current = new_config;
+            drop(current);
+            crate::lan_upnp::sync(upnp_enabled);
             Ok(serde_json::json!(null))
         }
         "check_attention_backend" => {
@@ -6522,14 +6547,14 @@ async fn dispatch_command(
         }
         "open_directory" => {
             // Opening a file explorer is only meaningful when the caller shares the
-            // server's desktop. For a remote LAN client this would pop a window on
-            // the operator's screen, so we no-op (the directory is still ensured to
-            // exist) rather than spawn a GUI the caller can't see.
+            // server's desktop. For a remote client this would pop a window on the
+            // operator's screen, so we no-op rather than spawn a GUI the caller
+            // can't see, and touch no host path on its behalf.
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
-            std::fs::create_dir_all(&path).ok();
             if !caller_is_local {
                 return Ok(serde_json::json!(null));
             }
+            std::fs::create_dir_all(&path).ok();
             #[cfg(target_os = "windows")]
             {
                 let _ = tokio::process::Command::new("explorer.exe")
@@ -7583,6 +7608,7 @@ async fn auth_lan_info_handler(
             // False until a restart after LAN access is switched on: the
             // listener is still bound to 127.0.0.1, so the URLs don't work yet.
             "listening": endpoint.lan,
+            "upnp": crate::lan_upnp::status(),
         })),
     )
         .into_response()
@@ -9031,9 +9057,33 @@ mod lan_hardening_tests {
 mod lan_access_scope_tests {
     use super::{
         ensure_output_owned, min_role_for_command, query_without_token, record_output_owners,
-        url_has_token_param, UserRole,
+        takes_host_path, url_has_token_param, UserRole,
     };
     use crate::state::AppState;
+
+    #[test]
+    fn raw_host_path_commands_are_flagged_for_the_local_only_check() {
+        let none = serde_json::json!({});
+        for command in [
+            "save_text_file",
+            "save_image_file",
+            "upload_image",
+            "read_image_metadata_path",
+            "import_image_directory",
+        ] {
+            assert!(takes_host_path(command, &none), "{command}");
+        }
+        assert!(takes_host_path(
+            "set_gallery_path",
+            &serde_json::json!({ "path": "C:/Windows" })
+        ));
+        // Resetting to the default folder names no host path.
+        assert!(!takes_host_path(
+            "set_gallery_path",
+            &serde_json::json!({ "path": "  " })
+        ));
+        assert!(!takes_host_path("read_image_metadata", &none));
+    }
 
     #[test]
     fn host_paths_and_shared_llm_or_model_writes_need_a_moderator() {

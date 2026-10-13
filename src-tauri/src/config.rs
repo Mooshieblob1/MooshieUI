@@ -162,6 +162,12 @@ pub struct AppConfig {
     /// environment variable can also switch off.
     #[serde(default = "default_true")]
     pub trust_localhost: bool,
+    /// Ask the router (UPnP) to forward the web server's port so people
+    /// outside the home network can connect. Only acts while LAN access is
+    /// on and the server listens on the network. Off by default: it puts the
+    /// sign-in page on the internet.
+    #[serde(default)]
+    pub upnp_enabled: bool,
     /// Shut the backend (and ComfyUI with it) down when the browser tab stops
     /// sending heartbeats. Only armed in single-user browser mode. Turn this
     /// off when the machine sleeps or the browser freezes background tabs and
@@ -361,6 +367,7 @@ impl Default for AppConfig {
             ui_server_port: 3200,
             lan_enabled: false,
             trust_localhost: true,
+            upnp_enabled: false,
             browser_auto_shutdown: true,
             attention_backend: "default".to_string(),
             gpu_workers: vec![],

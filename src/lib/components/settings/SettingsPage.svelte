@@ -309,6 +309,20 @@
   type LanFirewallStatus = { state: "unsupported" | "allowed" | "missing" | "blocked" | "unknown"; public_network: boolean; can_fix: boolean };
   let lanFirewall = $state<LanFirewallStatus | null>(null);
   let lanFirewallBusy = $state(false);
+  type LanUpnpStatus = {
+    state: "off" | "pending" | "mapped" | "failed";
+    external_url: string | null;
+    error: "not_listening" | "no_router" | "refused" | "port_in_use" | "double_nat" | "unsupported" | null;
+  };
+  let lanUpnp = $state<LanUpnpStatus | null>(null);
+  const lanUpnpErrorKeys: Record<NonNullable<LanUpnpStatus["error"]>, string> = {
+    not_listening: "settings.lan.upnp_not_listening",
+    no_router: "settings.lan.upnp_no_router",
+    refused: "settings.lan.upnp_refused",
+    port_in_use: "settings.lan.upnp_port_in_use",
+    double_nat: "settings.lan.upnp_double_nat",
+    unsupported: "settings.lan.upnp_unsupported",
+  };
   let lanFirewallError = $state<string | null>(null);
   const lanFirewallStateKeys: Record<LanFirewallStatus["state"], string> = {
     unsupported: "",
@@ -594,6 +608,7 @@
       lanAddresses = data.addresses ?? [];
       lanHostnameUrl = data.hostname_url ?? null;
       lanListening = data.listening !== false;
+      lanUpnp = data.upnp ?? null;
     } catch {
       lanAddresses = [];
       lanHostnameUrl = null;
@@ -639,6 +654,16 @@
     await loadLanFirewall();
     if (lanFirewall?.can_fix && (lanFirewall.state === "missing" || lanFirewall.state === "blocked")) {
       await allowLanFirewall();
+    }
+  }
+
+  /** After the router toggle, re-read LAN info until the router has answered. */
+  async function onUpnpToggled() {
+    await autoSave();
+    for (let i = 0; i < 15; i++) {
+      await loadLanInfo();
+      if (lanUpnp?.state !== "pending") return;
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
@@ -2277,6 +2302,47 @@
                       {/if}
                     </div>
                   {/if}
+
+                  <!-- Router forwarding (UPnP): opt-in access from outside the home network -->
+                  <div class="bg-neutral-800 rounded-lg px-3 py-2 space-y-1">
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <label for="settings-upnp" class="text-xs text-neutral-300 font-medium">{locale.t('settings.lan.upnp_enable')}</label>
+                        <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.lan.upnp_enable_desc')}</p>
+                      </div>
+                      <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input
+                          id="settings-upnp"
+                          type="checkbox"
+                          bind:checked={config.upnp_enabled}
+                          onchange={() => void onUpnpToggled()}
+                          class="sr-only peer"
+                        />
+                        <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+                    {#if config.upnp_enabled}
+                      <p class="text-[10px] text-amber-400">{locale.t('settings.lan.upnp_warning')}</p>
+                      {#if lanUpnp?.state === "pending"}
+                        <p class="text-[10px] text-neutral-400">{locale.t('settings.lan.upnp_pending')}</p>
+                      {:else if lanUpnp?.state === "mapped"}
+                        {#if lanUpnp.external_url}
+                          <p class="text-[10px] text-neutral-400">{locale.t('settings.lan.upnp_mapped')}</p>
+                          <div class="flex items-center gap-2 min-w-0">
+                            <span class="text-sm text-indigo-400 font-mono select-all truncate">{lanUpnp.external_url}</span>
+                            <button
+                              class="ml-auto shrink-0 px-2 py-0.5 text-[10px] rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
+                              onclick={() => copyLanUrl(lanUpnp?.external_url ?? "")}
+                            >{copiedLanUrl === lanUpnp.external_url ? locale.t('common.copied') : locale.t('common.copy')}</button>
+                          </div>
+                        {:else}
+                          <p class="text-[10px] text-neutral-400">{locale.t('settings.lan.upnp_mapped_no_ip')}</p>
+                        {/if}
+                      {:else if lanUpnp?.state === "failed" && lanUpnp.error}
+                        <p class="text-[10px] text-red-400">{locale.t(lanUpnpErrorKeys[lanUpnp.error])}</p>
+                      {/if}
+                    {/if}
+                  </div>
 
                   <!-- Existing accounts -->
                   {#if lanAccounts.length > 0}
