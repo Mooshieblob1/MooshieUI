@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import type { RegionalPromptSelection, RegionalPromptShape } from "../../types/index.js";
@@ -751,6 +752,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
+  use:portal
   class="fixed inset-0 z-80 flex items-center justify-center bg-black/70 p-4"
   onclick={(event) => { if (event.target === event.currentTarget) closeWithDraftSaved(); }}
   role="dialog"

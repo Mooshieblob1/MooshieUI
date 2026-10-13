@@ -15,6 +15,7 @@
    * once the id is handed to `progress.enqueue` the images arrive in the
    * session grid and the gallery on their own.
    */
+  import { portal } from "../../utils/portal.js";
   import {
     directorTools,
     DIRECTOR_TOOLS,
@@ -93,6 +94,7 @@
 
 {#if directorTools.isOpen}
   <div
+    use:portal
     data-modal-open
     class="fixed inset-0 z-70 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {

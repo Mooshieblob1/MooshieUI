@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import type { AnimadexCharacter } from "../types.js";
   import { buildCharacterInsertText } from "../characterInsert.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -46,6 +47,7 @@
 <svelte:window onkeydown={onBackdropKey} />
 
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/90 p-3 backdrop-blur-md sm:p-5"
   role="dialog"
   aria-modal="true"

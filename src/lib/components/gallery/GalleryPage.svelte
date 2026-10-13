@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import { gallery, isVideoImage, GALLERY_MAX_RATING, GALLERY_SOURCE_OWN } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -706,7 +707,7 @@
 </div>
 
 {#if dirPickerImage}
-  <div class="fixed inset-0 z-60 flex items-center justify-center bg-black/70 p-4">
+  <div use:portal class="fixed inset-0 z-60 flex items-center justify-center bg-black/70 p-4">
     <div class="w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 p-4">
       <h3 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t("gallery.choose_save_folder")}</h3>
       <div class="space-y-2 max-h-64 overflow-y-auto">

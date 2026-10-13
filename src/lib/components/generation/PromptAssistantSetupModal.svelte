@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import type { LlmCatalogEntry, LlmVariant } from "../../types/index.js";
@@ -67,6 +68,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
   onclick={onClose}
   role="presentation"

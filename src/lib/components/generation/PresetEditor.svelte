@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { promptPresets, inlineChunkToken } from "../../stores/promptPresets.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
@@ -40,6 +41,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 z-205 flex items-center justify-center bg-black/80 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"

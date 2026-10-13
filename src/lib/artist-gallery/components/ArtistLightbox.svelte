@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import type { ArtistEntry, ArtistImage } from "../types.js";
   import { formatPostCount } from "../counts.js";
   import { cachedSrc } from "../imageCache.js";
@@ -94,6 +95,7 @@
 <svelte:window onkeydown={onBackdropKey} />
 
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"

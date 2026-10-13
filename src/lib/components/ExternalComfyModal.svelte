@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../utils/portal.js";
   import { locale } from "../stores/locale.svelte.js";
   import { stopComfyui, updateComfyui } from "../utils/api.js";
   import { ipcInvoke, ipcListen, isBrowserMode } from "../utils/ipc.js";
@@ -137,6 +138,7 @@
 
 {#if open}
   <div
+    use:portal
     class="fixed inset-0 z-[220] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
     role="dialog"
     aria-modal="true"

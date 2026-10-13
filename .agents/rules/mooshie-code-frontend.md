@@ -44,6 +44,7 @@ globs: src/**/*.svelte,src/**/*.svelte.ts,src/**/*.ts
 ## UI & Design System
 
 - Tailwind only; no `<style>` in `.svelte`.
+- Modals and `fixed` popups: `use:portal` on the outermost overlay element so they cover the whole app, never just the panel that opened them (see CLAUDE.md, enforced by `scripts/check-portals.mjs`).
 - **Color Palette (Dark theme only)**:
   - `neutral-950` (#0a0a0a) → Main BG
   - `neutral-900` (#171717) → Card BG

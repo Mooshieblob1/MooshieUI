@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { characterInsert, type CharacterTagLevel } from "../../stores/characterInsert.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
 
@@ -37,6 +38,7 @@
 {#if pending}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    use:portal
     class="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
     onclick={(e) => {
       if (e.target === e.currentTarget) dismiss();

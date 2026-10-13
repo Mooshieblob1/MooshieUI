@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
@@ -93,6 +94,7 @@
 </script>
 
 <div
+  use:portal
   class="lightbox-backdrop fixed inset-0 z-70 bg-black/95 flex flex-col {visionSimClass}"
   role="dialog"
   aria-modal="true"

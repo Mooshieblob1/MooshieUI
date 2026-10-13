@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { onMount, tick } from "svelte";
   import { createArtistGalleryStore, type ArtistSortField, type ArtistSortDir, type ArtistPageSize } from "../store.svelte.js";
   import { artistFavourites } from "../favourites.svelte.js";
@@ -982,7 +983,7 @@
                   {isFav ? '♥' : '♡'}
                 </button>
                 {#if catPickerSlug === hit.slug}
-                  <!-- Backdrop to dismiss -->
+                  <!-- portal-exempt: click-catcher for the anchored menu below; it must stay its sibling. -->
                   <button
                     type="button"
                     class="fixed inset-0 z-40 cursor-default"
@@ -1107,6 +1108,7 @@
 
 {#if showGenParams}
   <div
+    use:portal
     class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 backdrop-blur-sm"
     role="dialog"
     aria-modal="true"

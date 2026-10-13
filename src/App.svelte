@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "./lib/utils/portal.js";
   import { onMount, onDestroy, untrack } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
@@ -4047,6 +4048,7 @@
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
   <div
+    use:portal
     class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex {visionSimClass}"
     role="dialog"
     tabindex="-1"
@@ -4739,6 +4741,7 @@
 {#if artistInsertPending}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    use:portal
     class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
     onclick={(e) => { if (e.target === e.currentTarget) artistInsert.dismiss(); }}
     onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
@@ -4813,6 +4816,7 @@
 {#if dirPickerImage}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    use:portal
     class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60"
     onclick={(e) => { if (e.target === e.currentTarget) dirPickerImage = null; }}
     onkeydown={(e) => { if (e.key === 'Escape') dirPickerImage = null; }}

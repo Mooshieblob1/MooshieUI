@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -860,6 +861,7 @@
   {@const isVideo = isVideoImage(image)}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    use:portal
     class="fixed z-[9999] flex justify-center pointer-events-auto animate-[actionBarBounce_0.35s_ease-out]"
     style="left: {actionBarPos.x}px; top: {actionBarPos.y + 4}px; transform: translateX(-50%);"
     onmouseenter={cancelHideActionBar}

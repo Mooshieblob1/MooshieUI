@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { onMount } from "svelte";
   import { locale } from "../../stores/locale.svelte.js";
   import { captureDiagnosticLog, reportDestination, reportError } from "../../errors/reportError.js";
@@ -50,6 +51,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
   onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}
   onkeydown={(e) => { if (e.key === "Escape") onclose(); }}

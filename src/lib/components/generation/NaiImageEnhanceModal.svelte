@@ -24,6 +24,7 @@
    * once the id is handed to `progress.enqueue` the images arrive in the
    * session grid and the gallery on their own.
    */
+  import { portal } from "../../utils/portal.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -380,6 +381,7 @@
 
 {#if naiImageEnhance.isOpen}
   <div
+    use:portal
     data-modal-open
     class="fixed inset-0 z-70 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {

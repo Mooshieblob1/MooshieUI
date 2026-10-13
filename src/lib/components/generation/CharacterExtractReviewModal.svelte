@@ -32,6 +32,7 @@
    * choice: merge the new details into the saved card, keep it as a variant
    * card of its own, or disregard it.
    */
+  import { portal } from "../../utils/portal.js";
   import { untrack } from "svelte";
   import { locale } from "../../stores/locale.svelte.js";
 
@@ -89,6 +90,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 z-210 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
   role="dialog"
   aria-modal="true"

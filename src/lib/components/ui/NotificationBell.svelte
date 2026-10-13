@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { notifications } from "../../stores/notifications.svelte.js";
   import type { Notification } from "../../stores/notifications.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -116,6 +117,7 @@
   </button>
 
   {#if notifications.panelOpen}
+    <!-- portal-exempt: click-catcher for the anchored dropdown below; it must stay its sibling. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="fixed inset-0 z-40"
@@ -197,6 +199,7 @@
     {@const notif = openedNotification}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
+      use:portal
       class="fixed inset-0 z-60 flex items-center justify-center bg-black/70"
       onmousedown={(e) => { if (e.target === e.currentTarget) openedNotification = null; }}
       onkeydown={(e) => { if (e.key === "Escape") openedNotification = null; }}

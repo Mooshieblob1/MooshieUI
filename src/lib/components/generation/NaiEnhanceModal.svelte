@@ -23,6 +23,7 @@
    * The `enhanceForNai` call lives here and not in the store: `naiEnhance` is a
    * feature store and may not import the prompt assistant.
    */
+  import { portal } from "../../utils/portal.js";
   import { naiEnhance, NAI_MAX_REFERENCES } from "../../stores/naiEnhance.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -496,6 +497,7 @@
 
 {#if naiEnhance.isOpen}
   <div
+    use:portal
     data-modal-open
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {
