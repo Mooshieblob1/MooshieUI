@@ -1256,7 +1256,7 @@
   }
 
   const sections = [
-    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in" },
+    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in lan network remote access share phone ip address local mooshieui.local firewall" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
