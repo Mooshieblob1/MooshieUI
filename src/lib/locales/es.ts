@@ -3926,6 +3926,8 @@ const es: Record<string, string> = {
   "prompt_assistant.busy_generation": "Ocupado generando — inténtalo de nuevo cuando termine.",
   "prompt_assistant.no_model": "No hay modelo de asistente de prompt instalado.",
   "prompt_assistant.error_generic": "Error del asistente de prompt, inténtalo de nuevo.",
+  "prompt_assistant.blocked_minor_content": "No enviado. Esto pide contenido sexual o sugerente con un menor, algo que MooshieUI nunca escribe.",
+  "prompt_assistant.provider_refused": "El filtro de contenido del propio proveedor de IA rechazó esta solicitud. MooshieUI no la bloqueó.",
   "artist_gallery.variant_label": "Variante",
 
   "artist_gallery.variant_n": "Imagen {n}",

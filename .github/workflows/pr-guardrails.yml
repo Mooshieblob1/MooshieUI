@@ -35,6 +35,13 @@ jobs:
       - name: Modals portaled app-wide
         run: node scripts/check-portals.mjs
 
+      # Node 20 cannot load .ts directly, so the test is bundled with the
+      # esbuild Vite already installs.
+      - name: Content safety tests
+        run: |
+          npx esbuild scripts/tests/contentSafety.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/contentSafety.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/contentSafety.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 

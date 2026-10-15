@@ -3897,6 +3897,8 @@ const it: Record<string, string> = {
   "prompt_assistant.busy_generation": "Generazione in corso — riprova al termine.",
   "prompt_assistant.no_model": "Nessun modello assistente prompt installato.",
   "prompt_assistant.error_generic": "Errore assistente prompt, riprova.",
+  "prompt_assistant.blocked_minor_content": "Non inviato. Questa richiesta chiede contenuti sessuali o allusivi che coinvolgono un minore, che MooshieUI non scrive mai.",
+  "prompt_assistant.provider_refused": "Il filtro dei contenuti del fornitore di IA ha rifiutato questa richiesta. Non è stata bloccata da MooshieUI.",
   "artist_gallery.variant_label": "Variante",
 
   "artist_gallery.variant_n": "Immagine {n}",

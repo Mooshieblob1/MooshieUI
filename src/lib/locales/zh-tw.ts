@@ -3897,6 +3897,8 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.busy_generation": "正在生成中 — 請等待完成後再試。",
   "prompt_assistant.no_model": "未安裝提示詞助手模型。",
   "prompt_assistant.error_generic": "提示詞助手錯誤，請重試。",
+  "prompt_assistant.blocked_minor_content": "未傳送。此請求涉及未成年人的色情或性暗示內容，MooshieUI 絕不會撰寫此類內容。",
+  "prompt_assistant.provider_refused": "AI 服務商自身的內容過濾器拒絕了此請求，並非 MooshieUI 攔截。",
   "artist_gallery.variant_label": "變體",
 
   "artist_gallery.variant_n": "圖片 {n}",

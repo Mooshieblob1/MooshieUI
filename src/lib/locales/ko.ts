@@ -3897,6 +3897,8 @@ const ko: Record<string, string> = {
   "prompt_assistant.busy_generation": "생성 중입니다 — 완료 후 다시 시도하세요.",
   "prompt_assistant.no_model": "프롬프트 어시스턴트 모델이 설치되지 않았습니다.",
   "prompt_assistant.error_generic": "프롬프트 어시스턴트 오류, 다시 시도하세요.",
+  "prompt_assistant.blocked_minor_content": "전송하지 않았습니다. 미성년자가 관련된 성적이거나 선정적인 내용을 요청하며, MooshieUI는 이를 절대 작성하지 않습니다.",
+  "prompt_assistant.provider_refused": "AI 제공업체의 자체 콘텐츠 필터가 이 요청을 거부했습니다. MooshieUI가 차단한 것이 아닙니다.",
   "artist_gallery.variant_label": "변형",
 
   "artist_gallery.variant_n": "이미지 {n}",

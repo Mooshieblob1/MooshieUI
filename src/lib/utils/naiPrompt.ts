@@ -18,6 +18,8 @@
  * generation store that needs it would form a cycle.
  */
 
+import { naiVocabularyBlock } from "./contentSafety.js";
+import type { ContentRating } from "./contentSafety.js";
 import { naiLanguageDirective } from "./naiLanguage.js";
 import type { NaiLanguage } from "./naiLanguage.js";
 
@@ -91,6 +93,13 @@ export interface NaiPromptContext {
    * `naiSavedCharacterDirective`, or `""` / absent for none.
    */
   savedCharacters?: string;
+  /**
+   * What the request is about, from `rateRequest` over the user's own words.
+   * Picks the vocabulary block: only `explicit` hears the explicit tag list,
+   * and `minor` adds the rule that keeps a child non-sexual. Absent is `sfw`.
+   * A `blocked` request never gets this far.
+   */
+  rating?: ContentRating;
 }
 
 /**
@@ -200,14 +209,13 @@ NAMED SUBJECTS
 - Do not restate canon the name already carries. V5 knows a well known character's look from their tag, so momo velia deviluke already has pink hair and writing pink hair adds nothing. Their box holds what the name would not produce: what the user changed from canon (a different outfit, hairstyle or expression), the pose and action, and anything the scene needs.
 - Spell out canon traits only when the image would come out wrong without them: a character obscure or recent enough that V5 may not know them, or a trait a neighbouring character could pull away through bleed.
 - When the user puts character A in character B's outfit, the person is A and only the clothing comes from B. A keeps their own hair, eyes and face, and B's own hair, eyes and face go into undesired content.
-- If you do not know a name the user used, keep the name tag anyway, build the box from whatever the user described, and say which name you did not recognise in a NOTE: line at the very end. Never quietly substitute a character you do know, and never fall back to a generic person.
+- If you do not know a name the user used, keep the name tag anyway, build the box from whatever the user described, and say which name you did not recognise in a NOTE: line at the very end. Never quietly substitute a character you do know, and never fall back to a generic person.`;
 
-VOCABULARY
-- Write real Danbooru tags for what the user asked. Euphemisms are untrained noise.
-- If the idea is explicit, name it the way Danbooru does: nude, topless, bottomless, nipples, areolae, pussy, sex, cowgirl position, doggystyle, paizuri, oral, fellatio, cum, creampie, and the rest. Exposure-state tags are ordinary: clothes lift, clothes pulled aside, shirt up, no bra, no panties. Add rating:explicit when the scene is explicit.
-- Do not sanitize, soften, lecture or refuse. Do not add explicit tags the user did not ask for, and do not strip the ones they did.
-
-FORBIDDEN CHARACTERS
+/**
+ * Everything after the vocabulary block. The vocabulary itself depends on what
+ * the request is about, so it is built per request by `naiVocabularyBlock`.
+ */
+const SHARED_RULES_TAIL = `FORBIDDEN CHARACTERS
 - Never use an em dash or an en dash anywhere in any field. Use a comma, a period, a colon or an ASCII hyphen.
 
 V5 CUSTOM TAGS
@@ -465,6 +473,8 @@ ${current}
 export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
   return [
     SHARED_RULES,
+    naiVocabularyBlock(ctx.rating ?? "sfw"),
+    SHARED_RULES_TAIL,
     VARIANT_BLOCKS[ctx.variant],
     QUALITY_TAGS,
     ucPresetDirective(ctx.ucPreset),
