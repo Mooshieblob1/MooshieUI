@@ -4005,6 +4005,8 @@ const en: Record<string, string> = {
   "prompt_assistant.busy_generation": "Busy generating — try again after it finishes.",
   "prompt_assistant.no_model": "No prompt assistant model installed.",
   "prompt_assistant.error_generic": "Prompt assistant error, try again.",
+  "prompt_assistant.blocked_minor_content": "Not sent. This asks for sexual or suggestive content involving a minor, which MooshieUI never writes.",
+  "prompt_assistant.provider_refused": "The AI provider's own content filter declined this request. MooshieUI did not block it.",
 
   // ── i18n audit: previously missing keys / hardcoded strings ──
   "nav.artists": "Artists",

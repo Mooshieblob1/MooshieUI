@@ -62,6 +62,7 @@ import {
 } from "../utils/naiPrompt.js";
 import type { NaiPromptContext } from "../utils/naiPrompt.js";
 import { naiRecipeDirective } from "../utils/naiRecipes.js";
+import { assertAllowedRequest, naiRequestTexts } from "../utils/contentSafety.js";
 import {
   naiRetryInstruction,
   normalizeNaiResponse,
@@ -475,6 +476,7 @@ class PromptAssistantStore {
     saved: SavedCharacterHint[] = [],
   ): Promise<ExtractedCharacter[]> {
     if (this.isGenerating) throw new Error("busy_generation");
+    assertAllowedRequest([prompt]);
     const request = characterExtractRequest(prompt, negative, saved);
     this.isGenerating = true;
     try {
@@ -534,6 +536,7 @@ class PromptAssistantStore {
     negative: string,
   ): Promise<CharacterUpdate | "missing"> {
     if (this.isGenerating) throw new Error("busy_generation");
+    assertAllowedRequest([character.prompt, prompt]);
     const request = characterUpdateRequest(character, prompt, negative);
     this.isGenerating = true;
     try {
@@ -566,6 +569,7 @@ class PromptAssistantStore {
     style: CharacterPromptStyle,
   ): Promise<CharacterUpdate> {
     if (this.isGenerating) throw new Error("busy_generation");
+    assertAllowedRequest([character.prompt]);
     const request = characterConvertRequest(character, from, to, style);
     this.isGenerating = true;
     try {
@@ -593,6 +597,7 @@ class PromptAssistantStore {
    */
   async mergeCharacter(input: CharacterMergeInput): Promise<CharacterMergeResult> {
     if (this.isGenerating) throw new Error("busy_generation");
+    assertAllowedRequest([input.prompt, input.character.prompt, ...(input.box?.boxes ?? [])]);
     const request = characterMergeRequest(input);
     this.isGenerating = true;
     try {
@@ -890,6 +895,15 @@ class PromptAssistantStore {
     ctx: NaiPromptContext,
     referenceData: string[] = [],
   ): Promise<NaiRewriteResult & { raw: string; sessionUser: string }> {
+    // Before anything is sent, the skill authoring call included. The rating
+    // also picks the vocabulary block, so an SFW request never carries the
+    // explicit tag list.
+    ctx = {
+      ...ctx,
+      rating: assertAllowedRequest(
+        naiRequestTexts(prompt, ctx.existing, enhancerSessions.turns("nai").map((turn) => turn.user)),
+      ),
+    };
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
