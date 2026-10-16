@@ -157,15 +157,18 @@ export function estimateH3ModelGb(filename: string | null | undefined): number {
 }
 
 /**
- * Fraction of card VRAM above which pinning the whole DiT resident is harmful.
- * ComfyUI's `--highvram` (VRAM Mode "high") force-loads the model instead of
- * staging it dynamically, so a DiT this close to the card's capacity leaves no
- * headroom for activations and the pass spills to host memory over PCIe.
- * Measured on a 12 GB RTX 5070 with the 12.5 GB NVFP4 DiT: 176 s/it under
- * `--highvram` against 4.2 s/it with dynamic loading, and no out-of-memory
- * error to explain the difference.
+ * VRAM a pinned DiT has to leave free before pinning it is harmful. ComfyUI's
+ * `--highvram` (VRAM Mode "high") force-loads the model instead of staging it
+ * dynamically, so a DiT that leaves less than this leaves no headroom for
+ * activations and the pass spills to host memory over PCIe. Measured on a
+ * 12 GB RTX 5070 with the 12.5 GB NVFP4 DiT: 176 s/it under `--highvram`
+ * against 4.2 s/it with dynamic loading, and no out-of-memory error to explain
+ * the difference; a 24 GB RTX 4090 with the 20 GB int8 DiT stalled the same
+ * way. Absolute rather than a fraction: activations scale with the output, not
+ * the card (about 6 GB for 124 frames at 1344x768, per the estimate below).
+ * Mirrors `HIGHVRAM_MIN_HEADROOM_BYTES` in `comfyui/process.rs`.
  */
-const H3_HIGHVRAM_HEADROOM_FRACTION = 0.9;
+const H3_HIGHVRAM_MIN_HEADROOM_GB = 6;
 
 /**
  * Whether VRAM Mode "high" would starve an H3 pass of activation headroom.
@@ -176,7 +179,7 @@ export function isH3HighVramHarmful(
   detectedVramGb: number | null,
 ): boolean {
   if (detectedVramGb === null || detectedVramGb <= 0) return false;
-  return modelGb > detectedVramGb * H3_HIGHVRAM_HEADROOM_FRACTION;
+  return detectedVramGb - modelGb < H3_HIGHVRAM_MIN_HEADROOM_GB;
 }
 
 /**

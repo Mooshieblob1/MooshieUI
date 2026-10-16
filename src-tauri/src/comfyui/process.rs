@@ -187,9 +187,11 @@ async fn has_blackwell_gpu() -> bool {
     }
 }
 
-/// Fraction of card VRAM above which pinning a whole diffusion model resident
-/// does more harm than good.
-const HIGHVRAM_HEADROOM_FRACTION: f64 = 0.9;
+/// VRAM a pinned diffusion model has to leave free for activations and the video
+/// decode before pinning it does more harm than good. Activations scale with the
+/// output size, not the card, so this is an absolute amount: about what a
+/// 124-frame 1344x768 pass needs on top of the model.
+const HIGHVRAM_MIN_HEADROOM_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 
 /// How many directory levels deep to look for an H3 diffusion model. Enough for
 /// a `diffusion_models/<vendor>/<file>` layout without walking a whole drive.
@@ -306,7 +308,9 @@ struct HighVramConflict {
 /// that nearly fills the card leaves nothing for activations and every sampler
 /// step spills over PCIe. Measured on a 12 GB RTX 5070 with the 12.5 GB NVFP4
 /// DiT: 176 s/it under `--highvram` against 4.2 s/it with dynamic loading, and
-/// no out-of-memory error to explain the difference.
+/// no out-of-memory error to explain the difference. A 24 GB RTX 4090 with the
+/// 20 GB int8 DiT (4 GB left over) showed the same: no first step after three
+/// minutes, or a video decode still running after twelve.
 ///
 /// `None` whenever VRAM cannot be read or no H3 model is installed — this only
 /// ever drops the flag on evidence, never on a guess.
@@ -316,7 +320,7 @@ fn h3_highvram_conflict(
 ) -> Option<HighVramConflict> {
     let vram_bytes = vram_bytes?;
     let (model, model_bytes) = largest_dit?;
-    if (model_bytes as f64) > (vram_bytes as f64) * HIGHVRAM_HEADROOM_FRACTION {
+    if vram_bytes.saturating_sub(model_bytes) < HIGHVRAM_MIN_HEADROOM_BYTES {
         Some(HighVramConflict {
             model,
             model_bytes,
@@ -2415,6 +2419,10 @@ mod highvram_conflict_tests {
         assert_eq!(conflict.model, "h3_nvfp4.safetensors");
         assert_eq!(conflict.vram_bytes, 12 * GIB);
         assert!(h3_highvram_conflict(Some(24 * GIB), big()).is_none());
+        // The 20 GB int8 DiT fits a 24 GB card but leaves too little for activations.
+        let int8 = || Some(("h3_int8.safetensors".to_string(), 20 * GIB));
+        assert!(h3_highvram_conflict(Some(24 * GIB), int8()).is_some());
+        assert!(h3_highvram_conflict(Some(32 * GIB), int8()).is_none());
         // Unreadable VRAM or no H3 model installed: keep the flag.
         assert!(h3_highvram_conflict(None, big()).is_none());
         assert!(h3_highvram_conflict(Some(12 * GIB), None).is_none());
