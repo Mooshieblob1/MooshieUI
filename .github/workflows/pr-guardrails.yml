@@ -19,7 +19,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 
@@ -34,6 +34,13 @@ jobs:
 
       - name: Modals portaled app-wide
         run: node scripts/check-portals.mjs
+
+      # Node 20 cannot load .ts directly, so the test is bundled with the
+      # esbuild Vite already installs.
+      - name: Content safety tests
+        run: |
+          npx esbuild scripts/tests/contentSafety.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/contentSafety.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/contentSafety.test.mjs"
 
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
@@ -55,7 +62,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 

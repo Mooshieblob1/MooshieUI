@@ -3946,6 +3946,8 @@ const pl: Record<string, string> = {
   "prompt_assistant.busy_generation": "Trwa generowanie — spróbuj ponownie po zakończeniu.",
   "prompt_assistant.no_model": "Nie zainstalowano modelu asystenta Prompt.",
   "prompt_assistant.error_generic": "Błąd asystenta Prompt, spróbuj ponownie.",
+  "prompt_assistant.blocked_minor_content": "Nie wysłano. To prośba o treści seksualne lub sugestywne z udziałem nieletniego, których MooshieUI nigdy nie pisze.",
+  "prompt_assistant.provider_refused": "Własny filtr treści dostawcy AI odrzucił to żądanie. Nie zablokował go MooshieUI.",
 
   // ── i18n audit: previously missing keys / hardcoded strings ──
   "nav.artists": "Artyści",

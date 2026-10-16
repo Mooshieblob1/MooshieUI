@@ -3900,6 +3900,8 @@ const de: Record<string, string> = {
   "prompt_assistant.busy_generation": "Beschäftigt mit Generierung — nach Abschluss erneut versuchen.",
   "prompt_assistant.no_model": "Kein Prompt-Assistent-Modell installiert.",
   "prompt_assistant.error_generic": "Fehler beim Prompt-Assistenten, erneut versuchen.",
+  "prompt_assistant.blocked_minor_content": "Nicht gesendet. Diese Anfrage verlangt sexuelle oder anzügliche Inhalte mit Minderjährigen, die MooshieUI niemals schreibt.",
+  "prompt_assistant.provider_refused": "Der eigene Inhaltsfilter des KI-Anbieters hat diese Anfrage abgelehnt. MooshieUI hat sie nicht blockiert.",
   "artist_gallery.variant_label": "Variante",
 
   "artist_gallery.variant_n": "Bild {n}",

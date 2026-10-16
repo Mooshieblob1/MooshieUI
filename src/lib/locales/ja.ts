@@ -3922,6 +3922,8 @@ const ja: Record<string, string> = {
   "prompt_assistant.busy_generation": "生成中です — 完了後にもう一度お試しください。",
   "prompt_assistant.no_model": "プロンプトアシスタントモデルがインストールされていません。",
   "prompt_assistant.error_generic": "プロンプトアシスタントエラー、もう一度お試しください。",
+  "prompt_assistant.blocked_minor_content": "送信していません。未成年者が関わる性的または示唆的な内容の依頼であり、MooshieUIは決して書きません。",
+  "prompt_assistant.provider_refused": "AIプロバイダー自身のコンテンツフィルターがこのリクエストを拒否しました。MooshieUIがブロックしたものではありません。",
   "artist_gallery.variant_label": "バリエーション",
 
   "artist_gallery.variant_n": "画像{n}",

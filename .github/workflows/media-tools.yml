@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
         with:
           toolchain: stable
       - name: Test production installer
@@ -50,7 +50,7 @@ jobs:
           find "$RUNNER_TEMP/mooshie-media-smoke/bin/media" -type f -perm -111 -exec xcrun vtool -show-build {} \; > media-tools-macos-targets.log
       - name: Upload native evidence
         if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: media-tools-${{ matrix.platform }}
           path: media-tools-*.log
