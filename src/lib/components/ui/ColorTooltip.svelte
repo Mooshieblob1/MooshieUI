@@ -1,5 +1,11 @@
+<script module lang="ts">
+  import { getColorName, initColors, ORIGINAL_COLORS } from "ntc-ts";
+
+  // ntc-ts starts with a palette of just Black; without this every color is named "Black".
+  initColors(ORIGINAL_COLORS);
+</script>
+
 <script lang="ts">
-  import { getColorName } from "ntc-ts";
 
   interface Props {
     color: string;
