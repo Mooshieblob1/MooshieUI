@@ -3897,6 +3897,8 @@ const ru: Record<string, string> = {
   "prompt_assistant.busy_generation": "Идёт генерация — попробуйте после завершения.",
   "prompt_assistant.no_model": "Модель ассистента промптов не установлена.",
   "prompt_assistant.error_generic": "Ошибка ассистента промптов, попробуйте ещё раз.",
+  "prompt_assistant.blocked_minor_content": "Не отправлено. Запрос касается сексуального или откровенного контента с участием несовершеннолетнего, а MooshieUI такое никогда не пишет.",
+  "prompt_assistant.provider_refused": "Собственный фильтр контента ИИ-провайдера отклонил этот запрос. MooshieUI его не блокировал.",
   "artist_gallery.variant_label": "Вариант",
 
   "artist_gallery.variant_n": "Изображение {n}",
