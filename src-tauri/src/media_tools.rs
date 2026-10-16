@@ -535,9 +535,11 @@ fn extract(archive: &Path, destination: &Path, package: &Package) -> Result<(), 
                 if entry.is_file()
                     && !entry.is_symlink()
                     && entry.size() <= 2 * 1024 * 1024
-                    && Path::new(entry.name())
-                        .file_name()
-                        .is_some_and(|n| n == "LICENSE" || n == "LICENSE.txt")
+                    && entry.name().is_ok_and(|name| {
+                        Path::new(name.as_ref())
+                            .file_name()
+                            .is_some_and(|n| n == "LICENSE" || n == "LICENSE.txt")
+                    })
                 {
                     copy_bounded(entry, &destination.join("LICENSE.txt"))?;
                     break;

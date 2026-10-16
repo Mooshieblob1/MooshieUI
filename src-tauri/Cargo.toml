@@ -89,7 +89,7 @@ rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 sysinfo = "0.39"
 # llama.cpp (prompt assistant) ships `.zip` assets on every platform at the
 # pinned release, so zip extraction is needed on all targets, not just Windows.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 chacha20poly1305 = "0.10"
 trash = "5.2"
 # LAN mode: list the PC's addresses, and advertise mooshieui.local over mDNS

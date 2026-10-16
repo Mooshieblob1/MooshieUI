@@ -1194,7 +1194,10 @@ fn extract_ort_library(
             let mut entry = archive.by_index(i).map_err(|e| {
                 AppError::InterrogatorError(format!("Failed to read zip entry: {}", e))
             })?;
-            if entry.name().ends_with("onnxruntime.dll") {
+            if entry
+                .name()
+                .is_ok_and(|name| name.ends_with("onnxruntime.dll"))
+            {
                 let mut outfile = std::fs::File::create(dest)?;
                 std::io::copy(&mut entry, &mut outfile)?;
                 return Ok(());
