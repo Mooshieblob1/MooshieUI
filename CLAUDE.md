@@ -55,6 +55,7 @@ Project skills live in `.claude/skills/` (synced from canonical `.agents/skills/
 - **`toParams()`** in the generation store maps camelCase → snake_case for Rust manually — mismatches break silently.
 - **i18n**: only `locale.t('key')`, no hardcoded user strings. Every key and `{placeholder}` added to `src/lib/locales/en.ts` must exist in **all** other locale files (missing keys fall back to English with no error).
 - **UI**: Tailwind only, no `<style>` blocks in `.svelte`; `onclick` not legacy `on:click`; dark neutral palette with accents via `--theme-accent-*` in `app.css`.
+- **Modals and popups render app-wide**: put `use:portal` (`src/lib/utils/portal.ts`) on the outermost element of every `fixed` overlay or popup, wherever it lives. Panel scroll areas (`contain: content` in `app.css`) and the transformed side/bottom/mobile panel wrappers trap `position: fixed`, so an unportaled modal opens inside the panel instead of over the app. Keep the portaled element the only top-level node of its `{#if}` branch or component (wrap it in its own `{#if}` if it needs siblings), or Svelte's block teardown removes unrelated nodes. `node scripts/check-portals.mjs` (Guardrails CI) fails any `fixed inset-0` without it; a deliberate exception needs `<!-- portal-exempt: reason -->` above the tag.
 
 ## Release Process Gotchas
 

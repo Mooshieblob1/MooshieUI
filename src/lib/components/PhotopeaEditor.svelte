@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../utils/portal.js";
   import { locale } from "../stores/locale.svelte.js";
   import { generation } from "../stores/generation.svelte.js";
   import { loadGalleryImagePng, saveToGalleryBytes, readImageMetadata } from "../utils/api.js";
@@ -110,6 +111,7 @@
 
 {#if open}
   <div
+    use:portal
     class="fixed inset-0 z-[230] flex flex-col bg-black/90 backdrop-blur-sm p-3"
     role="dialog"
     aria-modal="true"

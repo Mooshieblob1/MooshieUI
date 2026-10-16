@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { animeScene } from "../../stores/animeScene.svelte.js";
 
@@ -15,6 +16,7 @@
 
 {#if pending}
   <div
+    use:portal
     class="fixed inset-0 z-80 flex items-center justify-center bg-black/60 p-4"
     role="dialog"
     aria-modal="true"

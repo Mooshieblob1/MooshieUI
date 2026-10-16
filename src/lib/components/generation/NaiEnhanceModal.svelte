@@ -23,6 +23,7 @@
    * The `enhanceForNai` call lives here and not in the store: `naiEnhance` is a
    * feature store and may not import the prompt assistant.
    */
+  import { portal } from "../../utils/portal.js";
   import { naiEnhance, NAI_MAX_REFERENCES } from "../../stores/naiEnhance.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -38,6 +39,7 @@
   import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import { mapLlmError } from "../../utils/llmError.js";
+  import { naiRequestTexts, rateRequest, savedCharactersForRequest } from "../../utils/contentSafety.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { readClipboardImageSafe } from "../../utils/api.js";
   import { buildH3Context } from "../../utils/h3Prompt.js";
@@ -319,25 +321,31 @@
     const boxes = generation.novelaiSettings.characters;
     naiEnhance.busy = true;
     try {
+      // Ticked, what the user typed is applied as an edit to these fields
+      // rather than treated as the whole of the idea.
+      const existing = generation.naiEnhanceIncludeExisting
+        ? {
+            base: generation.positivePrompt ?? "",
+            uc: generation.negativePrompt ?? "",
+            characters: boxes.map((c) => c.prompt ?? ""),
+          }
+        : null;
+      // Rated here as well as in the store, because only this side has the
+      // saved characters themselves: an explicit request leaves out the ones
+      // drawn as minors, and refuses when it names one.
+      const texts = naiRequestTexts(text, existing, enhancerSessions.turns("nai").map((t) => t.user));
+      const roster = savedCharactersForRequest(savedCharacters.currentCharacters, rateRequest(texts), texts);
       const result = await promptAssistant.enhanceForNai(text, {
         variant: v,
         // Curate it applies the Heavy preset, so the rewrite skips what it covers.
         ucPreset: naiEnhance.curate ? NAI_UC_HEAVY : generation.novelaiSettings.uc_preset,
         characterCount: boxes.length,
-        // Ticked, what the user typed is applied as an edit to these fields
-        // rather than treated as the whole of the idea.
-        existing: generation.naiEnhanceIncludeExisting
-          ? {
-              base: generation.positivePrompt ?? "",
-              uc: generation.negativePrompt ?? "",
-              characters: boxes.map((c) => c.prompt ?? ""),
-            }
-          : null,
+        existing,
         language,
         references: refs.map((r) => r.label),
         // NovelAI mode, so these are the characters saved under NovelAI.
         savedCharacters: naiSavedCharacterDirective(
-          savedCharacters.currentCharacters.map((c) => ({
+          roster.map((c) => ({
             ...c,
             variantOf: c.parentId
               ? savedCharacters.characters.find((p) => p.id === c.parentId)?.name
@@ -496,6 +504,7 @@
 
 {#if naiEnhance.isOpen}
   <div
+    use:portal
     data-modal-open
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {

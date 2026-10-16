@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { modelRequests, type ModelRequest } from "../../stores/modelRequests.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel } from "../../utils/api.js";
@@ -166,6 +167,7 @@
 {#if denyModalOpen && denyTarget}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    use:portal
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
     onmousedown={(e) => { if (e.target === e.currentTarget) denyModalOpen = false; }}
     onkeydown={(e) => { if (e.key === "Escape") denyModalOpen = false; }}

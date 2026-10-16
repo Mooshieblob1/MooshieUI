@@ -29,7 +29,7 @@
 </script>
 
 {#if queue.panelOpen}
-  <!-- Backdrop -->
+  <!-- portal-exempt: click-catcher for the anchored panel below; it must stay its sibling. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="fixed inset-0 z-40"

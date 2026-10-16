@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { catalogIds } from "../../errors/errorCatalog.js";
   import { resolveError } from "../../errors/resolveError.js";
   import ErrorCard from "./ErrorCard.svelte";
@@ -36,7 +37,7 @@
   }
 </script>
 
-<div class="fixed inset-0 z-[60] overflow-auto bg-neutral-950 p-6">
+<div use:portal class="fixed inset-0 z-[60] overflow-auto bg-neutral-950 p-6">
   <h2 class="mb-4 text-lg font-semibold text-neutral-100">Error gallery ({ids.length})</h2>
   <div class="grid gap-4 md:grid-cols-2">
     {#each ids as id}

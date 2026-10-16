@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { errorModal } from "../../stores/errorModal.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import ErrorCard from "./ErrorCard.svelte";
@@ -6,6 +7,7 @@
 
 {#if errorModal.current}
   <div
+    use:portal
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
     onclick={(e) => { if (e.target === e.currentTarget) errorModal.close(); }}
     onkeydown={(e) => { if (e.key === "Escape") errorModal.close(); }}

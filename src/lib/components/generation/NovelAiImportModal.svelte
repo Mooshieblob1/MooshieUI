@@ -12,6 +12,7 @@
    * because they are answers to "what do you want to do with this image?"
    * rather than extra things to import.
    */
+  import { portal } from "../../utils/portal.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -126,6 +127,7 @@
 
 {#if novelaiImport.isOpen}
   <div
+    use:portal
     class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
     role="dialog"
     aria-modal="true"

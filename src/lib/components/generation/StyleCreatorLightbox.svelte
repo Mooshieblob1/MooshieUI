@@ -5,6 +5,7 @@
    * time or both at once, and the controls stay out of the way until the
    * pointer enters the frame.
    */
+  import { portal } from "../../utils/portal.js";
   import { styleCreator, type RoundCard } from "../../stores/styleCreator.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -117,7 +118,7 @@
 {/snippet}
 
 {#if open}
-  <div class="fixed inset-0 z-[60] flex flex-col bg-black/95">
+  <div use:portal class="fixed inset-0 z-[60] flex flex-col bg-black/95">
     <button
       type="button"
       class="absolute right-3 top-3 z-10 rounded border border-neutral-700 bg-neutral-900/80 px-2 py-1 text-xs text-neutral-300 hover:border-indigo-500 hover:text-indigo-200"

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import {
     artistFavourites,
     CATEGORY_COLOR_PALETTE,
@@ -191,6 +192,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"

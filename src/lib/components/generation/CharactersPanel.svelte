@@ -20,10 +20,11 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
   import CharacterMergeModal from "./CharacterMergeModal.svelte";
-  import CharacterDuplicatesModal, {
+  import CharacterExtractReviewModal, {
     type DuplicateDecision,
     type DuplicateMatch,
-  } from "./CharacterDuplicatesModal.svelte";
+    type NewCharacterDecision,
+  } from "./CharacterExtractReviewModal.svelte";
   import type { ExtractedCharacter } from "../../utils/characterExtract.js";
   import { findDuplicate, sameContent } from "../../utils/characterDuplicates.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
@@ -54,8 +55,8 @@
   let thumbPickerOpen = $state(false);
   let thumbFileInput = $state<HTMLInputElement | null>(null);
 
-  /** Extract found characters that are already saved, awaiting the user's call. */
-  let duplicateReview = $state<{
+  /** What Extract found, awaiting the user's names and calls before saving. */
+  let extractReview = $state<{
     arch: string;
     fresh: ExtractedCharacter[];
     matches: DuplicateMatch[];
@@ -314,21 +315,11 @@
           matches.push({ item, saved: dup });
         }
       }
-      if (matches.length > 0) {
-        duplicateReview = { arch, fresh, matches, source, negative };
+      if (fresh.length === 0 && matches.length === 0) {
+        gallery.showToast(locale.t("characters.toast.already_saved"), "info");
         return;
       }
-      const added = savedCharacters.saveExtracted(fresh, arch);
-      gallery.showToast(
-        added === 0
-          ? locale.t("characters.toast.already_saved")
-          : locale.t("characters.toast.saved", {
-              added: String(added),
-              updated: "0",
-              arch: architectureLabel(arch),
-            }),
-        added === 0 ? "info" : "success",
-      );
+      extractReview = { arch, fresh, matches, source, negative };
     } catch (e) {
       console.error("Character extraction failed:", e);
       const msg = String(e);
@@ -344,15 +335,20 @@
   }
 
   /**
-   * Carry out the duplicate review: new characters and variants become cards,
-   * and each Update merges the prompt's details into the saved card the same
-   * way the card's own Update button does. One Undo covers every update.
+   * Carry out the extract review: new characters are saved under the names
+   * the user gave them (an emptied name falls back to the suggested one),
+   * variants become cards, and each Update merges the prompt's details into
+   * the saved card the same way the card's own Update button does. One Undo
+   * covers every update.
    */
-  async function applyDuplicates(decisions: DuplicateDecision[]) {
-    const pending = duplicateReview;
-    duplicateReview = null;
+  async function applyExtractReview(decisions: DuplicateDecision[], named: NewCharacterDecision[]) {
+    const pending = extractReview;
+    extractReview = null;
     if (!pending) return;
-    const { arch, fresh, source, negative } = pending;
+    const { arch, source, negative } = pending;
+    const fresh = named
+      .filter((n) => n.keep)
+      .map((n) => ({ ...n.item, name: n.name.trim() || n.item.name }));
     const variants = decisions
       .filter((d) => d.action === "variant" && d.variantName.trim())
       .map((d) => ({
@@ -387,6 +383,13 @@
       extracting = false;
     }
     if (added + addedVariants + previous.length === 0) return;
+    if (pending.matches.length === 0) {
+      gallery.showToast(
+        locale.t("characters.toast.saved", { added: String(added), updated: "0", arch: architectureLabel(arch) }),
+        "success",
+      );
+      return;
+    }
     gallery.showToast(
       locale.t("characters.toast.dupes_saved", {
         added: String(added),
@@ -911,12 +914,12 @@
   {/if}
 </div>
 
-{#if duplicateReview}
-  <CharacterDuplicatesModal
-    matches={duplicateReview.matches}
-    fresh={duplicateReview.fresh.map((c) => c.name)}
-    onsave={applyDuplicates}
-    onclose={() => { duplicateReview = null; }}
+{#if extractReview}
+  <CharacterExtractReviewModal
+    matches={extractReview.matches}
+    fresh={extractReview.fresh}
+    onsave={applyExtractReview}
+    onclose={() => { extractReview = null; }}
   />
 {/if}
 

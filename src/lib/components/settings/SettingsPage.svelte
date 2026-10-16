@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
   import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
@@ -1255,7 +1256,7 @@
   }
 
   const sections = [
-    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in" },
+    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in lan network remote access share phone ip address local mooshieui.local firewall" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
@@ -4910,6 +4911,7 @@
 
 {#if showThemeCreatorModal}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
   onclick={(e) => { if (e.target === e.currentTarget) showThemeCreatorModal = false; }}
   onkeydown={(e) => { if (e.key === "Escape") showThemeCreatorModal = false; }}
@@ -5045,6 +5047,7 @@
 
 {#if showLogoCropModal && pendingLogoDataUrl}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
   onclick={(e) => { if (e.target === e.currentTarget) showLogoCropModal = false; }}
   onkeydown={(e) => { if (e.key === "Escape") showLogoCropModal = false; }}
@@ -5100,6 +5103,7 @@
 <!-- About MooshieUI Modal -->
 {#if showAboutModal}
 <div
+  use:portal
   class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
   onclick={(e) => { if (e.target === e.currentTarget) showAboutModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showAboutModal = false; }}
@@ -5174,6 +5178,7 @@
 <!-- Report an Issue Modal -->
 {#if showReportModal}
 <div
+  use:portal
   class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
   onclick={(e) => { if (e.target === e.currentTarget) showReportModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showReportModal = false; }}
@@ -5266,7 +5271,7 @@
 {/if}
 
 {#if showQualityTagsWarning}
-<div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
+<div use:portal class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-6 max-w-md mx-4 shadow-2xl">
     <h3 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t('settings.quality_warning.title')}</h3>
     <p class="text-xs text-neutral-400 mb-2">{locale.t('settings.quality_warning.body', { tags: 'masterpiece, best quality, score_9' })}</p>
@@ -5294,7 +5299,7 @@
 {/if}
 
 {#if showAdvancedModeWarning}
-<div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
+<div use:portal class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-6 max-w-md mx-4 shadow-2xl">
     <h3 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t('settings.advanced_mode.warning_title')}</h3>
     <p class="text-xs text-neutral-400 mb-4">{locale.t('settings.advanced_mode.warning_body')}</p>
@@ -5323,6 +5328,7 @@
 <!-- Add Account Modal -->
 {#if showAddAccountModal}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
   onclick={(e) => { if (e.target === e.currentTarget) showAddAccountModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showAddAccountModal = false; }}
@@ -5374,6 +5380,7 @@
 <!-- Reset Password Modal (admin) -->
 {#if showResetPasswordModal}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
   onclick={(e) => { if (e.target === e.currentTarget) showResetPasswordModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showResetPasswordModal = false; }}
@@ -5421,6 +5428,7 @@
 <!-- Delete Account Confirmation Modal -->
 {#if showDeleteModal}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
   onclick={(e) => { if (e.target === e.currentTarget) showDeleteModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showDeleteModal = false; }}
@@ -5468,6 +5476,7 @@
 
 {#if showStorageModal}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
   onclick={(e) => { if (e.target === e.currentTarget) showStorageModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showStorageModal = false; }}
@@ -5507,6 +5516,7 @@
 <!-- Account Actions Modal -->
 {#if showAccountActionsModal && actionsTargetAccount}
 <div
+  use:portal
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
   onclick={(e) => { if (e.target === e.currentTarget) showAccountActionsModal = false; }}
   onkeydown={(e) => { if (e.key === 'Escape') showAccountActionsModal = false; }}

@@ -2188,8 +2188,13 @@ const en: Record<string, string> = {
   "characters.dupes.variant_name": "Variant name",
   "characters.dupes.variant_default": "variant",
   "characters.dupes.disregard": "Disregard",
-  "characters.dupes.also_new": "Also saving {count} new: {names}",
   "characters.dupes.save": "Save",
+  "characters.naming.title": "Name your characters",
+  "characters.naming.desc": "The prompt assistant suggested these names. Change any you like, or untick one to leave it out.",
+  "characters.naming.new_heading": "New characters",
+  "characters.naming.saved_heading": "Already saved",
+  "characters.naming.name": "Character name",
+  "characters.naming.keep": "Save {name}",
   "characters.toast.dupes_saved": "Saved {added} new and {variants} variants, updated {updated}.",
   "characters.use": "Use",
   "characters.use_tip": "Add this character to the current prompt",
@@ -4000,6 +4005,8 @@ const en: Record<string, string> = {
   "prompt_assistant.busy_generation": "Busy generating — try again after it finishes.",
   "prompt_assistant.no_model": "No prompt assistant model installed.",
   "prompt_assistant.error_generic": "Prompt assistant error, try again.",
+  "prompt_assistant.blocked_minor_content": "Not sent. This asks for sexual or suggestive content involving a minor, which MooshieUI never writes.",
+  "prompt_assistant.provider_refused": "The AI provider's own content filter declined this request. MooshieUI did not block it.",
 
   // ── i18n audit: previously missing keys / hardcoded strings ──
   "nav.artists": "Artists",

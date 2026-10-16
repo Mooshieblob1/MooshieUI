@@ -12,6 +12,7 @@
    * so an anchored panel wide enough to preview chunk content ran off the left
    * edge and was clipped at the widths people actually use.
    */
+  import { portal } from "../../utils/portal.js";
   import { promptPresets, inlineChunkToken, type PromptPreset } from "../../stores/promptPresets.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -94,6 +95,7 @@
 {#if open}
   <!-- Below PresetActivationModal's z-210, so picking a mode stacks on top. -->
   <div
+    use:portal
     class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
     role="dialog"
     aria-modal="true"

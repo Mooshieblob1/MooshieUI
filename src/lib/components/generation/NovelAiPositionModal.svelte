@@ -19,6 +19,7 @@
    * dimensions, so the ratio is measured off the decoded image; anything that
    * does not match (or fails to load) falls back to the plain black canvas.
    */
+  import { portal } from "../../utils/portal.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -246,6 +247,7 @@
 
 {#if novelai.characterPositionOpen}
   <div
+    use:portal
     class="fixed inset-0 z-80 flex items-center justify-center bg-black/70 p-4"
     role="dialog"
     aria-modal="true"

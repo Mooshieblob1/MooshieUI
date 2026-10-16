@@ -4,6 +4,7 @@
    * in the Styles tab so the overlay covers the whole window, not just the
    * bottom panel the list lives in.
    */
+  import { portal } from "../../utils/portal.js";
   import { styles } from "../../stores/styles.svelte.js";
   import { styleEditors } from "../../stores/styleEditors.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -71,7 +72,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 {#if open && style}
-  <div class="fixed inset-0 z-[70] flex flex-col bg-black/95">
+  <div use:portal class="fixed inset-0 z-[70] flex flex-col bg-black/95">
     <div class="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
       <p class="truncate text-sm text-neutral-100">{style.name}</p>
       <button

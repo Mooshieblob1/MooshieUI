@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { generateStyleThumbnail } from "../../utils/styleThumbnailGen.js";
   import { styles, resizeImageToDataUrl, bakedArtistWeight, type ArtistStyle, type StyleArtist } from "../../stores/styles.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
@@ -218,6 +219,7 @@
 </script>
 
 <div
+  use:portal
   class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"

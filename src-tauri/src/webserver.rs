@@ -7598,6 +7598,12 @@ async fn auth_lan_info_handler(
         .iter()
         .map(|ip| crate::lan_discovery::url_for(&ip.to_string(), &endpoint))
         .collect();
+    // Before the restart that puts the server on the LAN, show the name it
+    // will advertise, so the list doesn't look like it lost the .local entry.
+    let hostname = hostname.or_else(|| {
+        (cfg!(feature = "desktop") && !endpoint.lan)
+            .then(|| format!("{}.local", crate::lan_discovery::MDNS_HOST_LABEL))
+    });
     let hostname_url = hostname.map(|h| crate::lan_discovery::url_for(&h, &endpoint));
     (
         StatusCode::OK,

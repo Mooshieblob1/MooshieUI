@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from "../../utils/portal.js";
   import { onMount } from "svelte";
   import {
     createModelFolder,
@@ -346,6 +347,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div
+  use:portal
   class="fixed inset-0 z-80 flex bg-neutral-950 {mobileFriendly ? 'flex-col p-0' : 'items-center justify-center p-6'}"
   onclick={(e) => { if (e.target === e.currentTarget && !mobileFriendly) onclose(); }}
   onkeydown={handleKeydown}
