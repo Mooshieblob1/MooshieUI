@@ -1062,7 +1062,7 @@ const ru: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Редактирование изображения",
   "generation.image_edit.hint": "Опишите изменение в промпте (например, \"сделать небо фиолетовым\"). Модель редактирует ваше референсное изображение, а не генерирует с нуля.",
-  "generation.image_edit.wrong_model": "Выбранная модель не поддерживает редактирование изображений. Выберите модель Qwen Image Edit, Qwen Image Edit Plus или Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Выбранная модель не поддерживает редактирование изображений. Выберите модель Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein или Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Референсное изображение",
   "generation.image_edit.reference_image_n": "Референсное изображение {n}",
   "generation.image_edit.reference_set": "Референсное изображение задано",
@@ -1072,6 +1072,8 @@ const ru: Record<string, string> = {
   "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
   "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
+  "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
+  "generation.image_edit.flux3_note": "FLUX 3 Klein принимает до 10 референсных изображений. Называйте их в промпте по порядку (первое изображение, второе изображение) и описывайте весь результат, а не только изменение.",
   "generation.image_edit.anima_note":
     "ReStyler перерисовывает персонажа с референсного изображения в стиле Anima. Размер результата совпадает с референсом. Требуется LoRA Anima Edit (загрузка с Civitai; может понадобиться API-ключ или VPN).",
   "generation.image_edit.anima_lora_download": "Скачать Anima Edit LoRA (350 МБ)",

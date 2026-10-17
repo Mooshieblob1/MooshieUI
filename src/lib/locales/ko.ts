@@ -1062,7 +1062,7 @@ const ko: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "이미지 편집",
   "generation.image_edit.hint": "프롬프트에 변경 사항을 설명하세요 (예: \"하늘을 보라색으로 만들어\"). 모델은 처음부터 생성하는 대신 참조 이미지를 편집합니다.",
-  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus 또는 Flux.1 Kontext 모델을 선택하세요.",
+  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein 또는 Flux.1 Kontext 모델을 선택하세요.",
   "generation.image_edit.reference_image": "참조 이미지",
   "generation.image_edit.reference_image_n": "참조 이미지 {n}",
   "generation.image_edit.reference_set": "참조 이미지 설정됨",
@@ -1072,6 +1072,8 @@ const ko: Record<string, string> = {
   "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
   "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
+  "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
+  "generation.image_edit.flux3_note": "FLUX 3 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
   "generation.image_edit.anima_note":
     "ReStyler는 참조 이미지의 캐릭터를 Anima 스타일로 다시 그립니다. 출력 크기는 참조 이미지와 동일합니다. Anima Edit LoRA가 필요합니다 (Civitai 다운로드, API 키 또는 VPN이 필요할 수 있음).",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRA 다운로드 (350 MB)",

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { generation } from "../../stores/generation.svelte.js";
+  import { generation, EDIT_REFERENCE_SLOTS } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { uploadImageBytes, readClipboardImageSafe, downloadModel } from "../../utils/api.js";
@@ -11,15 +11,27 @@
   // Local object-URL previews, indexed by slot. Reference filenames live in the
   // store (generation.editReferenceImages); previews are lost across reloads, in
   // which case a stored filename still renders as a "set" slot without a thumbnail.
-  let previews = $state<(string | null)[]>([null, null, null]);
+  let previews = $state<(string | null)[]>(Array(EDIT_REFERENCE_SLOTS).fill(null));
   let uploadingSlot = $state<number | null>(null);
   let dropSlot = $state<number | null>(null);
   let pasteSlot = $state<number | null>(null);
   let dropZone = $state<HTMLElement | null>(null);
 
   const slotCount = $derived(generation.editReferenceSlotCount);
+  // Up to three slots are always shown. Beyond that (FLUX 3 Klein's ten), show
+  // the filled ones plus one empty slot, so the panel grows as images are added.
+  const visibleSlotCount = $derived.by(() => {
+    if (slotCount <= 3) return slotCount;
+    let lastFilled = -1;
+    for (let i = 0; i < slotCount; i++) {
+      if (generation.editReferenceImages[i] || previews[i]) lastFilled = i;
+    }
+    return Math.min(slotCount, Math.max(3, lastFilled + 2));
+  });
   const familyBadge = $derived(
-    generation.isQwenEditPlus
+    generation.isFlux3
+      ? locale.t("generation.image_edit.family_badge.flux3klein")
+      : generation.isQwenEditPlus
       ? locale.t("generation.image_edit.family_badge.qwen_edit_plus")
       : generation.isFluxKontext
         ? locale.t("generation.image_edit.family_badge.flux1kontext")
@@ -222,6 +234,10 @@
   {:else}
     <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.hint")}</p>
 
+    {#if generation.isFlux3}
+      <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.flux3_note")}</p>
+    {/if}
+
     {#if generation.isAnima}
       <p class="text-[11px] text-neutral-500">
         {locale.t("generation.image_edit.anima_note")}
@@ -304,7 +320,7 @@
       </label>
     {/if}
 
-    {#each Array(slotCount) as _, slot (slot)}
+    {#each Array(visibleSlotCount) as _, slot (slot)}
       {@const filename = generation.editReferenceImages[slot]}
       {@const preview = previews[slot]}
       <div>

@@ -12,6 +12,11 @@
 //!     the encoded reference latent (denoise 1.0) so the output matches Kontext's
 //!     preferred scaled resolution.
 //!
+//!   * FLUX 3 Image Klein (`flux3klein`, `flux3kleinbase`) — up to ten references
+//!     are encoded by the core `ReferenceMultiLatent` node, which appends their
+//!     latents to both conditionings, as in ComfyUI's bundled Klein edit
+//!     templates. Sampling starts from an empty Flux 2 latent at the target size.
+//!
 //!   * Anima ReStyler (`anima`) — character-consistent restyling. The reference is
 //!     scaled to the target size, VAE-encoded, and applied through
 //!     `ApplyCosmosReferenceLatent` (ComfyUI-Cosmos-Reference, auto-installed with
@@ -20,7 +25,7 @@
 //!     loaded, sampling is otherwise plain txt2img from an empty latent at the
 //!     same size (the temporal concat requires matching spatial dims).
 //!
-//! Qwen/Kontext use only core ComfyUI nodes; Anima additionally needs the
+//! Qwen/Kontext/FLUX 3 use only core ComfyUI nodes; Anima additionally needs the
 //! ComfyUI-Cosmos-Reference custom node package.
 
 use serde_json::json;
@@ -37,14 +42,19 @@ use crate::comfyui::types::GenerationParams;
 pub fn supports_family(arch: &str) -> bool {
     matches!(
         arch,
-        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "anima"
+        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "flux3klein" | "flux3kleinbase" | "anima"
     )
 }
+
+/// Most reference images FLUX 3 Image Klein conditions on (Black Forest Labs'
+/// documented limit). Mirrored by `editReferenceSlotCount` in the generation store.
+pub const FLUX3_MAX_REFERENCES: usize = 10;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     match params.model_architecture.as_str() {
         "flux1kontext" => build_kontext(params, seed),
         "qwen_edit" | "qwen_edit_plus" => build_qwen(params, seed),
+        "flux3klein" | "flux3kleinbase" => build_flux3(params, seed),
         "anima" => build_anima_restyler(params, seed),
         // Validation guarantees a supported edit family reaches here; fall back to
         // txt2img defensively rather than panicking on an unexpected architecture.
@@ -698,6 +708,147 @@ fn build_anima_restyler(params: &GenerationParams, seed: i64) -> WorkflowResult 
     }
 }
 
+/// FLUX 3 Image Klein path.
+///
+/// Every reference goes through one `ReferenceMultiLatent`, resized to about one
+/// megapixel each (the bundled templates' setting), and lands on positive and
+/// negative alike. The distilled checkpoint samples at CFG 1, so its negative is
+/// a zeroed copy of the positive text; the base checkpoint runs real CFG and
+/// encodes the negative prompt.
+fn build_flux3(params: &GenerationParams, seed: i64) -> WorkflowResult {
+    let mut workflow = serde_json::Map::new();
+    let next_id: u32 = 1;
+
+    let ml = load_model_nodes(&mut workflow, next_id, params);
+    let mut next_id = ml.next_id;
+    let model_source = ml.model_source;
+    let clip_source = ml.clip_source;
+    let vae_source = ml.vae_source;
+
+    let mut refs = reference_images(params);
+    if refs.is_empty() {
+        // Validation should prevent this; keep the workflow well-formed regardless.
+        refs.push("");
+    }
+    refs.truncate(FLUX3_MAX_REFERENCES);
+
+    let (pos_text, nid) = build_scheduled_conditioning(
+        &mut workflow,
+        next_id,
+        &clip_source,
+        &params.positive_prompt,
+        &[],
+    );
+    next_id = nid;
+
+    let neg_text = if params.model_architecture == "flux3kleinbase" {
+        let neg_id = next_id.to_string();
+        workflow.insert(
+            neg_id.clone(),
+            json!({
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "text": strip_lora_tags(&params.negative_prompt),
+                    "clip": [clip_source.0.clone(), clip_source.1]
+                }
+            }),
+        );
+        next_id += 1;
+        (neg_id, 0u32)
+    } else {
+        let neg_id = next_id.to_string();
+        workflow.insert(
+            neg_id.clone(),
+            json!({
+                "class_type": "ConditioningZeroOut",
+                "inputs": { "conditioning": [pos_text.0.clone(), pos_text.1] }
+            }),
+        );
+        next_id += 1;
+        (neg_id, 0u32)
+    };
+
+    let mut ref_inputs = serde_json::Map::new();
+    ref_inputs.insert("positive".into(), json!([pos_text.0.clone(), pos_text.1]));
+    ref_inputs.insert("negative".into(), json!([neg_text.0.clone(), neg_text.1]));
+    ref_inputs.insert("vae".into(), json!([vae_source.0.clone(), vae_source.1]));
+    // DynamicCombo and Autogrow inputs travel as dotted keys in API prompts.
+    ref_inputs.insert("resolution".into(), json!("resize"));
+    ref_inputs.insert("resolution.megapixels".into(), json!(1.0));
+    for (idx, image_name) in refs.iter().enumerate() {
+        let load_id = next_id.to_string();
+        workflow.insert(
+            load_id.clone(),
+            json!({
+                "class_type": "LoadImage",
+                "inputs": { "image": image_name }
+            }),
+        );
+        next_id += 1;
+        ref_inputs.insert(format!("images.image{idx}"), json!([load_id, 0]));
+    }
+    let ref_id = next_id.to_string();
+    workflow.insert(
+        ref_id.clone(),
+        json!({ "class_type": "ReferenceMultiLatent", "inputs": ref_inputs }),
+    );
+    next_id += 1;
+    let pos_source = (ref_id.clone(), 0u32);
+    let neg_source = (ref_id, 1u32);
+
+    let latent_id = next_id.to_string();
+    workflow.insert(
+        latent_id.clone(),
+        json!({
+            "class_type": "EmptyFlux2LatentImage",
+            "inputs": {
+                "width": params.width,
+                "height": params.height,
+                "batch_size": params.batch_size
+            }
+        }),
+    );
+    next_id += 1;
+
+    let sampler_id = next_id.to_string();
+    workflow.insert(
+        sampler_id.clone(),
+        json!({
+            "class_type": "KSampler",
+            "inputs": {
+                "model": [model_source.0.clone(), model_source.1],
+                "positive": [pos_source.0.clone(), pos_source.1],
+                "negative": [neg_source.0.clone(), neg_source.1],
+                "latent_image": [latent_id, 0],
+                "seed": seed,
+                "steps": params.steps,
+                "cfg": params.cfg,
+                "sampler_name": params.sampler_name,
+                "scheduler": params.scheduler,
+                "denoise": 1.0
+            }
+        }),
+    );
+    next_id += 1;
+
+    let (decode_id, next_id) =
+        insert_vae_decode(&mut workflow, next_id, &sampler_id, &vae_source, params);
+
+    WorkflowResult {
+        workflow,
+        next_id,
+        image_output: (decode_id, 0),
+        model_source,
+        clip_source,
+        positive_source: pos_source,
+        negative_source: neg_source,
+        vae_source,
+        sampler_id,
+        refiner_model_source: None,
+        base_sources: None,
+    }
+}
+
 /// Flux.1 Kontext path.
 fn build_kontext(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
@@ -884,6 +1035,74 @@ mod tests {
             .values()
             .filter(|n| n["class_type"] == class_type)
             .collect()
+    }
+
+    fn flux3_params(family: &str, refs: usize) -> GenerationParams {
+        let mut p = anima_params();
+        p.model_architecture = family.to_string();
+        p.use_split_model = true;
+        p.diffusion_model = Some("flux3-image-klein-int8-convrot.safetensors".into());
+        p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".into());
+        p.clip_type = Some("flux3".into());
+        p.vae = Some("flux2-vae.safetensors".into());
+        p.positive_prompt = "put the character from the first image in the second".into();
+        p.edit_reference_images = (0..refs).map(|i| format!("ref{i}.png")).collect();
+        p.width = 1216;
+        p.height = 832;
+        p.batch_size = 2;
+        p
+    }
+
+    #[test]
+    fn flux3_edit_wires_every_reference_into_one_reference_multi_latent() {
+        let result = build(&flux3_params("flux3klein", 3), 7);
+        let multi = nodes_of_type(&result, "ReferenceMultiLatent");
+        assert_eq!(multi.len(), 1);
+        let inputs = &multi[0]["inputs"];
+        assert_eq!(inputs["resolution"], "resize");
+        assert_eq!(inputs["resolution.megapixels"], 1.0);
+        let loads = nodes_of_type(&result, "LoadImage");
+        assert_eq!(loads.len(), 3);
+        for i in 0..3 {
+            let link = &inputs[format!("images.image{i}")];
+            let load = &result.workflow[link[0].as_str().unwrap()];
+            assert_eq!(load["inputs"]["image"], format!("ref{i}.png"));
+        }
+        assert!(inputs.get("images.image3").is_none());
+
+        // Sampling reads both conditionings from the reference node and starts
+        // from an empty Flux 2 latent at the requested size and batch.
+        let sampler = &result.workflow[&result.sampler_id]["inputs"];
+        let multi_id = result
+            .workflow
+            .iter()
+            .find(|(_, n)| n["class_type"] == "ReferenceMultiLatent")
+            .map(|(id, _)| id.clone())
+            .unwrap();
+        assert_eq!(sampler["positive"], json!([multi_id, 0]));
+        assert_eq!(sampler["negative"], json!([multi_id, 1]));
+        let latent = &result.workflow[sampler["latent_image"][0].as_str().unwrap()];
+        assert_eq!(latent["class_type"], "EmptyFlux2LatentImage");
+        assert_eq!(latent["inputs"]["width"], 1216);
+        assert_eq!(latent["inputs"]["height"], 832);
+        assert_eq!(latent["inputs"]["batch_size"], 2);
+        // The distilled checkpoint runs at CFG 1: its negative is a zeroed copy.
+        assert_eq!(nodes_of_type(&result, "ConditioningZeroOut").len(), 1);
+    }
+
+    #[test]
+    fn flux3_edit_caps_references_at_ten_and_base_encodes_the_negative() {
+        let result = build(&flux3_params("flux3kleinbase", 12), 7);
+        assert_eq!(
+            nodes_of_type(&result, "LoadImage").len(),
+            FLUX3_MAX_REFERENCES
+        );
+        assert!(nodes_of_type(&result, "ConditioningZeroOut").is_empty());
+        let negative = nodes_of_type(&result, "CLIPTextEncode")
+            .into_iter()
+            .find(|n| n["inputs"]["text"] == "lowres");
+        assert!(negative.is_some(), "base must encode the negative prompt");
+        assert!(supports_family("flux3klein") && supports_family("flux3kleinbase"));
     }
 
     #[test]

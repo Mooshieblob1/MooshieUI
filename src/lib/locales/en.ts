@@ -1224,7 +1224,7 @@ const en: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Image Edit",
   "generation.image_edit.hint": "Describe the change in the prompt (for example \"make the sky purple\"). The model edits your reference image instead of generating from scratch.",
-  "generation.image_edit.wrong_model": "The selected model does not support image editing. Choose a Qwen Image Edit, Qwen Image Edit Plus, or Flux.1 Kontext model.",
+  "generation.image_edit.wrong_model": "The selected model does not support image editing. Choose a Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Flux.1 Kontext, or Anima model.",
   "generation.image_edit.reference_image": "Reference Image",
   "generation.image_edit.reference_image_n": "Reference Image {n}",
   "generation.image_edit.reference_set": "Reference image set",
@@ -1234,6 +1234,8 @@ const en: Record<string, string> = {
   "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
   "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
+  "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
+  "generation.image_edit.flux3_note": "FLUX 3 Klein takes up to 10 reference images. Refer to them by order in the prompt (the first image, the second image) and describe the whole result, not only the change.",
   "generation.image_edit.anima_note":
     "ReStyler redraws the character from your reference image in the Anima style. The output matches the reference size. Requires the Anima Edit LoRA (Civitai download; an API key or VPN may be needed).",
   "generation.image_edit.anima_lora_download": "Download Anima Edit LoRA (350 MB)",
