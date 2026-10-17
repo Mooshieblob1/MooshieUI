@@ -27,10 +27,12 @@
   import { naiEnhance, NAI_MAX_REFERENCES } from "../../stores/naiEnhance.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
   import { enhancerSessions } from "../../stores/enhancerSessions.svelte.js";
+  import { extractNaiArtists, restoreNaiArtists } from "../../utils/naiArtists.js";
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
@@ -304,6 +306,20 @@
     }
   }
 
+  /**
+   * The artist tags "Keep artists" carries through, read off the prompt box.
+   * NovelAI writes them bare, so the artist index is loaded first when it can
+   * be; without it only `artist:` tags are recognised.
+   */
+  async function keptArtists(): Promise<string[]> {
+    const prompt = generation.positivePrompt ?? "";
+    if (!generation.naiEnhanceKeepArtists || !prompt.trim()) return [];
+    if (connection.artistGalleryManifestUrl) {
+      await gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
+    }
+    return extractNaiArtists(prompt, gallery.artistIndexReady ? gallery.artistTagIndex : null);
+  }
+
   async function run() {
     if (naiEnhance.flow === "general") return runGeneral();
     if (naiEnhance.flow === "h3") return runH3();
@@ -321,6 +337,7 @@
     const boxes = generation.novelaiSettings.characters;
     naiEnhance.busy = true;
     try {
+      const kept = await keptArtists();
       // Ticked, what the user typed is applied as an edit to these fields
       // rather than treated as the whole of the idea.
       const existing = generation.naiEnhanceIncludeExisting
@@ -343,6 +360,7 @@
         existing,
         language,
         references: refs.map((r) => r.label),
+        keptArtists: kept,
         // NovelAI mode, so these are the characters saved under NovelAI.
         savedCharacters: naiSavedCharacterDirective(
           roster.map((c) => ({
@@ -378,7 +396,11 @@
         // Every row starts ticked: the rewrite is one coherent answer, and
         // half-applying it leaves a base prompt describing characters that the
         // character boxes no longer match.
-        base: { before: generation.positivePrompt, after: result.parsed.base, selected: true },
+        base: {
+          before: generation.positivePrompt,
+          after: restoreNaiArtists(result.parsed.base, kept),
+          selected: true,
+        },
         uc: { before: generation.negativePrompt, after: result.parsed.uc, selected: true },
         characters: [
           ...result.parsed.characters.map((after, i) => ({
@@ -798,6 +820,22 @@
               bind:checked={naiEnhance.curate}
             />
             {locale.t("prompt_assistant.nai_curate")}
+          </label>
+          <label
+            class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
+            title={locale.t("prompt_assistant.nai_keep_artists_tooltip")}
+          >
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              disabled={naiEnhance.busy}
+              checked={generation.naiEnhanceKeepArtists}
+              onchange={(e) => {
+                generation.naiEnhanceKeepArtists = (e.currentTarget as HTMLInputElement).checked;
+                generation.saveSettings();
+              }}
+            />
+            {locale.t("prompt_assistant.nai_keep_artists")}
           </label>
           {/if}
         </div>

@@ -3835,6 +3835,8 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.nai_curate": "精選化",
   "prompt_assistant.nai_curate_tooltip": "套用時同時切換到 V5 Full，並使用更乾淨的 Curated 風格設定：標準品質標籤、Heavy UC 加額外排除項、引導 5、25 步、Euler Ancestral（Karras）、832×1216、批次 1。",
   "prompt_assistant.nai_curate_notice": "精選化已開啟：套用時同時切換到 V5 Full，設定標準品質標籤、Heavy UC 預設、引導 5、25 步、Euler Ancestral（Karras）、引導重縮放 0、832×1216、關閉 Variety+、批次 1，並在不需要的內容中追加額外排除項。",
+  "prompt_assistant.nai_keep_artists": "保留藝術家",
+  "prompt_assistant.nai_keep_artists_tooltip": "在改寫結果中保留目前提示詞裡的藝術家標籤，包括權重。",
   "prompt_assistant.nai_run": "增強",
   "prompt_assistant.nai_working": "改寫中...",
   "prompt_assistant.enhance_nai": "為 V5 增強",
