@@ -257,7 +257,8 @@ export const NOVELAI_DEFAULTS = {
  * What the Enhance modal's "Curate it" box applies alongside the rewrite: V5
  * Full tuned toward Curated's cleaner look. Guidance sits below NovelAI's
  * default on purpose, since Full grains and oversharpens at 7. Effort is High
- * because Medium would pin its own step count over these 25.
+ * because Medium would pin its own step count over these 25. Width and height
+ * are left alone, so the aspect ratio stays whatever the user set.
  */
 export const NOVELAI_CURATE = {
   model: "nai-diffusion-5-full",
@@ -269,8 +270,6 @@ export const NOVELAI_CURATE = {
   sampler: "k_euler_ancestral",
   noiseSchedule: "karras",
   cfgRescale: 0,
-  width: 832,
-  height: 1216,
   batchSize: 1,
 } as const;
 
