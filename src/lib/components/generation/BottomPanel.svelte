@@ -14,6 +14,17 @@
   import { cachedSrc } from "../../artist-gallery/imageCache.js";
   import { artistInsert } from "../../stores/artistInsert.svelte.js";
   import type { ArtistSearchHit } from "../../artist-gallery/types.js";
+  import {
+    FAVOURITE_GROUPS,
+    FAVOURITE_SORTS,
+    UNCATEGORISED_GROUP,
+    groupFavouriteHits,
+    sortFavouriteHits,
+    type FavouriteGroup,
+    type FavouriteSort,
+  } from "../../artist-gallery/favouriteOrder.js";
+  import FavouritesManager from "../../artist-gallery/components/FavouritesManager.svelte";
+  import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
   import LoraGallery from "./LoraGallery.svelte";
   import CheckpointGallery from "./CheckpointGallery.svelte";
   import CompareGrid from "./CompareGrid.svelte";
@@ -238,6 +249,70 @@
     try { localStorage.setItem(ARTIST_CARD_SIZE_KEY, String(artistCardSize)); } catch {}
   });
 
+  // Sort, grouping and collapsed groups for the favourites list.
+  const ARTIST_ORDER_KEY = "mooshieui.bottomPanel.artistOrder.v1";
+  let artistSort = $state<FavouriteSort>("added_desc");
+  let artistGroup = $state<FavouriteGroup>("none");
+  /** Collapsed group keys, prefixed by grouping mode ("category:cat_x", "letter:A"). */
+  let artistCollapsed = $state<string[]>([]);
+  try {
+    const raw = localStorage.getItem(ARTIST_ORDER_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (FAVOURITE_SORTS.includes(parsed?.sort)) artistSort = parsed.sort;
+      if (FAVOURITE_GROUPS.includes(parsed?.group)) artistGroup = parsed.group;
+      if (Array.isArray(parsed?.collapsed)) {
+        artistCollapsed = parsed.collapsed.filter((k: unknown): k is string => typeof k === "string");
+      }
+    }
+  } catch {}
+  $effect(() => {
+    const payload = { sort: artistSort, group: artistGroup, collapsed: artistCollapsed };
+    try { localStorage.setItem(ARTIST_ORDER_KEY, JSON.stringify(payload)); } catch {}
+  });
+
+  function artistGroupCollapseKey(key: string): string {
+    return `${artistGroup}:${key}`;
+  }
+
+  function toggleArtistGroup(key: string) {
+    const k = artistGroupCollapseKey(key);
+    artistCollapsed = artistCollapsed.includes(k)
+      ? artistCollapsed.filter((c) => c !== k)
+      : [...artistCollapsed, k];
+  }
+
+  // Right-click a favourite card to move it to a category or unfavourite it.
+  let artistMenu = $state<{ slug: string; x: number; y: number } | null>(null);
+  let showArtistFavouritesManager = $state(false);
+
+  const artistMenuItems = $derived.by((): ContextMenuItem[] => {
+    const menu = artistMenu;
+    if (!menu) return [];
+    const current = artistFavourites.favourites[menu.slug]?.categoryId ?? null;
+    const label = (name: string, active: boolean) => (active ? `✓ ${name}` : name);
+    return [
+      {
+        label: label(locale.t("artist_gallery.cat_uncategorised"), current === null),
+        action: () => artistFavourites.setCategory(menu.slug, null),
+      },
+      ...artistFavourites.categories.map((cat) => ({
+        label: label(cat.name, current === cat.id),
+        action: () => artistFavourites.setCategory(menu.slug, cat.id),
+      })),
+      {
+        label: locale.t("artist_gallery.cat_new"),
+        action: () => (showArtistFavouritesManager = true),
+        separator: true,
+      },
+      {
+        label: locale.t("bottom_panel.unfavorite"),
+        action: () => artistFavourites.remove(menu.slug),
+        destructive: true,
+      },
+    ];
+  });
+
   /** Resolve a favourite slug → ArtistSearchHit from the loaded index. */
   const favouriteArtistHits = $derived.by((): ArtistSearchHit[] => {
     const favMap = artistFavourites.favourites;
@@ -245,9 +320,8 @@
     const bySlug = new Map<string, ArtistSearchHit>();
     for (const e of entries) bySlug.set(e.slug, e);
     const hits: ArtistSearchHit[] = [];
-    // Sort favourites by addedAt desc (most recent first).
-    const favs = Object.values(favMap).sort((a, b) => b.addedAt - a.addedAt);
-    for (const fav of favs) {
+    // Unordered here; filteredFavouriteArtists applies the chosen sort.
+    for (const fav of Object.values(favMap)) {
       const hit = bySlug.get(fav.slug);
       if (hit) {
         hits.push(hit);
@@ -284,8 +358,18 @@
           hit.slug.toLowerCase().includes(q) || hit.tag.toLowerCase().includes(q)
       );
     }
-    return list;
+    return sortFavouriteHits(list, artistFavourites.favourites, artistSort);
   });
+
+  const groupedFavouriteArtists = $derived(
+    groupFavouriteHits(
+      filteredFavouriteArtists,
+      artistGroup,
+      artistFavourites.favourites,
+      artistFavourites.categories,
+      artistSort,
+    ),
+  );
 
   /**
    * Variant a favourite card shows (1-based). The choice lives in the shared
@@ -728,8 +812,28 @@
               name="artist-favourite-search"
               bind:value={artistSearch}
               placeholder={locale.t('bottom_panel.artist_search_placeholder')}
-              class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              class="min-w-0 flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
+            <select
+              bind:value={artistSort}
+              class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-[10px] text-neutral-200 focus:outline-none focus:border-indigo-500"
+              title={locale.t('bottom_panel.artist_sort_title')}
+              aria-label={locale.t('bottom_panel.artist_sort_title')}
+            >
+              {#each FAVOURITE_SORTS as sort (sort)}
+                <option value={sort}>{locale.t(`bottom_panel.artist_sort.${sort}`)}</option>
+              {/each}
+            </select>
+            <select
+              bind:value={artistGroup}
+              class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-[10px] text-neutral-200 focus:outline-none focus:border-indigo-500"
+              title={locale.t('bottom_panel.artist_group_title')}
+              aria-label={locale.t('bottom_panel.artist_group_title')}
+            >
+              {#each FAVOURITE_GROUPS as group (group)}
+                <option value={group}>{locale.t(`bottom_panel.artist_group.${group}`)}</option>
+              {/each}
+            </select>
             {#if artistStore && favouriteVariantCount >= 2}
               <div
                 class="flex shrink-0 items-center gap-0.5 rounded border border-neutral-800 bg-neutral-900/50 p-0.5"
@@ -790,62 +894,90 @@
               <p>{locale.t('bottom_panel.no_artist_results')}</p>
             </div>
           {:else}
-            <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
+            {#snippet artistCard(hit: ArtistSearchHit)}
+              {@const thumb = artistThumbUrl(hit)}
+              {@const favCat = artistFavourites.categoryOf(hit.slug)}
               <div
-                class="grid gap-2"
-                style="grid-template-columns: repeat(auto-fill, minmax(min({artistCardSize}px, 100%), 1fr)); align-content: start;"
+                role="button"
+                tabindex="0"
+                class="group relative flex flex-col rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {isArtistInPrompt(hit.tag) ? 'border-amber-500/60 ring-1 ring-amber-500/20' : 'border-neutral-800 hover:border-indigo-500'}"
+                onclick={() => applyArtistTag(hit)}
+                oncontextmenu={(e) => { e.preventDefault(); artistMenu = { slug: hit.slug, x: e.clientX, y: e.clientY }; }}
+                onkeydown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyArtistTag(hit); } }}
+                title={locale.t('bottom_panel.apply_artist_tag', { tag: hit.tag })}
               >
-              {#each filteredFavouriteArtists as hit (hit.slug)}
-                {@const thumb = artistThumbUrl(hit)}
-                {@const favCat = artistFavourites.categoryOf(hit.slug)}
-                <div
-                  role="button"
-                  tabindex="0"
-                  class="group relative flex flex-col rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {isArtistInPrompt(hit.tag) ? 'border-amber-500/60 ring-1 ring-amber-500/20' : 'border-neutral-800 hover:border-indigo-500'}"
-                  onclick={() => applyArtistTag(hit)}
-                  onkeydown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyArtistTag(hit); } }}
-                  title={locale.t('bottom_panel.apply_artist_tag', { tag: hit.tag })}
-                >
-                  <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
-                    {#if thumb}
-                      <img use:cachedSrc={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
-                    {:else}
-                      <div class="flex h-full w-full items-center justify-center text-[10px] text-neutral-500">{locale.t("gallery.no_preview")}</div>
-                    {/if}
+                <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
+                  {#if thumb}
+                    <img use:cachedSrc={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
+                  {:else}
+                    <div class="flex h-full w-full items-center justify-center text-[10px] text-neutral-500">{locale.t("gallery.no_preview")}</div>
+                  {/if}
+                  <button
+                    type="button"
+                    class="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/90 text-sm leading-none text-red-400 transition-colors hover:bg-neutral-800"
+                    onclick={(e) => { e.stopPropagation(); artistFavourites.toggle(hit.slug); }}
+                    aria-label={locale.t('bottom_panel.unfavorite')}
+                    title={locale.t('bottom_panel.unfavorite')}
+                  >♥</button>
+                  {#if thumb && cdnVariantCountOf(hit) >= 2}
                     <button
                       type="button"
-                      class="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/90 text-sm leading-none text-red-400 transition-colors hover:bg-neutral-800"
-                      onclick={(e) => { e.stopPropagation(); artistFavourites.toggle(hit.slug); }}
-                      aria-label={locale.t('bottom_panel.unfavorite')}
-                      title={locale.t('bottom_panel.unfavorite')}
-                    >♥</button>
-                    {#if thumb && cdnVariantCountOf(hit) >= 2}
-                      <button
-                        type="button"
-                        class="absolute bottom-1 left-1 rounded border border-neutral-700 bg-neutral-900/90 px-1.5 py-0.5 text-[10px] text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:border-indigo-500"
-                        onclick={(e) => flipArtistVariant(hit, e)}
-                        aria-label={locale.t('artist_gallery.flip_variant_aria')}
-                        title={locale.t('artist_gallery.flip_variant_aria')}
-                      >⇄ {artistVariantOf(hit)}</button>
-                    {/if}
-                    {#if favCat}
-                      <span
-                        class="absolute left-1 top-1 h-3 w-3 rounded-full border border-black/40"
-                        style="background-color: {favCat.color}"
-                        title={favCat.name}
-                        aria-label={locale.t("artist_gallery.category_aria", { name: favCat.name })}
-                      ></span>
-                    {/if}
-                  </div>
-                  <div class="px-2 py-1.5">
-                    <div class="truncate text-xs text-red-400">{displayArtistTag(hit.tag)}</div>
-                    {#if hit.postCount > 0}
-                      <div class="text-[10px] text-neutral-500">{locale.formatInteger(hit.postCount)} {locale.t("artist_gallery.posts_suffix")}</div>
-                    {/if}
-                  </div>
+                      class="absolute bottom-1 left-1 rounded border border-neutral-700 bg-neutral-900/90 px-1.5 py-0.5 text-[10px] text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 hover:border-indigo-500"
+                      onclick={(e) => flipArtistVariant(hit, e)}
+                      aria-label={locale.t('artist_gallery.flip_variant_aria')}
+                      title={locale.t('artist_gallery.flip_variant_aria')}
+                    >⇄ {artistVariantOf(hit)}</button>
+                  {/if}
+                  {#if favCat}
+                    <span
+                      class="absolute left-1 top-1 h-3 w-3 rounded-full border border-black/40"
+                      style="background-color: {favCat.color}"
+                      title={favCat.name}
+                      aria-label={locale.t("artist_gallery.category_aria", { name: favCat.name })}
+                    ></span>
+                  {/if}
                 </div>
-              {/each}
+                <div class="px-2 py-1.5">
+                  <div class="truncate text-xs text-red-400">{displayArtistTag(hit.tag)}</div>
+                  {#if hit.postCount > 0}
+                    <div class="text-[10px] text-neutral-500">{locale.formatInteger(hit.postCount)} {locale.t("artist_gallery.posts_suffix")}</div>
+                  {/if}
+                </div>
               </div>
+            {/snippet}
+            <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
+              {#each groupedFavouriteArtists as group (group.key)}
+                {@const collapsed = artistGroup !== 'none' && artistCollapsed.includes(artistGroupCollapseKey(group.key))}
+                {#if artistGroup !== 'none'}
+                  <button
+                    type="button"
+                    class="mb-1 flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800/60 {group === groupedFavouriteArtists[0] ? '' : 'mt-2'}"
+                    onclick={() => toggleArtistGroup(group.key)}
+                    aria-expanded={!collapsed}
+                  >
+                    <span class="w-2.5 text-[9px] text-neutral-500" aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
+                    {#if group.category}
+                      <span class="h-2 w-2 shrink-0 rounded-full border border-neutral-700" style="background-color: {group.category.color}" aria-hidden="true"></span>
+                      <span class="truncate">{group.category.name}</span>
+                    {:else if group.key === UNCATEGORISED_GROUP}
+                      <span class="truncate">{locale.t('artist_gallery.cat_uncategorised')}</span>
+                    {:else}
+                      <span class="truncate">{group.key}</span>
+                    {/if}
+                    <span class="text-neutral-500 tabular-nums">({group.hits.length})</span>
+                  </button>
+                {/if}
+                {#if !collapsed}
+                  <div
+                    class="grid gap-2"
+                    style="grid-template-columns: repeat(auto-fill, minmax(min({artistCardSize}px, 100%), 1fr)); align-content: start;"
+                  >
+                    {#each group.hits as hit (hit.slug)}
+                      {@render artistCard(hit)}
+                    {/each}
+                  </div>
+                {/if}
+              {/each}
             </div>
           {/if}
         </div>
@@ -853,6 +985,18 @@
     {/if}
   </div>
 </div>
+
+<ContextMenu
+  items={artistMenuItems}
+  x={artistMenu?.x ?? 0}
+  y={artistMenu?.y ?? 0}
+  visible={artistMenu !== null}
+  onclose={() => (artistMenu = null)}
+/>
+
+{#if showArtistFavouritesManager}
+  <FavouritesManager onclose={() => (showArtistFavouritesManager = false)} client={artistStore?.client} />
+{/if}
 
 {#if hoveredImage && actionBarPos}
   {@const image = hoveredImage}

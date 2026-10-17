@@ -16,7 +16,8 @@ import type {
  *   store.setQuery("dairi");
  *   $derived.by(() => store.results);
  */
-export type ArtistSortField = "postCount" | "name" | "uniqueness";
+/** "added" (date favourited) is only offered while the favourites filter is on. */
+export type ArtistSortField = "postCount" | "name" | "uniqueness" | "added";
 export type ArtistSortDir = "asc" | "desc";
 export type ArtistPageSize = 25 | 50 | 100;
 
