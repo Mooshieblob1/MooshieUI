@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import CameraAnglePicker from "./CameraAnglePicker.svelte";
 
   // Local object-URL previews, indexed by slot. Reference filenames live in the
   // store (generation.editReferenceImages); previews are lost across reloads, in
@@ -404,5 +405,9 @@
         </div>
       </div>
     {/each}
+
+    {#if generation.isQwenEditPlus}
+      <CameraAnglePicker />
+    {/if}
   {/if}
 </div>
