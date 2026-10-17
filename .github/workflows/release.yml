@@ -101,6 +101,12 @@ jobs:
           cd src-tauri
           ignored=(
             # --ignore RUSTSEC-YYYY-NNNN  # crate: why there is no fix yet
+            # zip 4.6.1 via tauri-plugin-updater (2.14.0 still pins zip ^4; fix needs >=9).
+            # Windows-only dep, used solely on minisign-verified update archives, and all
+            # three are Unix symlink/permission-bit issues.
+            --ignore RUSTSEC-2026-0367  # zip: SUID/SGID bits preserved on extract
+            --ignore RUSTSEC-2026-0368  # zip: extracted symlinks may point outside dest
+            --ignore RUSTSEC-2026-0369  # zip: Unix permissions applied through symlinks
           )
           cargo audit "${ignored[@]}"
 

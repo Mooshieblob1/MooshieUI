@@ -1,4 +1,9 @@
-## What's New in v2.3.23
+## What's New in v2.3.24
+
+v2.3.23 was tagged but never published: its build stopped on new security advisories for two dependencies. Everything below ships in this release, plus the fix for those advisories.
+
+### Security
+- **rustls 0.23.46**: picks up fixes for four TLS advisories (RUSTSEC-2026-0346 to 0349), including a ServerHello downgrade and a pre-authentication memory spike.
 
 ### Models
 - **FLUX 3 Image Klein**: the distilled Klein and Klein Base models are detected from their file names, CivitAI base model names and tensor keys, paired with the Qwen3-VL 4B encoder (shared with Krea 2) and the Flux 2 VAE, and get presets from BFL's model card (16 steps at CFG 1 for distilled, 50 steps at CFG 3.5 for Base). The Model Hub has quick links and INT8 downloads, and a missing encoder or VAE downloads on its own. The DiT comes from BFL's gated Hugging Face repo, so it needs a Hugging Face token.
