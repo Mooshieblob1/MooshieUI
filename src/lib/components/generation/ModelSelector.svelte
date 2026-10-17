@@ -92,6 +92,19 @@
     category: "vae",
   };
 
+  // FLUX 3 Klein conditions on the same stock Qwen3-VL 4B Krea 2 uses, so the
+  // Comfy-Org Krea 2 copy (ungated) doubles as its encoder.
+  const FLUX3_ENCODER_FILE: ModelFile = {
+    filename: "qwen3vl_4b_fp8_scaled.safetensors",
+    url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+    category: "text_encoders",
+  };
+  const FLUX2_VAE_FILE: ModelFile = {
+    filename: "flux2-vae.safetensors",
+    url: "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/main/split_files/vae/flux2-vae.safetensors",
+    category: "vae",
+  };
+
   const recommendedModels: RecommendedModel[] = [
     {
       label: "Juice",
@@ -454,6 +467,48 @@
         scheduler: "simple",
       },
     },
+    // FLUX 3 Image Klein. Black Forest Labs' repo is gated, so the DiT needs
+    // an HF_TOKEN that has accepted its licence; the encoder and VAE come from
+    // ungated Comfy-Org repos (the encoder is the stock Qwen3-VL 4B, shared
+    // with Krea 2). INT8 runs on 8 GB cards and on GPUs without FP8.
+    {
+      label: "FLUX 3 Klein (INT8)",
+      size: "~11.4 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux3-image-klein-int8-convrot.safetensors",
+          url: "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: { ...FLUX3_ENCODER_FILE, clipType: "flux3" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: {
+        steps: 16,
+        cfg: 1.0,
+        samplerName: "euler",
+        scheduler: "simple",
+      },
+    },
+    {
+      label: "FLUX 3 Klein Base (INT8)",
+      size: "~11.4 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux3-image-klein-base-int8-convrot.safetensors",
+          url: "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-base-int8-convrot.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: { ...FLUX3_ENCODER_FILE, clipType: "flux3" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: {
+        steps: 50,
+        cfg: 3.5,
+        samplerName: "euler",
+        scheduler: "simple",
+      },
+    },
     {
       // Z-Image diffusion weights usually arrive from the Model Hub on their
       // own. Detection-only for the diffusion file; the Qwen3-4B encoder and
@@ -618,11 +673,7 @@
   }
 
   // Krea 2 only works with the Qwen3-VL 4B text encoder (see utils/krea2Encoder.ts).
-  const KREA2_ENCODER_FILE: ModelFile = {
-    filename: "qwen3vl_4b_fp8_scaled.safetensors",
-    url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
-    category: "text_encoders",
-  };
+  const KREA2_ENCODER_FILE: ModelFile = FLUX3_ENCODER_FILE;
   const KREA2_VAE_FILE: ModelFile = {
     filename: "qwen_image_vae.safetensors",
     url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors",
@@ -665,6 +716,15 @@
     vaeFile: ZIMAGE_VAE_FILE,
   };
 
+  const FLUX3_REQUIREMENT: RequiredSplitEncoder = {
+    label: "FLUX 3 Klein",
+    clipType: "flux3",
+    isEncoder: isKrea2Encoder,
+    encoderFile: FLUX3_ENCODER_FILE,
+    isVae: (filename) => /flux2[-_]vae/i.test(filename),
+    vaeFile: FLUX2_VAE_FILE,
+  };
+
   const REQUIRED_SPLIT_ENCODERS: Partial<Record<ModelFamily, RequiredSplitEncoder>> = {
     krea2: {
       label: "Krea 2",
@@ -676,6 +736,8 @@
     },
     zit: ZIMAGE_REQUIREMENT,
     zib: ZIMAGE_REQUIREMENT,
+    flux3klein: FLUX3_REQUIREMENT,
+    flux3kleinbase: FLUX3_REQUIREMENT,
   };
 
   let requiredEncoderEnsureRunning = false;
@@ -895,9 +957,13 @@
   // Auto-suggest hint: shown when the diffusion model filename looks like an
   // INT8-ConvRot file but the toggle is off. We only suggest — never silently
   // enable — to avoid surprising users who picked the file for another reason.
+  // FLUX 3 Klein is left out: core ComfyUI loads its ConvRot files through the
+  // plain UNETLoader (Black Forest Labs' own templates do), and INT8-Fast has
+  // no FLUX 3 model type.
   const showInt8FastHint = $derived(
     generation.useSplitModel &&
       !generation.int8FastEnabled &&
+      !generation.isFlux3 &&
       !isGgufDiffusionModel &&
       /int8/i.test(generation.diffusionModel ?? "") &&
       /convrot/i.test(generation.diffusionModel ?? "")

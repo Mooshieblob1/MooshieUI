@@ -166,6 +166,8 @@ fn is_prose_family(family: &str) -> bool {
             | "flux2klein9bbase"
             | "flux2klein4b"
             | "flux2klein4bbase"
+            | "flux3klein"
+            | "flux3kleinbase"
             | "chroma"
             | "zib"
             | "zit"
@@ -1093,7 +1095,15 @@ tags: 1girl, red dress, hair bun";
             PromptStyle::Tags
         );
         // LLM/T5-encoder families get prose.
-        for fam in ["krea2", "flux1d", "flux2klein4b", "chroma", "zit", "qwen"] {
+        for fam in [
+            "krea2",
+            "flux1d",
+            "flux2klein4b",
+            "flux3klein",
+            "chroma",
+            "zit",
+            "qwen",
+        ] {
             assert_eq!(
                 prompt_style("natural_language", fam),
                 PromptStyle::Prose,

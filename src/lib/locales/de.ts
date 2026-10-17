@@ -1083,7 +1083,7 @@ const de: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Bildbearbeitung",
   "generation.image_edit.hint": "Beschreibe die gewünschte Änderung im Prompt (zum Beispiel \"mach den Himmel lila\"). Das Modell bearbeitet dein Referenzbild, anstatt es von Grund auf neu zu erzeugen.",
-  "generation.image_edit.wrong_model": "Das ausgewählte Modell unterstützt keine Bildbearbeitung. Wähle ein Modell vom Typ Qwen Image Edit, Qwen Image Edit Plus oder Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Das ausgewählte Modell unterstützt keine Bildbearbeitung. Wähle ein Modell vom Typ Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein oder Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Referenzbild",
   "generation.image_edit.reference_image_n": "Referenzbild {n}",
   "generation.image_edit.reference_set": "Referenzbild gesetzt",
@@ -1093,6 +1093,8 @@ const de: Record<string, string> = {
   "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
   "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
+  "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
+  "generation.image_edit.flux3_note": "FLUX 3 Klein nimmt bis zu 10 Referenzbilder. Nenne sie im Prompt nach ihrer Reihenfolge (das erste Bild, das zweite Bild) und beschreibe das ganze Ergebnis, nicht nur die Änderung.",
   "generation.image_edit.anima_note":
     "ReStyler zeichnet die Figur aus deinem Referenzbild im Anima-Stil neu. Die Ausgabe entspricht der Referenzgröße. Benötigt das Anima Edit LoRA (Civitai-Download; API-Schlüssel oder VPN kann nötig sein).",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRA herunterladen (350 MB)",
