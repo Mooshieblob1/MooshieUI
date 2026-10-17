@@ -860,6 +860,17 @@ const ja: Record<string, string> = {
   "generation.tabs.new_hint": "この設定をコピーした新しいタブ",
   "generation.tabs.close": "タブを閉じる",
   "generation.tabs.empty_prompt": "空のプロンプト",
+  "generation.profiles.button": "プロファイル",
+  "generation.profiles.hint": "このタブの設定に名前を付けて保存します。同じ名前なら上書きします。",
+  "generation.profiles.name_placeholder": "プロファイル名",
+  "generation.profiles.save": "保存",
+  "generation.profiles.empty": "プロファイルはまだありません。",
+  "generation.profiles.open_hint": "新しいタブで開く",
+  "generation.profiles.load_here": "このタブに読み込む",
+  "generation.profiles.delete": "プロファイルを削除",
+  "generation.profiles.confirm_delete": "プロファイル「{name}」を削除しますか？",
+  "generation.profiles.saved": "プロファイル「{name}」を保存しました",
+  "generation.profiles.updated": "プロファイル「{name}」を更新しました",
 
   // プロンプト
   "generation.prompts.title": "プロンプト",

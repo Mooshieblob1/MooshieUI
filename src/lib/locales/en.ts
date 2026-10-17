@@ -929,6 +929,17 @@ const en: Record<string, string> = {
   "generation.tabs.new_hint": "New tab with a copy of these settings",
   "generation.tabs.close": "Close tab",
   "generation.tabs.empty_prompt": "Empty prompt",
+  "generation.profiles.button": "Profiles",
+  "generation.profiles.hint": "Save this tab's settings under a name. Saving under an existing name updates it.",
+  "generation.profiles.name_placeholder": "Profile name",
+  "generation.profiles.save": "Save",
+  "generation.profiles.empty": "No profiles yet.",
+  "generation.profiles.open_hint": "Open in a new tab",
+  "generation.profiles.load_here": "Load into this tab",
+  "generation.profiles.delete": "Delete profile",
+  "generation.profiles.confirm_delete": "Delete profile \"{name}\"?",
+  "generation.profiles.saved": "Saved profile \"{name}\"",
+  "generation.profiles.updated": "Updated profile \"{name}\"",
 
   // Prompts
   "generation.prompts.title": "Prompts",

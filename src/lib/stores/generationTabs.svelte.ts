@@ -46,6 +46,8 @@ export interface GenerationTab {
    * live generation fields, persisted by the generation store as before.
    */
   snapshot: Snapshot | null;
+  /** Set when the tab was opened from, or saved as, a profile. */
+  name?: string;
 }
 
 function newTabId(): string {
@@ -77,13 +79,17 @@ class GenerationTabsStore {
     return Math.max(0, this.tabs.findIndex((tab) => tab.id === this.activeId));
   }
 
-  /** Short label: the prompt's opening words, or the mode when it is empty. */
-  label(tab: GenerationTab): { prompt: string; mode: string } {
+  get activeTab(): GenerationTab {
+    return this.tabs[this.activeIndex];
+  }
+
+  /** Short label: the profile name, else the prompt's opening words, else the mode. */
+  label(tab: GenerationTab): { name: string; prompt: string; mode: string } {
     const live = tab.id === this.activeId;
     const source = tab.snapshot ?? {};
     const prompt = live ? generation.positivePrompt : String(source.positivePrompt ?? "");
     const mode = live ? generation.mode : String(source.mode ?? "txt2img");
-    return { prompt: prompt.replace(/\s+/g, " ").trim(), mode };
+    return { name: tab.name ?? "", prompt: prompt.replace(/\s+/g, " ").trim(), mode };
   }
 
   /** Must run after `generation.loadSettings()`, which restores the active tab. */
@@ -96,9 +102,10 @@ class GenerationTabsStore {
         .map((tab: any) => ({
           id: tab.id,
           snapshot: tab.snapshot && typeof tab.snapshot === "object" ? tab.snapshot : null,
+          ...(typeof tab.name === "string" && tab.name.trim() ? { name: tab.name.trim() } : {}),
         }));
       const active = tabs.find((tab) => tab.id === saved.activeId);
-      if (!active || tabs.length < 2) return;
+      if (!active) return;
       // Every other tab needs a snapshot to switch to; drop any that lost it.
       active.snapshot = null;
       this.tabs = tabs.filter((tab) => tab === active || tab.snapshot);
@@ -110,10 +117,9 @@ class GenerationTabsStore {
 
   private async persist(): Promise<void> {
     try {
-      await ipcStore.set(
-        TABS_KEY,
-        this.tabs.length > 1 ? { activeId: this.activeId, tabs: this.tabs } : null,
-      );
+      // A lone unnamed tab is just the generation store's own settings.
+      const worthSaving = this.tabs.length > 1 || !!this.tabs[0]?.name;
+      await ipcStore.set(TABS_KEY, worthSaving ? { activeId: this.activeId, tabs: this.tabs } : null);
     } catch (e) {
       console.error("generationTabs: save failed", e);
     }
@@ -128,6 +134,37 @@ class GenerationTabsStore {
     this.tabs = [...tabs.slice(0, index + 1), tab, ...tabs.slice(index + 1)];
     this.activeId = tab.id;
     void this.persist();
+  }
+
+  /** The active tab's settings, as a tab would park them. For saving a profile. */
+  captureActive(): Snapshot {
+    return captureSnapshot();
+  }
+
+  /** Label the active tab, after it is saved as a profile. */
+  nameActive(name: string): void {
+    this.tabs = this.tabs.map((tab) => (tab.id === this.activeId ? { ...tab, name } : tab));
+    void this.persist();
+  }
+
+  /** Open saved settings (a profile) in a new tab next to the current one. */
+  openSnapshot(snapshot: Snapshot, name: string): void {
+    const index = this.activeIndex;
+    const parked = captureSnapshot();
+    generation.applySettingsSnapshot(JSON.parse(JSON.stringify(snapshot)));
+    const tab: GenerationTab = { id: newTabId(), snapshot: null, name };
+    const tabs = this.tabs.map((t) => (t.id === this.activeId ? { ...t, snapshot: parked } : t));
+    this.tabs = [...tabs.slice(0, index + 1), tab, ...tabs.slice(index + 1)];
+    this.activeId = tab.id;
+    void generation.saveSettings();
+    void this.persist();
+  }
+
+  /** Replace the active tab's settings with saved ones (a profile). */
+  loadIntoActive(snapshot: Snapshot, name: string): void {
+    generation.applySettingsSnapshot(JSON.parse(JSON.stringify(snapshot)));
+    this.nameActive(name);
+    void generation.saveSettings();
   }
 
   switchTo(id: string): void {

@@ -860,6 +860,17 @@ const fr: Record<string, string> = {
   "generation.tabs.new_hint": "Nouvel onglet avec une copie de ces réglages",
   "generation.tabs.close": "Fermer l'onglet",
   "generation.tabs.empty_prompt": "Prompt vide",
+  "generation.profiles.button": "Profils",
+  "generation.profiles.hint": "Enregistre les réglages de cet onglet sous un nom. Un nom existant est mis à jour.",
+  "generation.profiles.name_placeholder": "Nom du profil",
+  "generation.profiles.save": "Enregistrer",
+  "generation.profiles.empty": "Aucun profil pour l'instant.",
+  "generation.profiles.open_hint": "Ouvrir dans un nouvel onglet",
+  "generation.profiles.load_here": "Charger dans cet onglet",
+  "generation.profiles.delete": "Supprimer le profil",
+  "generation.profiles.confirm_delete": "Supprimer le profil « {name} » ?",
+  "generation.profiles.saved": "Profil « {name} » enregistré",
+  "generation.profiles.updated": "Profil « {name} » mis à jour",
 
   // Prompts
   "generation.prompts.title": "Prompts",

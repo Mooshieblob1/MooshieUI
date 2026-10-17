@@ -32,6 +32,7 @@ import { generation } from "./generation.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { loraPresets } from "./loraPresets.svelte.js";
+import { profiles } from "./profiles.svelte.js";
 import { artistFavourites } from "../artist-gallery/favourites.svelte.js";
 import { gallery } from "./gallery.svelte.js";
 import { accessibility } from "./accessibility.svelte.js";
@@ -60,6 +61,7 @@ const CATEGORIES = [
   "prompt_presets",
   "styles",
   "lora_presets",
+  "profiles",
   "artist_favourites",
   "gallery_boards",
   "autocomplete",
@@ -154,6 +156,7 @@ class PrefsSyncStore {
       prompt_presets: promptPresets.collectPrefs(),
       styles: styles.collectPrefs(),
       lora_presets: loraPresets.collectPrefs(),
+      profiles: profiles.collectPrefs(),
       artist_favourites: artistFavourites.collectPrefs(),
       gallery_boards: gallery.collectPrefs(),
       autocomplete: autocomplete.collectPrefs(),
@@ -181,6 +184,7 @@ class PrefsSyncStore {
       case "prompt_presets": return promptPresets.applyServerPrefs(data);
       case "styles": return styles.applyServerPrefs(data);
       case "lora_presets": return loraPresets.applyServerPrefs(data);
+      case "profiles": return profiles.applyServerPrefs(data);
       case "artist_favourites": return artistFavourites.applyServerPrefs(data);
       case "gallery_boards": return gallery.applyServerPrefs(data);
       case "autocomplete":
