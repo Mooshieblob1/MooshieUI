@@ -723,6 +723,12 @@ class GenerationStore {
    */
   naiEnhanceIncludeExisting = $state(false);
   /**
+   * Carry the artist tags in the current prompt through a V5 enhance, so a
+   * blind rewrite does not throw away a hand-tuned artist stack. Sticky like
+   * the other enhance options.
+   */
+  naiEnhanceKeepArtists = $state(false);
+  /**
    * What the last NovelAI image Enhance was run with. The Enhance modal opens
    * on these, so someone who always enhances at 1.5x / magnitude 4 is not
    * reset to the defaults every launch. Written only when an enhance is
@@ -3127,6 +3133,8 @@ class GenerationStore {
       this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
     if (saved.naiEnhanceIncludeExisting !== undefined)
       this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
+    if (saved.naiEnhanceKeepArtists !== undefined)
+      this.naiEnhanceKeepArtists = saved.naiEnhanceKeepArtists;
     if (isEnhanceScaleChoice(saved.naiEnhanceScaleChoice))
       this.naiEnhanceScaleChoice = saved.naiEnhanceScaleChoice;
     if (typeof saved.naiEnhanceMagnitude === "number")
@@ -3385,6 +3393,7 @@ class GenerationStore {
         showNovelaiUsage: this.showNovelaiUsage,
         naiEnhanceLanguage: this.naiEnhanceLanguage,
         naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
+        naiEnhanceKeepArtists: this.naiEnhanceKeepArtists,
         naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
         naiEnhanceMagnitude: this.naiEnhanceMagnitude,
       });
@@ -3552,6 +3561,7 @@ class GenerationStore {
       showNovelaiUsage: this.showNovelaiUsage,
       naiEnhanceLanguage: this.naiEnhanceLanguage,
       naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
+      naiEnhanceKeepArtists: this.naiEnhanceKeepArtists,
       naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
       naiEnhanceMagnitude: this.naiEnhanceMagnitude,
     };

@@ -3848,6 +3848,8 @@ const ko: Record<string, string> = {
   "prompt_assistant.nai_curate": "큐레이트",
   "prompt_assistant.nai_curate_tooltip": "적용 시 V5 Full로 전환하고 Curated 스타일의 깔끔한 설정도 적용합니다: 표준 품질 태그, Heavy UC와 추가 제외 항목, 가이던스 5, 25 스텝, Euler Ancestral(Karras), 832×1216, 배치 1.",
   "prompt_assistant.nai_curate_notice": "큐레이트가 켜져 있습니다: 적용 시 V5 Full로 전환하고 표준 품질 태그, Heavy UC 프리셋, 가이던스 5, 25 스텝, Euler Ancestral(Karras), 가이던스 리스케일 0, 832×1216, Variety+ 끔, 배치 1을 설정하며 원치 않는 요소에 추가 제외 항목을 덧붙입니다.",
+  "prompt_assistant.nai_keep_artists": "아티스트 유지",
+  "prompt_assistant.nai_keep_artists_tooltip": "현재 프롬프트의 아티스트 태그를 가중치까지 그대로 재작성 결과에 유지합니다.",
   "prompt_assistant.nai_run": "향상",
   "prompt_assistant.nai_working": "다시 쓰는 중...",
   "prompt_assistant.enhance_nai": "V5용으로 향상",

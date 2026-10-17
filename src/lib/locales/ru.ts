@@ -3848,6 +3848,8 @@ const ru: Record<string, string> = {
   "prompt_assistant.nai_curate": "Курировать",
   "prompt_assistant.nai_curate_tooltip": "При применении также переключает на V5 Full с более чистыми настройками в стиле Curated: стандартные теги качества, Heavy UC с дополнительными исключениями, guidance 5, 25 шагов, Euler Ancestral с Karras, 832×1216, пакет 1.",
   "prompt_assistant.nai_curate_notice": "Курировать включено: при применении также переключает на V5 Full, задаёт стандартные теги качества, пресет Heavy UC, guidance 5, 25 шагов, Euler Ancestral с Karras, guidance rescale 0, 832×1216, Variety+ выкл. и пакет 1, а также добавляет дополнительные исключения в нежелательное содержимое.",
+  "prompt_assistant.nai_keep_artists": "Сохранить художников",
+  "prompt_assistant.nai_keep_artists_tooltip": "Сохраняет в переписанном промпте теги художников из текущего промпта вместе с весами.",
   "prompt_assistant.nai_run": "Улучшить",
   "prompt_assistant.nai_working": "Переписывание...",
   "prompt_assistant.enhance_nai": "Улучшить для V5",

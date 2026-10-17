@@ -3897,6 +3897,8 @@ const pl: Record<string, string> = {
   "prompt_assistant.nai_curate": "Kuratoruj",
   "prompt_assistant.nai_curate_tooltip": "Zastosowanie przełącza też na V5 Full z czystszymi ustawieniami w stylu Curated: standardowe tagi jakości, UC Heavy z dodatkowymi wykluczeniami, guidance 5, 25 kroków, Euler Ancestral z Karras, 832×1216, partia 1.",
   "prompt_assistant.nai_curate_notice": "Kuratoruj jest włączone: zastosowanie przełącza też na V5 Full, ustawia standardowe tagi jakości, preset UC Heavy, guidance 5, 25 kroków, Euler Ancestral z Karras, guidance rescale 0, 832×1216, Variety+ wyłączone i partię 1 oraz dopisuje dodatkowe wykluczenia do niepożądanej treści.",
+  "prompt_assistant.nai_keep_artists": "Zachowaj artystów",
+  "prompt_assistant.nai_keep_artists_tooltip": "Zachowuje w przepisanym prompcie tagi artystów z obecnego promptu, razem z wagami.",
   "prompt_assistant.nai_run": "Ulepsz",
   "prompt_assistant.nai_working": "Przepisywanie...",
   "prompt_assistant.enhance_nai": "Ulepsz dla V5",
