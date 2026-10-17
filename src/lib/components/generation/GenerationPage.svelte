@@ -10,6 +10,7 @@
   import SamplerSettings from "./SamplerSettings.svelte";
   import DimensionControls from "./DimensionControls.svelte";
   import GenerateButton from "./GenerateButton.svelte";
+  import ProfileBar from "./ProfileBar.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
   import NaiFaceDetailSettings from "./NaiFaceDetailSettings.svelte";
@@ -2344,6 +2345,7 @@
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7H20m0 0l-4-4m4 4l-4 4"/><path d="M16 17H4m0 0l4 4m-4-4l4-4"/></svg>
               </button>
             </div>
+            <ProfileBar />
 
             {#if generation.mode === "inpainting"}
               <button
@@ -2526,6 +2528,7 @@
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7H20m0 0l-4-4m4 4l-4 4"/><path d="M16 17H4m0 0l4 4m-4-4l4-4"/></svg>
               </button>
             </div>
+            <ProfileBar />
 
             {#if generation.mode === "inpainting"}
               <button
