@@ -3838,6 +3838,8 @@ const de: Record<string, string> = {
   "prompt_assistant.nai_curate": "Kuratieren",
   "prompt_assistant.nai_curate_tooltip": "Beim Übernehmen wird zusätzlich auf V5 Full mit saubereren Einstellungen im Curated-Stil gewechselt: Standard-Qualitätstags, Heavy-UC plus zusätzliche Ausschlüsse, Guidance 5, 25 Schritte, Euler Ancestral mit Karras, Batch 1.",
   "prompt_assistant.nai_curate_notice": "Kuratieren ist aktiv: Beim Übernehmen wird zusätzlich auf V5 Full gewechselt, Standard-Qualitätstags, das Heavy-UC-Preset, Guidance 5, 25 Schritte, Euler Ancestral mit Karras, Guidance Rescale 0, Variety+ aus und Batch 1 gesetzt und zusätzliche Ausschlüsse an den unerwünschten Inhalt angehängt.",
+  "prompt_assistant.nai_keep_artists": "Künstler behalten",
+  "prompt_assistant.nai_keep_artists_tooltip": "Übernimmt die Künstler-Tags aus deinem aktuellen Prompt in die Umschreibung, samt Gewichtung.",
   "prompt_assistant.nai_run": "Verbessern",
   "prompt_assistant.nai_working": "Wird umgeschrieben...",
   "prompt_assistant.enhance_nai": "Für V5 verbessern",
