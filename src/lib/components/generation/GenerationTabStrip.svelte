@@ -5,7 +5,7 @@
   import ProfilesMenu from "./ProfilesMenu.svelte";
 
   /**
-   * Settings tabs along the top edge, always on show so the feature is found
+   * Settings tabs above the main panel, always on show so the feature is found
    * without knowing it exists. A single tab still gets its chip, and the new
    * tab button spells out what it does until a second tab is open. Profiles
    * (named, saved tabs) sit at the right end.
@@ -36,8 +36,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- md:pl-20 lines the chips up with the panels, past the sidebar column. -->
-<div class="flex shrink-0 items-center gap-2 bg-neutral-950 px-3 pt-1.5 md:pl-20">
+<div class="flex shrink-0 items-center gap-2 px-3 pt-1.5 md:px-0 md:pt-0">
   <div
     class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
     role="tablist"
