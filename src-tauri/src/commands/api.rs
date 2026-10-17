@@ -4354,6 +4354,27 @@ fn filename_indicates_anima(filename: &str) -> bool {
     text_indicates_anima(filename)
 }
 
+/// FLUX 3 Image Klein, from a lowercase filename or CivitAI base-model name.
+///
+/// Black Forest Labs ships `flux3-image-klein[-base]-*` and
+/// `flux3_image_klein_{sd,base}_*`; community GGUF repos use `FLUX.3-Image-Klein`.
+/// The distilled checkpoint is the default: only a `base` marker selects the
+/// undistilled one. A file whose name says neither is still corrected by its
+/// tensor keys (`ref_time_in` exists only in the distilled flow-map model).
+fn flux3_klein_family_from_text(lower: &str) -> Option<&'static str> {
+    let is_flux3 = ["flux3", "flux-3", "flux.3", "flux_3", "flux 3"]
+        .iter()
+        .any(|marker| lower.contains(marker));
+    if !is_flux3 || !lower.contains("klein") {
+        return None;
+    }
+    Some(if lower.contains("base") {
+        "flux3kleinbase"
+    } else {
+        "flux3klein"
+    })
+}
+
 fn model_family_from_base_model(base_model: &str) -> &'static str {
     let bm = base_model.trim().to_lowercase();
     if bm.is_empty() {
@@ -4362,6 +4383,9 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
 
     if bm.contains("nanosaur") {
         return "nanosaur";
+    }
+    if let Some(family) = flux3_klein_family_from_text(&bm) {
+        return family;
     }
     if bm == "flux.2 klein 9b-base" {
         return "flux2klein9bbase";
@@ -4489,6 +4513,12 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
 
     if name.contains("nanosaur") {
         return Some("nanosaur");
+    }
+    // FLUX 3 Image Klein before every Flux 2 matcher: its filenames carry
+    // "flux" and "klein", which the 9b/4b token tests below would otherwise
+    // misread once a quantisation suffix adds a stray digit.
+    if let Some(family) = flux3_klein_family_from_text(&name) {
+        return Some(family);
     }
     if name.contains("flux.2 klein 9b-base")
         || name.contains("flux2klein9bbase")
@@ -4803,6 +4833,8 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "flux2klein9bbase"
             | "flux2klein4b"
             | "flux2klein4bbase"
+            | "flux3klein"
+            | "flux3kleinbase"
             | "chroma"
             | "ideogram4"
             | "krea2"
@@ -4845,7 +4877,13 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase"
+        "flux2d"
+            | "flux2klein9b"
+            | "flux2klein9bbase"
+            | "flux2klein4b"
+            | "flux2klein4bbase"
+            | "flux3klein"
+            | "flux3kleinbase"
     ) {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
@@ -4883,6 +4921,11 @@ pub const KREA2_TEXT_ENCODER_MARKERS: [&str; 5] = [
     "qwen3_vl_4b",
     "qwen3vl4b",
 ];
+
+/// Text-encoder filename markers accepted for FLUX 3 Image Klein. BFL and
+/// Comfy-Org (for Krea 2) ship the same stock Qwen3-VL-4B-Instruct weights, so
+/// the markers are Krea 2's. Shared with the generate-time guard in templates/mod.rs.
+pub const FLUX3_TEXT_ENCODER_MARKERS: [&str; 5] = KREA2_TEXT_ENCODER_MARKERS;
 
 /// Returns (recommended encoder filename if a compatible one exists, CLIP type).
 /// A `None` filename with `Some` type means: the family's CLIP type is known but
@@ -4973,6 +5016,13 @@ fn recommended_clip_from_available(
         return Some((preferred, "ideogram4"));
     }
 
+    if matches!(family, "flux3klein" | "flux3kleinbase") {
+        // Strict: FLUX 3 taps eight Qwen3-VL 4B layers (20480-dim conditioning).
+        // It is the same stock encoder Krea 2 loads, so either release's file works.
+        let preferred = find_first_text_encoder_matching(encoders, &FLUX3_TEXT_ENCODER_MARKERS);
+        return Some((preferred, "flux3"));
+    }
+
     if family == "krea2" {
         // Strict: Krea 2 expects 12x2560=30720-dim conditioning from Qwen3-VL 4B.
         // Recommending any other encoder produces a confusing ComfyUI error.
@@ -4989,6 +5039,93 @@ mod split_model_pairing_tests {
 
     fn list(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn flux3_klein_filenames_resolve_before_flux2_klein() {
+        for (name, family) in [
+            ("flux3-image-klein-int8-convrot.safetensors", "flux3klein"),
+            ("flux3-image-klein-nvfp4.safetensors", "flux3klein"),
+            ("flux3_image_klein_sd_bf16.safetensors", "flux3klein"),
+            ("FLUX.3-Image-Klein-Q4_K_M.gguf", "flux3klein"),
+            (
+                "flux3-image-klein-base-int8-convrot.safetensors",
+                "flux3kleinbase",
+            ),
+            ("flux3_image_klein_base_nvfp4.safetensors", "flux3kleinbase"),
+        ] {
+            assert_eq!(model_family_from_filename(name), Some(family), "{name}");
+        }
+        // Flux 2 Klein keeps its own families.
+        assert_eq!(
+            model_family_from_filename("flux-2-klein-4b.safetensors"),
+            Some("flux2klein4b")
+        );
+        assert_eq!(model_family_from_base_model("Flux.3 Klein"), "flux3klein");
+        assert_eq!(
+            model_family_from_base_model("Flux.3 Klein Base"),
+            "flux3kleinbase"
+        );
+    }
+
+    #[test]
+    fn flux3_klein_pairs_with_qwen3vl_4b_and_the_flux2_vae() {
+        let encoders = list(&["qwen_3_4b.safetensors", "qwen3vl_4b_fp8_scaled.safetensors"]);
+        for family in ["flux3klein", "flux3kleinbase"] {
+            assert_eq!(
+                recommended_clip_from_available("diffusion_models", family, &encoders),
+                Some((
+                    Some("qwen3vl_4b_fp8_scaled.safetensors".to_string()),
+                    "flux3"
+                ))
+            );
+            // Strict: no Qwen3-VL 4B installed means no substitute.
+            assert_eq!(
+                recommended_clip_from_available(
+                    "diffusion_models",
+                    family,
+                    &list(&["qwen_3_4b.safetensors"])
+                ),
+                Some((None, "flux3"))
+            );
+            assert_eq!(
+                recommended_vae_from_available(
+                    "diffusion_models",
+                    family,
+                    &list(&["sdxl_vae.safetensors", "flux2-vae.safetensors"])
+                ),
+                Some("flux2-vae.safetensors".to_string())
+            );
+            assert!(family_requires_separate_clip(family));
+        }
+    }
+
+    #[test]
+    fn flux3_tensor_keys_tell_distilled_from_base() {
+        let base = [
+            "content_mode_blocks.image.0.attn_out.weight",
+            "single_stream_modulations.txt.lin.weight",
+            "single_blocks.0.qkv.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&base).as_deref(),
+            Some("flux3")
+        );
+        let mut distilled = base.to_vec();
+        distilled.push("ref_time_in.in_layer.weight");
+        assert_eq!(
+            infer_architecture_from_key_names(&distilled).as_deref(),
+            Some("flux3_flowmap")
+        );
+        assert_eq!(
+            family_from_architecture("flux3_flowmap"),
+            Some("flux3klein")
+        );
+        assert_eq!(family_from_architecture("flux3"), Some("flux3kleinbase"));
+        assert_ne!(
+            architecture_class("flux3klein"),
+            architecture_class("flux3kleinbase")
+        );
     }
 
     #[test]
@@ -6603,6 +6740,19 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("wan2.1".to_string());
     }
 
+    // FLUX 3: per-mode early blocks plus single-stream modulations, as in
+    // ComfyUI's detect_unet_config. Only the distilled flow-map checkpoint
+    // carries `ref_time_in`. Checked before Flux, which shares `single_blocks.`.
+    if has_key("content_mode_blocks.image.0.attn_out.weight")
+        && has_key("single_stream_modulations.txt.lin.weight")
+    {
+        return Some(if has_key("ref_time_in.in_layer.weight") {
+            "flux3_flowmap".to_string()
+        } else {
+            "flux3".to_string()
+        });
+    }
+
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
@@ -6797,6 +6947,8 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "anima" => Some("anima"),
         "wan2.1" => Some("wan"),
         "flux" => Some("flux"),
+        "flux3_flowmap" => Some("flux3klein"),
+        "flux3" => Some("flux3kleinbase"),
         "qwen_image" => Some("qwen"),
         "stable-diffusion-3-medium" => Some("sd3"),
         "auraflow" => Some("auraflow"),
@@ -6827,6 +6979,10 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         "sdxl" | "illustrious" | "pony" | "mugen" => Some("sdxl"),
         "sd15" => Some("sd15"),
         "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma" => Some("flux"),
+        // Separate classes on purpose: the tensor keys prove distilled vs base,
+        // so they correct a filename that names the other checkpoint.
+        "flux3klein" => Some("flux3_flowmap"),
+        "flux3kleinbase" => Some("flux3"),
         "anima" => Some("anima"),
         "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),

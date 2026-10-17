@@ -118,7 +118,20 @@
       category: "upscale_models",
     },
     {
-      label: "Qwen3-VL 4B FP8 (Krea 2)",
+      // Gated: needs an HF_TOKEN that has accepted the FLUX Kommunity License.
+      label: "FLUX 3 Klein INT8 (HF access)",
+      url: "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",
+      filename: "flux3-image-klein-int8-convrot.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "FLUX 3 Klein Base INT8 (HF access)",
+      url: "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-base-int8-convrot.safetensors",
+      filename: "flux3-image-klein-base-int8-convrot.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Qwen3-VL 4B FP8 (Krea 2, FLUX 3 Klein)",
       url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
       filename: "qwen3vl_4b_fp8_scaled.safetensors",
       category: "text_encoders",

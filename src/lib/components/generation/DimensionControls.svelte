@@ -292,6 +292,8 @@
       case "flux2klein9bbase":
       case "flux2klein4b":
       case "flux2klein4bbase":
+      case "flux3klein":
+      case "flux3kleinbase":
         return { min: 1024, max: 2048 };
       case "qwen":
         return { min: 1024, max: 1536 };

@@ -667,6 +667,9 @@ export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = appendMissingNegativeTags(
   "oldest, low quality, cartoon, blurry, sketch, monochrome, flat color, text, watermark",
 );
 
+/** Reference-image slots kept in the store: the most any edit family takes (FLUX 3 Klein). */
+export const EDIT_REFERENCE_SLOTS = 10;
+
 class GenerationStore {
   _mode = $state<GenerationMode>("txt2img");
   lastImageMode = $state<Exclude<GenerationMode, "video">>("txt2img");
@@ -879,7 +882,7 @@ class GenerationStore {
   styleTransferEnabled = $state(false);
   styleReferenceImage = $state<string | null>(null);
   /** Image Edit mode reference images; slot 0 primary, slots 1-2 Qwen Edit Plus extras. */
-  editReferenceImages = $state<(string | null)[]>([null, null, null]);
+  editReferenceImages = $state<(string | null)[]>(Array(EDIT_REFERENCE_SLOTS).fill(null));
   /** Anima ReStyler reference adherence: 1.0 sticks to the reference, lower restyles harder. */
   editReferenceStrength = $state(1.0);
   /** Anima ReStyler drastic restyle: original split-screen inpaint recipe (stronger style change, ~2x generation area). */
@@ -1321,6 +1324,11 @@ class GenerationStore {
     ].includes(this.modelFamily);
   }
 
+  /** True when the selected model is FLUX 3 Image Klein (distilled or base). */
+  get isFlux3(): boolean {
+    return this.modelFamily === "flux3klein" || this.modelFamily === "flux3kleinbase";
+  }
+
   /** True when the selected model is a Z-Image Base variant. */
   get isZib(): boolean {
     return this.modelFamily === "zib";
@@ -1375,11 +1383,18 @@ class GenerationStore {
 
   /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
   get supportsImageEditMode(): boolean {
-    return this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isAnima;
+    return (
+      this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isFlux3 || this.isAnima
+    );
   }
 
-  /** Number of reference-image slots the current edit family accepts (3 for Plus, else 1). */
+  /**
+   * Number of reference-image slots the current edit family accepts: 10 for
+   * FLUX 3 Klein (FLUX3_MAX_REFERENCES in templates/image_edit.rs), 3 for
+   * Qwen Edit Plus, else 1.
+   */
   get editReferenceSlotCount(): number {
+    if (this.isFlux3) return EDIT_REFERENCE_SLOTS;
     return this.isQwenEditPlus ? 3 : 1;
   }
 
@@ -1461,6 +1476,7 @@ class GenerationStore {
       "zit",
       "flux2klein9b",
       "flux2klein4b",
+      "flux3klein",
     ].includes(this.modelFamily);
   }
 
@@ -2638,6 +2654,30 @@ class GenerationStore {
         };
         break;
 
+      // FLUX 3 Klein: Black Forest Labs' defaults (distilled 16 steps without
+      // guidance, base 50 steps at CFG 3.5), Euler on the simple schedule as
+      // in ComfyUI's bundled templates.
+      case "flux3klein":
+        preset = {
+          steps: 16,
+          cfg: 1.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+      case "flux3kleinbase":
+        preset = {
+          steps: 50,
+          cfg: 3.5,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
       // Flux.2 klein.
       case "flux2klein9b":
       case "flux2klein4b":
@@ -2991,9 +3031,9 @@ class GenerationStore {
     if (saved.styleReferenceImage !== undefined) this.styleReferenceImage = saved.styleReferenceImage;
     if (Array.isArray(saved.editReferenceImages)) {
       const slots = saved.editReferenceImages
-        .slice(0, 3)
+        .slice(0, EDIT_REFERENCE_SLOTS)
         .map((v: unknown) => (typeof v === "string" && v ? v : null));
-      while (slots.length < 3) slots.push(null);
+      while (slots.length < EDIT_REFERENCE_SLOTS) slots.push(null);
       this.editReferenceImages = slots;
     }
     if (saved.editReferenceStrength !== undefined)
@@ -4192,7 +4232,11 @@ class GenerationStore {
       style_ref_redux_model: this.styleRefReduxModel,
       style_ref_clip_vision: this.styleRefClipVision,
       anima_teacache_enabled: this.animaTeacacheEnabled,
-      edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
+      // Only the slots the current family shows: a FLUX 3 session's extra
+      // references must not ride along once a 1- or 3-slot model is picked.
+      edit_reference_images: this.editReferenceImages
+        .slice(0, this.editReferenceSlotCount)
+        .filter((v): v is string => !!v),
       edit_reference_strength: this.editReferenceStrength,
       edit_split_screen: this.editSplitScreen,
       video_variant: this.videoVariant,

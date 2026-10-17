@@ -86,6 +86,25 @@ export const KREA2_SAMPLING: SamplingRecommendation = {
 };
 
 /**
+ * FLUX 3 Image Klein, distilled flow-map checkpoint: 16 steps without guidance
+ * (Black Forest Labs' model card). Matches the store's flux3klein preset.
+ */
+export const FLUX3_KLEIN_SAMPLING: SamplingRecommendation = {
+  steps: 16,
+  cfg: 1.0,
+  samplerName: "euler",
+  scheduler: "simple",
+};
+
+/** FLUX 3 Image Klein Base, the undistilled weights: 50 steps at CFG 3.5. */
+export const FLUX3_KLEIN_BASE_SAMPLING: SamplingRecommendation = {
+  steps: 50,
+  cfg: 3.5,
+  samplerName: "euler",
+  scheduler: "simple",
+};
+
+/**
  * A conservative middle for a model nothing is known about.
  *
  * Only the NovelAI local pass uses this: it has to put some sampler in the
@@ -117,6 +136,8 @@ export function recommendedSamplingFor(
   const name = (filename ?? "").toLowerCase();
   const fam = (family ?? "").toLowerCase();
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
+  if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
+  if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;
   if (fam === "anima" || name.includes("anima")) return ANIMA_SAMPLING;
   if (name.includes("nanosaur")) return NANOSAUR_SAMPLING;
   if (

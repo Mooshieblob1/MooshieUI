@@ -207,7 +207,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
         ));
     }
@@ -341,6 +341,37 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
+    // FLUX 3 Image Klein needs ComfyUI's "flux3" CLIP type (v0.41.0+) and the
+    // stock Qwen3-VL 4B encoder; anything else fails inside ComfyUI with a
+    // conditioning-size error, so fail fast with the fix instead.
+    if matches!(
+        params.model_architecture.as_str(),
+        "flux3klein" | "flux3kleinbase"
+    ) && params.use_split_model
+    {
+        if params.clip_type.as_deref() != Some("flux3") {
+            return Err(
+                "FLUX 3 Klein requires the CLIP loader type \"flux3\" (ComfyUI 0.41.0 or newer). Re-select the FLUX 3 Klein model so the text encoder settings refresh, or update ComfyUI.".into(),
+            );
+        }
+        let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
+        let clip_lower = clip_model.to_lowercase();
+        if clip_model.is_empty()
+            || !crate::commands::api::FLUX3_TEXT_ENCODER_MARKERS
+                .iter()
+                .any(|marker| clip_lower.contains(marker))
+        {
+            return Err(format!(
+                "FLUX 3 Klein requires the Qwen3-VL 4B text encoder, but {} is selected. Open the model panel to download it (qwen3vl_4b_fp8_scaled.safetensors, shared with Krea 2), or if this file really is a Qwen3-VL 4B encoder, rename it to include \"qwen3vl_4b\".",
+                if clip_model.is_empty() {
+                    "none".to_string()
+                } else {
+                    format!("\"{clip_model}\"")
+                }
+            ));
+        }
+    }
+
     // INT8-Fast guard: when enabled for a split-model family, the family must
     // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
     // are incompatible with the INT8-Fast loader (they route through
@@ -356,6 +387,15 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             return Err(
                 "INT8-Fast loader is not compatible with GGUF diffusion models. \
                  Disable the INT8-Fast loader in Settings before using a GGUF checkpoint."
+                    .to_string(),
+            );
+        }
+        if matches!(
+            params.model_architecture.as_str(),
+            "flux3klein" | "flux3kleinbase"
+        ) {
+            return Err(
+                "FLUX 3 Klein loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
                     .to_string(),
             );
         }
@@ -1335,6 +1375,8 @@ pub fn needs_flux2_latent(params: &GenerationParams) -> bool {
             | "flux2klein9bbase"
             | "flux2klein4b"
             | "flux2klein4bbase"
+            | "flux3klein"
+            | "flux3kleinbase"
             | "ideogram4"
     )
 }
@@ -1703,6 +1745,35 @@ mod validation_and_seed_tests {
             p.model_architecture = arch.to_string();
             assert!(validate_generation_params(&p).is_ok(), "{arch}");
         }
+    }
+
+    #[test]
+    fn flux3_klein_needs_the_flux3_clip_type_and_a_qwen3vl_4b_encoder() {
+        let mut p = params("image_edit", "flux3klein");
+        p.edit_reference_images = vec!["ref.png".to_string()];
+        p.use_split_model = true;
+        p.diffusion_model = Some("flux3-image-klein-int8-convrot.safetensors".to_string());
+        p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".to_string());
+        p.clip_type = Some("flux3".to_string());
+        assert!(validate_generation_params(&p).is_ok());
+        assert!(
+            needs_flux2_latent(&p),
+            "FLUX 3 samples in the Flux 2 latent space"
+        );
+
+        p.clip_type = Some("krea2".to_string());
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("\"flux3\""), "{err}");
+
+        p.clip_type = Some("flux3".to_string());
+        p.clip_model = Some("qwen_3_4b.safetensors".to_string());
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("Qwen3-VL 4B"), "{err}");
+
+        p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".to_string());
+        p.int8_fast_enabled = true;
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("INT8-Fast"), "{err}");
     }
 
     #[test]

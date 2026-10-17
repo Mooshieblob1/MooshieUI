@@ -1077,7 +1077,7 @@ const ja: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "画像編集",
   "generation.image_edit.hint": "変更内容をプロンプトに記述してください（例：\"空を紫にする\"）。モデルはゼロから生成するのではなく、参照画像を編集します。",
-  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、またはFlux.1 Kontextモデルを選択してください。",
+  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、FLUX 3 Klein、またはFlux.1 Kontextモデルを選択してください。",
   "generation.image_edit.reference_image": "参照画像",
   "generation.image_edit.reference_image_n": "参照画像 {n}",
   "generation.image_edit.reference_set": "参照画像を設定しました",
@@ -1087,6 +1087,8 @@ const ja: Record<string, string> = {
   "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
   "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
+  "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
+  "generation.image_edit.flux3_note": "FLUX 3 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
   "generation.image_edit.anima_note":
     "ReStylerは参照画像のキャラクターをAnimaスタイルで描き直します。出力サイズは参照画像に合わせられます。Anima Edit LoRAが必要です（Civitaiからダウンロード。APIキーまたはVPNが必要な場合があります）。",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRAをダウンロード（350 MB）",
