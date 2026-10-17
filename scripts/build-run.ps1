@@ -79,8 +79,9 @@ $form.Add_Shown({
     try {
         Set-Content -LiteralPath $log -Value '' -Encoding utf8
         Run-Logged 'Installing packages' 2 10 'npm ci --no-audit --no-fund'
-        # --no-bundle: just the exe; no installer or updater files (those need upstream's signing key)
-        Run-Logged 'Building app (first build takes a while)' 10 92 'npm run tauri build -- --no-bundle'
+        # --no-bundle: just the exe; no installer or updater files (those need upstream's signing key).
+        # Calls tauri directly: npm run tauri's wrapper loses the quotes on its --config JSON on Windows.
+        Run-Logged 'Building app (first build takes a while)' 10 92 'npx tauri build --no-bundle'
 
         if (Get-Process comfyui-desktop -ErrorAction SilentlyContinue | Where-Object { $_.Path -ne $built }) {
             Show-Step 'Built. Close the installed MooshieUI to start the new one...' 95
