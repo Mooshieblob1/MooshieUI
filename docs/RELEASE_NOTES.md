@@ -1,3 +1,39 @@
+## What's New in v2.3.23
+
+### Models
+- **FLUX 3 Image Klein**: the distilled Klein and Klein Base models are detected from their file names, CivitAI base model names and tensor keys, paired with the Qwen3-VL 4B encoder (shared with Krea 2) and the Flux 2 VAE, and get presets from BFL's model card (16 steps at CFG 1 for distilled, 50 steps at CFG 3.5 for Base). The Model Hub has quick links and INT8 downloads, and a missing encoder or VAE downloads on its own. The DiT comes from BFL's gated Hugging Face repo, so it needs a Hugging Face token.
+- **Image Edit with up to 10 references**: Klein's Image Edit mode takes up to 10 reference images. The edit panel adds a slot at a time once you fill the first three.
+
+### Generation Tabs
+- **Tab strip always visible**: the tab strip now sits above the panels instead of appearing on hover, shows the current tab even when it is the only one, and the add button reads **New tab**.
+- **Profiles**: a new **Profiles** button saves the current tab's settings under a name. Open a profile in a new tab or load it into the current one. Saving under an existing name updates it. App-wide preferences are left alone, and profiles sync per user.
+- **Each tab keeps its own last image**: the preview now shows the last image generated in the tab you are on, and switching tabs switches the preview. An image that finishes in a background tab waits there instead of replacing what you are looking at.
+
+### Prompt Assistant
+- **Keep artists for the NovelAI V5 enhance**: a **Keep artists** checkbox keeps the artist tags from your current prompt in the rewrite, weights and emphasis included. Any the rewrite drops are added back at the end of the base tags.
+- **Curate it keeps your aspect ratio**: applying Curate it no longer resets the size to 832x1216. It keeps your width and height, rounded to NovelAI's 64 px grid.
+- **Fewer refused SFW requests**: the NovelAI V5 rewrite no longer sends its explicit vocabulary with every request, which made hosted providers (such as xAI) refuse completely SFW prompts that mentioned a child character. A minor paired with sexual or suggestive content is refused locally before anything is sent, and refusals from a provider now say so.
+
+### Characters and Artists
+- **Name extracted characters before saving**: Extract now opens a review first. Each new character gets a name field filled with the assistant's suggestion and a checkbox to leave it out, and characters that look already saved keep their Update, Save as variant and Disregard choices in the same dialog.
+- **Sort and group favourite artists**: the Artists tab sorts favourites by date added, name or post count in either direction, and groups them by category or first letter with collapsible headers. Right-click a favourite to move it to a category, manage categories or unfavourite it. The Artist Gallery gains a Date Added sort while the favourites filter is on.
+- **Favourites export fixed**: exporting favourites from the Artist Gallery can now write the file you pick.
+
+### Interface
+- **Modals open over the whole app**: dialogs opened from the bottom and side panels (character review, style and preset editors, NovelAI tools, settings dialogs and more) now open over the whole window instead of squeezed inside the panel.
+- **Canvas color names**: the canvas color tooltip names colors properly instead of calling every color "Black".
+- **LAN sharing in Settings search**: searching for lan, remote, ip or mooshieui.local finds the LAN section, and the `.local` address is listed even before the restart that starts advertising it.
+
+### Video (H3)
+- **No more stalls on 24 GB cards**: the High VRAM launch option is now dropped whenever the H3 model would leave less than 6 GB free (it used to need the model to fill 90% of the card), so the 20 GB INT8 model on an RTX 4090 no longer stalls before the first step.
+- **Live preview works again**: H3's live preview stayed blank on ComfyUI v0.39.2 and newer. It now shows from the first step.
+
+### Maintenance
+- **ComfyUI v0.41.1**: new and updating installs get ComfyUI v0.41.1 (was v0.39.2), which FLUX 3 Klein needs.
+- **Dependency updates**: Cargo, npm and CI action dependencies refreshed.
+
+---
+
 ## What's New in v2.3.22
 
 ### LAN Mode
