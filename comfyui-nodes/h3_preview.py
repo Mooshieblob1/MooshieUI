@@ -21,6 +21,7 @@ import torch
 
 import comfy.model_management
 import comfy.patcher_extension
+import comfy.utils
 
 PREVIEW_IMAGE_EVENT = 1  # protocol.BinaryEventTypes.PREVIEW_IMAGE
 WEBP_FORMAT = 3
@@ -29,10 +30,16 @@ MODEL_FPS = 24.0
 LATENT_SCALE = 16  # taeh3 upsamples each latent cell to 16x16 pixels
 
 
-def video_part(x0):
-    """The first batch item of the video stream; H3 carries video and audio nested."""
+def video_part(x0, latent_shapes=None):
+    """The first batch item of the video stream.
+
+    H3 carries video and audio either nested or, when the sampler is handed
+    `latent_shapes`, packed flat as [B, 1, video + audio] (comfy.utils.pack_latents).
+    """
     if getattr(x0, "is_nested", False):
         x0 = x0.tensors[0]
+    elif latent_shapes is not None and len(latent_shapes) > 1:
+        x0 = comfy.utils.unpack_latents(x0, latent_shapes)[0]
     return x0[:1]
 
 
@@ -160,7 +167,7 @@ def make_wrapper(vae, max_side, fps, max_frames, quality, send=send_preview):
             if index >= total_steps - 1 or sender.busy:
                 return
             try:
-                frames, duration_ms = decode_frames(vae, video_part(x0), max_side, fps, max_frames)
+                frames, duration_ms = decode_frames(vae, video_part(x0, latent_shapes), max_side, fps, max_frames)
                 sender.submit(frames, duration_ms)
             except Exception as error:
                 if not warned:
