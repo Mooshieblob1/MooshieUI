@@ -20,6 +20,7 @@
 
 import { naiVocabularyBlock } from "./contentSafety.js";
 import type { ContentRating } from "./contentSafety.js";
+import { naiKeptArtistsDirective } from "./naiArtists.js";
 import { naiLanguageDirective } from "./naiLanguage.js";
 import type { NaiLanguage } from "./naiLanguage.js";
 
@@ -93,6 +94,11 @@ export interface NaiPromptContext {
    * `naiSavedCharacterDirective`, or `""` / absent for none.
    */
   savedCharacters?: string;
+  /**
+   * Artist tags from the current prompt that the rewrite must keep, as written,
+   * from `extractNaiArtists`. Empty or absent when "Keep artists" is off.
+   */
+  keptArtists?: string[];
   /**
    * What the request is about, from `rateRequest` over the user's own words.
    * Picks the vocabulary block: only `explicit` hears the explicit tag list,
@@ -483,6 +489,7 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     ctx.savedCharacters ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
     sessionDirective(ctx.inSession, ctx.existing !== null),
+    naiKeptArtistsDirective(ctx.keptArtists),
     referenceDirective(ctx.references),
     naiLanguageDirective(ctx.language),
     OUTPUT_CONTRACT,
