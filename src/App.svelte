@@ -184,6 +184,14 @@
     document.documentElement.classList.toggle("dyslexic-font", accessibility.dyslexicFont);
   });
 
+  // Each generation tab keeps its own last output: switching tabs swaps the
+  // preview to that tab's image, and closed tabs drop theirs.
+  $effect(() => {
+    const activeId = generationTabs.activeId;
+    const openIds = generationTabs.tabs.map((tab) => tab.id);
+    untrack(() => progress.syncTabs(activeId, openIds, generation.mode));
+  });
+
   // Re-check what the picked VAE and text encoder files really are whenever a
   // pick changes, so the model panel can flag e.g. a text encoder chosen as VAE.
   $effect(() => {
@@ -2083,6 +2091,7 @@
       height?: number;
     }>,
     generationTimeMs?: number,
+    tabId?: string,
   ) {
     if (images.length === 0) return;
 
@@ -2109,7 +2118,7 @@
     // Write through the gallery's own objects from here on: a write to
     // `created` (the saved filename, metadata) never reaches them. See addImages().
     const newImages = gallery.addImages(created);
-    progress.setLastOutputForMode(mode, newImages[0]?.url ?? null);
+    progress.setLastOutputForMode(mode, newImages[0]?.url ?? null, tabId);
     if (mode === "inpainting" && generation.mode === "inpainting" && canvas.isCanvasMode && newImages[0]) {
       const sourceVersion = canvas.inpaintSourceVersion;
       void prepareLatestInpaintResult(newImages[0], sourceVersion);
@@ -3173,7 +3182,7 @@
               clearRegionalChainGallerySuppress(promptId);
               console.log("[regional] Skipping gallery save for chain intermediate:", promptId);
             } else {
-              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs);
+              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId);
             }
 
             // Track grid batch completion — stitch when all cells are done
@@ -3314,7 +3323,7 @@
                   clearRegionalChainGallerySuppress(p.promptId);
                   console.log("[regional] Skipping gallery save for chain intermediate:", p.promptId);
                 } else {
-                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs);
+                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId);
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;

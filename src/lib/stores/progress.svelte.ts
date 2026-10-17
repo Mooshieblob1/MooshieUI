@@ -13,6 +13,14 @@ export interface QueuedPrompt {
   durationMs?: number;
   /** GPU worker the prompt ran on, when the backend reported it. */
   workerId?: number;
+  /** Generation tab that was active when the prompt was queued. */
+  tabId?: string;
+}
+
+type ModeOutputs = Record<GenerationMode, string | null>;
+
+function emptyModeOutputs(): ModeOutputs {
+  return { txt2img: null, img2img: null, inpainting: null, image_edit: null, video: null };
 }
 
 class ProgressStore {
@@ -88,13 +96,13 @@ class ProgressStore {
   removePendingVideo(path: string): void {
     this.pendingVideos = this.pendingVideos.filter((v) => v.path !== path);
   }
-  modeLastOutput = $state<Record<GenerationMode, string | null>>({
-    txt2img: null,
-    img2img: null,
-    inpainting: null,
-    image_edit: null,
-    video: null,
-  });
+  /** Last output per mode for the active generation tab. */
+  modeLastOutput = $state<ModeOutputs>(emptyModeOutputs());
+
+  /** Generation tab whose outputs `modeLastOutput` holds. Null until the first sync. */
+  private _activeTabId: string | null = null;
+  /** `modeLastOutput` of every other open tab, parked until it is switched back to. */
+  private _parkedTabOutputs = new Map<string, ModeOutputs>();
 
   /** Which sampling pass we're on: 0 = not started, 1 = initial, 2 = upscale */
   samplingPass = $state(0);
@@ -282,7 +290,36 @@ class ProgressStore {
     this.lastOutputImage = this.modeLastOutput[mode];
   }
 
-  setLastOutputForMode(mode: GenerationMode, image: string | null) {
+  /**
+   * Follow the generation tabs: park the outgoing tab's outputs, show the
+   * incoming tab's, and forget tabs that were closed. Each tab keeps the last
+   * image it generated, so switching tabs swaps the preview with it.
+   */
+  syncTabs(activeId: string, openIds: string[], mode: GenerationMode) {
+    if (this._activeTabId !== null && this._activeTabId !== activeId) {
+      this._parkedTabOutputs.set(this._activeTabId, this.modeLastOutput);
+      this.modeLastOutput = this._parkedTabOutputs.get(activeId) ?? emptyModeOutputs();
+      this.lastOutputImage = this.modeLastOutput[mode];
+    }
+    this._activeTabId = activeId;
+    this._parkedTabOutputs.delete(activeId);
+    const open = new Set(openIds);
+    for (const id of this._parkedTabOutputs.keys()) {
+      if (!open.has(id)) this._parkedTabOutputs.delete(id);
+    }
+  }
+
+  /**
+   * Record a mode's output for the tab that queued it (the active tab when
+   * omitted). An output for a parked tab waits there instead of replacing the
+   * preview; one for a tab closed since is dropped (it is still in the gallery).
+   */
+  setLastOutputForMode(mode: GenerationMode, image: string | null, tabId?: string) {
+    if (tabId && this._activeTabId && tabId !== this._activeTabId) {
+      const parked = this._parkedTabOutputs.get(tabId);
+      if (parked) this._parkedTabOutputs.set(tabId, { ...parked, [mode]: image });
+      return;
+    }
     this.modeLastOutput = {
       ...this.modeLastOutput,
       [mode]: image,
@@ -304,6 +341,15 @@ class ProgressStore {
     }
     if (changed) {
       this.modeLastOutput = { ...this.modeLastOutput };
+    }
+    for (const [tabId, outputs] of this._parkedTabOutputs) {
+      if (Object.values(outputs).includes(oldUrl)) {
+        const next = { ...outputs };
+        for (const mode of Object.keys(next) as GenerationMode[]) {
+          if (next[mode] === oldUrl) next[mode] = newUrl;
+        }
+        this._parkedTabOutputs.set(tabId, next);
+      }
     }
   }
 
@@ -371,6 +417,7 @@ class ProgressStore {
         // activity guard has a valid baseline.
         enqueuedAt: existing.enqueuedAt ?? Date.now(),
         workerId: workerId ?? existing.workerId,
+        tabId: existing.tabId ?? this._activeTabId ?? undefined,
       };
       this.pendingPrompts = next;
       return;
@@ -384,6 +431,7 @@ class ProgressStore {
         params: params!,
         enqueuedAt: Date.now(),
         workerId,
+        tabId: this._activeTabId ?? undefined,
       },
     ];
   }
@@ -465,7 +513,7 @@ class ProgressStore {
       this._stopElapsedTimer();
 
       if (this.previewImage && item && !hasFinalImage) {
-        this.setLastOutputForMode(item.mode, this.previewImage);
+        this.setLastOutputForMode(item.mode, this.previewImage, item.tabId);
       }
       this.previewImage = null;
     }
