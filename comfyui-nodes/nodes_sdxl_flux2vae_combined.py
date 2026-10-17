@@ -32,7 +32,8 @@ def _wrap_latent_preview():
     def decode_latent_to_preview(self, x0):
         # If latents are packed (128ch) but the format is 32ch, unpack for preview
         try:
-            latent_channels = getattr(self.latent_format, "latent_channels", None)
+            # The previewer keeps only its RGB factors ([3, channels]), not the latent format.
+            latent_channels = self.latent_rgb_factors.shape[-1]
             if latent_channels == 32 and x0.shape[1] == 128:
                 x0 = F.pixel_shuffle(x0, 2)  # (N,128,H,W)->(N,32,H*2,W*2)
         except Exception as e:

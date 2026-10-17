@@ -26,6 +26,7 @@ from PIL import Image
 from comfy.nested_tensor import NestedTensor
 import comfy.model_patcher
 import comfy.patcher_extension
+import comfy.utils
 
 package = types.ModuleType("mooshie_preview_test")
 package.__path__ = [str(Path(__file__).resolve().parents[1] / "comfyui-nodes")]
@@ -84,6 +85,14 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(tuple(part.shape), (1, 24, 7, 30, 52))
         self.assertTrue(torch.equal(part, x0.tensors[0][:1]))
 
+    def test_video_part_unpacks_a_flat_packed_av_latent(self):
+        import comfy.utils
+        video, audio = torch.randn(2, 24, 7, 30, 52), torch.randn(2, 32, 2, 37)
+        packed, shapes = comfy.utils.pack_latents([video, audio])
+        part = preview.video_part(packed, shapes)
+        self.assertEqual(tuple(part.shape), (1, 24, 7, 30, 52))
+        self.assertTrue(torch.equal(part, video[:1]))
+
     def test_send_preview_uses_preview_event_with_webp_code(self):
         sent = []
         server = types.SimpleNamespace(client_id="app", send_sync=lambda *a: sent.append(a))
@@ -99,15 +108,18 @@ class HelperTests(unittest.TestCase):
 
 
 class WrapperTests(unittest.TestCase):
-    def run_steps(self, wrapper, steps, callback, after_step=None):
+    def run_steps(self, wrapper, steps, callback, after_step=None, packed=False):
         def executor(noise, latent, sampler, sigmas, mask, cb, disable_pbar, seed, latent_shapes=None):
             for i in range(steps):
                 x0 = av_x0()
+                if packed:
+                    x0, _ = comfy.utils.pack_latents(list(x0.tensors))
                 cb(i, x0, x0, steps)
                 if after_step is not None:
                     after_step(i)  # a real step takes seconds; let the encoder run
             return "samples"
-        return wrapper(executor, None, None, None, None, None, callback, False, 0, latent_shapes=None)
+        shapes = comfy.utils.pack_latents(list(av_x0().tensors))[1] if packed else None
+        return wrapper(executor, None, None, None, None, None, callback, False, 0, latent_shapes=shapes)
 
     def test_every_step_reaches_the_original_callback_and_previews_are_animated_webp(self):
         vae, sent, calls = FakeVae(), [], []
@@ -130,6 +142,12 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(vae.shapes[0][:3], (1, 24, 7))
         # Step 1 decodes unless the encoder is still finishing; step 2 never does.
         self.assertIn(len(vae.shapes), (1, 2))
+
+    def test_packed_av_latent_decodes_the_video_stream(self):
+        vae = FakeVae()
+        wrapper = preview.make_wrapper(vae, 384, 12, 72, 60, send=lambda data: None)
+        self.run_steps(wrapper, 2, lambda *a: None, packed=True)
+        self.assertEqual(vae.shapes[0][:3], (1, 24, 7))
 
     def test_final_step_is_never_decoded(self):
         vae, calls = FakeVae(), []
