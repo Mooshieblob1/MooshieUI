@@ -4733,6 +4733,19 @@ fn find_first_vae_matching(vaes: &[String], markers: &[&str]) -> Option<String> 
     })
 }
 
+/// The 16-channel Qwen-Image VAE, skipping the 64-channel Qwen-Image 2.x ones.
+fn find_qwen_image_vae(vaes: &[String]) -> Option<String> {
+    vaes.iter()
+        .find(|vae| {
+            let lower = vae.to_lowercase();
+            lower.contains("qwen")
+                && !["2.1", "2_1", "2.0", "2_0", "image_2", "image-2"]
+                    .iter()
+                    .any(|marker| lower.contains(marker))
+        })
+        .cloned()
+}
+
 fn find_first_text_encoder_matching(encoders: &[String], markers: &[&str]) -> Option<String> {
     encoders.iter().find_map(|encoder| {
         let lower = encoder.to_lowercase();
@@ -4835,7 +4848,11 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     }
 
     if family == "krea2" {
-        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
+        // Krea 2 decodes with the 16-channel Qwen-Image VAE. The 64-channel
+        // Qwen-Image 2.x VAE sorts first, so prefer the plain one.
+        return find_qwen_image_vae(vaes)
+            .or_else(|| find_first_vae_matching(vaes, &["qwen"]))
+            .or_else(|| vaes.first().cloned());
     }
 
     if family == "ideogram4" {
