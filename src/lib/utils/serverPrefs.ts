@@ -20,6 +20,7 @@ export interface UserPrefsData {
   prompt_presets?: unknown;
   styles?: unknown;
   lora_presets?: unknown;
+  profiles?: unknown;
   artist_favourites?: unknown;
   gallery_boards?: unknown;
   autocomplete?: unknown;

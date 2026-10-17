@@ -3622,7 +3622,7 @@
   {#if currentPage === "generate"}
     <GenerationTabStrip />
   {/if}
-<div class="flex min-h-0 flex-1 bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
+<div class="flex min-h-0 flex-1 bg-neutral-950 text-neutral-100 md:gap-3 md:px-3 md:pb-3 {currentPage === 'generate' ? 'md:pt-1.5' : 'md:pt-3'} {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
   <svg style="display: none">
     <defs>

@@ -928,6 +928,17 @@ const pl: Record<string, string> = {
   "generation.tabs.new_hint": "Nowa karta z kopią tych ustawień",
   "generation.tabs.close": "Zamknij kartę",
   "generation.tabs.empty_prompt": "Pusty prompt",
+  "generation.profiles.button": "Profile",
+  "generation.profiles.hint": "Zapisuje ustawienia tej karty pod nazwą. Istniejąca nazwa zostanie zaktualizowana.",
+  "generation.profiles.name_placeholder": "Nazwa profilu",
+  "generation.profiles.save": "Zapisz",
+  "generation.profiles.empty": "Brak profili.",
+  "generation.profiles.open_hint": "Otwórz w nowej karcie",
+  "generation.profiles.load_here": "Wczytaj do tej karty",
+  "generation.profiles.delete": "Usuń profil",
+  "generation.profiles.confirm_delete": "Usunąć profil „{name}”?",
+  "generation.profiles.saved": "Zapisano profil „{name}”",
+  "generation.profiles.updated": "Zaktualizowano profil „{name}”",
 
   // Prompts
   "generation.prompts.title": "Prompty",

@@ -258,6 +258,7 @@ export function mergeUserPrefs(primary: UserPrefsData, secondary: UserPrefsData)
     prompt_presets: pick("prompt_presets", (a, b) => mergeWithList(a, b, "presets")),
     styles: pick("styles", (a, b) => mergeWithList(a, b, "styles")),
     lora_presets: pick("lora_presets", (a, b) => mergeWithList(a, b, "presets")),
+    profiles: pick("profiles", (a, b) => mergeWithList(a, b, "profiles")),
     artist_favourites: pick("artist_favourites", mergeArtistFavourites),
     gallery_boards: pick("gallery_boards", mergeGallery),
     autocomplete: pick("autocomplete", fill),

@@ -863,6 +863,17 @@ const es: Record<string, string> = {
   "generation.tabs.new_hint": "Nueva pestaña con una copia de estos ajustes",
   "generation.tabs.close": "Cerrar pestaña",
   "generation.tabs.empty_prompt": "Prompt vacío",
+  "generation.profiles.button": "Perfiles",
+  "generation.profiles.hint": "Guarda los ajustes de esta pestaña con un nombre. Si el nombre ya existe, se actualiza.",
+  "generation.profiles.name_placeholder": "Nombre del perfil",
+  "generation.profiles.save": "Guardar",
+  "generation.profiles.empty": "Aún no hay perfiles.",
+  "generation.profiles.open_hint": "Abrir en una pestaña nueva",
+  "generation.profiles.load_here": "Cargar en esta pestaña",
+  "generation.profiles.delete": "Eliminar perfil",
+  "generation.profiles.confirm_delete": "¿Eliminar el perfil «{name}»?",
+  "generation.profiles.saved": "Perfil «{name}» guardado",
+  "generation.profiles.updated": "Perfil «{name}» actualizado",
 
   // Prompts
   "generation.prompts.title": "Prompts",

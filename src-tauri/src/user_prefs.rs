@@ -40,6 +40,8 @@ pub struct UserPrefs {
     pub styles: Option<serde_json::Value>,
     /// LoRA stack presets.
     pub lora_presets: Option<serde_json::Value>,
+    /// Named generation settings profiles (saved from settings tabs).
+    pub profiles: Option<serde_json::Value>,
     /// Favourited artist slugs and user-defined categories.
     pub artist_favourites: Option<serde_json::Value>,
     /// Gallery board assignments and custom board names.
