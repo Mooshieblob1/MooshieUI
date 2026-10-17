@@ -35,6 +35,15 @@ import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
+  MULTI_ANGLE_LORA,
+  cameraAnglePhrase,
+  clampAzimuth,
+  clampDistance,
+  clampElevation,
+  installedMultiAngleLora,
+  multiAngleLoraToApply,
+} from "../utils/cameraAngle.js";
+import {
   NAI_EFFORT_HIGH,
   NOVELAI_CURATE,
   NOVELAI_DEFAULTS,
@@ -893,6 +902,14 @@ class GenerationStore {
   editReferenceStrength = $state(1.0);
   /** Anima ReStyler drastic restyle: original split-screen inpaint recipe (stronger style change, ~2x generation area). */
   editSplitScreen = $state(false);
+  /** Qwen Edit Plus camera angle: prepends a Multiple-Angles LoRA shot phrase to the prompt. */
+  cameraAngleEnabled = $state(false);
+  /** Index into CAMERA_AZIMUTHS (0 = front, clockwise in 45 degree steps). */
+  cameraAzimuth = $state(0);
+  /** Index into CAMERA_ELEVATIONS (1 = eye level). */
+  cameraElevation = $state(1);
+  /** Index into CAMERA_DISTANCES (1 = medium shot). */
+  cameraDistance = $state(1);
   styleTransferLowScaleEnd = $state(1.5);
   styleTransferHighScaleStart = $state(1.0);
   styleTransferBeta = $state(50);
@@ -1370,6 +1387,21 @@ class GenerationStore {
   /** True when the selected model is Qwen Image Edit Plus (up to 3 reference images). */
   get isQwenEditPlus(): boolean {
     return this.modelFamily === "qwen_edit_plus";
+  }
+
+  /** True when the camera angle phrase (and its LoRA, if installed) goes out with the next edit. */
+  get cameraAngleActive(): boolean {
+    return this._mode === "image_edit" && this.isQwenEditPlus && this.cameraAngleEnabled;
+  }
+
+  /** The shot phrase the next edit will carry, with the LoRA trigger when the LoRA is installed. */
+  get cameraAnglePrompt(): string {
+    return cameraAnglePhrase(
+      this.cameraAzimuth,
+      this.cameraElevation,
+      this.cameraDistance,
+      installedMultiAngleLora(models.loras) !== null,
+    );
   }
 
   /** True when the selected model is Flux.1 Kontext (image edit). Kept out of isFlux. */
@@ -3055,6 +3087,13 @@ class GenerationStore {
       this.editReferenceStrength = saved.editReferenceStrength;
     if (saved.editSplitScreen !== undefined)
       this.editSplitScreen = saved.editSplitScreen;
+    if (saved.cameraAngleEnabled !== undefined)
+      this.cameraAngleEnabled = !!saved.cameraAngleEnabled;
+    if (saved.cameraAzimuth !== undefined) this.cameraAzimuth = clampAzimuth(saved.cameraAzimuth);
+    if (saved.cameraElevation !== undefined)
+      this.cameraElevation = clampElevation(saved.cameraElevation);
+    if (saved.cameraDistance !== undefined)
+      this.cameraDistance = clampDistance(saved.cameraDistance);
     if (saved.videoVariant === "fl2va" || saved.videoVariant === "ref2va")
       this.videoVariant = saved.videoVariant;
     if (saved.videoDurationSeconds !== undefined)
@@ -3321,6 +3360,10 @@ class GenerationStore {
         editReferenceImages: this.editReferenceImages,
         editReferenceStrength: this.editReferenceStrength,
         editSplitScreen: this.editSplitScreen,
+        cameraAngleEnabled: this.cameraAngleEnabled,
+        cameraAzimuth: this.cameraAzimuth,
+        cameraElevation: this.cameraElevation,
+        cameraDistance: this.cameraDistance,
         styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
         styleTransferHighScaleStart: this.styleTransferHighScaleStart,
         styleTransferBeta: this.styleTransferBeta,
@@ -3493,6 +3536,10 @@ class GenerationStore {
       editReferenceImages: this.editReferenceImages,
       editReferenceStrength: this.editReferenceStrength,
       editSplitScreen: this.editSplitScreen,
+      cameraAngleEnabled: this.cameraAngleEnabled,
+      cameraAzimuth: this.cameraAzimuth,
+      cameraElevation: this.cameraElevation,
+      cameraDistance: this.cameraDistance,
       styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
       styleTransferHighScaleStart: this.styleTransferHighScaleStart,
       styleTransferBeta: this.styleTransferBeta,
@@ -3769,16 +3816,32 @@ class GenerationStore {
       models.loras,
       loras.map((l) => l.name),
     );
-    return refusalLora
-      ? [
-          ...loras,
-          {
-            name: refusalLora,
-            strength_model: KREA2_REFUSAL_LORA_STRENGTH,
-            strength_clip: KREA2_REFUSAL_LORA_STRENGTH,
-          },
-        ]
-      : loras;
+    const angleLora = multiAngleLoraToApply(
+      this.cameraAngleActive,
+      models.loras,
+      loras.map((l) => l.name),
+    );
+    return [
+      ...loras,
+      ...(refusalLora
+        ? [
+            {
+              name: refusalLora,
+              strength_model: KREA2_REFUSAL_LORA_STRENGTH,
+              strength_clip: KREA2_REFUSAL_LORA_STRENGTH,
+            },
+          ]
+        : []),
+      ...(angleLora
+        ? [
+            {
+              name: angleLora,
+              strength_model: MULTI_ANGLE_LORA.strength,
+              strength_clip: MULTI_ANGLE_LORA.strength,
+            },
+          ]
+        : []),
+    ];
   }
 
   /**
@@ -3982,6 +4045,17 @@ class GenerationStore {
     }
     if (preset.append) {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
+    }
+
+    // The Multiple-Angles LoRA wants its shot phrase first. Prepended as-is
+    // rather than through mergeIntoPrompt, which would re-tokenize the edit
+    // instruction (usually prose) on commas.
+    if (this.cameraAngleActive) {
+      const phrase = this.cameraAnglePrompt;
+      const rest = positivePrompt.trim();
+      if (!rest.toLowerCase().includes(phrase.toLowerCase())) {
+        positivePrompt = rest ? `${phrase}, ${rest}` : phrase;
+      }
     }
 
     // Auto-apply quality tags for supported model families.
