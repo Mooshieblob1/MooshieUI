@@ -344,6 +344,8 @@
 
   function setShowOnlyFavourites(val: boolean) {
     store.showOnlyFavourites = val;
+    // Date added means nothing for artists that aren't favourited.
+    if (!val && store.sortField === "added") store.sortField = "postCount";
     store.currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
@@ -486,6 +488,13 @@
       return [...scored.map((x) => x.e), ...placeholders];
     }
     const dir = sortDir === "asc" ? 1 : -1;
+    if (sortField === "added") {
+      const favs = artistFavourites.favourites;
+      const addedAt = (e: ArtistSearchHit) => favs[e.slug]?.addedAt ?? 0;
+      return [...allEntries].sort(
+        (a, b) => (addedAt(a) - addedAt(b)) * dir || a.slug.localeCompare(b.slug),
+      );
+    }
     return [...allEntries].sort((a, b) =>
       sortField === "name"
         ? a.slug.localeCompare(b.slug) * dir
@@ -659,6 +668,16 @@
           >
             {locale.t('artist_gallery.sort_name')}
           </button>
+          {#if showOnlyFavourites}
+            <button
+              type="button"
+              class="rounded px-2 py-0.5 text-xs transition-colors {sortField === 'added' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+              onclick={() => setSort('added')}
+              title={locale.t('artist_gallery.sort_added_title')}
+            >
+              {locale.t('artist_gallery.sort_added')}
+            </button>
+          {/if}
           <button
             type="button"
             class="rounded px-2 py-0.5 text-xs transition-colors {sortField === 'uniqueness' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
