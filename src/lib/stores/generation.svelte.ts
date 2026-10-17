@@ -2536,8 +2536,10 @@ class GenerationStore {
     if (this.checkpoint !== NOVELAI_CURATE.model) this.selectNovelAiModel(NOVELAI_CURATE.model);
     this.steps = NOVELAI_CURATE.steps;
     this.cfg = NOVELAI_CURATE.cfg;
-    this.width = NOVELAI_CURATE.width;
-    this.height = NOVELAI_CURATE.height;
+    // The size is kept as the user set it, only snapped onto NovelAI's grid
+    // (which `selectNovelAiModel` already does when it switches models).
+    this.width = snapNovelAiDimension(this.width);
+    this.height = snapNovelAiDimension(this.height);
     this.batchSize = NOVELAI_CURATE.batchSize;
     this.negativePrompt = appendNovelAiCurateUc(this.negativePrompt ?? "");
     this.updateNovelAiSettings({
