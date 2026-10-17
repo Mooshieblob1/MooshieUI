@@ -483,6 +483,18 @@ pub struct GenerationParams {
     pub style_ref_start: f32,
     #[serde(default = "default_style_ref_end")]
     pub style_ref_end: f32,
+    /// Guide image (txt2img): blends each early step's prediction toward
+    /// this image's latent via core LatentOperationBlend.
+    #[serde(default)]
+    pub guide_image_enabled: bool,
+    #[serde(default)]
+    pub guide_image: Option<String>,
+    /// 0 leaves the prediction alone, 1 replaces it with the guide latent.
+    #[serde(default = "default_guide_strength")]
+    pub guide_strength: f64,
+    /// Fraction of the schedule the guide runs for, from the start.
+    #[serde(default = "default_guide_end_percent")]
+    pub guide_end_percent: f64,
     /// Flux Redux: style model filename in models/style_models/
     pub style_ref_redux_model: Option<String>,
     /// Redux/IPAdapter: clip_vision model filename in models/clip_vision/
@@ -661,6 +673,12 @@ fn default_style_ref_weight_type() -> String {
 }
 fn default_style_ref_end() -> f32 {
     1.0
+}
+fn default_guide_strength() -> f64 {
+    0.6
+}
+fn default_guide_end_percent() -> f64 {
+    0.35
 }
 
 fn default_region_strength() -> f64 {

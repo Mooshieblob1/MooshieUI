@@ -1100,6 +1100,13 @@ const fr: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein accepte jusqu'à 10 images de référence. Désignez-les dans le prompt par leur ordre (la première image, la deuxième image) et décrivez le résultat complet, pas seulement la modification.",
+  "generation.guide_image.title": "Image guide",
+  "generation.guide_image.tip": "Oriente le début de la génération vers la composition et les couleurs de cette image, puis laisse le modèle dessiner de nouveaux détails. Contrairement à img2img, elle part d'un bruit pur et fonctionne avec tous les modèles.",
+  "generation.guide_image.strength": "Force du guide",
+  "generation.guide_image.strength_tip": "À quel point chaque étape initiale est attirée vers le guide. 1 reprend sa composition presque exactement, des valeurs plus basses ne font que la suggérer.",
+  "generation.guide_image.until": "Guider jusqu'à",
+  "generation.guide_image.until_tip": "Quelle part de la génération le guide oriente depuis le début. 0,35 correspond aux premiers 35 % des étapes, les suivantes sont libres.",
+  "generation.guide_image.uploading": "Envoi...",
   "generation.image_edit.anima_note":
     "ReStyler redessine le personnage de votre image de référence dans le style Anima. La sortie correspond à la taille de la référence. Nécessite le LoRA Anima Edit (téléchargement Civitai ; une clé API ou un VPN peut être nécessaire).",
   "generation.image_edit.anima_lora_download": "Télécharger le LoRA Anima Edit (350 Mo)",

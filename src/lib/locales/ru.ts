@@ -1085,6 +1085,13 @@ const ru: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein принимает до 10 референсных изображений. Называйте их в промпте по порядку (первое изображение, второе изображение) и описывайте весь результат, а не только изменение.",
+  "generation.guide_image.title": "Направляющее изображение",
+  "generation.guide_image.tip": "Ведёт начало генерации к композиции и цветам этого изображения, а затем даёт модели нарисовать новые детали. В отличие от img2img начинается с чистого шума и работает с любой моделью.",
+  "generation.guide_image.strength": "Сила направления",
+  "generation.guide_image.strength_tip": "Насколько сильно каждый ранний шаг тянется к направляющему изображению. 1 почти точно копирует композицию, меньшие значения лишь намекают на неё.",
+  "generation.guide_image.until": "Направлять до",
+  "generation.guide_image.until_tip": "Какую часть генерации с начала ведёт изображение. 0,35 означает первые 35% шагов, дальше модель работает свободно.",
+  "generation.guide_image.uploading": "Загрузка...",
   "generation.image_edit.anima_note":
     "ReStyler перерисовывает персонажа с референсного изображения в стиле Anima. Размер результата совпадает с референсом. Требуется LoRA Anima Edit (загрузка с Civitai; может понадобиться API-ключ или VPN).",
   "generation.image_edit.anima_lora_download": "Скачать Anima Edit LoRA (350 МБ)",

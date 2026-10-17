@@ -1100,6 +1100,13 @@ const ja: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
+  "generation.guide_image.title": "ガイド画像",
+  "generation.guide_image.tip": "生成の序盤をこの画像の構図と色に寄せ、その後はモデルに新しいディテールを描かせます。img2img と違い純粋なノイズから始まり、どのモデルでも使えます。",
+  "generation.guide_image.strength": "ガイドの強さ",
+  "generation.guide_image.strength_tip": "序盤の各ステップをどれだけガイドに寄せるか。1 で構図をほぼそのまま写し、低い値ではヒント程度になります。",
+  "generation.guide_image.until": "ガイド適用範囲",
+  "generation.guide_image.until_tip": "生成の最初からどこまでガイドを効かせるか。0.35 なら最初の 35% のステップで、残りは自由に進みます。",
+  "generation.guide_image.uploading": "アップロード中...",
   "generation.image_edit.anima_note":
     "ReStylerは参照画像のキャラクターをAnimaスタイルで描き直します。出力サイズは参照画像に合わせられます。Anima Edit LoRAが必要です（Civitaiからダウンロード。APIキーまたはVPNが必要な場合があります）。",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRAをダウンロード（350 MB）",

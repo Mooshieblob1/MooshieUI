@@ -1085,6 +1085,13 @@ const zhTw: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein 最多可使用 10 張參考圖。在提示詞中依順序指稱它們（第一張圖、第二張圖），並描述完整的結果，而不只是改動。",
+  "generation.guide_image.title": "引導圖",
+  "generation.guide_image.tip": "讓生成初期朝這張圖的構圖與色彩靠攏，之後再交由模型繪製新的細節。與 img2img 不同，它從純雜訊開始，適用於所有模型。",
+  "generation.guide_image.strength": "引導強度",
+  "generation.guide_image.strength_tip": "初期每一步被拉向引導圖的程度。1 幾乎照搬構圖，較低的值只是稍作提示。",
+  "generation.guide_image.until": "引導至",
+  "generation.guide_image.until_tip": "從開始起引導圖影響生成的比例。0.35 代表前 35% 的步數，之後自由生成。",
+  "generation.guide_image.uploading": "上傳中...",
   "generation.image_edit.anima_note":
     "ReStyler 會以 Anima 風格重新繪製參考圖片中的角色。輸出尺寸與參考圖片一致。需要 Anima Edit LoRA（從 Civitai 下載；可能需要 API 金鑰或 VPN）。",
   "generation.image_edit.anima_lora_download": "下載 Anima Edit LoRA（350 MB）",

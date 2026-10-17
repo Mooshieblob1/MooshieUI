@@ -461,6 +461,10 @@ export interface GenerationParams {
   style_ref_end?: number;
   style_ref_redux_model?: string | null;
   style_ref_clip_vision?: string | null;
+  guide_image_enabled?: boolean;
+  guide_image?: string | null;
+  guide_strength?: number;
+  guide_end_percent?: number;
   /** Anima TeaCache: reuses the previous step's DiT output when little changed. */
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
