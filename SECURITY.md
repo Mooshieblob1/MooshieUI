@@ -2,8 +2,10 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately by email to **blob@mooshieblob.com**.
-Do not open a public issue for anything that could put users at risk.
+Please report security issues privately, either through GitHub's
+[private vulnerability reporting](https://github.com/Mooshieblob1/MooshieUI/security/advisories/new)
+or by email to **security@mooshieui.com**. Do not open a public issue for
+anything that could put users at risk.
 
 Include what you can of:
 
