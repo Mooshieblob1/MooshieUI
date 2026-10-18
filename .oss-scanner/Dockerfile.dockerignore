@@ -1,0 +1,9 @@
+# Used instead of the root .dockerignore when building .oss-scanner/Dockerfile
+# (BuildKit picks up <Dockerfile>.dockerignore). The root one strips scripts/
+# and *.md for the deploy image, but the Rust tests include_str! files from
+# scripts/ and the scanner should see the docs, so only build outputs are left
+# out here.
+src-tauri/target/
+report-proxy/target/
+dist/
+node_modules/
