@@ -13,12 +13,13 @@ generation). One Rust crate (`src-tauri/`) builds two ways:
   (`--no-default-features --features server`), which is what the Docker image
   in `deploy/` ships.
 
-The server binds `127.0.0.1` by default. With LAN mode on it binds all
-interfaces and serves other people: accounts, roles (Admin, Moderator, User,
-Anonymous; see `UserRole` in `webserver.rs`), sessions and passwords in
-`src-tauri/src/auth.rs`, per-user galleries and exports. The Docker image runs
-LAN mode by default and is often exposed through a reverse proxy or Cloudflare
-Tunnel, so treat it as internet-facing.
+Inside the desktop app the server binds `127.0.0.1` unless the user turns on
+LAN mode. The headless `mooshieui-server` always runs in LAN mode (see
+`server_main.rs`). In LAN mode it binds all interfaces and serves other people:
+accounts, roles (Admin, Moderator, User, Anonymous; see `UserRole` in
+`webserver.rs`), sessions and passwords in `src-tauri/src/auth.rs`, per-user
+galleries and exports. The Docker image is often exposed through a reverse
+proxy or Cloudflare Tunnel, so treat LAN mode as internet-facing.
 
 `report-proxy/` is a small separate axum service that turns in-app error
 reports into GitHub issues. It is public and unauthenticated by design, and

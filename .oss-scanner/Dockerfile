@@ -15,7 +15,10 @@ FROM node:20-bookworm-slim AS node
 
 FROM rust:1-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive
+# CARGO_INCREMENTAL=0: incremental caches would roughly double the size of
+# target/ for no benefit in a one-off build.
+ENV DEBIAN_FRONTEND=noninteractive \
+    CARGO_INCREMENTAL=0
 
 # Same Linux packages as the desktop job in .github/workflows/rust-checks.yml.
 RUN apt-get update && apt-get install -y --no-install-recommends \
