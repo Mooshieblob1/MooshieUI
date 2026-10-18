@@ -934,6 +934,13 @@ class GenerationStore {
   styleRefEnd = $state(1.0);
   styleRefReduxModel = $state<string | null>(null);
   styleRefClipVision = $state<string | null>(null);
+  /** txt2img guide image: steers the early steps toward this image's layout and colours (any family). */
+  guideImageEnabled = $state(false);
+  guideImage = $state<string | null>(null);
+  /** 0 leaves each step alone, 1 replaces its prediction with the guide. */
+  guideStrength = $state(0.6);
+  /** Fraction of the schedule the guide runs for, from the start. */
+  guideEndPercent = $state(0.35);
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -3201,6 +3208,10 @@ class GenerationStore {
     if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
     if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
     if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
+    if (saved.guideImageEnabled !== undefined) this.guideImageEnabled = !!saved.guideImageEnabled;
+    if (saved.guideImage !== undefined) this.guideImage = saved.guideImage;
+    if (saved.guideStrength !== undefined) this.guideStrength = saved.guideStrength;
+    if (saved.guideEndPercent !== undefined) this.guideEndPercent = saved.guideEndPercent;
     if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
     if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
     if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -3373,6 +3384,10 @@ class GenerationStore {
         styleRefEnd: this.styleRefEnd,
         styleRefReduxModel: this.styleRefReduxModel,
         styleRefClipVision: this.styleRefClipVision,
+        guideImageEnabled: this.guideImageEnabled,
+        guideImage: this.guideImage,
+        guideStrength: this.guideStrength,
+        guideEndPercent: this.guideEndPercent,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -3545,6 +3560,10 @@ class GenerationStore {
       styleRefEnd: this.styleRefEnd,
       styleRefReduxModel: this.styleRefReduxModel,
       styleRefClipVision: this.styleRefClipVision,
+      guideImageEnabled: this.guideImageEnabled,
+      guideImage: this.guideImage,
+      guideStrength: this.guideStrength,
+      guideEndPercent: this.guideEndPercent,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -4317,6 +4336,10 @@ class GenerationStore {
       style_ref_end: this.styleRefEnd,
       style_ref_redux_model: this.styleRefReduxModel,
       style_ref_clip_vision: this.styleRefClipVision,
+      guide_image_enabled: this.guideImageEnabled && this._mode === "txt2img" && !!this.guideImage,
+      guide_image: this.guideImage,
+      guide_strength: this.guideStrength,
+      guide_end_percent: this.guideEndPercent,
       anima_teacache_enabled: this.animaTeacacheEnabled,
       // Only the slots the current family shows: a FLUX 3 session's extra
       // references must not ride along once a 1- or 3-slot model is picked.

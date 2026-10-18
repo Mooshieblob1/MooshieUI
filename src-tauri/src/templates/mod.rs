@@ -1,6 +1,7 @@
 pub mod controlnet;
 pub mod face_detect;
 pub mod facefix;
+pub mod guide_image;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
@@ -1079,6 +1080,10 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
             style_ref::inject_style_ref(&mut result, params);
         }
     }
+
+    // Guide image (txt2img). After every model patch above, so it wraps the
+    // final model and its schedule percentages read the final sampling shift.
+    guide_image::inject_guide_image(&mut result, params);
 
     // Resumed stage extras (sigma tail, painted edit). Last, because they
     // read the schedule off the fully patched model the injects above built.
