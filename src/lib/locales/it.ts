@@ -1255,6 +1255,7 @@ const it: Record<string, string> = {
   "generation.video.custom_vae_model": "VAE video",
   "generation.video.custom_audio_vae_model": "VAE audio",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "Impostato dalla preimpostazione {preset}. Scegli {larryvrh} in Preimpostazione Turbo per usarne uno tuo.",
   "generation.video.custom_sampler": "Campionatore",
   "generation.video.custom_sampler_turbo": "Campionatore Turbo",
   "generation.video.custom_turbo_sampling_hint": "Turbo usa il proprio campionatore e lo scheduler simple. Disattiva Turbo per usare il campionatore e lo scheduler salvati.",

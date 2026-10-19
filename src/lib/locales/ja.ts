@@ -1270,6 +1270,7 @@ const ja: Record<string, string> = {
   "generation.video.custom_vae_model": "映像VAE",
   "generation.video.custom_audio_vae_model": "音声VAE",
   "generation.video.custom_turbo_lora": "ターボLoRA",
+  "generation.video.custom_turbo_lora_locked": "{preset} プリセットで固定されています。自分のものを選ぶには、Turboプリセットで {larryvrh} を選んでください。",
   "generation.video.custom_sampler": "サンプラー",
   "generation.video.custom_sampler_turbo": "Turboサンプラー",
   "generation.video.custom_turbo_sampling_hint": "Turboは専用サンプラーとsimpleスケジューラーを使用します。保存したサンプラーとスケジューラーを使用するには、Turboをオフにしてください。",

@@ -1270,6 +1270,7 @@ const fr: Record<string, string> = {
   "generation.video.custom_vae_model": "VAE video",
   "generation.video.custom_audio_vae_model": "VAE audio",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "Défini par le préréglage {preset}. Choisissez {larryvrh} dans Préréglage Turbo pour utiliser le vôtre.",
   "generation.video.custom_sampler": "Echantillonneur",
   "generation.video.custom_sampler_turbo": "Échantillonneur Turbo",
   "generation.video.custom_turbo_sampling_hint": "Turbo utilise son propre échantillonneur et le planificateur simple. Désactivez Turbo pour utiliser votre échantillonneur et votre planificateur enregistrés.",

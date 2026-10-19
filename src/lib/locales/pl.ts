@@ -1384,6 +1384,7 @@ const pl: Record<string, string> = {
   "generation.video.custom_vae_model": "VAE wideo",
   "generation.video.custom_audio_vae_model": "VAE audio",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "Ustawione przez {preset}. Wybierz {larryvrh} w Ustawienie Turbo, aby wybrać własną.",
   "generation.video.custom_sampler": "Probnikator",
   "generation.video.custom_sampler_turbo": "Sampler Turbo",
   "generation.video.custom_turbo_sampling_hint": "Turbo używa własnego samplera i harmonogramu simple. Wyłącz Turbo, aby użyć zapisanego samplera i harmonogramu.",

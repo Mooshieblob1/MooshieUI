@@ -1255,6 +1255,7 @@ const ko: Record<string, string> = {
   "generation.video.custom_vae_model": "비디오 VAE",
   "generation.video.custom_audio_vae_model": "오디오 VAE",
   "generation.video.custom_turbo_lora": "터보 LoRA",
+  "generation.video.custom_turbo_lora_locked": "{preset} 프리셋이 지정합니다. 직접 고르려면 Turbo 프리셋에서 {larryvrh}를 선택하세요.",
   "generation.video.custom_sampler": "샘플러",
   "generation.video.custom_sampler_turbo": "Turbo 샘플러",
   "generation.video.custom_turbo_sampling_hint": "Turbo는 전용 샘플러와 simple 스케줄러를 사용합니다. 저장된 샘플러와 스케줄러를 사용하려면 Turbo를 끄세요.",

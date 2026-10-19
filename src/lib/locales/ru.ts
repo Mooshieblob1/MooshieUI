@@ -1255,6 +1255,7 @@ const ru: Record<string, string> = {
   "generation.video.custom_vae_model": "Видео VAE",
   "generation.video.custom_audio_vae_model": "Аудио VAE",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "Задаётся пресетом {preset}. Чтобы выбрать свою, укажите {larryvrh} в поле «Пресет Turbo».",
   "generation.video.custom_sampler": "Сэмплер",
   "generation.video.custom_sampler_turbo": "Сэмплер Turbo",
   "generation.video.custom_turbo_sampling_hint": "Turbo использует собственный сэмплер и планировщик simple. Отключите Turbo, чтобы использовать сохранённые сэмплер и планировщик.",

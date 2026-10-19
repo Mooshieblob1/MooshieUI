@@ -1276,6 +1276,7 @@ const de: Record<string, string> = {
   "generation.video.custom_vae_model": "Video-VAE",
   "generation.video.custom_audio_vae_model": "Audio-VAE",
   "generation.video.custom_turbo_lora": "Turbo-LoRA",
+  "generation.video.custom_turbo_lora_locked": "Vom Preset {preset} festgelegt. Wähle {larryvrh} unter Turbo-Voreinstellung, um eine eigene auszuwählen.",
   "generation.video.custom_sampler": "Sampler",
   "generation.video.custom_sampler_turbo": "Turbo-Sampler",
   "generation.video.custom_turbo_sampling_hint": "Turbo verwendet seinen eigenen Sampler und den Scheduler simple. Schalte Turbo aus, um deinen gespeicherten Sampler und Scheduler zu verwenden.",

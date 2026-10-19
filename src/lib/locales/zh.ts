@@ -1255,6 +1255,7 @@ const zh: Record<string, string> = {
   "generation.video.custom_vae_model": "视频 VAE",
   "generation.video.custom_audio_vae_model": "音频 VAE",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "由 {preset} 预设指定。如需自选，请在 Turbo 预设中选择 {larryvrh}。",
   "generation.video.custom_sampler": "采样器",
   "generation.video.custom_sampler_turbo": "Turbo 采样器",
   "generation.video.custom_turbo_sampling_hint": "Turbo 使用专用采样器和 simple 调度器。关闭 Turbo 后即可使用已保存的采样器和调度器。",
