@@ -1,3 +1,18 @@
+## What's New in v2.3.25
+
+### Image Edit
+- **Camera angle picker for Qwen Edit Plus**: a new **Camera Angle** section re-shoots the reference from another angle. Pick a direction (8 steps of 45 degrees), a height and a distance, and the matching shot phrase is added to the start of your prompt. When the Multiple-Angles LoRA is installed it is applied at 0.9 with its trigger word; otherwise only the shot words are sent. The LoRA can be downloaded from the panel (295 MB).
+
+### Video
+- **Custom Turbo LoRA picker no longer greys out**: with a LightX2V or PDD turbo preset stored, the Custom tier's **Turbo LoRA** picker was disabled even while Turbo was off, with no visible reason. It now locks only while Turbo is on, and says which preset set the file and how to pick your own.
+
+### Interface
+- **Sidebar runs full height again**: the generation tab strip moved from above the whole layout to the top of the main column, so the left sidebar starts at the top edge and the tabs line up with the main panel.
+
+### Project
+- **SECURITY.md**: report vulnerabilities privately to security@mooshieui.com or through GitHub private vulnerability reporting.
+
+---
 ## What's New in v2.3.24
 
 v2.3.23 was tagged but never published: its build stopped on new security advisories for two dependencies. Everything below ships in this release, plus the fix for those advisories.
