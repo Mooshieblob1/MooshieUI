@@ -1255,6 +1255,7 @@ const pt: Record<string, string> = {
   "generation.video.custom_vae_model": "VAE de video",
   "generation.video.custom_audio_vae_model": "VAE de audio",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "Definido pela predefinição {preset}. Escolha {larryvrh} em Predefinição Turbo para usar a sua.",
   "generation.video.custom_sampler": "Amostrador",
   "generation.video.custom_sampler_turbo": "Amostrador Turbo",
   "generation.video.custom_turbo_sampling_hint": "O Turbo usa seu próprio amostrador e o agendador simple. Desative o Turbo para usar o amostrador e o agendador salvos.",

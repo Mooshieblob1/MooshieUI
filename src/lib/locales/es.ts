@@ -1308,6 +1308,7 @@ const es: Record<string, string> = {
   "generation.video.custom_vae_model": "VAE de video",
   "generation.video.custom_audio_vae_model": "VAE de audio",
   "generation.video.custom_turbo_lora": "Turbo LoRA",
+  "generation.video.custom_turbo_lora_locked": "Lo fija el preajuste {preset}. Elige {larryvrh} en Preajuste Turbo para usar el tuyo.",
   "generation.video.custom_sampler": "Muestreador",
   "generation.video.custom_sampler_turbo": "Muestreador Turbo",
   "generation.video.custom_turbo_sampling_hint": "Turbo usa su propio muestreador y el planificador simple. Desactiva Turbo para usar el muestreador y el planificador guardados.",
