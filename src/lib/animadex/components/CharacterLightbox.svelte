@@ -134,7 +134,7 @@
             {locale.t("animadex.lightbox.loras")}
           </h3>
           <ul class="space-y-1 text-xs">
-            {#each character.loras as lora (lora.id)}
+            {#each character.loras as lora (lora.url)}
               <li class="min-w-0">
                 <a
                   href={lora.url}
