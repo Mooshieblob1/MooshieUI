@@ -457,12 +457,9 @@
   onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}
 >
   <!-- Modal card -->
-  <div class="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+  <div class="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full {imagePreviewUrl ? 'max-w-4xl' : 'max-w-3xl'} max-h-[85vh] flex flex-col">
     <!-- Header -->
     <div class="flex items-center gap-3 px-5 py-3 border-b border-neutral-700">
-      {#if imagePreviewUrl}
-        <img src={imagePreviewUrl} alt="" class="w-16 h-16 rounded-lg object-cover shrink-0 border border-neutral-600" />
-      {/if}
       <h2 class="text-lg font-semibold text-neutral-100 flex-1">{locale.t('generation.interrogate.title')}</h2>
       <button
         onclick={onclose}
@@ -472,8 +469,14 @@
       </button>
     </div>
 
-    <!-- Body -->
-    <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+    <!-- Body: the interrogated image stays in view beside the tags (above them on narrow screens) -->
+    <div class="flex-1 min-h-0 flex flex-col md:flex-row">
+    {#if imagePreviewUrl}
+      <div class="shrink-0 flex justify-center px-5 pt-4 md:pr-0 md:pb-4 md:w-72 md:block">
+        <img src={imagePreviewUrl} alt="" class="max-h-48 md:max-h-[60vh] max-w-full md:w-full object-contain rounded-lg border border-neutral-700 bg-neutral-950" />
+      </div>
+    {/if}
+    <div class="flex-1 min-w-0 overflow-y-auto px-5 py-4 space-y-4">
       {#if downloadProgress && !downloadProgress.filename.includes("done")}
         <!-- Download progress -->
         <div class="space-y-2">
@@ -664,6 +667,7 @@
           </div>
         {/if}
       {/if}
+    </div>
     </div>
 
     <!-- Footer -->

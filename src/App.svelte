@@ -1206,6 +1206,15 @@
   let interrogateStage = $state<string | null>(null);
   let interrogateDownloadProgress = $state<{ downloaded: number; total: number; filename: string } | null>(null);
   let interrogateImageUrl = $state<string | null>(null);
+  /** Object URL made here for the interrogate preview. Only this one is
+   *  revoked: gallery thumbnails and lightbox previews belong to their owners. */
+  let ownedInterrogateUrl: string | null = null;
+
+  function setInterrogatePreview(url: string | null, owned = false) {
+    if (ownedInterrogateUrl && ownedInterrogateUrl !== url) URL.revokeObjectURL(ownedInterrogateUrl);
+    ownedInterrogateUrl = owned ? url : null;
+    interrogateImageUrl = url;
+  }
   let interrogateError = $state<string | null>(null);
 
   function openContextMenu(e: MouseEvent, image: OutputImage) {
@@ -1364,7 +1373,7 @@
     interrogateStage = null;
     interrogateDownloadProgress = null;
     interrogateError = null;
-    interrogateImageUrl = url.startsWith("data:") ? url : null;
+    setInterrogatePreview(url.startsWith("data:") || url.startsWith("blob:") ? url : null);
 
     const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
@@ -1384,14 +1393,12 @@
     try {
       const { bytes } = await fetchModelPreviewImageBytes(url, "model_preview.png");
       const uint8 = new Uint8Array(bytes);
+      if (!interrogateImageUrl) setInterrogatePreview(URL.createObjectURL(new Blob([uint8])), true);
       let binary = "";
       for (let i = 0; i < uint8.length; i++) {
         binary += String.fromCharCode(uint8[i]);
       }
       interrogateResult = await interrogateImage(btoa(binary));
-      if (!interrogateImageUrl && url.startsWith("http")) {
-        interrogateImageUrl = url;
-      }
     } catch (e) {
       console.error("Interrogation failed:", e);
       interrogateError = e instanceof Error ? e.message : String(e);
@@ -1486,7 +1493,7 @@
     interrogateStage = null;
     interrogateDownloadProgress = null;
     interrogateError = null;
-    interrogateImageUrl = image.thumbnailUrl || image.url || null;
+    setInterrogatePreview(image.thumbnailUrl || image.url || null);
 
     const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
@@ -1556,8 +1563,7 @@
     interrogateStage = null;
     interrogateDownloadProgress = null;
     interrogateError = null;
-    if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
-    interrogateImageUrl = previewUrl;
+    setInterrogatePreview(previewUrl, previewUrl !== null);
 
     const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
@@ -1637,7 +1643,16 @@
       }
       return;
     }
-    await runQuickInterrogation(null, () => interrogateClipboard());
+    // Read the pixels once more just for the preview; interrogation still
+    // reads the clipboard natively. No preview is fine if this read fails.
+    let previewUrl: string | null = null;
+    try {
+      const bytes = await readClipboardImageSafe();
+      if (bytes.length > 0) previewUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+    } catch {
+      previewUrl = null;
+    }
+    await runQuickInterrogation(previewUrl, () => interrogateClipboard());
   }
 
   /** Tauri-only: pick an image via the native dialog, then interrogate it. */
@@ -4817,8 +4832,7 @@
     onclose={() => {
       showInterrogateModal = false;
       interrogateResult = null;
-      if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
-      interrogateImageUrl = null;
+      setInterrogatePreview(null);
       interrogateError = null;
     }}
   />
