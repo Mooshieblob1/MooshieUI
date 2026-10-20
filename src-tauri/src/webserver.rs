@@ -2010,8 +2010,15 @@ async fn thumbnail_handler(
         }
     };
 
-    match commands::api::generate_thumbnail(&gallery_dir, &filename, max_size) {
-        Ok(data) => (
+    // Decoding a JXL and encoding WebP is CPU-bound. Run it off the async
+    // runtime, like the full-image route, so a gallery page requesting dozens of
+    // uncached thumbnails at once can't stall every other request on the server.
+    let thumbnail = tokio::task::spawn_blocking(move || {
+        commands::api::generate_thumbnail(&gallery_dir, &filename, max_size)
+    })
+    .await;
+    match thumbnail {
+        Ok(Ok(data)) => (
             StatusCode::OK,
             [
                 ("content-type", "image/webp".to_string()),
@@ -2020,7 +2027,12 @@ async fn thumbnail_handler(
             data,
         )
             .into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, format!("Thumbnail error: {}", e)).into_response(),
+        Ok(Err(e)) => (StatusCode::NOT_FOUND, format!("Thumbnail error: {}", e)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Thumbnail task failed: {}", e),
+        )
+            .into_response(),
     }
 }
 
