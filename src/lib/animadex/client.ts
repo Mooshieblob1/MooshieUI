@@ -111,9 +111,25 @@ function shouldReplaceCharacter(next: AnimadexCharacter, prev: AnimadexCharacter
   return next.slug.length < prev.slug.length;
 }
 
+/**
+ * Drop repeated tags and LoRAs. The API can list a tag twice (Remilia Scarlet's
+ * "bat wings") and no longer sends LoRA ids, and the lightbox keys both lists,
+ * so a repeat throws each_key_duplicate and the lightbox never opens.
+ */
+function dedupeCharacterLists(c: AnimadexCharacter): AnimadexCharacter {
+  const loraUrls = new Set<string>();
+  const loras = (c.loras ?? []).filter((l) => {
+    if (!l?.url || loraUrls.has(l.url)) return false;
+    loraUrls.add(l.url);
+    return true;
+  });
+  return { ...c, tags: [...new Set(c.tags ?? [])], loras };
+}
+
 function normalizeSearchResults(results: AnimadexCharacter[]): AnimadexCharacter[] {
   const deduped = new Map<string, AnimadexCharacter>();
-  for (const row of results) {
+  for (const raw of results) {
+    const row = dedupeCharacterLists(raw);
     const key = normalizedCharacterKey(row);
     const existing = deduped.get(key);
     if (!existing || shouldReplaceCharacter(row, existing)) {
