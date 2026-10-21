@@ -136,6 +136,7 @@ pub async fn generate(
         false
     };
 
+    crate::mcp::setups::remember(&params);
     let workflow = templates::build_workflow(&params, seed, video_metadata_supported);
     crate::comfyui::process::mark_legacy_worker_idle(state.inner()).await;
     log::info!(

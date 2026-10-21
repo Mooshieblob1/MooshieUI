@@ -769,6 +769,21 @@ export interface ThemeProfile {
   hide_branding: boolean;
 }
 
+/** The local MCP server for AI assistants (`get_mcp_status`). */
+export interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  /** Endpoint to give the assistant, e.g. `http://127.0.0.1:3210/mcp`. */
+  url: string;
+  /** Bearer token every request must send. */
+  token: string;
+  /** Why an enabled server is not running (port taken, ...). */
+  error: string | null;
+  /** Models with a saved txt2img setup the server can reuse. */
+  setups: number;
+}
+
 export interface QueueInfo {
   queue_running: unknown[];
   queue_pending: unknown[];

@@ -56,6 +56,14 @@ pub new_param: Option<Type>,
 "node_input": params.new_param,
 ```
 
+## 7. MCP check — `src-tauri/src/mcp/setups.rs`
+
+The MCP server reuses the owner's last txt2img request per model (see `docs/MCP.md`). Decide which case the param is:
+
+- **Points at one image** (ComfyUI input filename, mask, reference): clear it in `snapshot()`, or assistants re-send a stale file.
+- **Something an assistant should set** (like steps or size): add it to `Overrides`, `apply()` (with bounds) and the `generate_image` schema in `mcp/tools.rs`, plus a test.
+- **Neither** (a tuning knob the setup should carry over): nothing to do.
+
 ## Verify
 
 ```powershell
@@ -67,6 +75,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - [ ] Store $state + load/save + toParams()
 - [ ] Rust GenerationParams field
 - [ ] ≥1 template references param
+- [ ] MCP check done (snapshot / Overrides / nothing)
 ```
 
 If UI needs i18n: add keys to **all** files in `src/lib/locales/` (parity with `en.ts`).

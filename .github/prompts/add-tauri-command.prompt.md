@@ -69,4 +69,6 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - [ ] Listed in generate_handler!
 - [ ] api.ts uses ipcInvoke("my_command", ...)
 - [ ] Names aligned TS camelCase ↔ Rust snake_case
+- [ ] Browser mode: matching arm in `webserver.rs` `dispatch_command` (and `ADMIN_COMMANDS` / `MODERATOR_COMMANDS` if restricted)
+- [ ] MCP: would an AI assistant want this? If so, consider a tool in `src-tauri/src/mcp/tools.rs` (see `docs/MCP.md`)
 ```

@@ -186,7 +186,8 @@ fn json_f64(v: &serde_json::Value) -> Option<f64> {
         .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
-/// Parse the embedded SwarmUI `sui_image_params` JSON into queryable columns.
+/// Parse image metadata into queryable columns: the embedded SwarmUI
+/// `sui_image_params` JSON, or the flat key map the save commands receive.
 fn extract_params(metadata: &HashMap<String, String>) -> ParsedParams {
     let mut p = ParsedParams::default();
     if let Some(raw) = metadata.get("sui_image_params") {
@@ -219,6 +220,33 @@ fn extract_params(metadata: &HashMap<String, String>) -> ParsedParams {
             }
         }
     }
+    // What the save commands actually pass: the frontend's flat map
+    // (`buildPngMetadata`), which only becomes `sui_image_params` inside the
+    // file. Fills whatever the SwarmUI JSON above did not.
+    let flat = |key: &str| {
+        metadata
+            .get(key)
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    };
+    p.prompt = p.prompt.or_else(|| flat("positive_prompt"));
+    p.negative_prompt = p.negative_prompt.or_else(|| flat("negative_prompt"));
+    p.checkpoint = p.checkpoint.or_else(|| flat("model"));
+    p.sampler = p.sampler.or_else(|| flat("sampler"));
+    p.scheduler = p.scheduler.or_else(|| flat("scheduler"));
+    p.cfg = p.cfg.or_else(|| flat("cfg").and_then(|v| v.parse().ok()));
+    p.steps = p
+        .steps
+        .or_else(|| flat("steps").and_then(|v| v.parse().ok()));
+    p.seed = p.seed.or_else(|| flat("seed").and_then(|v| v.parse().ok()));
+    if p.width.is_none() || p.height.is_none() {
+        if let Some((w, h)) = flat("size").as_deref().and_then(|s| s.split_once('x')) {
+            p.width = p.width.or_else(|| w.trim().parse().ok());
+            p.height = p.height.or_else(|| h.trim().parse().ok());
+        }
+    }
+    p.bit_depth = p.bit_depth.or_else(|| flat("bit_depth"));
     if let Some(extra_raw) = metadata.get("mooshie_extra") {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(extra_raw) {
             if let Some(obj) = v.as_object() {
@@ -540,6 +568,122 @@ fn video_meta_in(c: &Connection, root: &Path, dir: &Path) -> HashMap<String, Vid
     video_meta_for_dir(root, dir, rows.flatten())
 }
 
+/// One indexed image, as the MCP gallery tools report it.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct IndexedImage {
+    pub filename: String,
+    pub prompt: Option<String>,
+    pub negative_prompt: Option<String>,
+    pub model: Option<String>,
+    pub seed: Option<i64>,
+    pub steps: Option<i64>,
+    pub cfg: Option<f64>,
+    pub sampler: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+}
+
+const INDEXED_COLUMNS: &str =
+    "path, prompt, negative_prompt, checkpoint, seed, steps, cfg, sampler, width, height";
+
+fn indexed_image(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, IndexedImage)> {
+    let path: String = row.get(0)?;
+    let filename = Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok((
+        path,
+        IndexedImage {
+            filename,
+            prompt: row.get(1)?,
+            negative_prompt: row.get(2)?,
+            model: row.get(3)?,
+            seed: row.get(4)?,
+            steps: row.get(5)?,
+            cfg: row.get(6)?,
+            sampler: row.get(7)?,
+            width: row.get(8)?,
+            height: row.get(9)?,
+        },
+    ))
+}
+
+/// Turn free text into an FTS5 query: every word must appear, each one as a
+/// quoted prefix so `cat` also finds `cats`. FTS syntax in the input (quotes,
+/// `OR`, `NEAR`, column filters) is neutralised. `None` when nothing is left.
+fn fts_query(text: &str) -> Option<String> {
+    let words: Vec<String> = text
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .take(16)
+        .map(|w| format!("\"{w}\"*"))
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
+/// Full-text search over prompt, negative prompt and model for the images
+/// directly inside `dir`, best match first.
+pub fn search(dir: &Path, text: &str, limit: usize) -> Vec<IndexedImage> {
+    with_conn(|c, _| search_in(c, dir, text, limit)).unwrap_or_default()
+}
+
+fn search_in(c: &Connection, dir: &Path, text: &str, limit: usize) -> Vec<IndexedImage> {
+    let Some(query) = fts_query(text) else {
+        return Vec::new();
+    };
+    let sql = format!(
+        "SELECT {} FROM images JOIN images_fts ON images_fts.rowid = images.id \
+         WHERE images_fts MATCH ?1 ORDER BY rank LIMIT ?2",
+        INDEXED_COLUMNS
+            .split(", ")
+            .map(|col| format!("images.{col}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut stmt = match c.prepare(&sql) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("gallery_index: search prepare failed: {e}");
+            return Vec::new();
+        }
+    };
+    // Rows from users' folders share the index; over-fetch, then keep `dir`'s.
+    let fetch = (limit.saturating_mul(4)).max(50) as i64;
+    let rows = match stmt.query_map(params![query, fetch], indexed_image) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("gallery_index: search failed: {e}");
+            return Vec::new();
+        }
+    };
+    rows.flatten()
+        .filter(|(path, _)| Path::new(path).parent() == Some(dir))
+        .map(|(_, img)| img)
+        .take(limit)
+        .collect()
+}
+
+/// Index rows for the given files, keyed by full path. Files without a row
+/// are simply missing from the map.
+pub fn rows_for(paths: &[PathBuf]) -> HashMap<String, IndexedImage> {
+    with_conn(|c, _| rows_for_in(c, paths)).unwrap_or_default()
+}
+
+fn rows_for_in(c: &Connection, paths: &[PathBuf]) -> HashMap<String, IndexedImage> {
+    let sql = format!("SELECT {INDEXED_COLUMNS} FROM images WHERE path = ?1");
+    let Ok(mut stmt) = c.prepare(&sql) else {
+        return HashMap::new();
+    };
+    paths
+        .iter()
+        .filter_map(|p| {
+            stmt.query_row([p.to_string_lossy().as_ref()], indexed_image)
+                .ok()
+        })
+        .collect()
+}
+
 /// Update an image's path in the index after a rename. Best-effort: errors are
 /// logged. Preserves the existing row (and its metadata/created_at) rather than
 /// dropping and re-inserting.
@@ -605,6 +749,72 @@ mod tests {
         let old_db = Connection::open(old.join("index.sqlite")).unwrap();
         assert_eq!(row_count(&old_db), 1);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn flat_metadata(prompt: &str) -> HashMap<String, String> {
+        HashMap::from([
+            ("positive_prompt".to_string(), prompt.to_string()),
+            ("negative_prompt".to_string(), "blurry".to_string()),
+            (
+                "model".to_string(),
+                "illustrious_v2.safetensors".to_string(),
+            ),
+            ("seed".to_string(), "42".to_string()),
+            ("steps".to_string(), "28".to_string()),
+            ("cfg".to_string(), "5.5".to_string()),
+            ("size".to_string(), "832x1216".to_string()),
+        ])
+    }
+
+    #[test]
+    fn the_flat_save_map_fills_the_columns() {
+        let p = extract_params(&flat_metadata("a cat"));
+        assert_eq!(p.prompt.as_deref(), Some("a cat"));
+        assert_eq!(p.checkpoint.as_deref(), Some("illustrious_v2.safetensors"));
+        assert_eq!(p.seed, Some(42));
+        assert_eq!(p.steps, Some(28));
+        assert_eq!(p.cfg, Some(5.5));
+        assert_eq!((p.width, p.height), (Some(832), Some(1216)));
+    }
+
+    #[test]
+    fn fts_queries_are_quoted_prefixes() {
+        assert_eq!(fts_query("red cat").as_deref(), Some("\"red\"* \"cat\"*"));
+        assert_eq!(
+            fts_query("\"x\" OR prompt:y").as_deref(),
+            Some("\"x\"* \"OR\"* \"prompt\"* \"y\"*")
+        );
+        assert_eq!(fts_query("  ,,  "), None);
+    }
+
+    #[test]
+    fn search_finds_prompts_in_the_listed_folder_only() {
+        let root = scratch_dir("search");
+        let alice = root.join("users").join("alice");
+        let mut slot = None;
+        with_conn_in(&mut slot, &root, |c, _| {
+            let meta = flat_metadata("red cat on a sofa");
+            upsert_in(c, &root.join("a.png"), 1, ImageFormat::Png, Some(&meta));
+            upsert_in(c, &alice.join("b.png"), 1, ImageFormat::Png, Some(&meta));
+            let other = flat_metadata("blue dog");
+            upsert_in(c, &root.join("c.png"), 1, ImageFormat::Png, Some(&other));
+
+            let hits = search_in(c, &root, "cats sofa", 10);
+            assert!(hits.is_empty(), "every word must match: {hits:?}");
+            let hits = search_in(c, &root, "red cat", 10);
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].filename, "a.png");
+            assert_eq!(hits[0].seed, Some(42));
+            let hits = search_in(c, &root, "illustrious", 10);
+            assert_eq!(hits.len(), 2);
+
+            let rows = rows_for_in(c, &[root.join("c.png"), root.join("missing.png")]);
+            assert_eq!(rows.len(), 1);
+            let c_png = root.join("c.png").to_string_lossy().into_owned();
+            assert_eq!(rows[&c_png].prompt.as_deref(), Some("blue dog"));
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

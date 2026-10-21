@@ -21,6 +21,7 @@ pub mod lan_upnp;
 #[cfg(any(feature = "desktop", test))]
 pub mod linked_folders;
 pub mod log_buffer;
+pub mod mcp;
 pub mod media_tools;
 pub mod metadata;
 pub mod model_requests;
@@ -285,6 +286,8 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     media_tools::start(shared_state.clone());
                     *shared_state.app_handle.lock().await = Some(handle);
+                    // Opt-in local MCP server; a no-op unless Settings turned it on.
+                    mcp::sync(shared_state).await;
                 });
             }
 
@@ -714,6 +717,9 @@ pub fn run() {
             commands::cloud::scene_exact_voice,
             commands::config::get_config,
             commands::config::update_config,
+            commands::mcp::get_mcp_status,
+            commands::mcp::set_mcp_settings,
+            commands::mcp::regenerate_mcp_token,
             commands::config::get_user_prefs,
             commands::config::save_user_prefs,
             commands::config::get_gallery_path,

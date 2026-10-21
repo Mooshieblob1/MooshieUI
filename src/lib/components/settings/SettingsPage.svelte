@@ -20,6 +20,7 @@
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import LlmProviderPanel from "./LlmProviderPanel.svelte";
+  import McpServerPanel from "./McpServerPanel.svelte";
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
@@ -1270,6 +1271,7 @@
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope saved characters detect llm match" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
+    { key: "mcp", labelKey: "settings.sections.mcp", keywords: "mcp model context protocol ai assistant agent claude code desktop cursor codex automation api token tools" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
     { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
@@ -1291,6 +1293,8 @@
   function categoryAllowed(key: string): boolean {
     switch (key) {
       case "appMode": return isAdmin && !mobileFriendly;
+      // The MCP token is a key to the owner's queue and gallery.
+      case "mcp":
       case "connection":
       case "performance":
       case "paths": return isAdmin;
@@ -4380,6 +4384,10 @@
         {/if}
 
         <!-- CivitAI (admin / moderator) -->
+        {#if isAdmin && activeCategory === "mcp"}
+          <McpServerPanel />
+        {/if}
+
         {#if canManageServer && activeCategory === "civitai"}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
           <div class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200">

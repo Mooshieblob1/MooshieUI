@@ -111,7 +111,7 @@ fn host_without_port(host: &str) -> &str {
 /// point at it: `localhost`, a `*.localhost` name, or an IP literal. DNS
 /// rebinding needs an attacker-controlled domain name, so it never passes.
 /// A missing header (non-browser clients) is accepted.
-fn host_header_is_local(headers: &HeaderMap) -> bool {
+pub(crate) fn host_header_is_local(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(axum::http::header::HOST) else {
         return true;
     };
@@ -635,6 +635,10 @@ const ADMIN_COMMANDS: &[&str] = &[
     "save_image_file",
     "save_text_file",
     "upload_image",
+    // the MCP token is a key to the owner's queue and gallery
+    "get_mcp_status",
+    "set_mcp_settings",
+    "regenerate_mcp_token",
 ];
 
 /// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
@@ -3451,6 +3455,11 @@ async fn dispatch_command(
                 crate::commands::api::validate_generation_loras(&config, &params.loras)
                     .map_err(|e| e.to_string())?;
             }
+            // The MCP server acts as the owner, so only the owner's runs
+            // become setups it can reuse.
+            if username.is_none() {
+                crate::mcp::setups::remember(&params);
+            }
             // Mirrors the same check in the Tauri `generate` command: catches a
             // missing MiniMax H3 node before submission instead of surfacing
             // ComfyUI's raw `missing_node_type` prompt-validation error.
@@ -3641,6 +3650,22 @@ async fn dispatch_command(
                 "queue_position": queue_pos,
                 "queue_total": queue_total,
             }))
+        }
+        "get_mcp_status" => {
+            serde_json::to_value(crate::mcp::status().await).map_err(|e| e.to_string())
+        }
+        "set_mcp_settings" => {
+            let enabled = args["enabled"].as_bool().ok_or("Missing enabled")?;
+            let port = args["port"]
+                .as_u64()
+                .and_then(|p| u16::try_from(p).ok())
+                .ok_or("Missing or invalid port")?;
+            let status = crate::mcp::set_settings(state.clone(), enabled, port).await?;
+            serde_json::to_value(status).map_err(|e| e.to_string())
+        }
+        "regenerate_mcp_token" => {
+            let status = crate::mcp::regenerate_token().await?;
+            serde_json::to_value(status).map_err(|e| e.to_string())
         }
         "novelai_generate" => {
             crate::temp_images::cleanup(300);
@@ -7716,7 +7741,8 @@ fn user_gallery_subdir(username: &str) -> Option<String> {
 
 /// Save image bytes to a specific gallery directory with metadata embedding.
 /// This is a per-directory variant of `commands::api::save_to_gallery_inner`.
-fn save_to_gallery_in_dir(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_to_gallery_in_dir(
     dir: &std::path::Path,
     bytes: &[u8],
     filename: &str,
