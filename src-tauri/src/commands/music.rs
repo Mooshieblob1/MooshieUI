@@ -15,8 +15,8 @@ use crate::{
 
 #[derive(Serialize)]
 pub struct MusicCapabilities {
-    missing_nodes: Vec<String>,
-    checkpoints: Vec<String>,
+    pub(crate) missing_nodes: Vec<String>,
+    pub(crate) checkpoints: Vec<String>,
     extended: bool,
     cover_missing_nodes: Vec<String>,
     audio_encoders: Vec<String>,

@@ -5,7 +5,7 @@
 //! images even if the agent's request has already timed out or gone away.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -59,65 +59,105 @@ pub struct Job {
     pub comfy_prompt_id: Option<String>,
 }
 
-/// Jobs by id, oldest first.
-type JobList = Vec<(String, watch::Sender<Job>)>;
+/// A job kind `Store` can hold.
+pub trait Tracked: Clone {
+    fn finished(&self) -> bool;
+}
 
-static JOBS: LazyLock<Mutex<JobList>> = LazyLock::new(|| Mutex::new(Vec::new()));
-
-fn insert(job: Job) -> watch::Receiver<Job> {
-    let id = job.job_id.clone();
-    let (tx, rx) = watch::channel(job);
-    let mut jobs = JOBS.lock().unwrap();
-    jobs.push((id, tx));
-    while jobs.len() > MAX_JOBS {
-        let Some(pos) = jobs
-            .iter()
-            .position(|(_, tx)| tx.borrow().status.finished())
-        else {
-            break;
-        };
-        jobs.remove(pos);
+impl Tracked for Job {
+    fn finished(&self) -> bool {
+        self.status.finished()
     }
-    rx
 }
 
-fn sender(job_id: &str) -> Option<watch::Sender<Job>> {
-    JOBS.lock()
-        .unwrap()
-        .iter()
-        .find(|(id, _)| id == job_id)
-        .map(|(_, tx)| tx.clone())
+/// Jobs by id, oldest first. Finished jobs past `MAX_JOBS` are dropped.
+pub struct Store<T> {
+    jobs: Mutex<Vec<(String, watch::Sender<T>)>>,
 }
+
+impl<T: Tracked> Store<T> {
+    pub const fn new() -> Self {
+        Self {
+            jobs: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn insert(&self, id: String, job: T) -> watch::Sender<T> {
+        let (tx, _) = watch::channel(job);
+        let mut jobs = self.jobs.lock().unwrap();
+        jobs.push((id, tx.clone()));
+        while jobs.len() > MAX_JOBS {
+            let Some(pos) = jobs.iter().position(|(_, tx)| tx.borrow().finished()) else {
+                break;
+            };
+            jobs.remove(pos);
+        }
+        tx
+    }
+
+    pub fn sender(&self, job_id: &str) -> Option<watch::Sender<T>> {
+        self.jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == job_id)
+            .map(|(_, tx)| tx.clone())
+    }
+
+    pub fn get(&self, job_id: &str) -> Option<watch::Receiver<T>> {
+        self.sender(job_id).map(|tx| tx.subscribe())
+    }
+
+    /// Jobs not finished yet, oldest first.
+    pub fn active(&self) -> Vec<T> {
+        self.jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, tx)| tx.borrow().clone())
+            .filter(|j| !j.finished())
+            .collect()
+    }
+
+    /// The last `n` jobs, newest first, so an agent whose client timed out
+    /// can still find its job id.
+    pub fn recent(&self, n: usize) -> Vec<T> {
+        self.jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .take(n)
+            .map(|(_, tx)| tx.borrow().clone())
+            .collect()
+    }
+}
+
+impl<T: Tracked> Default for Store<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static JOBS: Store<Job> = Store::new();
 
 pub fn get(job_id: &str) -> Option<watch::Receiver<Job>> {
-    sender(job_id).map(|tx| tx.subscribe())
+    JOBS.get(job_id)
 }
 
 /// Jobs not finished yet, oldest first.
 pub fn active() -> Vec<Job> {
-    JOBS.lock()
-        .unwrap()
-        .iter()
-        .map(|(_, tx)| tx.borrow().clone())
-        .filter(|j| !j.status.finished())
-        .collect()
+    JOBS.active()
 }
 
-/// The last `n` jobs, newest first, so an agent whose client timed out on
-/// `generate_image` can still find its job id.
+/// The last `n` image jobs, newest first.
 pub fn recent(n: usize) -> Vec<Job> {
-    JOBS.lock()
-        .unwrap()
-        .iter()
-        .rev()
-        .take(n)
-        .map(|(_, tx)| tx.borrow().clone())
-        .collect()
+    JOBS.recent(n)
 }
 
 /// Wait until the job finishes or `timeout` passes, then return its state.
-pub async fn wait(mut rx: watch::Receiver<Job>, timeout: Duration) -> Job {
-    let _ = tokio::time::timeout(timeout, rx.wait_for(|j| j.status.finished())).await;
+pub async fn wait<T: Tracked>(mut rx: watch::Receiver<T>, timeout: Duration) -> T {
+    let _ = tokio::time::timeout(timeout, rx.wait_for(|j| j.finished())).await;
     let job = rx.borrow().clone();
     job
 }
@@ -125,7 +165,9 @@ pub async fn wait(mut rx: watch::Receiver<Job>, timeout: Duration) -> Job {
 /// Cancel a job. A queued job never reaches ComfyUI; a running one is
 /// interrupted there.
 pub async fn cancel(state: &Arc<AppState>, job_id: &str) -> Result<Job, String> {
-    let tx = sender(job_id).ok_or_else(|| format!("No job '{job_id}'"))?;
+    let tx = JOBS
+        .sender(job_id)
+        .ok_or_else(|| format!("No job '{job_id}'"))?;
     let (was, prompt_id) = {
         let job = tx.borrow();
         (job.status, job.comfy_prompt_id.clone())
@@ -161,8 +203,8 @@ pub fn start(state: Arc<AppState>, params: GenerationParams) -> watch::Receiver<
         error: None,
         comfy_prompt_id: None,
     };
-    let rx = insert(job);
-    let tx = sender(&rx.borrow().job_id).expect("job was just inserted");
+    let tx = JOBS.insert(job.job_id.clone(), job);
+    let rx = tx.subscribe();
     tokio::spawn(async move {
         if let Err(e) = run(&state, &tx, params).await {
             tx.send_if_modified(|j| {

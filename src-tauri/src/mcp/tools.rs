@@ -13,11 +13,14 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::jobs::{self, Job};
+use super::music::{self, MusicJob};
 use super::setups;
 use crate::state::AppState;
 
 /// How long `generate_image` holds the request before handing back a job id.
 const DEFAULT_WAIT_SECS: u64 = 600;
+/// Largest song `include_audio` embeds in a result.
+const MAX_INLINE_AUDIO: u64 = 16 * 1024 * 1024;
 const PREVIEW_SIZE: u32 = 768;
 /// Newest gallery files a search looks at when filling in missing metadata.
 const SEARCH_WINDOW: usize = 5000;
@@ -29,18 +32,18 @@ pub fn definitions() -> Value {
         {
             "name": "get_status",
             "title": "MooshieUI status",
-            "description": "Check whether ComfyUI is running, what is queued, and which models have a saved generation setup (only those can be used by generate_image). Call this first.",
+            "description": "Check whether ComfyUI is running, what is queued, recent image and music jobs, and which models have a saved generation setup (only those can be used by generate_image). Call this first.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "list_models",
             "title": "List models",
-            "description": "List installed model files. Checkpoints and diffusion models marked has_setup can be passed to generate_image; LoRAs can be added to any generation.",
+            "description": "List installed model files. Checkpoints and diffusion models marked has_setup can be passed to generate_image; LoRAs can be added to any generation. music lists the YuE2 checkpoints generate_music can use.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "enum": ["checkpoints", "diffusion_models", "loras"], "description": "Default checkpoints." },
+                    "category": { "type": "string", "enum": ["checkpoints", "diffusion_models", "loras", "music"], "description": "Default checkpoints." },
                     "filter": { "type": "string", "description": "Case-insensitive substring to match." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Default 200." }
                 }
@@ -86,16 +89,38 @@ pub fn definitions() -> Value {
             }
         },
         {
+            "name": "generate_music",
+            "title": "Generate music",
+            "description": "Generate a song with YuE2 (the MooshieUI Music page backend). Describe the style; add lyrics for vocals or leave them out for instrumental music. The FLAC (and the ABC score YuE2 planned) is saved on the MooshieUI machine and its path returned. Songs take minutes: this waits up to 10 minutes unless wait is false; then poll get_job.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["style"],
+                "properties": {
+                    "style": { "type": "string", "description": "Genre, instruments, mood, tempo and vocal type, e.g. \"upbeat synthpop, female vocals, 120 bpm, bright analog synths\"." },
+                    "lyrics": { "type": "string", "description": "Song lyrics. Section tags such as [verse] and [chorus] on their own lines help structure. Omit for instrumental music." },
+                    "duration_seconds": { "type": "number", "minimum": 1, "maximum": 360, "description": "Maximum length. Default 120." },
+                    "checkpoint": { "type": "string", "description": "YuE2 checkpoint from list_models (category music). Default: the first installed." },
+                    "planning": { "type": "string", "enum": ["full", "melody", "off"], "description": "full plans melody and chords as an ABC score first (default), melody plans only the melody, off skips planning." },
+                    "score": { "type": "string", "description": "ABC notation score for the song to follow (needs planning full or melody)." },
+                    "steps": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Default 32." },
+                    "seed": { "type": "integer", "description": "Omit or -1 for random." },
+                    "wait": { "type": "boolean", "description": "Default true." },
+                    "include_audio": { "type": "boolean", "description": "Embed the FLAC in the result (up to 16 MB). Default false." }
+                }
+            }
+        },
+        {
             "name": "get_job",
             "title": "Generation job",
-            "description": "Status and results of a generate_image job.",
+            "description": "Status and results of a generate_image or generate_music job.",
             "inputSchema": {
                 "type": "object",
                 "required": ["job_id"],
                 "properties": {
                     "job_id": { "type": "string" },
                     "wait_seconds": { "type": "integer", "minimum": 0, "maximum": 600, "description": "Wait up to this long for the job to finish. Default 0." },
-                    "include_images": { "type": "boolean", "description": "Default true." }
+                    "include_images": { "type": "boolean", "description": "Image jobs: return previews. Default true." },
+                    "include_audio": { "type": "boolean", "description": "Music jobs: embed the FLAC in the result (up to 16 MB). Default false; the file path is always returned." }
                 }
             },
             "annotations": { "readOnlyHint": true }
@@ -103,7 +128,7 @@ pub fn definitions() -> Value {
         {
             "name": "cancel_generation",
             "title": "Cancel generation",
-            "description": "Cancel a generate_image job, or every unfinished one when job_id is omitted. Generations started in the MooshieUI window are not touched.",
+            "description": "Cancel a generate_image or generate_music job, or every unfinished one when job_id is omitted. Generations started in the MooshieUI window are not touched.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "job_id": { "type": "string" } }
@@ -165,6 +190,7 @@ pub async fn call(state: &Arc<AppState>, name: &str, args: &Value) -> Option<Val
         "get_status" => get_status(state).await,
         "list_models" => list_models(state, args).await,
         "generate_image" => generate_image(state, args).await,
+        "generate_music" => generate_music(state, args).await,
         "get_job" => get_job(args).await,
         "cancel_generation" => cancel_generation(state, args).await,
         "search_gallery" => search_gallery(args).await,
@@ -218,11 +244,24 @@ async fn get_status(state: &Arc<AppState>) -> Result<Value, String> {
             })
         })
         .collect();
+    let recent_music: Vec<Value> = music::recent(5)
+        .iter()
+        .map(|j| {
+            json!({
+                "job_id": j.job_id,
+                "status": j.status,
+                "style": j.style.chars().take(120).collect::<String>(),
+                "file": j.file,
+                "error": j.error,
+            })
+        })
+        .collect();
     Ok(ok(vec![text(json!({
         "mooshieui_version": env!("CARGO_PKG_VERSION"),
         "comfyui": comfyui,
         "queue_length": state.prompt_queue.len(),
         "recent_jobs": recent,
+        "recent_music_jobs": recent_music,
         "setups": setups,
         "note": if setups.is_empty() {
             "No saved setups yet: generate one txt2img image in MooshieUI with a model to make it usable here."
@@ -234,8 +273,11 @@ async fn get_status(state: &Arc<AppState>) -> Result<Value, String> {
 
 async fn list_models(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
     let category = arg_str(args, "category").unwrap_or("checkpoints");
+    if category == "music" {
+        return list_music_models(state).await;
+    }
     if !matches!(category, "checkpoints" | "diffusion_models" | "loras") {
-        return Err("category must be checkpoints, diffusion_models or loras".into());
+        return Err("category must be checkpoints, diffusion_models, loras or music".into());
     }
     let filter = arg_str(args, "filter").map(str::to_ascii_lowercase);
     let limit = args["limit"].as_u64().unwrap_or(200).clamp(1, 1000) as usize;
@@ -284,6 +326,79 @@ async fn generate_image(state: &Arc<AppState>, args: &Value) -> Result<Value, St
     job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await
 }
 
+async fn list_music_models(state: &Arc<AppState>) -> Result<Value, String> {
+    let caps = crate::commands::music::capabilities(state)
+        .await
+        .map_err(|e| format!("Could not check music support (is ComfyUI running?): {e}"))?;
+    let note = if !caps.missing_nodes.is_empty() {
+        format!(
+            "YuE2 nodes are missing from ComfyUI ({}). Update the managed runtime from MooshieUI's Music page.",
+            caps.missing_nodes.join(", ")
+        )
+    } else if caps.checkpoints.is_empty() {
+        "No YuE2 checkpoint is installed. Download one from MooshieUI's Music page.".into()
+    } else {
+        "generate_music can use any of these.".into()
+    };
+    Ok(ok(vec![text(json!({
+        "category": "music",
+        "available": caps.missing_nodes.is_empty() && !caps.checkpoints.is_empty(),
+        "models": caps.checkpoints.iter().map(|m| json!({ "name": m })).collect::<Vec<_>>(),
+        "note": note,
+    }))]))
+}
+
+async fn generate_music(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
+    let req: music::MusicRequest =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))?;
+    if req.style.trim().is_empty() {
+        return Err("style is required".into());
+    }
+    let rx = music::start(state.clone(), req);
+    if args["wait"].as_bool() == Some(false) {
+        let job = rx.borrow().clone();
+        return Ok(ok(vec![text(music_job_json(&job))]));
+    }
+    let job = jobs::wait(rx, Duration::from_secs(DEFAULT_WAIT_SECS)).await;
+    music_job_result(&job, args["include_audio"].as_bool().unwrap_or(false)).await
+}
+
+fn music_job_json(job: &MusicJob) -> Value {
+    let mut v = serde_json::to_value(job).unwrap_or_default();
+    if !job.status.finished() {
+        v["hint"] = json!("Still working. Call get_job with this job_id (wait_seconds up to 600).");
+    }
+    v
+}
+
+async fn music_job_result(job: &MusicJob, include_audio: bool) -> Result<Value, String> {
+    let mut content = vec![text(music_job_json(job))];
+    if let (true, Some(file)) = (
+        include_audio && job.status == jobs::JobStatus::Done,
+        &job.file,
+    ) {
+        match tokio::fs::metadata(file).await {
+            Ok(m) if m.len() <= MAX_INLINE_AUDIO => {
+                let bytes = tokio::fs::read(file).await.map_err(|e| e.to_string())?;
+                content.push(json!({
+                    "type": "audio",
+                    "mimeType": "audio/flac",
+                    "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+                }));
+            }
+            Ok(_) => content.push(json!({
+                "type": "text",
+                "text": "The song is over 16 MB, so it isn't embedded. Use the file path.",
+            })),
+            Err(e) => log::warn!("[mcp] reading {file} failed: {e}"),
+        }
+    }
+    Ok(json!({
+        "content": content,
+        "isError": job.status == jobs::JobStatus::Failed,
+    }))
+}
+
 fn job_json(job: &Job) -> Value {
     let mut v = serde_json::to_value(job).unwrap_or_default();
     if !job.status.finished() {
@@ -310,9 +425,15 @@ async fn job_result(job: &Job, include_images: bool) -> Result<Value, String> {
 
 async fn get_job(args: &Value) -> Result<Value, String> {
     let id = arg_str(args, "job_id").ok_or("job_id is required")?;
+    let wait = args["wait_seconds"].as_u64().unwrap_or(0).min(600);
+    if music::is_music_job(id) {
+        let rx = music::get(id)
+            .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
+        let job = jobs::wait(rx, Duration::from_secs(wait)).await;
+        return music_job_result(&job, args["include_audio"].as_bool().unwrap_or(false)).await;
+    }
     let rx = jobs::get(id)
         .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
-    let wait = args["wait_seconds"].as_u64().unwrap_or(0).min(600);
     let job = jobs::wait(rx, Duration::from_secs(wait)).await;
     job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await
 }
@@ -320,12 +441,22 @@ async fn get_job(args: &Value) -> Result<Value, String> {
 async fn cancel_generation(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
     let ids: Vec<String> = match arg_str(args, "job_id") {
         Some(id) => vec![id.to_string()],
-        None => jobs::active().into_iter().map(|j| j.job_id).collect(),
+        None => jobs::active()
+            .into_iter()
+            .map(|j| j.job_id)
+            .chain(music::active().into_iter().map(|j| j.job_id))
+            .collect(),
     };
     let mut cancelled = Vec::new();
     for id in ids {
-        let job = jobs::cancel(state, &id).await?;
-        cancelled.push(json!({ "job_id": job.job_id, "status": job.status }));
+        let (job_id, status) = if music::is_music_job(&id) {
+            let job = music::cancel(state, &id).await?;
+            (job.job_id, job.status)
+        } else {
+            let job = jobs::cancel(state, &id).await?;
+            (job.job_id, job.status)
+        };
+        cancelled.push(json!({ "job_id": job_id, "status": status }));
     }
     Ok(ok(vec![text(json!({ "jobs": cancelled }))]))
 }
