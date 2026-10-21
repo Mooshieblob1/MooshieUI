@@ -128,8 +128,18 @@ fn venv_python(base: &Path) -> PathBuf {
 
 /// uv release the setup bootstraps. Pinned instead of `releases/latest` so the
 /// archive can be checksum-verified before it is extracted and run; bump it
-/// deliberately together with [`UV_ASSETS`].
-const UV_VERSION: &str = "0.12.19";
+/// deliberately together with [`UV_ASSETS`]. Existing installs are moved up to
+/// it by [`refresh_python_tooling`] (uv verifies PyPI and GitHub against its own
+/// bundled root certificates, so an old uv keeps trusting a distrusted CA).
+/// 0.13.4 is the first release without the compromised eMudhra emSign ECC Root
+/// CA - G3.
+const UV_VERSION: &str = "0.13.4";
+
+/// Lowest certifi the ComfyUI venv may keep. `requests` and `huggingface_hub`
+/// trust certifi's bundle, not the OS store; 2026.10.19 drops the compromised
+/// emSign ECC Root CA - G3.
+const CERTIFI_REQUIREMENT: &str = "certifi>=2026.10.19";
+const CERTIFI_MIN: (u32, u32, u32) = (2026, 10, 19);
 
 /// (release asset, SHA-256) for every platform setup supports, copied from the
 /// `sha256.sum` published with the uv release above (each also matches the
@@ -137,23 +147,23 @@ const UV_VERSION: &str = "0.12.19";
 const UV_ASSETS: &[(&str, &str)] = &[
     (
         "uv-x86_64-unknown-linux-gnu.tar.gz",
-        "23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8",
+        "2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f",
     ),
     (
         "uv-aarch64-unknown-linux-gnu.tar.gz",
-        "0804e9b164c64b6914182d5920c08551958a095986f10a3731056df701126436",
+        "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab",
     ),
     (
         "uv-x86_64-apple-darwin.tar.gz",
-        "cb5fa57bafe68fc0fb94b17f06bee0b0b9a7feb94ccbd110445afa0696e39273",
+        "7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6",
     ),
     (
         "uv-aarch64-apple-darwin.tar.gz",
-        "a9a8df1eedeb192f2e47e40e2faabfb387db4b850209118786d42f89dde3e0ba",
+        "e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1",
     ),
     (
         "uv-x86_64-pc-windows-msvc.zip",
-        "6dbb02d79e419522f1c500f0adb1cddcff0cda7d59b0d66ea7f5e3b4a1b2f5f0",
+        "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225",
     ),
 ];
 
@@ -612,9 +622,64 @@ async fn step_download_uv(
     client: &reqwest::Client,
 ) -> Result<(), String> {
     let uv = uv_bin(base);
-    if uv.exists() {
+    if !uv.exists() {
+        return install_pinned_uv(app, base, client).await;
+    }
+    if uv_is_current(&uv).await {
         return Ok(());
     }
+    // An older uv still works, so a failed upgrade is not worth failing setup.
+    emit_log(app, &format!("Updating uv to {UV_VERSION}..."));
+    if let Err(e) = install_pinned_uv(app, base, client).await {
+        emit_log(
+            app,
+            &format!("Warning: could not update uv ({e}). Continuing with the installed one."),
+        );
+    }
+    Ok(())
+}
+
+/// `(major, minor, patch)` from `uv --version` output such as
+/// `uv 0.13.4 (x86_64-unknown-linux-gnu)` or a bare `0.13.4`.
+fn parse_uv_version(text: &str) -> Option<(u32, u32, u32)> {
+    let word = text
+        .split_whitespace()
+        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
+    let mut parts = word.split('.');
+    let mut next = || -> Option<u32> {
+        let part = parts.next()?;
+        let digits = part.split(|c: char| !c.is_ascii_digit()).next()?;
+        digits.parse().ok()
+    };
+    Some((next()?, next()?, next().unwrap_or(0)))
+}
+
+/// True when the uv at `uv` is at least [`UV_VERSION`]. A uv that cannot be run
+/// or whose version cannot be read counts as outdated, so it gets replaced.
+async fn uv_is_current(uv: &Path) -> bool {
+    let Some(pinned) = parse_uv_version(UV_VERSION) else {
+        return true;
+    };
+    let mut cmd = tokio::process::Command::new(uv);
+    cmd.arg("--version");
+    hide_window(&mut cmd);
+    match cmd.output().await {
+        Ok(out) if out.status.success() => {
+            parse_uv_version(&String::from_utf8_lossy(&out.stdout)).is_some_and(|v| v >= pinned)
+        }
+        _ => false,
+    }
+}
+
+/// Download the pinned uv (checksum-verified) and move it into `bin/`. The
+/// archive is unpacked into a staging folder and each binary is renamed over the
+/// old one, so an upgrade never leaves a half-written uv behind. Unix replaces a
+/// running uv safely; on Windows the rename fails instead and the old uv stays.
+async fn install_pinned_uv(
+    app: &AppHandle,
+    base: &Path,
+    client: &reqwest::Client,
+) -> Result<(), String> {
     let bin_dir = base.join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
 
@@ -623,11 +688,14 @@ async fn step_download_uv(
         .ok_or_else(|| format!("No pinned uv {UV_VERSION} download for {asset}"))?;
     let url = url.as_str();
 
+    let staging = base.join("_uv_extract");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+
     #[cfg(not(target_os = "windows"))]
     {
         let archive = base.join("_uv.tar.gz");
         download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
-
         run_logged(
             app,
             "tar",
@@ -636,58 +704,146 @@ async fn step_download_uv(
                 archive.to_str().unwrap(),
                 "--strip-components=1",
                 "-C",
-                bin_dir.to_str().unwrap(),
+                staging.to_str().unwrap(),
             ],
             &[],
         )
         .await
         .map_err(|_| "Failed to extract uv archive".to_string())?;
-
-        // Ensure executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).ok();
-        }
         std::fs::remove_file(&archive).ok();
     }
 
     #[cfg(target_os = "windows")]
     {
         let archive = base.join("_uv.zip");
-        let temp_dir = base.join("_uv_extract");
         download_file(app, client, url, &archive, "uv", Some(sha256)).await?;
-
-        // Move-Item takes the found file through the pipeline as -LiteralPath,
-        // which also stops PowerShell globbing its -Destination.
         let ps_cmd = format!(
-            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force; \
-             Get-ChildItem -LiteralPath '{}' -Filter 'uv.exe' -Recurse | Select-Object -First 1 | Move-Item -Destination '{}\\uv.exe' -Force; \
-             Get-ChildItem -LiteralPath '{}' -Filter 'uvx.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 | Move-Item -Destination '{}\\uvx.exe' -Force",
+            "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",
             ps_quote(&archive),
-            ps_quote(&temp_dir),
-            ps_quote(&temp_dir),
-            ps_quote(&bin_dir),
-            ps_quote(&temp_dir),
-            ps_quote(&bin_dir),
+            ps_quote(&staging),
         );
         run_logged(app, "powershell", &["-NoProfile", "-Command", &ps_cmd], &[])
             .await
             .map_err(|_| "Failed to extract uv archive".to_string())?;
-
-        std::fs::remove_dir_all(&temp_dir).ok();
         std::fs::remove_file(&archive).ok();
     }
 
+    let placed = place_uv_binaries(&staging, &bin_dir);
+    std::fs::remove_dir_all(&staging).ok();
+    placed?;
+
     // Verify uv was actually extracted
+    let uv = uv_bin(base);
     if !uv.exists() {
         return Err(format!(
             "uv binary not found at {} after extraction. The download may have failed or the archive structure changed.",
             uv.display()
         ));
     }
-
     Ok(())
+}
+
+/// Move `uv` (required) and `uvx` (optional) from an unpacked release in
+/// `staging` into `bin_dir`, replacing older copies.
+fn place_uv_binaries(staging: &Path, bin_dir: &Path) -> Result<(), String> {
+    for (name, required) in [("uv", true), ("uvx", false)] {
+        let file_name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        let Some(src) = find_file_named(staging, &file_name, 3) else {
+            if required {
+                return Err(format!("{file_name} is missing from the uv archive"));
+            }
+            continue;
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+        std::fs::rename(&src, bin_dir.join(&file_name))
+            .map_err(|e| format!("Cannot replace {file_name}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// First regular file called `name` in `dir`, searching at most `depth` levels.
+fn find_file_named(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+    let mut subdirs = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+        } else if entry.file_name() == name {
+            return Some(path);
+        }
+    }
+    if depth == 0 {
+        return None;
+    }
+    subdirs
+        .iter()
+        .find_map(|sub| find_file_named(sub, name, depth - 1))
+}
+
+/// Version of the certifi installed in the venv at `venv_dir`, read from its
+/// `certifi-<version>.dist-info` folder. `None` when certifi is not installed.
+fn venv_certifi_version(venv_dir: &Path) -> Option<(u32, u32, u32)> {
+    let site_packages: Vec<PathBuf> = if cfg!(target_os = "windows") {
+        vec![venv_dir.join("Lib").join("site-packages")]
+    } else {
+        std::fs::read_dir(venv_dir.join("lib"))
+            .ok()?
+            .flatten()
+            .map(|e| e.path().join("site-packages"))
+            .collect()
+    };
+    site_packages.iter().find_map(|dir| {
+        std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let version = name.strip_prefix("certifi-")?.strip_suffix(".dist-info")?;
+            parse_uv_version(version)
+        })
+    })
+}
+
+/// Bring an existing install's uv, and the CA bundle in its ComfyUI venv, up to
+/// [`UV_VERSION`] and [`CERTIFI_REQUIREMENT`]. Setup downloads uv only once, so
+/// without this an install keeps the uv it was created with, and that release's
+/// bundled root certificates, forever. Runs in the background at launch and
+/// skips while setup or a ComfyUI update holds the setup lock; failures are
+/// logged and retried on the next launch.
+pub async fn refresh_python_tooling(app: AppHandle, state: Arc<AppState>) {
+    let Ok(_setup) = SETUP_LOCK.try_lock() else {
+        return;
+    };
+    let Ok(base) = data_dir(&app) else {
+        return;
+    };
+    let uv = uv_bin(&base);
+    // Not set up yet: setup installs the pinned uv itself.
+    if !uv.exists() {
+        return;
+    }
+    if !uv_is_current(&uv).await {
+        log::info!("Updating the managed uv to {UV_VERSION}");
+        if let Err(e) = install_pinned_uv(&app, &base, &state.http_client).await {
+            log::warn!("Could not update uv to {UV_VERSION}: {e}");
+            return;
+        }
+    }
+
+    let venv_dir = base.join("venv");
+    let outdated = venv_certifi_version(&venv_dir).is_some_and(|v| v < CERTIFI_MIN);
+    if !outdated || !venv_python(&base).exists() {
+        return;
+    }
+    let net = {
+        let config = state.config.read().await;
+        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
+    };
+    log::info!("Updating certifi in the ComfyUI venv ({CERTIFI_REQUIREMENT})");
+    if let Err(e) = uv_pip(&app, &base, &[CERTIFI_REQUIREMENT], &net, true).await {
+        log::warn!("Could not update certifi in the ComfyUI venv: {e}");
+    }
 }
 
 async fn step_install_python(
@@ -1593,6 +1749,8 @@ async fn step_install_deps(
         .arg(&python_str)
         .arg("-r")
         .arg(&req_str)
+        // ComfyUI leaves certifi unpinned, so an existing venv keeps an old one.
+        .arg(CERTIFI_REQUIREMENT)
         .env("UV_PYTHON_INSTALL_DIR", &python_dir_str);
     crate::comfyui::nodes::apply_pip_install_options(
         &mut cmd,
@@ -2930,8 +3088,9 @@ pub async fn update_comfyui(
 mod tests {
     use super::{
         amd_windows_rocm_model_supported, check_resume, content_range_start, device_vram_bytes,
-        parse_vram_from_drm_root, remove_dir_contents_except, uv_asset_name, uv_download,
-        venv_python_version, ResumeCheck, UV_ASSETS, UV_VERSION,
+        find_file_named, parse_uv_version, parse_vram_from_drm_root, place_uv_binaries,
+        remove_dir_contents_except, uv_asset_name, uv_download, venv_certifi_version,
+        venv_python_version, ResumeCheck, CERTIFI_MIN, CERTIFI_REQUIREMENT, UV_ASSETS, UV_VERSION,
     };
     use std::fs;
 
@@ -2989,6 +3148,72 @@ mod tests {
             assert!(sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{asset}");
         }
         assert!(uv_download("uv-unknown.tar.gz").is_none());
+    }
+
+    #[test]
+    fn uv_version_parses_cli_output_and_compares() {
+        assert_eq!(
+            parse_uv_version("uv 0.13.4 (x86_64-unknown-linux-gnu)"),
+            Some((0, 13, 4))
+        );
+        assert_eq!(
+            parse_uv_version("uv 0.12.19 (abc1234 2026-09-24)\n"),
+            Some((0, 12, 19))
+        );
+        assert_eq!(parse_uv_version("0.9.0"), Some((0, 9, 0)));
+        assert_eq!(parse_uv_version("uv 0.5.0-rc.1"), Some((0, 5, 0)));
+        assert_eq!(parse_uv_version("uv"), None);
+        assert_eq!(parse_uv_version(""), None);
+        let pinned = parse_uv_version(UV_VERSION).expect("pinned version parses");
+        assert!(parse_uv_version("uv 0.12.19").unwrap() < pinned);
+        assert!(parse_uv_version("uv 0.13.10").unwrap() > pinned);
+    }
+
+    #[test]
+    fn certifi_floor_matches_its_requirement() {
+        let floor = format!(
+            "certifi>={}.{}.{}",
+            CERTIFI_MIN.0, CERTIFI_MIN.1, CERTIFI_MIN.2
+        );
+        assert_eq!(CERTIFI_REQUIREMENT, floor);
+    }
+
+    #[test]
+    fn venv_certifi_version_reads_the_dist_info() {
+        let venv = unique_temp_dir("certifi-venv");
+        let site = if cfg!(target_os = "windows") {
+            venv.join("Lib").join("site-packages")
+        } else {
+            venv.join("lib").join("python3.11").join("site-packages")
+        };
+        fs::create_dir_all(site.join("certifi")).unwrap();
+        assert_eq!(venv_certifi_version(&venv), None);
+        fs::create_dir_all(site.join("certifi-2026.7.22.dist-info")).unwrap();
+        assert_eq!(venv_certifi_version(&venv), Some((2026, 7, 22)));
+        assert!(venv_certifi_version(&venv).unwrap() < CERTIFI_MIN);
+        let _ = fs::remove_dir_all(&venv);
+    }
+
+    #[test]
+    fn uv_binaries_replace_the_old_ones() {
+        let root = unique_temp_dir("uv-place");
+        let exe = std::env::consts::EXE_SUFFIX;
+        let staging = root.join("staging").join("uv-x86_64-unknown-linux-gnu");
+        let bin = root.join("bin");
+        fs::create_dir_all(&staging).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(staging.join(format!("uv{exe}")), b"new uv").unwrap();
+        fs::write(staging.join(format!("uvx{exe}")), b"new uvx").unwrap();
+        fs::write(bin.join(format!("uv{exe}")), b"old uv").unwrap();
+
+        assert!(find_file_named(&root.join("staging"), &format!("uv{exe}"), 0).is_none());
+        place_uv_binaries(&root.join("staging"), &bin).unwrap();
+        assert_eq!(fs::read(bin.join(format!("uv{exe}"))).unwrap(), b"new uv");
+        assert_eq!(fs::read(bin.join(format!("uvx{exe}"))).unwrap(), b"new uvx");
+
+        // uv itself is required; a missing uvx is not.
+        assert!(place_uv_binaries(&root.join("staging"), &bin).is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
