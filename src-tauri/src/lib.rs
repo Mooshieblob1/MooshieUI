@@ -291,6 +291,16 @@ pub fn run() {
                 });
             }
 
+            // Move an existing install's uv and venv CA bundle up to the pinned
+            // versions (setup itself only ever downloads uv once).
+            {
+                let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                tauri::async_runtime::spawn(setup::refresh_python_tooling(
+                    _app.handle().clone(),
+                    shared_state,
+                ));
+            }
+
             // In browser mode: hide the window, start web server, open browser
             if browser_mode {
                 use tauri::Manager;
