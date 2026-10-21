@@ -1,5 +1,24 @@
 # Changelog
 
+## What's New in v2.3.26
+
+### AI Assistants (MCP)
+- **Local MCP server**: AI assistants such as Claude Code, Claude Desktop or Cursor can now generate images, check jobs and search your gallery through the Model Context Protocol. It is off by default; turn it on in **Settings > AI assistants (MCP)**. It listens on `127.0.0.1:3210` (port configurable), only accepts apps on this computer, and every request needs the token shown in the panel. Each model uses the setup from your last local txt2img run with it, so generations match what you would get in the app. See `docs/MCP.md`.
+- **Music generation**: a `generate_music` tool makes YuE2 songs from a style, optional lyrics and a duration. Finished songs are saved as FLAC (with the planned ABC score) in the app's `music` folder.
+
+### Interrogate
+- **Image stays in view**: the interrogated image now shows uncropped beside the tags (above them on narrow screens), including for lightbox previews, model previews and clipboard pastes.
+- **Detections on by default**: Kaloscope artist detection and saved character detection are on for new installs. Existing settings are kept.
+
+### Fixes
+- **Animadex characters open again**: characters with two or more LoRAs or a repeated tag (Ganyu, Remilia Scarlet) only outlined the card, and paging could leave the previous character's details on screen.
+- **Browser-mode gallery thumbnails**: thumbnails are built off the async runtime, so a page of uncached thumbnails no longer stalls other requests.
+
+### Security
+- **eMudhra CA distrust**: setup now pins uv 0.13.4 and upgrades an older uv instead of keeping it, and the ComfyUI venv gets certifi 2026.10.19 or newer (checked in the background at launch). Both drop the compromised emSign root. rustls-webpki 0.103.16 and webpki-root-certs 1.0.10 do the same on the Rust side.
+
+---
+
 ## What's New in v2.3.25
 
 ### Image Edit
