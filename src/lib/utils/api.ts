@@ -122,6 +122,7 @@ import type {
   LlmHardware,
   LlmProviderState,
   LlmStatus,
+  McpStatus,
   NovelAiSubscription,
   OutputImage,
   PromptAssistantOpts,
@@ -785,6 +786,18 @@ export async function saveToGalleryBytes(
   metadataMode?: string,
 ): Promise<string> {
   return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
+}
+
+export async function getMcpStatus(): Promise<McpStatus> {
+  return ipcInvoke("get_mcp_status");
+}
+
+export async function setMcpSettings(enabled: boolean, port: number): Promise<McpStatus> {
+  return ipcInvoke("set_mcp_settings", { enabled, port });
+}
+
+export async function regenerateMcpToken(): Promise<McpStatus> {
+  return ipcInvoke("regenerate_mcp_token");
 }
 
 export async function saveToGalleryTemp(

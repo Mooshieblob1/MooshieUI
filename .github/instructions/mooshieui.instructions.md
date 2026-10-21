@@ -302,4 +302,5 @@ fixed bottom-4 right-4 z-50 px-4 py-2.5 rounded-lg border text-sm shadow-lg
 - **Version in 3 files must match**: [`package.json`](package.json:5), [`src-tauri/Cargo.toml`](src-tauri/Cargo.toml:3), [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json:4).
 - **Tag protection**: Tags cannot be deleted or force-updated. Use `workflow_dispatch` fallback.
 - **Stores do NOT import each other**: Cross-store coordination happens in `App.svelte`.
+- **MCP surface** (`src-tauri/src/mcp/`, `docs/MCP.md`): when adding or changing a feature, decide whether the MCP server has to follow (clear per-image params in `setups::snapshot`, extend `setups::Overrides` and the `generate_image` schema, or add a tool).
 - **`toParams()` pattern**: camelCase store fields → snake_case Rust params. Manual mapping in `generation.svelte.ts`.

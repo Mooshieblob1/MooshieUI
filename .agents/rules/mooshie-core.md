@@ -22,6 +22,15 @@ No frontend tests (no vitest/jest). Rust has ~920 tests (`#[test]` + `#[tokio::t
 - Desktop: Tauri WebView. Browser: axum serves same UI (`webserver.rs`); `window.__MOOSHIE_BROWSER_MODE__`.
 - **All backend I/O:** `ipcInvoke()` / `ipcListen()` in `src/lib/utils/ipc.ts` — never raw `invoke()`/`listen()` (browser mode breaks silently).
 
+## MCP surface
+
+`src-tauri/src/mcp/` is an opt-in local MCP server (`docs/MCP.md`). Every feature change gets an MCP check, noted in the PR:
+
+- New `GenerationParams` field tied to one image (input file, mask, reference): clear it in `setups::snapshot`.
+- Field an assistant should control: add to `setups::Overrides`, `apply()` and the `generate_image` schema in `mcp/tools.rs`.
+- New mode, gallery action or command worth automating: consider a tool.
+- Renamed `comfyui:*` events or gallery save helpers: update `mcp/jobs.rs`.
+
 ## Images
 
 - Gallery on disk: **JXL**. UI: `loadGalleryImageDisplay()` / `loadGalleryImagePng()` — not raw file reads.

@@ -6,6 +6,7 @@ Documentation for the current implementation, with music and connection updates 
 
 | Document | Purpose |
 |----------|---------|
+| [MCP.md](MCP.md) | The opt-in local MCP server for AI assistants: setup, tools, generation setups and connecting clients |
 | [METADATA_CARRIERS.md](METADATA_CARRIERS.md) | Where generation metadata lives per output format, and what survives |
 | [NOVELAI.md](NOVELAI.md) | NovelAI architecture, personal keys, face detailing, local post-processing and historical test notes |
 | [RANDOM_PROMPTS.md](RANDOM_PROMPTS.md) | Seeded alternation, multiple choices, weights, nesting and escapes |

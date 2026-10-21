@@ -59,6 +59,8 @@ Inspect only `+` lines in `git diff HEAD`. Full rule tables: [reference.md](refe
 
 If `commands/*.rs` or `lib.rs` changed: matching wrapper in `src/lib/utils/api.ts` using `ipcInvoke()` (not raw `invoke()`).
 
+If `GenerationParams`, a generation mode, the gallery save path, or `comfyui:*` event names changed: check the MCP surface in `src-tauri/src/mcp/` (`setups::snapshot` clears per-image inputs, `Overrides` and the `generate_image` schema cover what assistants should set, `jobs.rs` still follows the events). Flag a missing MCP decision as a warning.
+
 ## Report format
 
 ```markdown

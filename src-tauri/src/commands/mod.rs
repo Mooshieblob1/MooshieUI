@@ -5,6 +5,8 @@ pub mod cloud;
 pub mod config;
 #[cfg(feature = "desktop")]
 pub mod interrogator;
+#[cfg(feature = "desktop")]
+pub mod mcp;
 pub mod music;
 pub mod music_audio_style;
 pub mod music_cover;

@@ -2847,6 +2847,12 @@
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (Array.isArray(data.vibes)) generation.applyNovelAiVibeEncodings(data.vibes);
       }),
+      // An AI assistant generated this through the MCP server; the backend
+      // already saved it, so only surface it at the top of the gallery.
+      ipcListen("mcp:image_saved", (event: any) => {
+        const filename = event.payload?.filename;
+        if (typeof filename === "string" && filename) void gallery.addPersistedImage(filename);
+      }),
       ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
