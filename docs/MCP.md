@@ -1,6 +1,6 @@
 # MCP server
 
-MooshieUI can run a [Model Context Protocol](https://modelcontextprotocol.io) server so AI assistants (Claude Code, Claude Desktop, Cursor, LM Studio and others) can generate images, check the queue and search the gallery.
+MooshieUI can run a [Model Context Protocol](https://modelcontextprotocol.io) server so AI assistants (Claude Code, Claude Desktop, Cursor, LM Studio and others) can generate images and music, check the queue and search the gallery.
 
 It is **off by default**. Turn it on in **Settings > AI assistants (MCP)**.
 
@@ -20,14 +20,21 @@ A model is usable over MCP once it has been used for one txt2img generation in M
 
 Images generated over MCP are saved to the owner's gallery (with normal metadata, `mooshie_source: mcp`) and show up in an open MooshieUI window right away.
 
+## Music
+
+`generate_music` uses the same YuE2 backend as the Music page. It needs no setup: the backend builds the YuE2 graph itself from the style, lyrics, length and seed, with the Music page's defaults (full planning, 32 steps, 120 seconds). `list_models` with `category: music` says whether YuE2 is installed and lists its checkpoints.
+
+Finished songs are copied out of ComfyUI into the `music` folder in the app data folder, as `mcp_<date>_<time>_<seed>.flac` plus the ABC score YuE2 planned (`.abc`). The result gives the file paths; `include_audio: true` also embeds the FLAC (up to 16 MB) for clients that play MCP audio. Songs made over MCP don't appear in the Music page library, which is kept in the browser.
+
 ## Tools
 
 | Tool | What it does |
 |------|--------------|
-| `get_status` | ComfyUI status and GPUs, queue length, the last five MCP jobs, and the saved setups. |
-| `list_models` | Installed checkpoints, diffusion models (with `has_setup`) or LoRAs. |
+| `get_status` | ComfyUI status and GPUs, queue length, the last five image and music jobs, and the saved setups. |
+| `list_models` | Installed checkpoints, diffusion models (with `has_setup`), LoRAs, or YuE2 music checkpoints. |
 | `generate_image` | txt2img from a setup. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
-| `get_job` | Status, gallery filenames and previews of a job, optionally waiting for it. |
+| `generate_music` | A YuE2 song from `style`, with optional `lyrics` (omit for instrumental), `duration_seconds` (1 to 360), `checkpoint`, `planning` (`full`, `melody`, `off`), `score` (ABC to follow), `steps` and `seed`. Waits up to 10 minutes, or returns a job id with `wait: false`. |
+| `get_job` | Status and results of an image or music job (gallery filenames and previews, or song file paths), optionally waiting for it. |
 | `cancel_generation` | Cancels one MCP job, or all of them. Never touches generations started in the window. |
 | `search_gallery` | Full-text search over prompt, negative prompt and model, or the newest images. Older images are indexed on demand, a few hundred per search. |
 | `get_image` | A preview of a gallery image (up to 2048 px) and its generation settings. |
@@ -78,7 +85,8 @@ Code lives in `src-tauri/src/mcp/`:
 
 - `mod.rs`: settings, listener lifecycle (`sync`), auth, JSON-RPC dispatch.
 - `setups.rs`: what a setup keeps (`snapshot`), what an assistant may change (`Overrides`, `apply`), and the saved metadata map.
-- `jobs.rs`: submits to the GPU manager, follows `comfyui:*` events on the broadcast channel, saves outputs to the gallery, emits `mcp:image_saved`.
+- `jobs.rs`: the job store, and image jobs: submits to the GPU manager, follows `comfyui:*` events on the broadcast channel, saves outputs to the gallery, emits `mcp:image_saved`.
+- `music.rs`: music jobs. Maps the tool arguments to `MusicParams` (`to_params`), then submits, polls and downloads through `commands::music` (`submit`, `status`, `audio`), the same functions the Music page calls.
 - `tools.rs`: tool schemas and handlers.
 
 When a feature changes, check whether the MCP surface needs to follow. See "MCP surface" in `CLAUDE.md`.

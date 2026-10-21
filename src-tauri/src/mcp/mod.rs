@@ -15,6 +15,7 @@
 //! stale copy of it must not switch the server off or roll the token back.
 
 pub mod jobs;
+pub mod music;
 pub mod setups;
 pub mod tools;
 
@@ -334,10 +335,12 @@ async fn handle_post(
     (StatusCode::OK, Json(reply)).into_response()
 }
 
-const INSTRUCTIONS: &str = "MooshieUI is a local image generator built on ComfyUI. \
+const INSTRUCTIONS: &str = "MooshieUI is a local image and music generator built on ComfyUI. \
 generate_image reuses the owner's last txt2img setup for a model (loaders, upscale, face fix, guidance), \
 so only models listed with a saved setup in get_status can be used; generating once with a model in \
-MooshieUI saves its setup. Images land in the MooshieUI gallery. Check get_status first.";
+MooshieUI saves its setup. Images land in the MooshieUI gallery. generate_music makes songs with YuE2 \
+(list_models category music shows whether it is installed) and saves FLAC files on the MooshieUI machine. \
+Check get_status first.";
 
 async fn dispatch(
     state: &Arc<AppState>,
@@ -453,6 +456,12 @@ mod tests {
         assert_eq!(init["protocolVersion"], PROTOCOL_VERSIONS[0]);
         assert!(dispatch(&state, "nope", &json!({})).await.is_err());
         let listed = dispatch(&state, "tools/list", &json!({})).await.unwrap();
-        assert!(listed["tools"].as_array().is_some_and(|t| !t.is_empty()));
+        let names: Vec<&str> = listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+        assert!(names.contains(&"generate_image") && names.contains(&"generate_music"));
     }
 }
