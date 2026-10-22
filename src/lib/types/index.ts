@@ -782,6 +782,22 @@ export interface McpStatus {
   error: string | null;
   /** Models with a saved txt2img setup the server can reuse. */
   setups: number;
+  /** `url` with the token in the path, for apps that take only a URL. */
+  local_connector_url: string;
+  /** Whether the built-in Cloudflare quick tunnel is switched on. */
+  tunnel: boolean;
+  tunnel_status: McpTunnelStatus;
+  /** The tunnel's public address with the token in the path, while it runs. */
+  tunnel_connector_url: string | null;
+  /** The owner's own public https address, or "". */
+  public_url: string;
+  public_connector_url: string | null;
+}
+
+export interface McpTunnelStatus {
+  state: "off" | "downloading" | "starting" | "running" | "error";
+  url: string | null;
+  error: string | null;
 }
 
 export interface QueueInfo {

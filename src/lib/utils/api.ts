@@ -792,8 +792,12 @@ export async function getMcpStatus(): Promise<McpStatus> {
   return ipcInvoke("get_mcp_status");
 }
 
-export async function setMcpSettings(enabled: boolean, port: number): Promise<McpStatus> {
-  return ipcInvoke("set_mcp_settings", { enabled, port });
+export async function setMcpSettings(
+  enabled: boolean,
+  port: number,
+  extra: { tunnel?: boolean; publicUrl?: string } = {},
+): Promise<McpStatus> {
+  return ipcInvoke("set_mcp_settings", { enabled, port, ...extra });
 }
 
 export async function regenerateMcpToken(): Promise<McpStatus> {

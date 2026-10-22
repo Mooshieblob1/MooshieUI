@@ -10,6 +10,12 @@
 //! `POST /mcp` per JSON-RPC message, no server-initiated stream (`GET` answers
 //! 405, which the spec allows). Long tools simply hold the request open.
 //!
+//! Cloud-hosted clients (Claude's custom connectors, ChatGPT) connect from
+//! their own servers, so they need a public HTTPS address: the built-in
+//! Cloudflare quick tunnel (`tunnel.rs`) or the owner's own tunnel or reverse
+//! proxy (`public_url`). Clients that can't send headers put the token in the
+//! path instead: `POST /mcp/<token>`.
+//!
 //! Its settings live in `mcp.json` next to `config.json` rather than in
 //! `AppConfig`: the Settings page saves the whole config object at once, and a
 //! stale copy of it must not switch the server off or roll the token back.
@@ -18,11 +24,12 @@ pub mod jobs;
 pub mod music;
 pub mod setups;
 pub mod tools;
+pub mod tunnel;
 
 use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::body::Bytes;
-use axum::extract::State as AxumState;
+use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -39,12 +46,23 @@ pub const DEFAULT_PORT: u16 = 3210;
 /// the client's revision when it is one of these, else offers the newest.
 const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
+/// Longest a tool holds a request that came through a tunnel or proxy.
+/// Cloudflare drops a request with no response after 100 seconds, so a
+/// generation that takes longer comes back as a job id to poll instead.
+const PROXIED_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(75);
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct McpSettings {
     pub enabled: bool,
     pub port: u16,
     pub token: String,
+    /// Run the built-in Cloudflare quick tunnel.
+    pub tunnel: bool,
+    /// The owner's own public address for the server (a named tunnel or a
+    /// reverse proxy), e.g. `https://mooshie.example.com`. Its host passes
+    /// the `Host`/`Origin` checks.
+    pub public_url: String,
 }
 
 impl Default for McpSettings {
@@ -53,8 +71,19 @@ impl Default for McpSettings {
             enabled: false,
             port: DEFAULT_PORT,
             token: String::new(),
+            tunnel: false,
+            public_url: String::new(),
         }
     }
+}
+
+/// What a settings change asks for. `None` keeps the current value.
+#[derive(Debug, Default)]
+pub struct SettingsUpdate {
+    pub enabled: bool,
+    pub port: u16,
+    pub tunnel: Option<bool>,
+    pub public_url: Option<String>,
 }
 
 /// What the Settings panel shows.
@@ -69,6 +98,15 @@ pub struct McpStatus {
     pub error: Option<String>,
     /// Models with a remembered generation setup the server can reuse.
     pub setups: usize,
+    /// `url` with the token in the path, for clients that take only a URL.
+    pub local_connector_url: String,
+    pub tunnel: bool,
+    pub tunnel_status: tunnel::TunnelStatus,
+    /// The tunnel's address with the token in the path, while it runs.
+    pub tunnel_connector_url: Option<String>,
+    pub public_url: String,
+    /// `public_url` with the token in the path.
+    pub public_connector_url: Option<String>,
 }
 
 struct Running {
@@ -123,37 +161,131 @@ pub fn url_for(port: u16) -> String {
     format!("http://127.0.0.1:{port}/mcp")
 }
 
+/// `base` (scheme and host, maybe a path prefix) plus `/mcp/<token>`.
+fn connector_url(base: &str, token: &str) -> String {
+    format!("{}/mcp/{token}", base.trim_end_matches('/'))
+}
+
+/// Check and tidy an owner-entered public address. It must be HTTPS (cloud
+/// clients require it, and the token travels in it) and carry no query or
+/// fragment. A trailing `/mcp` is dropped, since the server adds it.
+pub fn normalize_public_url(input: &str) -> Result<String, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let url = reqwest::Url::parse(trimmed)
+        .map_err(|_| "Enter the public address as a full URL, like https://mooshie.example.com")?;
+    if url.scheme() != "https" {
+        return Err("The public address must start with https://".into());
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err("The public address needs a host name".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() || !url.username().is_empty() {
+        return Err("Leave out any ?query, #fragment or user name from the public address".into());
+    }
+    let mut out = url.as_str().trim_end_matches('/').to_string();
+    if let Some(stripped) = out.strip_suffix("/mcp") {
+        out = stripped.to_string();
+    }
+    Ok(out)
+}
+
+/// The host (and port, if not the default) of the owner's public address,
+/// lowercased, as it appears in a `Host` header.
+fn public_host(public_url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(public_url).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
+
+/// Whether the request's `Host` header is the owner's public address.
+fn host_is_public(headers: &HeaderMap, public_url: &str) -> bool {
+    let (Some(expected), Some(host)) = (
+        public_host(public_url),
+        headers
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok()),
+    ) else {
+        return false;
+    };
+    let host = host.trim().to_ascii_lowercase();
+    host == expected || host.strip_suffix(":443") == Some(expected.as_str())
+}
+
+/// Whether `origin` is the owner's public address.
+fn origin_is_public(origin: &str, public_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(public_url) else {
+        return false;
+    };
+    origin
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case(&url.origin().ascii_serialization())
+}
+
 pub async fn status() -> McpStatus {
     let settings = current_settings();
     let running = RUNNING.lock().await.as_ref().map(|r| r.port);
+    let port = running.unwrap_or(settings.port);
+    let tunnel_status = tunnel::status();
+    let tunnel_connector_url = (tunnel_status.state == tunnel::TunnelState::Running)
+        .then(|| {
+            tunnel_status
+                .url
+                .as_deref()
+                .map(|u| connector_url(u, &settings.token))
+        })
+        .flatten();
     McpStatus {
         enabled: settings.enabled,
         running: running.is_some(),
-        port: running.unwrap_or(settings.port),
-        url: url_for(running.unwrap_or(settings.port)),
-        token: settings.token,
+        port,
+        url: url_for(port),
+        local_connector_url: connector_url(&format!("http://127.0.0.1:{port}"), &settings.token),
         error: if settings.enabled {
             LAST_ERROR.lock().unwrap().clone()
         } else {
             None
         },
         setups: setups::count(),
+        tunnel: settings.tunnel,
+        tunnel_status,
+        tunnel_connector_url,
+        public_connector_url: (!settings.public_url.is_empty())
+            .then(|| connector_url(&settings.public_url, &settings.token)),
+        public_url: settings.public_url,
+        token: settings.token,
     }
 }
 
-/// Turn the server on or off, or move it to another port.
+/// Turn the server or the tunnel on or off, move the server to another port,
+/// or change the public address.
 pub async fn set_settings(
     state: Arc<AppState>,
-    enabled: bool,
-    port: u16,
+    update: SettingsUpdate,
 ) -> Result<McpStatus, String> {
-    if port < 1024 {
+    if update.port < 1024 {
         return Err("Pick a port from 1024 to 65535.".into());
     }
+    let public_url = update
+        .public_url
+        .as_deref()
+        .map(normalize_public_url)
+        .transpose()?;
     {
         let mut settings = SETTINGS.lock().unwrap();
-        settings.enabled = enabled;
-        settings.port = port;
+        settings.enabled = update.enabled;
+        settings.port = update.port;
+        if let Some(tunnel) = update.tunnel {
+            settings.tunnel = tunnel;
+        }
+        if let Some(public_url) = public_url {
+            settings.public_url = public_url;
+        }
         if settings.token.is_empty() {
             settings.token = new_token();
         }
@@ -181,6 +313,8 @@ pub async fn sync(state: Arc<AppState>) {
     let mut running = RUNNING.lock().await;
     let wanted = settings.enabled.then_some(settings.port);
     if running.as_ref().map(|r| r.port) == wanted {
+        drop(running);
+        sync_tunnel(&state, &settings, wanted).await;
         return;
     }
     if let Some(old) = running.take() {
@@ -189,6 +323,8 @@ pub async fn sync(state: Arc<AppState>) {
     }
     *LAST_ERROR.lock().unwrap() = None;
     let Some(port) = wanted else {
+        drop(running);
+        sync_tunnel(&state, &settings, None).await;
         return;
     };
     if settings.token.is_empty() {
@@ -203,11 +339,13 @@ pub async fn sync(state: Arc<AppState>) {
         Err(e) => {
             log::warn!("MCP server could not listen on 127.0.0.1:{port}: {e}");
             *LAST_ERROR.lock().unwrap() = Some(format!("Port {port} is not available: {e}"));
+            drop(running);
+            sync_tunnel(&state, &settings, None).await;
             return;
         }
     };
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    let app = router(state);
+    let app = router(state.clone());
     tokio::spawn(async move {
         let served = axum::serve(listener, app)
             .with_graceful_shutdown(async {
@@ -220,6 +358,19 @@ pub async fn sync(state: Arc<AppState>) {
     });
     log::info!("MCP server listening on {}", url_for(port));
     *running = Some(Running { port, shutdown: tx });
+    drop(running);
+    sync_tunnel(&state, &settings, Some(port)).await;
+}
+
+/// Run the tunnel only while the server listens and the owner wants it.
+async fn sync_tunnel(state: &AppState, settings: &McpSettings, listening: Option<u16>) {
+    let port = listening.filter(|_| settings.tunnel);
+    tunnel::sync(port, state.http_client.clone()).await;
+}
+
+/// Stop the tunnel on app exit.
+pub async fn shutdown() {
+    tunnel::shutdown().await;
 }
 
 fn router(state: Arc<AppState>) -> Router {
@@ -227,6 +378,12 @@ fn router(state: Arc<AppState>) -> Router {
         .route(
             "/mcp",
             post(handle_post)
+                .get(method_not_allowed)
+                .delete(method_not_allowed),
+        )
+        .route(
+            "/mcp/{token}",
+            post(handle_post_with_path_token)
                 .get(method_not_allowed)
                 .delete(method_not_allowed),
         )
@@ -260,17 +417,24 @@ fn origin_is_local(origin: &str) -> bool {
 /// The request's bearer token matches `expected`. Constant-time, and an empty
 /// expected token never matches.
 fn token_matches(headers: &HeaderMap, expected: &str) -> bool {
-    if expected.is_empty() {
-        return false;
-    }
-    let Some(given) = headers
+    headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-    else {
-        return false;
-    };
-    given.trim().as_bytes().ct_eq(expected.as_bytes()).into()
+        .is_some_and(|given| token_equals(given.trim(), expected))
+}
+
+/// Constant-time token comparison; an empty expected token never matches.
+fn token_equals(given: &str, expected: &str) -> bool {
+    !expected.is_empty() && bool::from(given.as_bytes().ct_eq(expected.as_bytes()))
+}
+
+/// Whether a request came through the tunnel or a reverse proxy rather than
+/// straight from an app on this machine.
+fn is_proxied(headers: &HeaderMap, public_url: &str) -> bool {
+    headers.contains_key("cf-ray")
+        || headers.contains_key("x-forwarded-for")
+        || host_is_public(headers, public_url)
 }
 
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
@@ -282,15 +446,44 @@ async fn handle_post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !crate::webserver::host_header_is_local(&headers) {
+    let settings = current_settings();
+    let authorized = token_matches(&headers, &settings.token);
+    serve(&state, &settings, &headers, authorized, body).await
+}
+
+/// `POST /mcp/<token>`, for clients that can only be given a URL. A bearer
+/// header, if also sent, is ignored.
+async fn handle_post_with_path_token(
+    AxumState(state): AxumState<Arc<AppState>>,
+    AxumPath(token): AxumPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let settings = current_settings();
+    let authorized = token_equals(&token, &settings.token);
+    serve(&state, &settings, &headers, authorized, body).await
+}
+
+async fn serve(
+    state: &Arc<AppState>,
+    settings: &McpSettings,
+    headers: &HeaderMap,
+    authorized: bool,
+    body: Bytes,
+) -> Response {
+    let public = &settings.public_url;
+    if !crate::webserver::host_header_is_local(headers) && !host_is_public(headers, public) {
         return (StatusCode::FORBIDDEN, "Host not allowed").into_response();
     }
     if let Some(origin) = headers.get(axum::http::header::ORIGIN) {
-        if !origin.to_str().is_ok_and(origin_is_local) {
+        let ok = origin
+            .to_str()
+            .is_ok_and(|o| origin_is_local(o) || origin_is_public(o, public));
+        if !ok {
             return (StatusCode::FORBIDDEN, "Origin not allowed").into_response();
         }
     }
-    if !token_matches(&headers, &current_settings().token) {
+    if !authorized {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "Missing or wrong MooshieUI MCP token. Copy it from Settings > AI assistants (MCP)." })),
@@ -328,7 +521,12 @@ async fn handle_post(
     };
     let params = message.get("params").cloned().unwrap_or(Value::Null);
 
-    let reply = match dispatch(&state, method, &params).await {
+    let max_wait = if is_proxied(headers, public) {
+        PROXIED_MAX_WAIT
+    } else {
+        tools::MAX_WAIT
+    };
+    let reply = match dispatch(state, method, &params, max_wait).await {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
         Err((code, msg)) => rpc_error(id, code, &msg),
     };
@@ -346,6 +544,7 @@ async fn dispatch(
     state: &Arc<AppState>,
     method: &str,
     params: &Value,
+    max_wait: std::time::Duration,
 ) -> Result<Value, (i64, String)> {
     match method {
         "initialize" => {
@@ -373,7 +572,7 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or((-32602, "Missing tool name".to_string()))?;
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            tools::call(state, name, &args)
+            tools::call(state, name, &args, max_wait)
                 .await
                 .ok_or((-32602, format!("Unknown tool: {name}")))
         }
@@ -428,6 +627,90 @@ mod tests {
     }
 
     #[test]
+    fn path_tokens_compare_exactly() {
+        assert!(token_equals("abc123", "abc123"));
+        assert!(!token_equals("abc12", "abc123"));
+        assert!(!token_equals("ABC123", "abc123"));
+        assert!(!token_equals("", ""));
+    }
+
+    #[test]
+    fn public_addresses_are_checked_and_tidied() {
+        for (input, want) in [
+            ("", ""),
+            (
+                "  https://Mooshie.Example.com/  ",
+                "https://mooshie.example.com",
+            ),
+            (
+                "https://mooshie.example.com/mcp",
+                "https://mooshie.example.com",
+            ),
+            (
+                "https://example.com:8443/ai/mcp/",
+                "https://example.com:8443/ai",
+            ),
+        ] {
+            assert_eq!(normalize_public_url(input).unwrap(), want, "{input}");
+        }
+        for bad in [
+            "http://mooshie.example.com",
+            "mooshie.example.com",
+            "https://mooshie.example.com/?x=1",
+            "https://user@mooshie.example.com",
+            "ftp://mooshie.example.com",
+        ] {
+            assert!(normalize_public_url(bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            connector_url("https://a.example/", "tok"),
+            "https://a.example/mcp/tok"
+        );
+    }
+
+    #[test]
+    fn only_the_configured_public_host_passes() {
+        let public = "https://mooshie.example.com";
+        let host = |h: &str| headers(&[("host", h)]);
+        assert!(host_is_public(&host("mooshie.example.com"), public));
+        assert!(host_is_public(&host("MOOSHIE.example.com:443"), public));
+        assert!(!host_is_public(
+            &host("mooshie.example.com.evil.example"),
+            public
+        ));
+        assert!(!host_is_public(&host("evil.example"), public));
+        assert!(!host_is_public(&host("mooshie.example.com"), ""));
+        assert!(!host_is_public(&HeaderMap::new(), public));
+        let ported = "https://example.com:8443/ai";
+        assert!(host_is_public(&host("example.com:8443"), ported));
+        assert!(!host_is_public(&host("example.com"), ported));
+
+        assert!(origin_is_public("https://mooshie.example.com", public));
+        assert!(origin_is_public("https://mooshie.example.com/", public));
+        assert!(!origin_is_public("http://mooshie.example.com", public));
+        assert!(!origin_is_public("https://evil.example", public));
+        assert!(!origin_is_public("https://mooshie.example.com", ""));
+    }
+
+    #[test]
+    fn tunnelled_and_proxied_requests_are_told_apart() {
+        let public = "https://mooshie.example.com";
+        assert!(!is_proxied(&headers(&[("host", "127.0.0.1:3210")]), public));
+        assert!(is_proxied(
+            &headers(&[("host", "127.0.0.1:3210"), ("cf-ray", "8a1b")]),
+            public
+        ));
+        assert!(is_proxied(
+            &headers(&[("x-forwarded-for", "203.0.113.5")]),
+            ""
+        ));
+        assert!(is_proxied(
+            &headers(&[("host", "mooshie.example.com")]),
+            public
+        ));
+    }
+
+    #[test]
     fn new_tokens_are_long_hex() {
         let t = new_token();
         assert_eq!(t.len(), 64);
@@ -442,6 +725,7 @@ mod tests {
             &state,
             "initialize",
             &json!({ "protocolVersion": "2025-03-26" }),
+            tools::MAX_WAIT,
         )
         .await
         .unwrap();
@@ -450,12 +734,17 @@ mod tests {
             &state,
             "initialize",
             &json!({ "protocolVersion": "1999-01-01" }),
+            tools::MAX_WAIT,
         )
         .await
         .unwrap();
         assert_eq!(init["protocolVersion"], PROTOCOL_VERSIONS[0]);
-        assert!(dispatch(&state, "nope", &json!({})).await.is_err());
-        let listed = dispatch(&state, "tools/list", &json!({})).await.unwrap();
+        assert!(dispatch(&state, "nope", &json!({}), tools::MAX_WAIT)
+            .await
+            .is_err());
+        let listed = dispatch(&state, "tools/list", &json!({}), tools::MAX_WAIT)
+            .await
+            .unwrap();
         let names: Vec<&str> = listed["tools"]
             .as_array()
             .unwrap()
