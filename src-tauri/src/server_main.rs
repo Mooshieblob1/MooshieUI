@@ -188,6 +188,7 @@ async fn main() {
     shutdown_signal().await;
     log::info!("Shutdown signal received, cleaning up...");
     comfyui_desktop_lib::media_tools::shutdown(&state).await;
+    comfyui_desktop_lib::mcp::shutdown().await;
     comfyui_desktop_lib::prompt_assistant::companion::shutdown().await;
     comfyui_desktop_lib::commands::music_link::shutdown(&state).await;
     comfyui_desktop_lib::commands::music_audio_style::shutdown(&state).await;

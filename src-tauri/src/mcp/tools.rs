@@ -17,8 +17,9 @@ use super::music::{self, MusicJob};
 use super::setups;
 use crate::state::AppState;
 
-/// How long `generate_image` holds the request before handing back a job id.
-const DEFAULT_WAIT_SECS: u64 = 600;
+/// Longest a tool holds a request open before handing back a job id, for
+/// clients on this machine. Tunnelled requests get less (see `mod.rs`).
+pub const MAX_WAIT: Duration = Duration::from_secs(600);
 /// Largest song `include_audio` embeds in a result.
 const MAX_INLINE_AUDIO: u64 = 16 * 1024 * 1024;
 const PREVIEW_SIZE: u32 = 768;
@@ -184,14 +185,20 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// Run a tool. `None` for an unknown tool name.
-pub async fn call(state: &Arc<AppState>, name: &str, args: &Value) -> Option<Value> {
+/// Run a tool. `None` for an unknown tool name. Waiting tools give up after
+/// `max_wait` and return the job id.
+pub async fn call(
+    state: &Arc<AppState>,
+    name: &str,
+    args: &Value,
+    max_wait: Duration,
+) -> Option<Value> {
     let result = match name {
         "get_status" => get_status(state).await,
         "list_models" => list_models(state, args).await,
-        "generate_image" => generate_image(state, args).await,
-        "generate_music" => generate_music(state, args).await,
-        "get_job" => get_job(args).await,
+        "generate_image" => generate_image(state, args, max_wait).await,
+        "generate_music" => generate_music(state, args, max_wait).await,
+        "get_job" => get_job(args, max_wait).await,
         "cancel_generation" => cancel_generation(state, args).await,
         "search_gallery" => search_gallery(args).await,
         "get_image" => get_image(args).await,
@@ -312,7 +319,11 @@ async fn list_models(state: &Arc<AppState>, args: &Value) -> Result<Value, Strin
     }))]))
 }
 
-async fn generate_image(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
+async fn generate_image(
+    state: &Arc<AppState>,
+    args: &Value,
+    max_wait: Duration,
+) -> Result<Value, String> {
     let overrides: setups::Overrides =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))?;
     let setup = setups::find(&setups::list(), arg_str(args, "model"))?;
@@ -322,7 +333,7 @@ async fn generate_image(state: &Arc<AppState>, args: &Value) -> Result<Value, St
         let job = rx.borrow().clone();
         return Ok(ok(vec![text(job_json(&job))]));
     }
-    let job = jobs::wait(rx, Duration::from_secs(DEFAULT_WAIT_SECS)).await;
+    let job = jobs::wait(rx, max_wait).await;
     job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await
 }
 
@@ -348,7 +359,11 @@ async fn list_music_models(state: &Arc<AppState>) -> Result<Value, String> {
     }))]))
 }
 
-async fn generate_music(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
+async fn generate_music(
+    state: &Arc<AppState>,
+    args: &Value,
+    max_wait: Duration,
+) -> Result<Value, String> {
     let req: music::MusicRequest =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))?;
     if req.style.trim().is_empty() {
@@ -359,7 +374,7 @@ async fn generate_music(state: &Arc<AppState>, args: &Value) -> Result<Value, St
         let job = rx.borrow().clone();
         return Ok(ok(vec![text(music_job_json(&job))]));
     }
-    let job = jobs::wait(rx, Duration::from_secs(DEFAULT_WAIT_SECS)).await;
+    let job = jobs::wait(rx, max_wait).await;
     music_job_result(&job, args["include_audio"].as_bool().unwrap_or(false)).await
 }
 
@@ -423,18 +438,18 @@ async fn job_result(job: &Job, include_images: bool) -> Result<Value, String> {
     }))
 }
 
-async fn get_job(args: &Value) -> Result<Value, String> {
+async fn get_job(args: &Value, max_wait: Duration) -> Result<Value, String> {
     let id = arg_str(args, "job_id").ok_or("job_id is required")?;
-    let wait = args["wait_seconds"].as_u64().unwrap_or(0).min(600);
+    let wait = Duration::from_secs(args["wait_seconds"].as_u64().unwrap_or(0)).min(max_wait);
     if music::is_music_job(id) {
         let rx = music::get(id)
             .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
-        let job = jobs::wait(rx, Duration::from_secs(wait)).await;
+        let job = jobs::wait(rx, wait).await;
         return music_job_result(&job, args["include_audio"].as_bool().unwrap_or(false)).await;
     }
     let rx = jobs::get(id)
         .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
-    let job = jobs::wait(rx, Duration::from_secs(wait)).await;
+    let job = jobs::wait(rx, wait).await;
     job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await
 }
 

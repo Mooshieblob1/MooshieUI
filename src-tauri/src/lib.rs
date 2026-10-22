@@ -821,6 +821,7 @@ pub fn run() {
             let state = app_handle.state::<Arc<AppState>>();
             tauri::async_runtime::block_on(async {
                 media_tools::shutdown(&state).await;
+                mcp::shutdown().await;
                 prompt_assistant::companion::shutdown().await;
                 commands::music_link::shutdown(&state).await;
                 commands::music_audio_style::shutdown(&state).await;

@@ -3660,7 +3660,13 @@ async fn dispatch_command(
                 .as_u64()
                 .and_then(|p| u16::try_from(p).ok())
                 .ok_or("Missing or invalid port")?;
-            let status = crate::mcp::set_settings(state.clone(), enabled, port).await?;
+            let update = crate::mcp::SettingsUpdate {
+                enabled,
+                port,
+                tunnel: args["tunnel"].as_bool(),
+                public_url: args["publicUrl"].as_str().map(str::to_string),
+            };
+            let status = crate::mcp::set_settings(state.clone(), update).await?;
             serde_json::to_value(status).map_err(|e| e.to_string())
         }
         "regenerate_mcp_token" => {
@@ -8368,6 +8374,7 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     // ComfyUI queue doesn't keep running after the tab closes.
                     let _ = state.gpu_manager.interrupt(None).await;
                     crate::media_tools::shutdown(&state).await;
+                    crate::mcp::shutdown().await;
                     #[cfg(any(feature = "desktop", feature = "server"))]
                     crate::prompt_assistant::companion::shutdown().await;
                     commands::music_link::shutdown(&state).await;

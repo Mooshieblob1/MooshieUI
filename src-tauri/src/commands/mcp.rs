@@ -18,8 +18,16 @@ pub async fn set_mcp_settings(
     state: State<'_, Arc<AppState>>,
     enabled: bool,
     port: u16,
+    tunnel: Option<bool>,
+    public_url: Option<String>,
 ) -> Result<McpStatus, AppError> {
-    Ok(crate::mcp::set_settings(state.inner().clone(), enabled, port).await?)
+    let update = crate::mcp::SettingsUpdate {
+        enabled,
+        port,
+        tunnel,
+        public_url,
+    };
+    Ok(crate::mcp::set_settings(state.inner().clone(), update).await?)
 }
 
 #[tauri::command]
