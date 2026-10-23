@@ -859,6 +859,8 @@ export interface InterrogationResult {
   general_tags: TagResult[];
   copyright_tags: TagResult[];
   rating_tags: TagResult[];
+  /** Reaches the interrogated image server-side, for `describeImage`. */
+  image_token?: string;
 }
 
 /** One selectable tagger, plus whether its files are already on disk. */
@@ -913,12 +915,15 @@ export interface LlmVariant {
   vram_mb: number;
   repo: string;
   file: string;
+  /** Vision projector loaded beside `file`; null for text-only models. */
+  mmproj: string | null;
 }
 
 export interface LlmCatalogEntry {
   id: string;
   name: string;
-  purpose: "tag_upsampler" | "natural_language";
+  /** A captioner only describes images and is never the assistant model. */
+  purpose: "tag_upsampler" | "natural_language" | "captioner";
   families: string[];
   variants: LlmVariant[];
   pros: string;

@@ -14,13 +14,17 @@ pub struct LlmVariant {
     pub repo: String,
     /// File name within the repo.
     pub file: String,
+    /// The vision projector a model that can see images loads beside `file`,
+    /// from the same repo. `None` for text-only models.
+    pub mmproj: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LlmCatalogEntry {
     pub id: String,
     pub name: String,
-    /// "tag_upsampler" or "natural_language".
+    /// "tag_upsampler", "natural_language", or "captioner" (describes images
+    /// and nothing else, so it never serves as the prompt assistant model).
     pub purpose: String,
     /// Model families this entry serves well (matches generation.modelFamily values),
     /// or ["*"] for any family.
@@ -39,6 +43,30 @@ fn gguf(quant: &str, size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmV
         vram_mb,
         repo: repo.into(),
         file: file.into(),
+        mmproj: None,
+    }
+}
+
+/// A GGUF variant that sees images through `mmproj`. `size_mb` and `vram_mb`
+/// cover both files.
+fn gguf_vision(
+    quant: &str,
+    size_mb: u64,
+    vram_mb: u64,
+    repo: &str,
+    file: &str,
+    mmproj: &str,
+) -> LlmVariant {
+    LlmVariant {
+        mmproj: Some(mmproj.into()),
+        ..gguf(quant, size_mb, vram_mb, repo, file)
+    }
+}
+
+impl LlmCatalogEntry {
+    /// Whether the model reads images (every variant ships a projector).
+    pub fn has_vision(&self) -> bool {
+        !self.variants.is_empty() && self.variants.iter().all(|v| v.mmproj.is_some())
     }
 }
 
@@ -144,6 +172,57 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
             cons: "Needs ~6-7 GB VRAM; slow on CPU.".into(),
             best_for: ">=12 GB GPUs; best compose quality.".into(),
         },
+        // Small vision model: writes prompts like Qwen3 4B and also reads
+        // images, so Describe in Interrogate and reference images in Enhance
+        // work without an API. Qwen's own single-file GGUFs plus projector.
+        LlmCatalogEntry {
+            id: "qwen3-vl-4b-instruct".into(),
+            name: "Qwen3-VL 4B Instruct".into(),
+            purpose: "natural_language".into(),
+            families: vec!["*".into()],
+            variants: vec![
+                gguf_vision(
+                    "Q4_K_M",
+                    2950,
+                    4300,
+                    "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+                    "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+                    "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+                ),
+                gguf_vision(
+                    "Q8_0",
+                    4750,
+                    6100,
+                    "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+                    "Qwen3VL-4B-Instruct-Q8_0.gguf",
+                    "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+                ),
+            ],
+            pros: "Sees images: describes them in Interrogate and reads reference images in Enhance."
+                .into(),
+            cons: "Prose a little behind Qwen2.5 7B; may tone down explicit images.".into(),
+            best_for: "Describing images and prompting from references without an API.".into(),
+        },
+        // Captioner only: trained to caption images for diffusion training,
+        // including explicit ones. Never offered as the prompt assistant model.
+        LlmCatalogEntry {
+            id: "joycaption-beta-one".into(),
+            name: "JoyCaption Beta One".into(),
+            purpose: "captioner".into(),
+            families: vec!["*".into()],
+            variants: vec![gguf_vision(
+                "Q4_K",
+                5800,
+                7200,
+                "concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf",
+                "Llama-Joycaption-Beta-One-Hf-Llava-Q4_K.gguf",
+                "llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
+            )],
+            pros: "Made for captioning images for diffusion models; detailed and uncensored."
+                .into(),
+            cons: "Only describes images, it can't enhance prompts; ~6 GB download.".into(),
+            best_for: "The most faithful image descriptions.".into(),
+        },
     ]
 }
 
@@ -166,7 +245,8 @@ const MEASURED_CONTEXT_TOKENS: u64 = 4096;
 pub fn context_overhead_mb(model_id: &str, context_tokens: u32) -> u64 {
     let bytes_per_token: u64 = match model_id {
         "qwen25-7b-instruct" => 2 * 28 * 4 * 128 * 2,
-        _ => 2 * 36 * 8 * 128 * 2, // Qwen3-4B, and the fallback
+        "joycaption-beta-one" => 2 * 32 * 8 * 128 * 2, // Llama 3.1 8B
+        _ => 2 * 36 * 8 * 128 * 2,                     // Qwen3-4B, and the fallback
     };
     let extra_tokens = u64::from(context_tokens).saturating_sub(MEASURED_CONTEXT_TOKENS);
     bytes_per_token * extra_tokens / (1024 * 1024)
@@ -207,6 +287,9 @@ pub fn recommend_model_id(total_vram_mb: u64, system_ram_mb: u64) -> String {
     let nl_pick = cat
         .iter()
         .filter(|e| e.purpose == "natural_language")
+        // A vision model is a deliberate pick for its images, not a default:
+        // its projector costs VRAM a text-only prompt never uses.
+        .filter(|e| !e.has_vision())
         .filter(|e| best_variant_for(e, available).is_some())
         .max_by_key(|e| {
             best_variant_for(e, available)
@@ -277,5 +360,30 @@ mod tests {
         assert_eq!(context_overhead_mb("qwen3-4b-instruct", 4096), 0);
         // Unknown models get the larger per-token cost, never a smaller one.
         assert_eq!(context_overhead_mb("something-new", 16384), 1728);
+    }
+
+    #[test]
+    fn vision_models_ship_a_projector_and_are_never_the_default() {
+        let vision: Vec<_> = catalog().into_iter().filter(|e| e.has_vision()).collect();
+        assert!(vision.iter().any(|e| e.id == "qwen3-vl-4b-instruct"));
+        assert!(vision.iter().any(|e| e.id == "joycaption-beta-one"));
+        for e in &vision {
+            assert!(e.variants.iter().all(|v| v.mmproj.is_some()), "{}", e.id);
+        }
+        for (vram, ram) in [
+            (4000, 16000),
+            (6000, 32000),
+            (8000, 32768),
+            (32000, 65536),
+            (0, 8000),
+        ] {
+            let id = recommend_model_id(vram, ram);
+            assert!(
+                !entry(&id).unwrap().has_vision(),
+                "{vram}/{ram} picked {id}"
+            );
+        }
+        // Text-only models carry no projector.
+        assert!(!entry("qwen3-4b-instruct").unwrap().has_vision());
     }
 }

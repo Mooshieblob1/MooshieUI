@@ -5,7 +5,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::error::AppError;
 use crate::prompt_assistant::grounding::{self, GenMode};
-use crate::prompt_assistant::{catalog, hardware, oauth, providers, LlmCatalogEntry, LlmHardware};
+use crate::prompt_assistant::{
+    catalog, describe, hardware, oauth, providers, LlmCatalogEntry, LlmHardware, LocalPick,
+};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +73,7 @@ pub async fn download_llm_model(
     state: State<'_, Arc<AppState>>,
     id: String,
     variant: String,
+    select: Option<bool>,
 ) -> Result<(), AppError> {
     let pa = state.prompt_assistant.clone();
     let app2 = app.clone();
@@ -88,8 +91,10 @@ pub async fn download_llm_model(
     };
     pa.download_model(&state.http_client, &id, &variant, &progress)
         .await?;
-    // Persist selected model id + mark setup done.
-    {
+    // Persist selected model id + mark setup done. A captioner never becomes
+    // the assistant model, and a download made only to describe images
+    // (`select: false`) leaves the owner's pick alone.
+    if select.unwrap_or(true) && catalog::entry(&id).is_some_and(|e| e.purpose != "captioner") {
         let mut cfg = state.config.write().await;
         cfg.prompt_assistant_model_id = Some(id.clone());
         cfg.prompt_assistant_setup_done = true;
@@ -125,6 +130,9 @@ pub async fn unload_llm(state: State<'_, Arc<AppState>>) -> Result<(), AppError>
 /// `images` only reach the external path. The bundled llama-server runs
 /// text-only models, so it drops them and answers from the prompt alone rather
 /// than failing.
+// The turn's own fields plus where it may run; a struct would only move the
+// same list somewhere else.
+#[allow(clippy::too_many_arguments)]
 async fn chat_any(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
@@ -133,6 +141,7 @@ async fn chat_any(
     user: &str,
     max_tokens: u32,
     images: &[crate::prompt_assistant::vision::VisionImage],
+    pick: LocalPick,
 ) -> Result<String, AppError> {
     let history = crate::prompt_assistant::history::sanitize(history);
     // Before reading the key, not after: providers whose sign-in issues an
@@ -184,10 +193,11 @@ async fn chat_any(
         )
         .await;
         // Down or busy, and the owner asked for the bundled model to stand in:
-        // carry on to the local path below with a model that writes prose.
+        // carry on to the local path below with a model that writes prose
+        // (or, for a turn about an image, one that sees).
         match answer {
             Err(e) if fallback_local && e.is_llm_unavailable() => {
-                let Some(local) = state.prompt_assistant.fallback_model(model_id.as_deref()) else {
+                let Some(local) = state.prompt_assistant.stand_in(model_id.as_deref(), pick) else {
                     return Err(e);
                 };
                 log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
@@ -195,17 +205,18 @@ async fn chat_any(
             }
             other => return other,
         }
-    }
-
-    if !images.is_empty() {
-        log::info!(
-            "[prompt-assistant] the bundled local model has no vision; \
-             answering from the prompt text alone"
+    } else if pick == LocalPick::Vision {
+        model_id = Some(
+            state
+                .prompt_assistant
+                .vision_model(model_id.as_deref())
+                .ok_or_else(|| AppError::LlmError("prompt_assistant.no_vision_model".into()))?,
         );
     }
 
     let model_id =
         model_id.ok_or_else(|| AppError::LlmError("prompt_assistant.no_model".into()))?;
+    let images = crate::prompt_assistant::images_for(&model_id, images);
     let hw = tokio::task::spawn_blocking(hardware::detect)
         .await
         .map_err(|e| AppError::LlmError(e.to_string()))?;
@@ -237,7 +248,15 @@ async fn chat_any(
 
     app.emit("llm:stage", "generating").ok();
     pa.server
-        .chat(&state.http_client, port, system, &history, user, max_tokens)
+        .chat(
+            &state.http_client,
+            port,
+            system,
+            &history,
+            user,
+            max_tokens,
+            images,
+        )
         .await
 }
 
@@ -286,9 +305,14 @@ async fn run_generation(
     } else {
         mode
     };
-    // Only an external provider can see images; the bundled model would be
-    // told about pictures it never receives.
-    let images = if ext_enabled {
+    // Only an external provider or a bundled vision model can see images; a
+    // text-only model would be told about pictures it never receives.
+    let sees_images = ext_enabled
+        || model_id
+            .as_deref()
+            .and_then(catalog::entry)
+            .is_some_and(|e| e.has_vision());
+    let images = if sees_images {
         crate::prompt_assistant::vision::collect_images(state, None, image_data).await
     } else {
         Vec::new()
@@ -306,7 +330,17 @@ async fn run_generation(
         crate::prompt_assistant::history::for_purpose(&purpose, history),
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
-    let raw = chat_any(app, state, &system, &history, &user, max_tokens, &images).await?;
+    let raw = chat_any(
+        app,
+        state,
+        &system,
+        &history,
+        &user,
+        max_tokens,
+        &images,
+        LocalPick::Assistant,
+    )
+    .await?;
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
     // "blue hair" prompt). No-op for Compose and for prose families.
@@ -536,7 +570,53 @@ pub async fn call_external_llm(
         crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data).await;
     let history = history.unwrap_or_default();
     chat_any(
-        &app, &state, &system, &history, &prompt, max_tokens, &images,
+        &app,
+        &state,
+        &system,
+        &history,
+        &prompt,
+        max_tokens,
+        &images,
+        LocalPick::Assistant,
     )
     .await
+}
+
+/// Describe an interrogated image in words, as a natural-language prompt.
+///
+/// `image_token` comes from the interrogation result, which left the image in
+/// `AppState::interrogate_frames`. The external provider answers when one is
+/// set up (and must be vision-capable); otherwise an installed bundled model
+/// that sees images does, or the call fails with `no_vision_model` so the
+/// client can offer one.
+#[tauri::command]
+pub async fn describe_image(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    image_token: String,
+    length: Option<String>,
+) -> Result<String, AppError> {
+    let frame = state
+        .interrogate_frames
+        .get(&image_token)
+        .ok_or_else(|| AppError::LlmError("prompt_assistant.describe_expired".into()))?;
+    let image = frame.encode().await?;
+    let length = describe::Length::parse(length.as_deref());
+    let raw = chat_any(
+        &app,
+        &state,
+        describe::SYSTEM,
+        &[],
+        describe::instruction(length),
+        length.max_tokens(),
+        &[image],
+        LocalPick::Vision,
+    )
+    .await?;
+    if describe::saw_no_image(&raw) {
+        return Err(AppError::LlmError(
+            "prompt_assistant.provider_no_vision".into(),
+        ));
+    }
+    Ok(describe::clean(&raw))
 }

@@ -79,6 +79,14 @@ const JPEG_QUALITY: u8 = 85;
 pub fn encode_downscaled(bytes: &[u8], max_pixels: u32) -> Result<VisionImage, AppError> {
     let img = image::load_from_memory(bytes)
         .map_err(|e| AppError::LlmError(format!("Could not read the frame image: {e}")))?;
+    encode_image_downscaled(img, max_pixels)
+}
+
+/// [`encode_downscaled`] for an image that is already decoded.
+pub fn encode_image_downscaled(
+    img: image::DynamicImage,
+    max_pixels: u32,
+) -> Result<VisionImage, AppError> {
     let (w, h) = (img.width().max(1), img.height().max(1));
     let pixels = u64::from(w) * u64::from(h);
     let img = if pixels > u64::from(max_pixels) {
@@ -105,6 +113,64 @@ pub fn encode_downscaled(bytes: &[u8], max_pixels: u32) -> Result<VisionImage, A
         media_type: "image/jpeg".to_string(),
         base64: base64::engine::general_purpose::STANDARD.encode(&buf),
     })
+}
+
+/// An interrogated image, kept as it arrived so describing it later costs
+/// nothing unless someone asks.
+#[derive(Clone)]
+pub enum Frame {
+    /// Encoded file bytes (PNG, JPEG, JPEG XL, ...).
+    Bytes(std::sync::Arc<Vec<u8>>),
+    /// Pixels with no file behind them (the clipboard).
+    Image(std::sync::Arc<image::DynamicImage>),
+}
+
+impl Frame {
+    /// Downscale and encode for a vision request, off the async runtime.
+    pub async fn encode(self) -> Result<VisionImage, AppError> {
+        tokio::task::spawn_blocking(move || match self {
+            Frame::Bytes(bytes) => encode_downscaled(&bytes, VISION_MAX_PIXELS),
+            Frame::Image(img) => encode_image_downscaled((*img).clone(), VISION_MAX_PIXELS),
+        })
+        .await
+        .map_err(|e| AppError::LlmError(format!("image encode task failed: {e}")))?
+    }
+}
+
+/// How many interrogated images stay describable. Interrogate shows one
+/// result at a time; a few spare cover a second window or a quick re-run.
+const FRAME_CACHE_SLOTS: usize = 4;
+
+/// The last few interrogated images, each behind a random token that the
+/// interrogation result carries back to the client.
+///
+/// The token is the only way to reach an image, so in browser mode, where
+/// every user shares this cache, one user cannot describe another's picture
+/// without having been handed its token.
+#[derive(Default)]
+pub struct FrameCache {
+    slots: std::sync::Mutex<std::collections::VecDeque<(String, Frame)>>,
+}
+
+impl FrameCache {
+    /// Keep `frame` and return the token that reaches it, evicting the oldest.
+    pub fn insert(&self, frame: Frame) -> String {
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        if slots.len() >= FRAME_CACHE_SLOTS {
+            slots.pop_front();
+        }
+        slots.push_back((token.clone(), frame));
+        token
+    }
+
+    pub fn get(&self, token: &str) -> Option<Frame> {
+        let slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        slots
+            .iter()
+            .find(|(t, _)| t == token)
+            .map(|(_, f)| f.clone())
+    }
 }
 
 /// Ollama's native API root, derived from whatever OpenAI-compatible base URL
@@ -387,6 +453,21 @@ mod tests {
             .map(|_| b64(&png_bytes(8, 8)))
             .collect();
         assert_eq!(load_inline_images(many).await.len(), MAX_VISION_IMAGES);
+    }
+
+    #[tokio::test]
+    async fn the_frame_cache_keeps_the_newest_few_behind_tokens() {
+        let cache = FrameCache::default();
+        let first = cache.insert(Frame::Bytes(std::sync::Arc::new(png_bytes(8, 8))));
+        assert!(cache.get(&first).is_some());
+        assert!(cache.get("not-a-token").is_none());
+        let later: Vec<String> = (0..FRAME_CACHE_SLOTS)
+            .map(|_| cache.insert(Frame::Bytes(std::sync::Arc::new(png_bytes(8, 8)))))
+            .collect();
+        assert!(cache.get(&first).is_none(), "the oldest is evicted");
+        assert!(later.iter().all(|t| cache.get(t).is_some()));
+        let img = cache.get(&later[0]).unwrap().encode().await.unwrap();
+        assert_eq!(img.media_type, "image/jpeg");
     }
 
     #[tokio::test]

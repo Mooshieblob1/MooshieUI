@@ -192,6 +192,11 @@ pub struct InterrogationResult {
     pub general_tags: Vec<TagResult>,
     pub copyright_tags: Vec<TagResult>,
     pub rating_tags: Vec<TagResult>,
+    /// Reaches the interrogated image in `AppState::interrogate_frames`, so
+    /// the prompt assistant can describe it without the client sending it
+    /// again. Set by the command layer after a successful run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -688,6 +693,7 @@ impl InterrogatorState {
             general_tags,
             copyright_tags,
             rating_tags,
+            image_token: None,
         })
     }
 }

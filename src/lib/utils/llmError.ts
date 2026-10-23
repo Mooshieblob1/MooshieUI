@@ -13,6 +13,9 @@ import { locale } from "../stores/locale.svelte.js";
  */
 export function mapLlmError(msg: string): string {
   if (msg.includes("busy_generation")) return locale.t("prompt_assistant.busy_generation");
+  if (msg.includes("no_vision_model")) return locale.t("prompt_assistant.no_vision_model");
+  if (msg.includes("provider_no_vision")) return locale.t("prompt_assistant.provider_no_vision");
+  if (msg.includes("describe_expired")) return locale.t("prompt_assistant.describe_expired");
   if (msg.includes("no_model")) return locale.t("prompt_assistant.no_model");
   if (msg.includes("blocked_minor_content")) return locale.t("prompt_assistant.blocked_minor_content");
   if (isProviderRefusal(msg)) return locale.t("prompt_assistant.provider_refused");

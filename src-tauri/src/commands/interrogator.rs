@@ -6,6 +6,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::error::AppError;
 use crate::interrogator::{InterrogationResult, InterrogatorModelStatus};
+use crate::prompt_assistant::vision::Frame;
 use crate::state::AppState;
 
 /// Settings for one interrogation run: model id, resolved directory, and thresholds.
@@ -87,7 +88,9 @@ async fn run_interrogation(
 
     let app2 = app.clone();
     let interrogator = state.interrogator.clone();
-    tokio::task::spawn_blocking(move || {
+    let image_bytes = Arc::new(image_bytes);
+    let bytes = image_bytes.clone();
+    let mut result = tokio::task::spawn_blocking(move || {
         let mut guard = interrogator.blocking_write();
         // Switching models drops any cached session, so this must precede the
         // load check or a stale session would be reported as already loaded.
@@ -98,14 +101,16 @@ async fn run_interrogation(
         guard.load_session()?;
         app2.emit("interrogator:stage", "running_inference").ok();
         guard.interrogate_bytes(
-            &image_bytes,
+            &bytes,
             settings.general_threshold,
             settings.character_threshold,
             settings.artist_threshold,
         )
     })
     .await
-    .map_err(|e| AppError::InterrogatorError(format!("Inference task failed: {}", e)))?
+    .map_err(|e| AppError::InterrogatorError(format!("Inference task failed: {}", e)))??;
+    result.image_token = Some(state.interrogate_frames.insert(Frame::Bytes(image_bytes)));
+    Ok(result)
 }
 
 /// Shared helper that takes a DynamicImage directly (avoids decode round-trip).
@@ -118,7 +123,9 @@ async fn run_interrogation_from_image(
 
     let app2 = app.clone();
     let interrogator = state.interrogator.clone();
-    tokio::task::spawn_blocking(move || {
+    let img = Arc::new(img);
+    let frame = img.clone();
+    let mut result = tokio::task::spawn_blocking(move || {
         let mut guard = interrogator.blocking_write();
         guard.set_model(&settings.model_id, settings.model_dir);
         if guard.needs_load(settings.artist_threshold.is_some()) {
@@ -127,14 +134,16 @@ async fn run_interrogation_from_image(
         guard.load_session()?;
         app2.emit("interrogator:stage", "running_inference").ok();
         guard.interrogate(
-            img,
+            (*frame).clone(),
             settings.general_threshold,
             settings.character_threshold,
             settings.artist_threshold,
         )
     })
     .await
-    .map_err(|e| AppError::InterrogatorError(format!("Inference task failed: {}", e)))?
+    .map_err(|e| AppError::InterrogatorError(format!("Inference task failed: {}", e)))??;
+    result.image_token = Some(state.interrogate_frames.insert(Frame::Image(img)));
+    Ok(result)
 }
 
 /// Accept image as base64-encoded string (much smaller than JSON number array).

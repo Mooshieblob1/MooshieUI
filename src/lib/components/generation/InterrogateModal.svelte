@@ -41,6 +41,7 @@
   import { getConfig } from "../../utils/api.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import { normalizeTag, pickCandidates, type DetectTags } from "../../utils/characterDetect.js";
+  import InterrogateDescribe from "./InterrogateDescribe.svelte";
 
   interface Props {
     result: InterrogationResult | null;
@@ -523,6 +524,11 @@
             </span>
             <span class="text-xs text-neutral-500">({locale.formatPercent(ratingLabel.confidence * 100, 1)})</span>
           </div>
+        {/if}
+
+        <!-- The same image in words, for prose-prompted models -->
+        {#if result.image_token}
+          <InterrogateDescribe imageToken={result.image_token} onapplied={onclose} />
         {/if}
 
         <!-- Saved characters the prompt assistant found -->
