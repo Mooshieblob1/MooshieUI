@@ -1638,6 +1638,7 @@
     config.llm_provider = next.provider;
     config.llm_external_base_url = next.base_url;
     config.llm_external_model = next.model;
+    config.llm_fallback_models = next.fallback_models;
     config.llm_external_enabled = next.enabled;
     // Not secret, so unlike the key these do reach the snapshot and would be
     // reverted by a later autosave if they were left unmirrored.
@@ -4376,6 +4377,7 @@
                  not by this page's full-config autosave. -->
             <LlmProviderPanel
               bind:enabled={config.llm_external_enabled}
+              bind:fallbackLocal={config.llm_fallback_local}
               {autoSave}
               onstate={onProviderState}
             />

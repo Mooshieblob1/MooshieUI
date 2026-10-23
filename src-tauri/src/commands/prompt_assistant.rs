@@ -141,7 +141,16 @@ async fn chat_any(
     // every provider that has no OAuth session stored.
     providers::ensure_fresh_token(&state.http_client, &state.config).await;
 
-    let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
+    let (
+        mut model_id,
+        idle_secs,
+        ext_enabled,
+        provider,
+        ext_base,
+        ext_key,
+        ext_models,
+        fallback_local,
+    ) = {
         let cfg = state.config.read().await;
         (
             cfg.prompt_assistant_model_id.clone(),
@@ -150,19 +159,23 @@ async fn chat_any(
             cfg.llm_provider.clone(),
             cfg.llm_external_base_url.clone(),
             cfg.llm_api_key(),
-            cfg.llm_external_model.clone(),
+            crate::prompt_assistant::server::model_chain(
+                &cfg.llm_external_model,
+                &cfg.llm_fallback_models,
+            ),
+            cfg.llm_fallback_local,
         )
     };
 
     if ext_enabled {
         crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         app.emit("llm:stage", "generating").ok();
-        return crate::prompt_assistant::server::chat_provider(
+        let answer = crate::prompt_assistant::server::chat_provider_chain(
             &state.http_client,
             &provider,
             &ext_base,
             &ext_key,
-            &ext_model,
+            &ext_models,
             system,
             &history,
             user,
@@ -170,6 +183,18 @@ async fn chat_any(
             images,
         )
         .await;
+        // Down or busy, and the owner asked for the bundled model to stand in:
+        // carry on to the local path below with a model that writes prose.
+        match answer {
+            Err(e) if fallback_local && e.is_llm_unavailable() => {
+                let Some(local) = state.prompt_assistant.fallback_model(model_id.as_deref()) else {
+                    return Err(e);
+                };
+                log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
+                model_id = Some(local);
+            }
+            other => return other,
+        }
     }
 
     if !images.is_empty() {
@@ -381,6 +406,15 @@ pub async fn set_llm_model(
     model: String,
 ) -> Result<providers::LlmProviderState, AppError> {
     providers::set_model(&state.config, &model).await
+}
+
+/// Set the models tried, in order, when the configured one cannot answer.
+#[tauri::command]
+pub async fn set_llm_fallback_models(
+    state: State<'_, Arc<AppState>>,
+    models: Vec<String>,
+) -> Result<providers::LlmProviderState, AppError> {
+    providers::set_fallback_models(&state.config, &models).await
 }
 
 /// Point a self-hosted provider at its OpenAI-compatible API root.

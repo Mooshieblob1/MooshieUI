@@ -77,6 +77,12 @@ impl PromptAssistant {
             .collect()
     }
 
+    /// An installed bundled model that can answer when the external provider
+    /// cannot (see `llm_fallback_local`), or `None` when there is none.
+    pub fn fallback_model(&self, preferred: Option<&str>) -> Option<String> {
+        fallback_model_among(&self.installed_models(), preferred)
+    }
+
     /// Find the installed variant file path for a model id.
     fn installed_variant(&self, model_id: &str) -> Option<PathBuf> {
         let entry = catalog::entry(model_id)?;
@@ -277,6 +283,18 @@ async fn download_to(
 pub use catalog::{LlmCatalogEntry, LlmVariant};
 pub use hardware::{LlmGpu, LlmHardware};
 
+/// The configured local model when it writes natural language, else the first
+/// installed one that does. Tag upsamplers are never picked: the request was
+/// written for an external chat model and asks for prose they cannot write.
+fn fallback_model_among(installed: &[String], preferred: Option<&str>) -> Option<String> {
+    let writes_prose =
+        |id: &str| catalog::entry(id).is_some_and(|e| e.purpose == "natural_language");
+    preferred
+        .filter(|p| installed.iter().any(|i| i == p) && writes_prose(p))
+        .map(str::to_string)
+        .or_else(|| installed.iter().find(|i| writes_prose(i)).cloned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::PromptAssistant;
@@ -294,5 +312,43 @@ mod tests {
         ] {
             assert!(assistant.delete_model(id).is_err(), "{id:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod fallback_model_tests {
+    use super::fallback_model_among;
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_configured_prose_model_is_preferred() {
+        let installed = ids(&["qwen3-4b-instruct", "qwen25-7b-instruct"]);
+        assert_eq!(
+            fallback_model_among(&installed, Some("qwen25-7b-instruct")).as_deref(),
+            Some("qwen25-7b-instruct")
+        );
+    }
+
+    #[test]
+    fn a_tag_upsampler_is_never_the_fallback() {
+        let installed = ids(&["dantaggen-l", "qwen3-4b-instruct"]);
+        assert_eq!(
+            fallback_model_among(&installed, Some("dantaggen-l")).as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+        assert_eq!(fallback_model_among(&ids(&["dantaggen-l"]), None), None);
+    }
+
+    #[test]
+    fn a_configured_model_that_is_not_installed_is_skipped() {
+        let installed = ids(&["qwen3-4b-instruct"]);
+        assert_eq!(
+            fallback_model_among(&installed, Some("qwen25-7b-instruct")).as_deref(),
+            Some("qwen3-4b-instruct")
+        );
+        assert_eq!(fallback_model_among(&[], Some("qwen3-4b-instruct")), None);
     }
 }

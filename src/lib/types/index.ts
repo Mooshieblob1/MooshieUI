@@ -732,6 +732,14 @@ export interface AppConfig {
   llm_external_api_key_configured?: boolean;
   /** External LLM model name (e.g. gpt-4o-mini). */
   llm_external_model: string;
+  /**
+   * More models on the same provider, tried in order when the one above cannot
+   * answer. Part of the provider row: a full-config save cannot change it (use
+   * `setLlmFallbackModels`).
+   */
+  llm_fallback_models?: string[];
+  /** Answer with an installed local model when the external provider cannot. */
+  llm_fallback_local?: boolean;
   /** OAuth client id presented to xAI; empty until an operator supplies one. */
   llm_xai_client_id: string;
   /** Scope override for the xAI sign-in; empty means the backend default. */
@@ -955,6 +963,10 @@ export interface LlmProviderState {
   provider: LlmProviderId | string;
   base_url: string;
   model: string;
+  /** Tried in order when `model` times out, is rate limited or the server fails. */
+  fallback_models: string[];
+  /** An installed local model answers when the provider cannot. */
+  fallback_local: boolean;
   api_key_configured: boolean;
   /** The provider has a sign-in flow this build implements. */
   oauth: boolean;

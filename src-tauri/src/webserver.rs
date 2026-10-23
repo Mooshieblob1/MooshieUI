@@ -586,6 +586,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_provider",
     "set_llm_api_key",
     "set_llm_model",
+    "set_llm_fallback_models",
     "set_llm_base_url",
     "set_llm_xai_client",
     "connect_llm_oauth",
@@ -6153,6 +6154,21 @@ async fn dispatch_command(
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_fallback_models" => {
+            let models: Vec<String> = args["models"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let s = crate::prompt_assistant::providers::set_fallback_models(&state.config, &models)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
         "set_llm_base_url" => {
             let base_url = args["baseUrl"].as_str().unwrap_or("").to_string();
             let s = crate::prompt_assistant::providers::set_base_url(&state.config, &base_url)
@@ -6822,7 +6838,16 @@ pub async fn chat_any_headless(
     // copies it out.
     crate::prompt_assistant::providers::ensure_fresh_token(&state.http_client, &state.config).await;
 
-    let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
+    let (
+        mut model_id,
+        idle_secs,
+        ext_enabled,
+        provider,
+        ext_base,
+        ext_key,
+        ext_models,
+        fallback_local,
+    ) = {
         let cfg = state.config.read().await;
         (
             cfg.prompt_assistant_model_id.clone(),
@@ -6831,27 +6856,42 @@ pub async fn chat_any_headless(
             cfg.llm_provider.clone(),
             cfg.llm_external_base_url.clone(),
             cfg.llm_api_key(),
-            cfg.llm_external_model.clone(),
+            crate::prompt_assistant::server::model_chain(
+                &cfg.llm_external_model,
+                &cfg.llm_fallback_models,
+            ),
+            cfg.llm_fallback_local,
         )
     };
 
     if ext_enabled {
         crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         state.broadcast("llm:stage", serde_json::json!("generating"));
-        return crate::prompt_assistant::server::chat_provider(
+        let answer = crate::prompt_assistant::server::chat_provider_chain(
             &state.http_client,
             &provider,
             &ext_base,
             &ext_key,
-            &ext_model,
+            &ext_models,
             system,
             &history,
             user,
             max_tokens,
             images,
         )
-        .await
-        .map_err(|e| e.to_string());
+        .await;
+        // Same stand-in as the desktop path: down or busy, and the owner asked
+        // for the bundled model, so carry on to the local path below.
+        match answer {
+            Err(e) if fallback_local && e.is_llm_unavailable() => {
+                let Some(local) = state.prompt_assistant.fallback_model(model_id.as_deref()) else {
+                    return Err(e.to_string());
+                };
+                log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
+                model_id = Some(local);
+            }
+            other => return other.map_err(|e| e.to_string()),
+        }
     }
 
     if !images.is_empty() {

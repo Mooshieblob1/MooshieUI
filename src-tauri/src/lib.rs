@@ -755,6 +755,7 @@ pub fn run() {
             commands::prompt_assistant::set_llm_provider,
             commands::prompt_assistant::set_llm_api_key,
             commands::prompt_assistant::set_llm_model,
+            commands::prompt_assistant::set_llm_fallback_models,
             commands::prompt_assistant::set_llm_base_url,
             commands::prompt_assistant::list_external_llm_models,
             commands::prompt_assistant::connect_llm_oauth,

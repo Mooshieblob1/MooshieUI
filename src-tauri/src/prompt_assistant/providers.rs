@@ -205,6 +205,10 @@ pub struct LlmProviderState {
     pub provider: String,
     pub base_url: String,
     pub model: String,
+    /// More models on this provider, tried in order when `model` cannot answer.
+    pub fallback_models: Vec<String>,
+    /// Whether an installed bundled model answers when the provider cannot.
+    pub fallback_local: bool,
     /// Whether a key is stored. The key itself never leaves Rust.
     pub api_key_configured: bool,
     /// Whether this build can sign in to the provider without an API key.
@@ -230,6 +234,8 @@ pub fn state_of(cfg: &AppConfig) -> LlmProviderState {
         provider: cfg.llm_provider.clone(),
         base_url: cfg.llm_external_base_url.clone(),
         model: cfg.llm_external_model.clone(),
+        fallback_models: cfg.llm_fallback_models.clone(),
+        fallback_local: cfg.llm_fallback_local,
         api_key_configured: !cfg.llm_external_api_key.trim().is_empty(),
         oauth: provider(&cfg.llm_provider).is_some_and(|p| p.oauth),
         companion: super::companion::is_companion(&cfg.llm_provider),
@@ -278,6 +284,8 @@ pub async fn select(
             clear_oauth_session(cfg);
             cfg.llm_external_base_url = known.base_url.to_string();
             cfg.llm_external_model = known.default_model.to_string();
+            // Model names belong to the provider that serves them.
+            cfg.llm_fallback_models.clear();
         }
     })
     .await
@@ -361,6 +369,7 @@ pub async fn store_oauth_key(
     mutate(config, move |cfg| {
         if cfg.llm_provider != provider_id {
             cfg.llm_external_model = known.default_model.to_string();
+            cfg.llm_fallback_models.clear();
         }
         cfg.llm_provider = provider_id.to_string();
         cfg.llm_external_base_url = known.base_url.to_string();
@@ -391,6 +400,7 @@ pub async fn store_oauth_session(
     mutate(config, move |cfg| {
         if cfg.llm_provider != provider_id {
             cfg.llm_external_model = known.default_model.to_string();
+            cfg.llm_fallback_models.clear();
         }
         cfg.llm_provider = provider_id.to_string();
         cfg.llm_external_base_url = known.base_url.to_string();
@@ -607,6 +617,32 @@ pub async fn set_model(
     .await
 }
 
+/// Most fallback models kept. Each one that is down costs a full request
+/// timeout before the next is tried, so a long list only makes a failure slow.
+pub const MAX_FALLBACK_MODELS: usize = 4;
+
+/// Set the models tried, in order, when the configured one cannot answer.
+/// Blank entries, repeats and the primary model itself are dropped.
+pub async fn set_fallback_models(
+    config: &RwLock<AppConfig>,
+    models: &[String],
+) -> Result<LlmProviderState, AppError> {
+    mutate(config, |cfg| {
+        cfg.llm_fallback_models = fallback_list(&cfg.llm_external_model, models);
+    })
+    .await
+}
+
+/// The fallback models worth storing behind `primary`, capped at
+/// [`MAX_FALLBACK_MODELS`].
+fn fallback_list(primary: &str, models: &[String]) -> Vec<String> {
+    super::server::model_chain(primary, models)
+        .into_iter()
+        .skip(1)
+        .take(MAX_FALLBACK_MODELS)
+        .collect()
+}
+
 /// Point a self-hosted (`custom`) provider at its server.
 ///
 /// Refused for providers with a fixed root (the value would be ignored by
@@ -738,6 +774,33 @@ mod tests {
         // more usable than one already dead.
         assert!(needs_refresh(expires_at, expires_at - REFRESH_SKEW_SECS));
         assert!(needs_refresh(expires_at, expires_at + 1));
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+
+    #[test]
+    fn fallbacks_drop_the_primary_blanks_and_repeats_and_are_capped() {
+        let models: Vec<String> = ["main", "", "b", "b", "c", "d", "e", "f"]
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        assert_eq!(fallback_list("main", &models), ["b", "c", "d", "e"]);
+        assert!(fallback_list("main", &[]).is_empty());
+    }
+
+    #[test]
+    fn the_settings_row_reports_the_fallbacks() {
+        let cfg = AppConfig {
+            llm_fallback_models: vec!["b".into()],
+            llm_fallback_local: true,
+            ..Default::default()
+        };
+        let state = state_of(&cfg);
+        assert_eq!(state.fallback_models, ["b"]);
+        assert!(state.fallback_local);
     }
 }
 

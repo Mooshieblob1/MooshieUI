@@ -22,13 +22,16 @@
     /** `config.llm_external_enabled`. The one field the provider commands do
      *  not own, because a keyless self-hosted endpoint has no key to imply it. */
     enabled: boolean;
-    /** SettingsPage's autosave, used only by the enable toggle. */
+    /** `config.llm_fallback_local`. Not secret and not part of the provider
+     *  row, so like `enabled` it rides the full-config autosave. */
+    fallbackLocal?: boolean;
+    /** SettingsPage's autosave, used only by the two toggles. */
     autoSave: () => Promise<void>;
     /** Re-sync SettingsPage's cached config from the authoritative snapshot. */
     onstate: (state: LlmProviderState) => void;
   }
 
-  let { enabled = $bindable(), autoSave, onstate }: Props = $props();
+  let { enabled = $bindable(), fallbackLocal = $bindable(false), autoSave, onstate }: Props = $props();
 
   /** The key field holds an environment variable name, not a key. */
   let llmEnvMode = $state(false);
@@ -107,6 +110,22 @@
     } catch (e) {
       error = String(e);
     }
+  }
+
+  async function onToggleFallbackLocal(next: boolean) {
+    fallbackLocal = next;
+    error = null;
+    try {
+      await autoSave();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** Comma or line separated, as typed; Rust drops blanks, repeats and the
+   *  primary model, and caps the list. */
+  function parseModelList(value: string): string[] {
+    return value.split(/[,\n]/).map((m) => m.trim()).filter((m) => m.length > 0);
   }
 
   async function onToggleEnabled(next: boolean) {
@@ -345,6 +364,42 @@
       </datalist>
       <p class="text-[10px] text-neutral-500 mt-1">{locale.t(isCompanion ? 'settings.prompt_assistant.companion_model_hint' : 'settings.prompt_assistant.model_hint')}</p>
     </div>
+
+    <!-- Fallbacks only follow the API wire formats: a sign-in companion does
+         not report whether it was busy or refused, so nothing would trigger them. -->
+    {#if !isCompanion}
+      <div>
+        <label for="llm-fallback-models" class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.fallback_models')}</label>
+        <input
+          id="llm-fallback-models"
+          type="text"
+          value={(provider?.fallback_models ?? []).join(", ")}
+          disabled={promptAssistant.providerBusy}
+          onchange={(e) => {
+            const models = parseModelList(e.currentTarget.value);
+            run(() => promptAssistant.saveFallbackModels(models));
+          }}
+          placeholder={locale.t('settings.prompt_assistant.fallback_models_placeholder')}
+          autocomplete="off"
+          spellcheck="false"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+        />
+        <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.fallback_models_hint')}</p>
+      </div>
+
+      <label class="flex items-center justify-between gap-3 cursor-pointer">
+        <span>
+          <span class="text-xs text-neutral-300 block">{locale.t('settings.prompt_assistant.fallback_local')}</span>
+          <span class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.fallback_local_desc')}</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={fallbackLocal}
+          onchange={(e) => onToggleFallbackLocal(e.currentTarget.checked)}
+          class="accent-indigo-500 w-4 h-4 shrink-0"
+        />
+      </label>
+    {/if}
 
     {#if error}
       <p class="text-[10px] text-red-400 break-words">{error}</p>

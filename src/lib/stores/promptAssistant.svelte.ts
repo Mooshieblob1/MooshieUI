@@ -11,6 +11,7 @@ import {
   setLlmProvider,
   setLlmApiKey,
   setLlmModel,
+  setLlmFallbackModels,
   setLlmBaseUrl,
   listExternalLlmModels,
   connectLlmOauth,
@@ -299,6 +300,10 @@ class PromptAssistantStore {
 
   async saveModel(model: string): Promise<void> {
     await this.mutateProvider(() => setLlmModel(model));
+  }
+
+  async saveFallbackModels(models: string[]): Promise<void> {
+    await this.mutateProvider(() => setLlmFallbackModels(models));
   }
 
   async saveBaseUrl(baseUrl: string): Promise<void> {
