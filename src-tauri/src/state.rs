@@ -770,6 +770,9 @@ pub struct AppState {
     pub interrogator: Arc<RwLock<InterrogatorState>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub prompt_assistant: Arc<PromptAssistant>,
+    /// Interrogated images the prompt assistant can still describe in words.
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub interrogate_frames: crate::prompt_assistant::vision::FrameCache,
     /// Broadcast channel for SSE events in browser mode.
     pub event_tx: broadcast::Sender<BroadcastEvent>,
     /// Timestamp of last heartbeat from browser client.
@@ -863,6 +866,8 @@ impl AppState {
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             #[cfg(any(feature = "desktop", feature = "server"))]
             prompt_assistant: Arc::new(PromptAssistant::new()),
+            #[cfg(any(feature = "desktop", feature = "server"))]
+            interrogate_frames: Default::default(),
             event_tx,
             last_heartbeat: Mutex::new(std::time::Instant::now()),
             #[cfg(feature = "desktop")]

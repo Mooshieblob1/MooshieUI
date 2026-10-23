@@ -17,6 +17,7 @@ import {
   connectLlmOauth,
   setLlmXaiClient,
   callExternalLlm,
+  describeImage,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
@@ -172,9 +173,28 @@ class PromptAssistantStore {
    */
   deviceCode = $state<LlmDeviceCode | null>(null);
 
-  /** True once at least one model is installed. */
+  /** True once at least one model that can serve as the assistant is
+   *  installed. A captioner only describes images, so it does not count. */
   get hasInstalledModel(): boolean {
-    return !!this.status && this.status.installed_models.length > 0;
+    return this.assistantModels.length > 0;
+  }
+
+  /** Installed models that can serve as the assistant (not captioners). */
+  get assistantModels(): string[] {
+    return (this.status?.installed_models ?? []).filter(
+      (id) => this.catalog.find((e) => e.id === id)?.purpose !== "captioner",
+    );
+  }
+
+  /** Catalog models that can see images, for Describe in Interrogate. */
+  get visionCatalog(): LlmCatalogEntry[] {
+    return this.catalog.filter((e) => e.variants.length > 0 && e.variants.every((v) => !!v.mmproj));
+  }
+
+  /** Whether a bundled model that sees images is installed. */
+  get hasVisionModel(): boolean {
+    const installed = this.status?.installed_models ?? [];
+    return this.visionCatalog.some((e) => installed.includes(e.id));
   }
 
   /** True when the assistant can run: a local model is installed, or an external
@@ -197,7 +217,7 @@ class PromptAssistantStore {
       this.recommendedModelId = hw.recommended_model_id;
       // Pre-select: installed model > recommended.
       this.selectedModelId =
-        st.installed_models[0] ?? hw.recommended_model_id ?? null;
+        this.assistantModels[0] ?? hw.recommended_model_id ?? null;
     } catch (e) {
       console.warn("[promptAssistant] init failed", e);
     }
@@ -228,7 +248,7 @@ class PromptAssistantStore {
     return chosen?.quant ? `gguf:${chosen.quant}` : "gguf:Q4_K_M";
   }
 
-  async download(modelId: string, variantKey: string): Promise<void> {
+  async download(modelId: string, variantKey: string, select = true): Promise<void> {
     this.isDownloading = true;
     this.downloadProgress = null;
     const unlisten = await ipcListen("llm:download_progress", (event: any) => {
@@ -236,7 +256,7 @@ class PromptAssistantStore {
       this.downloadProgress = p.done ? null : p;
     });
     try {
-      await downloadLlmModel(modelId, variantKey);
+      await downloadLlmModel(modelId, variantKey, select);
       await this.refreshStatus();
     } finally {
       unlisten();
@@ -370,6 +390,17 @@ class PromptAssistantStore {
     } finally {
       unlisten();
       this.stage = null;
+    }
+  }
+
+  /** Describe an interrogated image in words (see `describeImage`). */
+  async describe(imageToken: string, length: "short" | "detailed"): Promise<string> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(() => describeImage(imageToken, length));
+    } finally {
+      this.isGenerating = false;
     }
   }
 

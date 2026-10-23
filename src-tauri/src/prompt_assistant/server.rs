@@ -332,6 +332,7 @@ impl LlamaServer {
         &self,
         client: &reqwest::Client,
         model_path: &Path,
+        mmproj_path: Option<&Path>,
         model_id: &str,
         n_gpu_layers: i32,
     ) -> Result<u16, AppError> {
@@ -372,7 +373,16 @@ impl LlamaServer {
             .arg(n_gpu_layers.to_string())
             .arg("--no-webui")
             .arg("-c")
-            .arg(LOCAL_CONTEXT_TOKENS.to_string())
+            .arg(LOCAL_CONTEXT_TOKENS.to_string());
+        if let Some(mmproj) = mmproj_path {
+            cmd.arg("--mmproj").arg(mmproj);
+            // On CPU the projector follows the weights, or a busy GPU this
+            // was kept off would still get the vision encoder.
+            if n_gpu_layers == 0 {
+                cmd.arg("--no-mmproj-offload");
+            }
+        }
+        cmd
             // Passed through the environment rather than `--api-key`: another
             // local account can read a process's command line, but not its
             // environment. llama-server reads `LLAMA_API_KEY` as `--api-key`.
@@ -442,6 +452,8 @@ impl LlamaServer {
     }
 
     /// POST a single chat completion and return the assistant message content.
+    // The external `chat_*` functions take the same turn fields.
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat(
         &self,
         client: &reqwest::Client,
@@ -450,6 +462,7 @@ impl LlamaServer {
         history: &[super::history::ChatMessage],
         user: &str,
         max_tokens: u32,
+        images: &[super::vision::VisionImage],
     ) -> Result<String, AppError> {
         // Mark a request in flight so the idle watchdog leaves the server alone
         // until generation finishes. CPU inference of a 7B model routinely runs
@@ -472,8 +485,9 @@ impl LlamaServer {
         let api_key = self.api_key.lock().unwrap().clone();
         self.touch();
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+        // Callers pass images only to a model loaded with its projector.
         let body = json!({
-            "messages": super::history::openai_messages(system, history, json!(user)),
+            "messages": super::history::openai_messages(system, history, openai_user_content(user, images)),
             "temperature": 0.7,
             "max_tokens": max_tokens,
             "stream": false
@@ -482,7 +496,7 @@ impl LlamaServer {
             .post(&url)
             .bearer_auth(&api_key)
             .json(&body)
-            .timeout(Duration::from_secs(120))
+            .timeout(chat_timeout(!images.is_empty()))
             .send()
             .await
         {
@@ -696,25 +710,7 @@ pub async fn chat_external(
     max_tokens: u32,
     images: &[super::vision::VisionImage],
 ) -> Result<String, AppError> {
-    // A bare string when there is nothing to look at: the array form is legal
-    // either way, but some OpenAI-compatible servers only accept the string.
-    let user_content = if images.is_empty() {
-        json!(user)
-    } else {
-        // Text first, then the images in the order the caller listed them --
-        // the user turn refers to them by position ("image 2"), so the order
-        // here is part of the contract rather than an implementation detail.
-        let mut parts = vec![json!({ "type": "text", "text": user })];
-        parts.extend(images.iter().map(|img| {
-            json!({
-                "type": "image_url",
-                "image_url": {
-                    "url": format!("data:{};base64,{}", img.media_type, img.base64)
-                }
-            })
-        }));
-        json!(parts)
-    };
+    let user_content = openai_user_content(user, images);
     let body = json!({
         "model": model,
         "messages": super::history::openai_messages(system, history, user_content),
@@ -750,6 +746,29 @@ pub async fn chat_external(
     }
     let v = bounded_json(resp, RESPONSE_LIMIT, "external LLM response").await?;
     completion_content(&v, "The external model")
+}
+
+/// The user turn of an OpenAI-style chat request, with any images inlined.
+///
+/// A bare string when there is nothing to look at: the array form is legal
+/// either way, but some OpenAI-compatible servers only accept the string.
+fn openai_user_content(user: &str, images: &[super::vision::VisionImage]) -> serde_json::Value {
+    if images.is_empty() {
+        return json!(user);
+    }
+    // Text first, then the images in the order the caller listed them --
+    // the user turn refers to them by position ("image 2"), so the order
+    // here is part of the contract rather than an implementation detail.
+    let mut parts = vec![json!({ "type": "text", "text": user })];
+    parts.extend(images.iter().map(|img| {
+        json!({
+            "type": "image_url",
+            "image_url": {
+                "url": format!("data:{};base64,{}", img.media_type, img.base64)
+            }
+        })
+    }));
+    json!(parts)
 }
 
 /// Pull the assistant text out of a chat completion, naming why it can be missing.
@@ -1576,7 +1595,7 @@ mod hardening_tests {
         // Nothing is listening and no port is published: the check must fail
         // before any connection is attempted, and release its in-flight slot.
         let err = server
-            .chat(&reqwest::Client::new(), 9, "s", &[], "u", 16)
+            .chat(&reqwest::Client::new(), 9, "s", &[], "u", 16, &[])
             .await
             .unwrap_err()
             .to_string();

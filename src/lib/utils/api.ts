@@ -1492,8 +1492,9 @@ export async function llmStatus(): Promise<LlmStatus> {
   return ipcInvoke("llm_status");
 }
 
-export async function downloadLlmModel(id: string, variant: string): Promise<void> {
-  return ipcInvoke("download_llm_model", { id, variant });
+/** `select: false` installs without making it the prompt assistant model. */
+export async function downloadLlmModel(id: string, variant: string, select = true): Promise<void> {
+  return ipcInvoke("download_llm_model", { id, variant, select });
 }
 
 export async function deleteLlmModel(id: string): Promise<void> {
@@ -1515,7 +1516,7 @@ export async function unloadLlm(): Promise<void> {
  * the SSE event channel, which keep-alives and isn't bound by the proxy timeout.
  */
 async function runPromptAssistant(
-  command: "enhance_prompt" | "compose_prompt" | "call_external_llm",
+  command: "enhance_prompt" | "compose_prompt" | "call_external_llm" | "describe_image",
   args: Record<string, unknown>,
 ): Promise<string> {
   if (!isBrowserMode) {
@@ -1577,6 +1578,15 @@ async function runPromptAssistant(
         ),
       );
   });
+}
+
+/**
+ * Describe an interrogated image in words, as a natural-language prompt.
+ * The external provider answers when one is set up, else an installed bundled
+ * model that sees images; with neither, it fails with `no_vision_model`.
+ */
+export async function describeImage(imageToken: string, length: "short" | "detailed"): Promise<string> {
+  return runPromptAssistant("describe_image", { imageToken, length });
 }
 
 /**

@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod companion;
+pub mod describe;
 pub mod grounding;
 pub mod hardware;
 pub mod history;
@@ -15,6 +16,15 @@ use std::sync::Arc;
 use crate::config;
 use crate::error::AppError;
 use server::LlamaServer;
+
+/// Which bundled model answers a turn that does not go to an external provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalPick {
+    /// The prompt assistant model the owner set up.
+    Assistant,
+    /// A model that can see the turn's image ([`PromptAssistant::vision_model`]).
+    Vision,
+}
 
 /// Top-level prompt-assistant state held in AppState.
 pub struct PromptAssistant {
@@ -65,7 +75,16 @@ impl PromptAssistant {
         entry
             .variants
             .iter()
-            .any(|v| self.model_file_path(model_id, &v.file).exists())
+            .any(|v| self.variant_installed(model_id, v))
+    }
+
+    /// Both files of a variant are on disk: the weights, and the projector
+    /// when the variant has one (a half-finished download has only one).
+    fn variant_installed(&self, model_id: &str, v: &LlmVariant) -> bool {
+        self.model_file_path(model_id, &v.file).exists()
+            && v.mmproj
+                .as_ref()
+                .is_none_or(|m| self.model_file_path(model_id, m).exists())
     }
 
     /// Catalog model ids that are installed.
@@ -83,16 +102,45 @@ impl PromptAssistant {
         fallback_model_among(&self.installed_models(), preferred)
     }
 
-    /// Find the installed variant file path for a model id.
-    fn installed_variant(&self, model_id: &str) -> Option<PathBuf> {
-        let entry = catalog::entry(model_id)?;
-        for v in &entry.variants {
-            let p = self.model_file_path(model_id, &v.file);
-            if p.exists() {
-                return Some(p);
-            }
+    /// The first installed model that can serve as the prompt assistant, for
+    /// installs whose config names none. A captioner only describes images.
+    pub fn default_assistant_model(&self) -> Option<String> {
+        self.installed_models()
+            .into_iter()
+            .find(|id| catalog::entry(id).is_some_and(|e| e.purpose != "captioner"))
+    }
+
+    /// The bundled model that stands in for an unavailable external provider
+    /// (`llm_fallback_local`), chosen for what the turn needs.
+    pub fn stand_in(&self, configured: Option<&str>, pick: LocalPick) -> Option<String> {
+        match pick {
+            LocalPick::Assistant => self.fallback_model(configured),
+            LocalPick::Vision => self.vision_model(configured),
         }
-        None
+    }
+
+    /// An installed model that can describe an image, or `None`. A captioner
+    /// is preferred, since describing images is all it was trained for; then
+    /// `preferred` (the prompt assistant model) when it sees images; then any
+    /// other installed model that does.
+    pub fn vision_model(&self, preferred: Option<&str>) -> Option<String> {
+        vision_model_among(&self.installed_models(), preferred)
+    }
+
+    /// The installed variant of a model id: its weights, and its projector
+    /// when it has one.
+    fn installed_variant(&self, model_id: &str) -> Option<(PathBuf, Option<PathBuf>)> {
+        let entry = catalog::entry(model_id)?;
+        entry
+            .variants
+            .iter()
+            .find(|v| self.variant_installed(model_id, v))
+            .map(|v| {
+                (
+                    self.model_file_path(model_id, &v.file),
+                    v.mmproj.as_ref().map(|m| self.model_file_path(model_id, m)),
+                )
+            })
     }
 
     /// Download a specific variant (by format key: "gguf:Q4_K_M") of a model.
@@ -111,19 +159,26 @@ impl PromptAssistant {
             .find(|v| variant_matches(v, variant_key))
             .ok_or_else(|| AppError::LlmError("Unknown variant".into()))?;
 
-        let dest = self.model_file_path(model_id, &variant.file);
-        if dest.exists() {
-            return Ok(());
+        // The projector first: it is the small file, so a vision download that
+        // fails early fails before the long one, and the weights finishing
+        // last keeps "both files present" meaning "download complete".
+        let files = variant.mmproj.iter().chain(std::iter::once(&variant.file));
+        for file in files {
+            let dest = self.model_file_path(model_id, file);
+            if dest.exists() {
+                continue;
+            }
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            // HuggingFace resolve URL (mirrors interrogator's HF_BASE_URL pattern).
+            let url = format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                variant.repo, file
+            );
+            download_to(client, &url, &dest, file, progress).await?;
         }
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // HuggingFace resolve URL (mirrors interrogator's HF_BASE_URL pattern).
-        let url = format!(
-            "https://huggingface.co/{}/resolve/main/{}",
-            variant.repo, variant.file
-        );
-        download_to(client, &url, &dest, &variant.file, progress).await
+        Ok(())
     }
 
     /// Delete all installed files for a model id.
@@ -152,7 +207,7 @@ impl PromptAssistant {
         idle_timeout_secs: u64,
         progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<u16, AppError> {
-        let model_path = self
+        let (model_path, mmproj_path) = self
             .installed_variant(model_id)
             .ok_or_else(|| AppError::LlmError("Model not installed".into()))?;
 
@@ -171,7 +226,7 @@ impl PromptAssistant {
             .and_then(|e| {
                 e.variants
                     .into_iter()
-                    .find(|v| self.model_file_path(model_id, &v.file).exists())
+                    .find(|v| self.variant_installed(model_id, v))
             })
             .map(|v| v.vram_mb)
             .unwrap_or(u64::MAX)
@@ -206,7 +261,13 @@ impl PromptAssistant {
 
         let port = self
             .server
-            .ensure_running(client, &model_path, model_id, n_gpu_layers)
+            .ensure_running(
+                client,
+                &model_path,
+                mmproj_path.as_deref(),
+                model_id,
+                n_gpu_layers,
+            )
             .await?;
         server::start_idle_watchdog(self.server.clone(), idle_timeout_secs);
         Ok(port)
@@ -293,6 +354,37 @@ fn fallback_model_among(installed: &[String], preferred: Option<&str>) -> Option
         .filter(|p| installed.iter().any(|i| i == p) && writes_prose(p))
         .map(str::to_string)
         .or_else(|| installed.iter().find(|i| writes_prose(i)).cloned())
+}
+
+/// The images a bundled model is sent: all of them when it was loaded with a
+/// projector, none when it is text-only (which answers from the text alone).
+pub fn images_for<'a>(
+    model_id: &str,
+    images: &'a [vision::VisionImage],
+) -> &'a [vision::VisionImage] {
+    if images.is_empty() || catalog::entry(model_id).is_some_and(|e| e.has_vision()) {
+        return images;
+    }
+    log::info!(
+        "[prompt-assistant] the bundled model {model_id} has no vision; \
+         answering from the prompt text alone"
+    );
+    &[]
+}
+
+/// See [`PromptAssistant::vision_model`].
+fn vision_model_among(installed: &[String], preferred: Option<&str>) -> Option<String> {
+    let entries: Vec<_> = installed
+        .iter()
+        .filter_map(|id| catalog::entry(id))
+        .filter(|e| e.has_vision())
+        .collect();
+    entries
+        .iter()
+        .find(|e| e.purpose == "captioner")
+        .or_else(|| entries.iter().find(|e| Some(e.id.as_str()) == preferred))
+        .or_else(|| entries.first())
+        .map(|e| e.id.clone())
 }
 
 #[cfg(test)]

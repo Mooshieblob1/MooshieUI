@@ -8,7 +8,8 @@
     $props();
 
   const hw = $derived(promptAssistant.hardware);
-  const catalog = $derived(promptAssistant.catalog);
+  // A captioner only describes images; Interrogate offers it, not this setup.
+  const catalog = $derived(promptAssistant.catalog.filter((e) => e.purpose !== "captioner"));
 
   let selectedId = $state(promptAssistant.selectedModelId ?? "");
   let selectedVariant = $state("");

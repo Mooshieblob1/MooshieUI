@@ -5827,7 +5827,13 @@ async fn dispatch_command(
                     }
                     _ => unreachable!(),
                 };
-                let result = run_interrogation_headless(&state, image_bytes).await?;
+                let image_bytes = Arc::new(image_bytes);
+                let mut result = run_interrogation_headless(&state, image_bytes.clone()).await?;
+                result.image_token = Some(
+                    state
+                        .interrogate_frames
+                        .insert(crate::prompt_assistant::vision::Frame::Bytes(image_bytes)),
+                );
                 serde_json::to_value(result).map_err(|e| e.to_string())
             }
         }
@@ -6091,7 +6097,13 @@ async fn dispatch_command(
                 .download_model(&state.http_client, &id, &variant, &progress)
                 .await
                 .map_err(|e| e.to_string())?;
-            // Persist selected model id + mark setup done.
+            // Persist selected model id + mark setup done, under the same rule
+            // as the desktop command: never a captioner, and not when the
+            // download was only to describe images.
+            let select = args["select"].as_bool().unwrap_or(true);
+            if select
+                && crate::prompt_assistant::catalog::entry(&id)
+                    .is_some_and(|e| e.purpose != "captioner")
             {
                 let mut cfg = state.config.write().await;
                 cfg.prompt_assistant_model_id = Some(id.clone());
@@ -6223,6 +6235,71 @@ async fn dispatch_command(
             serde_json::to_value(models).map_err(|e| e.to_string())
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
+        "describe_image" => {
+            use crate::prompt_assistant::describe;
+            let token = args["imageToken"].as_str().unwrap_or("").to_string();
+            let frame = state
+                .interrogate_frames
+                .get(&token)
+                .ok_or_else(|| "prompt_assistant.describe_expired".to_string())?;
+            let image = frame.encode().await.map_err(|e| e.to_string())?;
+            let length = describe::Length::parse(args["length"].as_str());
+            let run = {
+                let state = state.clone();
+                move || async move {
+                    chat_any_headless(
+                        &state,
+                        describe::SYSTEM,
+                        &[],
+                        describe::instruction(length),
+                        length.max_tokens(),
+                        &[image],
+                        crate::prompt_assistant::LocalPick::Vision,
+                    )
+                    .await
+                    .and_then(|raw| {
+                        if describe::saw_no_image(&raw) {
+                            Err("prompt_assistant.provider_no_vision".to_string())
+                        } else {
+                            Ok(describe::clean(&raw))
+                        }
+                    })
+                }
+            };
+            match args["requestId"].as_str() {
+                // Same SSE hand-off as `call_external_llm`: loading a vision
+                // model and reading the image can outlast the proxy's limit.
+                Some(request_id) => {
+                    let request_id = request_id.to_string();
+                    let owner = username.map(|s| s.to_string());
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let (event, payload) = match run().await {
+                            Ok(text) => (
+                                "llm:result",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "result": text,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                            Err(e) => (
+                                "llm:error",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "error": e,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                        };
+                        state.broadcast(event, payload);
+                    });
+                    Ok(serde_json::json!({ "queued": true }))
+                }
+                None => Ok(serde_json::Value::String(run().await?)),
+            }
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
         "call_external_llm" => {
             let system = args["system"].as_str().unwrap_or("").to_string();
             let prompt = args["prompt"].as_str().unwrap_or("").to_string();
@@ -6256,7 +6333,13 @@ async fn dispatch_command(
                     let state = state.clone();
                     tokio::spawn(async move {
                         let (event, payload) = match chat_any_headless(
-                            &state, &system, &history, &prompt, max_tokens, &images,
+                            &state,
+                            &system,
+                            &history,
+                            &prompt,
+                            max_tokens,
+                            &images,
+                            crate::prompt_assistant::LocalPick::Assistant,
                         )
                         .await
                         {
@@ -6282,9 +6365,16 @@ async fn dispatch_command(
                     Ok(serde_json::json!({ "queued": true }))
                 }
                 None => {
-                    let text =
-                        chat_any_headless(&state, &system, &history, &prompt, max_tokens, &images)
-                            .await?;
+                    let text = chat_any_headless(
+                        &state,
+                        &system,
+                        &history,
+                        &prompt,
+                        max_tokens,
+                        &images,
+                        crate::prompt_assistant::LocalPick::Assistant,
+                    )
+                    .await?;
                     Ok(serde_json::Value::String(text))
                 }
             }
@@ -6730,7 +6820,7 @@ async fn dispatch_command(
 #[cfg(any(feature = "desktop", feature = "server"))]
 async fn run_interrogation_headless(
     state: &Arc<AppState>,
-    image_bytes: Vec<u8>,
+    image_bytes: Arc<Vec<u8>>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
     let (model_id, custom_models, general_threshold, character_threshold, artist_threshold) = {
         let config = state.config.read().await;
@@ -6829,6 +6919,7 @@ pub async fn chat_any_headless(
     user: &str,
     max_tokens: u32,
     images: &[crate::prompt_assistant::vision::VisionImage],
+    pick: crate::prompt_assistant::LocalPick,
 ) -> Result<String, String> {
     use crate::prompt_assistant::hardware;
     let history = crate::prompt_assistant::history::sanitize(history);
@@ -6884,7 +6975,7 @@ pub async fn chat_any_headless(
         // for the bundled model, so carry on to the local path below.
         match answer {
             Err(e) if fallback_local && e.is_llm_unavailable() => {
-                let Some(local) = state.prompt_assistant.fallback_model(model_id.as_deref()) else {
+                let Some(local) = state.prompt_assistant.stand_in(model_id.as_deref(), pick) else {
                     return Err(e.to_string());
                 };
                 log::warn!("[prompt-assistant] external LLM unavailable ({e}); answering with local model {local}");
@@ -6892,12 +6983,12 @@ pub async fn chat_any_headless(
             }
             other => return other.map_err(|e| e.to_string()),
         }
-    }
-
-    if !images.is_empty() {
-        log::info!(
-            "[prompt-assistant] the bundled local model has no vision; \
-             answering from the prompt text alone"
+    } else if pick == crate::prompt_assistant::LocalPick::Vision {
+        model_id = Some(
+            state
+                .prompt_assistant
+                .vision_model(model_id.as_deref())
+                .ok_or_else(|| "prompt_assistant.no_vision_model".to_string())?,
         );
     }
 
@@ -6910,9 +7001,7 @@ pub async fn chat_any_headless(
         Some(id) => id,
         None => state
             .prompt_assistant
-            .installed_models()
-            .into_iter()
-            .next()
+            .default_assistant_model()
             .ok_or_else(|| "prompt_assistant.no_model".to_string())?,
     };
     let hw = tokio::task::spawn_blocking(hardware::detect)
@@ -6937,10 +7026,19 @@ pub async fn chat_any_headless(
         .await
         .map_err(|e| e.to_string())?;
     state.broadcast("llm:stage", serde_json::json!("generating"));
+    let images = crate::prompt_assistant::images_for(&model_id, images);
     state
         .prompt_assistant
         .server
-        .chat(&state.http_client, port, system, &history, user, max_tokens)
+        .chat(
+            &state.http_client,
+            port,
+            system,
+            &history,
+            user,
+            max_tokens,
+            images,
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -6978,13 +7076,19 @@ pub async fn run_prompt_assistant_headless(
             cfg.llm_external_enabled,
         )
     };
+    // Images go to an external provider or a bundled model that can see them.
+    let sees_images = ext_enabled
+        || model_id
+            .as_deref()
+            .and_then(crate::prompt_assistant::catalog::entry)
+            .is_some_and(|e| e.has_vision());
     // A purpose-built tag upsampler is always tag-only regardless of family.
     let purpose = if ext_enabled {
         "natural_language".to_string()
     } else {
         let resolved = match model_id {
             Some(id) => Some(id),
-            None => state.prompt_assistant.installed_models().into_iter().next(),
+            None => state.prompt_assistant.default_assistant_model(),
         };
         resolved
             .and_then(|id| crate::prompt_assistant::catalog::entry(&id))
@@ -6998,7 +7102,7 @@ pub async fn run_prompt_assistant_headless(
     } else {
         mode
     };
-    let images = if ext_enabled {
+    let images = if sees_images {
         crate::prompt_assistant::vision::collect_images(state, None, image_data).await
     } else {
         Vec::new()
@@ -7018,7 +7122,16 @@ pub async fn run_prompt_assistant_headless(
         crate::prompt_assistant::history::for_purpose(&purpose, history),
     );
     let system = crate::prompt_assistant::history::with_session_clause(&system, &history);
-    let raw = chat_any_headless(state, &system, &history, &user, max_tokens, &images).await?;
+    let raw = chat_any_headless(
+        state,
+        &system,
+        &history,
+        &user,
+        max_tokens,
+        &images,
+        crate::prompt_assistant::LocalPick::Assistant,
+    )
+    .await?;
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose and for prose families. The desktop path
     // runs this too; omitting it here made browser Enhance silently drop user tags.
