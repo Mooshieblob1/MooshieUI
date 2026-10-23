@@ -646,11 +646,29 @@ async fn send_external_chat(
         req = req.bearer_auth(api_key);
     }
     req.send().await.map_err(|e| {
-        AppError::LlmError(format!(
+        AppError::LlmUnavailable(format!(
             "External LLM request failed: {}",
             describe_request_error(&e, timeout)
         ))
     })
+}
+
+/// Whether an HTTP status means the provider is down or busy rather than that
+/// it refused this request: 408 and 429, any 5xx, and Cloudflare's 52x and
+/// Anthropic's 529 overload (both in the 5xx range). A 4xx refusal (bad key,
+/// unknown model, a policy block) is the same on the next model, so it ends
+/// the fallback chain instead of being retried.
+fn status_is_unavailable(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 429) || status.is_server_error()
+}
+
+/// The error for a non-success status, typed by [`status_is_unavailable`].
+fn status_error(status: reqwest::StatusCode, message: String) -> AppError {
+    if status_is_unavailable(status) {
+        AppError::LlmUnavailable(message)
+    } else {
+        AppError::LlmError(message)
+    }
 }
 
 /// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
@@ -725,9 +743,10 @@ pub async fn chat_external(
         } else {
             ""
         };
-        return Err(AppError::LlmError(format!(
-            "External LLM returned {status}{detail}{hint}"
-        )));
+        return Err(status_error(
+            status,
+            format!("External LLM returned {status}{detail}{hint}"),
+        ));
     }
     let v = bounded_json(resp, RESPONSE_LIMIT, "external LLM response").await?;
     completion_content(&v, "The external model")
@@ -975,7 +994,7 @@ pub async fn chat_anthropic(
         .send()
         .await
         .map_err(|e| {
-            AppError::LlmError(format!(
+            AppError::LlmUnavailable(format!(
                 "Anthropic request failed: {}",
                 describe_request_error(&e, timeout)
             ))
@@ -983,9 +1002,10 @@ pub async fn chat_anthropic(
     if !resp.status().is_success() {
         let status = resp.status();
         let detail = error_detail(resp).await;
-        return Err(AppError::LlmError(format!(
-            "Anthropic returned {status}{detail}"
-        )));
+        return Err(status_error(
+            status,
+            format!("Anthropic returned {status}{detail}"),
+        ));
     }
     let v = bounded_json(resp, RESPONSE_LIMIT, "Anthropic response").await?;
     anthropic_text(&v)
@@ -1075,6 +1095,69 @@ pub async fn chat_provider(
             .await
         }
     }
+}
+
+/// The models to try in order: the configured one, then each fallback that is
+/// not blank and not already listed.
+pub fn model_chain(primary: &str, fallbacks: &[String]) -> Vec<String> {
+    let mut chain = vec![primary.trim().to_string()];
+    for m in fallbacks {
+        let m = m.trim();
+        if !m.is_empty() && !chain.iter().any(|c| c == m) {
+            chain.push(m.to_string());
+        }
+    }
+    chain
+}
+
+/// [`chat_provider`] down a chain of models on the same provider.
+///
+/// The next model is tried only when the previous one was unavailable (see
+/// [`AppError::is_llm_unavailable`]); any other failure is returned at once,
+/// since a refused request would be refused again. When every model is
+/// unavailable the last error is returned, still typed as unavailable, so the
+/// caller can fall back further to the bundled local model.
+// Same argument list as `chat_provider`, with the model list in place of one model.
+#[allow(clippy::too_many_arguments)]
+pub async fn chat_provider_chain(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base_url: &str,
+    api_key: &str,
+    models: &[String],
+    system: &str,
+    history: &[super::history::ChatMessage],
+    user: &str,
+    max_tokens: u32,
+    images: &[super::vision::VisionImage],
+) -> Result<String, AppError> {
+    let mut last = None;
+    for (i, model) in models.iter().enumerate() {
+        if i > 0 {
+            log::warn!(
+                "[prompt-assistant] {} unavailable, trying fallback model {model}",
+                models[i - 1]
+            );
+        }
+        match chat_provider(
+            client,
+            provider_id,
+            base_url,
+            api_key,
+            model,
+            system,
+            history,
+            user,
+            max_tokens,
+            images,
+        )
+        .await
+        {
+            Err(e) if e.is_llm_unavailable() => last = Some(e),
+            other => return other,
+        }
+    }
+    Err(last.unwrap_or_else(|| AppError::LlmError("No external LLM model is set.".into())))
 }
 
 /// List the model ids a provider exposes.
@@ -1605,5 +1688,107 @@ mod hardening_tests {
         .to_string();
         assert!(err.contains("token budget"), "{err}");
         assert!(anthropic_text(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn only_busy_or_failing_statuses_are_unavailable() {
+        for code in [408u16, 429, 500, 502, 503, 504, 524, 529] {
+            let status = reqwest::StatusCode::from_u16(code).unwrap();
+            assert!(status_is_unavailable(status), "{code}");
+        }
+        for code in [400u16, 401, 403, 404, 422] {
+            let status = reqwest::StatusCode::from_u16(code).unwrap();
+            assert!(!status_is_unavailable(status), "{code}");
+        }
+    }
+
+    #[test]
+    fn the_chain_starts_with_the_primary_and_skips_blanks_and_repeats() {
+        let fallbacks = vec![
+            " b ".to_string(),
+            String::new(),
+            "a".to_string(),
+            "c".to_string(),
+            "b".to_string(),
+        ];
+        assert_eq!(model_chain(" a ", &fallbacks), ["a", "b", "c"]);
+        assert_eq!(model_chain("a", &[]), ["a"]);
+    }
+
+    /// An OpenAI-compatible server that answers per model: `busy` with 429,
+    /// `refuses` with 400, anything else with its own name.
+    async fn chain_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(
+                |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    use axum::response::IntoResponse;
+                    let model = body["model"].as_str().unwrap_or("").to_string();
+                    match model.as_str() {
+                        "busy" => {
+                            (axum::http::StatusCode::TOO_MANY_REQUESTS, "slow down").into_response()
+                        }
+                        "refuses" => (axum::http::StatusCode::BAD_REQUEST, "no").into_response(),
+                        _ => axum::Json(serde_json::json!({
+                            "choices": [{ "message": { "content": model } }]
+                        }))
+                        .into_response(),
+                    }
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{address}/v1")
+    }
+
+    async fn run_chain(base: &str, models: &[&str]) -> Result<String, AppError> {
+        let models: Vec<String> = models.iter().map(|m| m.to_string()).collect();
+        chat_provider_chain(
+            &reqwest::Client::new(),
+            "custom",
+            base,
+            "",
+            &models,
+            "s",
+            &[],
+            "u",
+            16,
+            &[],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_busy_model_hands_over_to_the_next_one() {
+        let base = chain_server().await;
+        assert_eq!(run_chain(&base, &["busy", "spare"]).await.unwrap(), "spare");
+        assert_eq!(
+            run_chain(&base, &["first", "spare"]).await.unwrap(),
+            "first"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_ends_the_chain() {
+        let base = chain_server().await;
+        let err = run_chain(&base, &["refuses", "spare"]).await.unwrap_err();
+        assert!(!err.is_llm_unavailable(), "{err}");
+        assert!(err.to_string().contains("400"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_exhausted_chain_stays_unavailable() {
+        let base = chain_server().await;
+        let err = run_chain(&base, &["busy", "busy"]).await.unwrap_err();
+        assert!(err.is_llm_unavailable(), "{err}");
+        // Nothing listening at all counts as unavailable too.
+        let err = run_chain("http://127.0.0.1:9/v1", &["any"])
+            .await
+            .unwrap_err();
+        assert!(err.is_llm_unavailable(), "{err}");
     }
 }

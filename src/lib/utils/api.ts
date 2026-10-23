@@ -1637,6 +1637,11 @@ export async function setLlmModel(model: string): Promise<LlmProviderState> {
   return ipcInvoke("set_llm_model", { model });
 }
 
+/** Models tried, in order, when the configured one cannot answer. */
+export async function setLlmFallbackModels(models: string[]): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_fallback_models", { models });
+}
+
 /** Only meaningful for the self-hosted "custom" provider; the rest pin their own. */
 export async function setLlmBaseUrl(baseUrl: string): Promise<LlmProviderState> {
   return ipcInvoke("set_llm_base_url", { baseUrl });

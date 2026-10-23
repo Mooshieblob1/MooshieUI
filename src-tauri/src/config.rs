@@ -228,6 +228,16 @@ pub struct AppConfig {
     /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
     #[serde(default)]
     pub llm_external_model: String,
+    /// More models on the same provider, tried in order when the model above
+    /// cannot answer right now (no response, timeout, rate limit, server
+    /// error). Part of the provider row: set by `set_llm_fallback_models` and
+    /// cleared on a provider switch, since model names do not carry over.
+    #[serde(default)]
+    pub llm_fallback_models: Vec<String>,
+    /// When the external provider (and every fallback model) cannot answer,
+    /// answer with an installed bundled natural-language model instead.
+    #[serde(default)]
+    pub llm_fallback_local: bool,
     /// Refresh token for providers whose sign-in issues a *short-lived* access
     /// token (Nous Portal). Empty for every other provider: an API key does not
     /// expire, and OpenRouter's PKCE flow issues a long-lived key rather than
@@ -388,6 +398,8 @@ impl Default for AppConfig {
             llm_external_base_url: String::new(),
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
+            llm_fallback_models: Vec::new(),
+            llm_fallback_local: false,
             llm_oauth_refresh_token: String::new(),
             llm_oauth_client_id: String::new(),
             llm_oauth_expires_at: 0,
@@ -775,16 +787,17 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
 /// Keep the external-LLM provider row exactly as the server has it.
 ///
 /// Every one of these fields is written only by a dedicated command
-/// (`set_llm_provider`, `set_llm_api_key`, `set_llm_model`, `set_llm_base_url`,
-/// `set_llm_xai_client`, the OAuth sign-in) or by the background token refresh,
+/// (`set_llm_provider`, `set_llm_api_key`, `set_llm_model`,
+/// `set_llm_fallback_models`, `set_llm_base_url`, `set_llm_xai_client`, the
+/// OAuth sign-in) or by the background token refresh,
 /// so whatever a full-config save carries for them is at best a stale echo of
 /// a page-load snapshot. Accepting it would write back a key the user has
 /// since cleared or replaced, an expired access token, or a refresh token the
 /// provider already rotated out. It would also let a full-config save pair the
 /// stored key with a different provider or base URL, sending it to a host
-/// `set_llm_base_url` would have made it forget the key for. The one field
-/// left to `update_config` is `llm_external_enabled`, which the settings page
-/// toggles through its autosave.
+/// `set_llm_base_url` would have made it forget the key for. The fields left
+/// to `update_config` are `llm_external_enabled` and `llm_fallback_local`,
+/// which the settings page toggles through its autosave.
 fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
     incoming.llm_provider.clone_from(&current.llm_provider);
     incoming
@@ -793,6 +806,9 @@ fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
     incoming
         .llm_external_model
         .clone_from(&current.llm_external_model);
+    incoming
+        .llm_fallback_models
+        .clone_from(&current.llm_fallback_models);
     incoming
         .llm_external_api_key
         .clone_from(&current.llm_external_api_key);
