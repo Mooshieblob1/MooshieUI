@@ -1,3 +1,15 @@
+## What's New in v2.3.29
+
+### Style Reference
+- **Anima character reference**: **Style Reference** now works on Anima through the Anima Reference Adapter v2. From one reference image it keeps the character (hair, eyes, outfit and much of the art style), so the prompt only describes the scene. No character LoRA or name tags needed. Add a **Second character** image for two characters (placed on the right). On Anima the panel shows **Reference guidance** (default 4.5), **Colour correction** (APG recommended) and **End**, plus a one-click download of the adapter (183 MB; skip it and ComfyUI fetches it on the first run). Each step makes one extra model call at the default guidance, so generations take about twice as long; guidance 1 removes that cost. Anima TeaCache is switched off while the reference is on.
+
+### Fixes
+- **Style Reference file drops**: dropping an image file onto the Style Reference drop zone in the desktop app now loads it.
+
+### Maintenance
+- **macOS CI**: Dependabot PRs no longer run macOS validation, a new push cancels a PR's older macOS run, and Dependabot minor and patch updates come as one weekly PR per ecosystem. This keeps macOS runners free for release builds.
+
+---
 ## What's New in v2.3.28
 
 v2.3.27 was tagged but never published (its builds stopped on a new dependency advisory), so this release carries its changes.
