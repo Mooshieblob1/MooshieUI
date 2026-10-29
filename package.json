@@ -28,7 +28,7 @@
     "@tauri-apps/plugin-updater": "^2.13.3",
     "dompurify": "^3.4.17",
     "konva": "^10.7.1",
-    "marked": "^18.1.0",
+    "marked": "^18.1.1",
     "ntc-ts": "^0.2.1",
     "sortablejs": "^1.15.7",
     "svelte-konva": "^1.0.1"
