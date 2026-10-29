@@ -461,6 +461,12 @@ export interface GenerationParams {
   style_ref_end?: number;
   style_ref_redux_model?: string | null;
   style_ref_clip_vision?: string | null;
+  /** Anima character reference: second character, stitched right of style_ref_image. */
+  style_ref_image_2?: string | null;
+  /** Anima character reference: AnimaRefAdapter ref_guidance (1 = no extra model call). */
+  anima_ref_guidance?: number;
+  /** Anima character reference: AnimaRefAdapter correction (apg, rescale, none). */
+  anima_ref_correction?: string;
   /** Anima TeaCache: reuses the previous step's DiT output when little changed. */
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
