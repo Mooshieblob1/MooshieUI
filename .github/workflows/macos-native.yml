@@ -25,9 +25,19 @@ on:
 permissions:
   contents: read
 
+# The free plan runs 5 macOS jobs at once, shared with the release build. A new
+# push to a PR cancels that PR's older run; release and manual runs each get a
+# group of their own and are never cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('macos-native-pr-{0}', github.event.pull_request.number) || format('macos-native-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   native:
     name: Apple Silicon build and runtime
+    # Dependabot PRs rebase on every main merge and would take every macOS
+    # runner; the release build still validates their bumps on macOS.
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: macos-15
     timeout-minutes: 90
     env:
