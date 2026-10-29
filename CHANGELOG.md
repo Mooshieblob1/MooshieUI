@@ -1,6 +1,8 @@
 # Changelog
 
-## What's New in v2.3.27
+## What's New in v2.3.28
+
+v2.3.27 was tagged but never published (its builds stopped on a new dependency advisory), so this release carries its changes.
 
 ### AI Assistants (MCP)
 - **Connect from Claude and other cloud apps**: Claude's custom connectors (Claude Desktop, claude.ai, mobile) and ChatGPT connect from their own servers, so they need a public https address. Turn on **Cloudflare tunnel** in **Settings > AI assistants (MCP)** for a temporary address with no account needed (it changes each time MooshieUI starts), or enter **Your own address** for a named tunnel, Tailscale Funnel, ngrok or reverse proxy. Copy the **Connector URL** (it contains the token, so keep it private) and paste it under Settings > Connectors > Add custom connector in Claude.
@@ -13,7 +15,12 @@
 - **Describe in words**: a new panel writes a natural-language prompt (short or detailed) for the interrogated image, for Flux, Krea, H3 and other models that read prose rather than tags. Edit it, copy it, **Append to prompt** or **Replace prompt**. It uses your prompt assistant provider when it can see images, otherwise a local vision model.
 - **New local vision models**: Qwen3-VL 4B Instruct (a writing model that also reads images, so Enhance reference images work locally) and JoyCaption Beta One (a captioner, preferred for Describe when installed) can be installed from the panel.
 
+### Security
+- **DOMPurify 3.4.17**: fixes three sanitizer bypasses (GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr, GHSA-c6gr-qvv4-5v3f).
+- **ctutils 0.4.4**: fixes non-constant-time comparisons (RUSTSEC-2026-0385).
+
 ---
+
 ## What's New in v2.3.26
 
 ### AI Assistants (MCP)
