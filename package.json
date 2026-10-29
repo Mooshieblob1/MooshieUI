@@ -2,7 +2,7 @@
   "name": "comfyui-desktop",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "2.3.27",
+  "version": "2.3.28",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,7 +26,7 @@
     "@tauri-apps/plugin-shell": "^2.5.0",
     "@tauri-apps/plugin-store": "^2.5.0",
     "@tauri-apps/plugin-updater": "^2.13.3",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "konva": "^10.7.1",
     "marked": "^18.1.0",
     "ntc-ts": "^0.2.1",
