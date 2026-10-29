@@ -15,8 +15,8 @@ importers:
         specifier: ^1.55.0
         version: 1.55.0(svelte@5.57.2)
       '@tauri-apps/api':
-        specifier: ^2.12.3
-        version: 2.12.3
+        specifier: ^2.12.4
+        version: 2.12.4
       '@tauri-apps/plugin-clipboard-manager':
         specifier: ^2.4.2
         version: 2.4.2
@@ -42,8 +42,8 @@ importers:
         specifier: ^2.13.3
         version: 2.13.3
       dompurify:
-        specifier: ^3.4.16
-        version: 3.4.16
+        specifier: ^3.4.17
+        version: 3.4.17
       konva:
         specifier: ^10.7.1
         version: 10.7.1
@@ -532,11 +532,8 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tauri-apps/api@2.12.1':
-    resolution: {integrity: sha512-DeyFHa3wynpyoqTDikDEDGTJIq4LQ5USfolQGRmGIWT6JMADyxZBTDa5cAdT3tDg73rUXufPaCwN7aXBos4OnQ==}
-
-  '@tauri-apps/api@2.12.3':
-    resolution: {integrity: sha512-9s0PKw0p4r3kFq92jhpivYSp+cSht15o0gXpZxuQd0+dV9KCexEVkNaLELVoLdJWyoH4KlfQo5h3W2LIM8siJg==}
+  '@tauri-apps/api@2.12.4':
+    resolution: {integrity: sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==}
 
   '@tauri-apps/cli-darwin-arm64@2.12.2':
     resolution: {integrity: sha512-Lk3zaBTfzNvA7670Al5PNgo2M/95uaDPe1yp+ILJeDOmol87XiYuK5E5+FUbK5e6U6OORx9qpZdOo2U+5tETtQ==}
@@ -686,8 +683,8 @@ packages:
   devalue@5.9.4:
     resolution: {integrity: sha512-sPAT4pztbu6586/hrhOnMKS17IJrvg12mXiSPSS3W5qDeN2RGgvZ0diZCm31dBbnevfVmujNO3IM2wrS4Y2Rhg==}
 
-  dompurify@3.4.16:
-    resolution: {integrity: sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   enhanced-resolve@5.24.5:
     resolution: {integrity: sha512-L1l8TNvomm6UVW5B253AGxQagSQr+vGwhMlrrfRS2qmhx46AMpMVJKQYLvWYbysTMY8VoicOvzHzoHMbyzB+4A==}
@@ -1239,9 +1236,7 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 6.4.4(jiti@2.7.0)(lightningcss@1.32.0)
 
-  '@tauri-apps/api@2.12.1': {}
-
-  '@tauri-apps/api@2.12.3': {}
+  '@tauri-apps/api@2.12.4': {}
 
   '@tauri-apps/cli-darwin-arm64@2.12.2':
     optional: true
@@ -1292,41 +1287,41 @@ snapshots:
 
   '@tauri-apps/plugin-clipboard-manager@2.4.2':
     dependencies:
-      '@tauri-apps/api': 2.12.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-dialog@2.8.2':
     dependencies:
-      '@tauri-apps/api': 2.12.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-fs@2.7.0':
     dependencies:
-      '@tauri-apps/api': 2.12.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-notification@2.6.0':
     dependencies:
-      '@tauri-apps/api': 2.12.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-process@2.4.0':
     dependencies:
-      '@tauri-apps/api': 2.12.3
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-shell@2.5.0':
     dependencies:
-      '@tauri-apps/api': 2.12.1
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-store@2.5.0':
     dependencies:
-      '@tauri-apps/api': 2.12.3
+      '@tauri-apps/api': 2.12.4
 
   '@tauri-apps/plugin-updater@2.13.3':
     dependencies:
-      '@tauri-apps/api': 2.12.1
+      '@tauri-apps/api': 2.12.4
 
   '@tsconfig/svelte@5.0.8': {}
 
   '@types/dompurify@3.2.0':
     dependencies:
-      dompurify: 3.4.16
+      dompurify: 3.4.17
 
   '@types/estree@1.0.8': {}
 
@@ -1353,7 +1348,7 @@ snapshots:
 
   devalue@5.9.4: {}
 
-  dompurify@3.4.16:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
