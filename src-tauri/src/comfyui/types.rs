@@ -487,6 +487,17 @@ pub struct GenerationParams {
     pub style_ref_redux_model: Option<String>,
     /// Redux/IPAdapter: clip_vision model filename in models/clip_vision/
     pub style_ref_clip_vision: Option<String>,
+    /// Anima character reference: optional second character, stitched to the
+    /// right of `style_ref_image` (the prompt says who is on which side).
+    #[serde(default)]
+    pub style_ref_image_2: Option<String>,
+    /// Anima character reference: `AnimaRefAdapter.ref_guidance`. 1 is the
+    /// cheapest (no extra model call per step), higher pushes harder.
+    #[serde(default = "default_anima_ref_guidance")]
+    pub anima_ref_guidance: f32,
+    /// Anima character reference: `AnimaRefAdapter.correction` (apg, rescale, none).
+    #[serde(default = "default_anima_ref_correction")]
+    pub anima_ref_correction: String,
     /// Anima TeaCache — reuses the previous step's DiT output while the
     /// accumulated input delta stays under threshold, skipping the forward
     /// pass. MooshieUI-authored node, always deployed (no lazy install).
@@ -661,6 +672,12 @@ fn default_style_ref_weight_type() -> String {
 }
 fn default_style_ref_end() -> f32 {
     1.0
+}
+fn default_anima_ref_guidance() -> f32 {
+    4.5
+}
+fn default_anima_ref_correction() -> String {
+    "apg".to_string()
 }
 
 fn default_region_strength() -> f64 {

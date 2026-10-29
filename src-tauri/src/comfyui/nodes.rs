@@ -53,7 +53,23 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         verify_nodes: &["ApplyCosmosReferenceLatent"],
         requirements_file: "requirements.txt",
     },
+    // Anima character reference (Style Reference panel): one node that patches
+    // the model with the reference adapter LoRA and reference guidance, for a
+    // plain KSampler. Pure-Python, ships no requirements.txt.
+    RequiredCustomNodePackage {
+        name: "ComfyUI-Anima-Ref-Adapter",
+        git_url: "https://github.com/ElectronGirl/ComfyUI-Anima-Ref-Adapter.git",
+        git_rev: "bd1e094a2592f40b085e423a1a507b4c288ba9f1",
+        verify_nodes: &["AnimaRefAdapter"],
+        requirements_file: "requirements.txt",
+    },
 ];
+
+/// Anima Reference Adapter v2 LoRA. `AnimaRefAdapter` loads it by this exact
+/// filename from `models/loras/` (and downloads it there itself when it is
+/// missing); the Style Reference panel's download button saves it under the
+/// same name (see StyleReferenceSection.svelte).
+pub const ANIMA_REF_ADAPTER_LORA_FILENAME: &str = "anima_ref_adapter_v2_r64.safetensors";
 
 /// Anima Edit LoRA used by the ReStyler image_edit workflow. The template loads
 /// it by this exact filename; the frontend download button must save it under

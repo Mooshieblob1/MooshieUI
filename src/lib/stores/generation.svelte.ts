@@ -934,6 +934,10 @@ class GenerationStore {
   styleRefEnd = $state(1.0);
   styleRefReduxModel = $state<string | null>(null);
   styleRefClipVision = $state<string | null>(null);
+  /** Anima character reference: optional second character (right side). */
+  styleRefImage2 = $state<string | null>(null);
+  animaRefGuidance = $state(4.5);
+  animaRefCorrection = $state("apg");
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -1402,11 +1406,23 @@ class GenerationStore {
     return this.modelFamily === "flux1kontext";
   }
 
-  /** True when the model family supports style reference (IP-Adapter or Flux Redux). */
+  /** True when the model family supports style reference (IP-Adapter, Flux Redux or Anima). */
   get supportsStyleRef(): boolean {
-    return ["flux1d", "flux1s", "flux1krea", "sd15", "sdxl", "illustrious", "pony"].includes(
-      this.modelFamily,
-    );
+    return [
+      "flux1d",
+      "flux1s",
+      "flux1krea",
+      "sd15",
+      "sdxl",
+      "illustrious",
+      "pony",
+      "anima",
+    ].includes(this.modelFamily);
+  }
+
+  /** True when the active style ref is the Anima character reference (Reference Adapter). */
+  get styleRefIsAnima(): boolean {
+    return this.modelFamily === "anima";
   }
 
   /** True when the active style ref is Flux Redux (Flux.1 family). */
@@ -3201,6 +3217,9 @@ class GenerationStore {
     if (saved.styleRefEnd !== undefined) this.styleRefEnd = saved.styleRefEnd;
     if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
     if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
+    if (saved.styleRefImage2 !== undefined) this.styleRefImage2 = saved.styleRefImage2;
+    if (saved.animaRefGuidance !== undefined) this.animaRefGuidance = saved.animaRefGuidance;
+    if (saved.animaRefCorrection) this.animaRefCorrection = saved.animaRefCorrection;
     if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
     if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
     if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -3373,6 +3392,9 @@ class GenerationStore {
         styleRefEnd: this.styleRefEnd,
         styleRefReduxModel: this.styleRefReduxModel,
         styleRefClipVision: this.styleRefClipVision,
+        styleRefImage2: this.styleRefImage2,
+        animaRefGuidance: this.animaRefGuidance,
+        animaRefCorrection: this.animaRefCorrection,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -3545,6 +3567,9 @@ class GenerationStore {
       styleRefEnd: this.styleRefEnd,
       styleRefReduxModel: this.styleRefReduxModel,
       styleRefClipVision: this.styleRefClipVision,
+      styleRefImage2: this.styleRefImage2,
+      animaRefGuidance: this.animaRefGuidance,
+      animaRefCorrection: this.animaRefCorrection,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -4317,6 +4342,9 @@ class GenerationStore {
       style_ref_end: this.styleRefEnd,
       style_ref_redux_model: this.styleRefReduxModel,
       style_ref_clip_vision: this.styleRefClipVision,
+      style_ref_image_2: this.styleRefImage2,
+      anima_ref_guidance: this.animaRefGuidance,
+      anima_ref_correction: this.animaRefCorrection,
       anima_teacache_enabled: this.animaTeacacheEnabled,
       // Only the slots the current family shows: a FLUX 3 session's extra
       // references must not ride along once a 1- or 3-slot model is picked.

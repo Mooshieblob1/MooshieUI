@@ -293,7 +293,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     if params.style_ref_enabled && params.mode != "video" && params.mode != "image_edit" {
         if !style_ref::family_supports_style_ref(&params.model_architecture) {
             return Err(format!(
-                "Style reference is only available for SD1.5, SDXL, and Flux.1 models. \
+                "Style reference is only available for SD1.5, SDXL, Flux.1 and Anima models. \
                  The selected model family ('{}') is not supported. \
                  Disable style reference or switch to a supported model.",
                 params.model_architecture
@@ -312,6 +312,15 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
                     .into(),
             );
         }
+    }
+
+    // Style transfer builds its own graph without the inject pipeline, so the
+    // Anima character reference would be dropped without a word.
+    if style_ref::anima_ref_active(params) && params.style_transfer_enabled {
+        return Err(
+            "Style transfer and the Anima character reference cannot be used together. Disable one of them."
+                .into(),
+        );
     }
 
     // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
@@ -854,7 +863,13 @@ pub fn load_model_nodes(
     // step in `build_workflow` because this is the one function every
     // Anima-capable template routes through, including `style_transfer::build`,
     // which bypasses the entire `inject_*` pipeline.
-    if params.model_architecture == "anima" && params.anima_teacache_enabled {
+    // The character reference runs its own Anima forward pass with an extra
+    // reference call per step, which TeaCache's step cache was not built for,
+    // so TeaCache stays off while it is on.
+    if params.model_architecture == "anima"
+        && params.anima_teacache_enabled
+        && !style_ref::anima_ref_active(params)
+    {
         let teacache_id = next_id.to_string();
         workflow.insert(
             teacache_id.clone(),
@@ -2687,6 +2702,51 @@ mod tests {
             "style transfer's own sampler graph must not be used"
         );
         assert_eq!(nodes_of_class(workflow, "KSamplerAdvanced").len(), 1);
+    }
+
+    fn anima_character_ref_params() -> GenerationParams {
+        let mut params = pausable_params();
+        params.model_architecture = "anima".to_string();
+        params.is_sdxl_like = false;
+        params.style_ref_enabled = true;
+        params.style_ref_image = Some("character.png".to_string());
+        params
+    }
+
+    #[test]
+    fn anima_character_ref_patches_the_ksampler_model_and_skips_teacache() {
+        let mut params = anima_character_ref_params();
+        params.anima_teacache_enabled = true;
+        assert!(validate_generation_params(&params).is_ok());
+
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+        let adapters = nodes_of_class(workflow, "AnimaRefAdapter");
+        assert_eq!(adapters.len(), 1);
+        let (_, sampler) = nodes_of_class(workflow, "KSampler")[0];
+        let model = sampler["inputs"]["model"][0].as_str().unwrap();
+        assert_eq!(workflow[model]["class_type"], "AnimaRefAdapter");
+    }
+
+    #[test]
+    fn anima_teacache_still_runs_without_the_character_ref() {
+        let mut params = anima_character_ref_params();
+        params.style_ref_enabled = false;
+        params.anima_teacache_enabled = true;
+        let workflow = build_workflow(&params, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert_eq!(nodes_of_class(workflow, "MooshieAnimaTeaCache").len(), 1);
+        assert!(nodes_of_class(workflow, "AnimaRefAdapter").is_empty());
+    }
+
+    #[test]
+    fn anima_character_ref_rejects_style_transfer() {
+        let mut params = anima_character_ref_params();
+        params.style_transfer_enabled = true;
+        params.style_reference_image = Some("style.png".to_string());
+        let err = validate_generation_params(&params).unwrap_err();
+        assert!(err.contains("character reference"), "{err}");
     }
 
     #[test]

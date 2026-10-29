@@ -96,6 +96,7 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
     p.style_reference_image = None;
     p.style_ref_enabled = false;
     p.style_ref_image = None;
+    p.style_ref_image_2 = None;
     p.edit_reference_images.clear();
     p.resume_edit_image = None;
     p.resume_edit_mask = None;
@@ -396,11 +397,13 @@ mod tests {
         let mut p = base();
         p.input_image = Some("x.png".into());
         p.style_ref_enabled = true;
+        p.style_ref_image_2 = Some("second.png".into());
         let snap = snapshot(&p).unwrap();
         assert!(snap.positive_prompt.is_empty());
         assert_eq!(snap.negative_prompt, "blurry");
         assert_eq!(snap.input_image, None);
         assert!(!snap.style_ref_enabled);
+        assert_eq!(snap.style_ref_image_2, None);
         assert_eq!(snap.seed, -1);
     }
 

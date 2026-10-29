@@ -16,6 +16,7 @@ See the [wiki comparison](https://github.com/Mooshieblob1/MooshieUI/wiki/Control
 | Flux.1 (flux1d, flux1s, flux1krea) | Flux Redux | None (core ComfyUI) |
 | SD1.5 (sd15) | IP-Adapter Plus | ComfyUI_IPAdapter_plus |
 | SDXL, Illustrious, Pony (sdxl, illustrious, pony) | IP-Adapter Plus | ComfyUI_IPAdapter_plus |
+| Anima (anima) | Anima Reference Adapter v2 (character reference) | ComfyUI-Anima-Ref-Adapter (installed automatically) |
 | All other families | Not supported | -- |
 
 Unsupported families show an explanatory hint in the panel. Generation with
@@ -69,6 +70,34 @@ Place files in the paths shown, relative to your ComfyUI root.
 
 - `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors` (same file as SD1.5 above)
 
+### Anima (Anima Reference Adapter v2)
+
+**models/loras/**
+
+- `anima_ref_adapter_v2_r64.safetensors` (183 MB)
+  The panel has a download button (pinned Hugging Face revision, SHA-256
+  checked). If it is missing, the node downloads it from
+  https://huggingface.co/ElectronGirl/anima-ref-adapter on the first run.
+  The weights use the CircleStone Non-Commercial License, like Anima itself.
+
+The node pack (https://github.com/ElectronGirl/ComfyUI-Anima-Ref-Adapter,
+Apache-2.0) is pinned to one commit and installed at ComfyUI launch with the
+other Anima packs.
+
+Unlike the other families, this is a character reference: the reference keeps
+who is drawn (hair, eyes, outfit and much of the art style) and the prompt
+gives pose, place and framing. Write a scene-only prompt with no character
+name or outfit tags. For two characters, add a second image (stitched to the
+right of the first), say in the prompt who is on the left and who is on the
+right, use `2girls` or `1boy, 1girl` instead of `solo`, and pick a landscape
+size.
+
+Settings: Reference guidance (`ref_guidance`, default 4.5; 1 skips the extra
+model call per step), Colour correction (`apg`, `rescale`, `none`) and End
+(`ref_end`, about 0.6 is faster with nearly the same image). Anima TeaCache is
+switched off while it is on, and it cannot be combined with Anima Style
+Transfer.
+
 ## Using the panel
 
 1. Open the Style Reference section in the Generation page sidebar.
@@ -92,7 +121,8 @@ ComfyUI nodes.
 
 - Workflow templates: `src-tauri/src/templates/style_ref.rs`
 - Generation params: `style_ref_enabled`, `style_ref_image`, `style_ref_strength`,
-  `style_ref_weight_type`, `style_ref_start`, `style_ref_end`
+  `style_ref_weight_type`, `style_ref_start`, `style_ref_end`; Anima adds
+  `style_ref_image_2`, `anima_ref_guidance` and `anima_ref_correction`
 - IP-Adapter lazy install follows the optional-node installation pattern:
   verified by checking for the `IPAdapterUnifiedLoader` class in the ComfyUI
   object info endpoint.
