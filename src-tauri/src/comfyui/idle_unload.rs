@@ -3,7 +3,8 @@
 //! ComfyUI keeps the last models in VRAM, and its RAM-pressure cache keeps
 //! their weights and node outputs in RAM, until the next run or until memory
 //! runs short. An app left open between sessions (or used only for NovelAI)
-//! therefore holds several GB it is not using. After
+//! therefore holds several GB it is not using. When `comfyui_idle_unload` is
+//! on (Settings > Connection, off by default), after
 //! `comfyui_idle_unload_minutes` without ComfyUI activity this asks every idle
 //! managed worker to unload its models and clear its cache (`POST /free`).
 //! ComfyUI itself keeps running; the next generation reloads what it needs.
@@ -72,14 +73,15 @@ async fn run(state: Arc<AppState>) {
                 Err(RecvError::Closed) => return,
             },
             _ = ticker.tick() => {
-                let (minutes, managed) = {
+                let (enabled, minutes, managed) = {
                     let config = state.config.read().await;
                     (
+                        config.comfyui_idle_unload,
                         config.comfyui_idle_unload_minutes,
                         config.server_mode == ServerMode::AutoLaunch,
                     )
                 };
-                if !managed || !unload_due(last_activity.elapsed(), minutes, unloaded) {
+                if !enabled || !managed || !unload_due(last_activity.elapsed(), minutes, unloaded) {
                     continue;
                 }
                 if !state.prompt_queue.is_empty() || any_worker_busy(&state).await {

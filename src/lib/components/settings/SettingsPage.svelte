@@ -2632,17 +2632,31 @@
               <p class="text-sm text-neutral-200">{locale.t('settings.connection.idle_unload')}</p>
               <p class="text-xs text-neutral-500">{locale.t('settings.connection.idle_unload_desc')}</p>
             </div>
+            <button
+              class="w-10 h-5 shrink-0 rounded-full transition-colors cursor-pointer {config.comfyui_idle_unload ? 'bg-indigo-600' : 'bg-neutral-700'}"
+              onclick={() => { config!.comfyui_idle_unload = !config!.comfyui_idle_unload; autoSave(); }}
+              role="switch"
+              aria-checked={config.comfyui_idle_unload}
+              aria-label={locale.t('settings.connection.idle_unload')}
+            >
+              <div class="w-4 h-4 rounded-full bg-white shadow transition-transform {config.comfyui_idle_unload ? 'translate-x-5' : 'translate-x-0.5'}"></div>
+            </button>
+          </div>
+          {#if config.comfyui_idle_unload}
+          <div class="flex items-center justify-between gap-4 pl-4">
+            <label for="comfyui-idle-unload-minutes" class="text-xs text-neutral-400">{locale.t('settings.connection.idle_unload_after')}</label>
             <select
+              id="comfyui-idle-unload-minutes"
               bind:value={config.comfyui_idle_unload_minutes}
               onchange={() => { autoSave(); }}
               class="shrink-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
             >
-              <option value={0}>{locale.t('settings.connection.idle_unload_off')}</option>
               {#each [5, 10, 15, 30, 60] as minutes (minutes)}
                 <option value={minutes}>{locale.t('settings.connection.idle_unload_minutes', { minutes })}</option>
               {/each}
             </select>
           </div>
+          {/if}
           {/if}
 
           <div class="grid grid-cols-3 gap-3">
