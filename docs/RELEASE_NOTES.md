@@ -1,3 +1,12 @@
+## What's New in v2.3.30
+
+### Performance
+- **Lighter when idle**: MooshieUI now uses far less CPU and GPU while you are not using it. The tips carousel on the empty preview no longer redraws the page 20 times a second (about 7% of a CPU core down to under 0.5%), and after 2 minutes with no input, or while the window is hidden, all UI animations pause until you move the mouse or press a key.
+- **WebView2 rests on Windows**: while the window is minimised the WebView is hidden, and while the UI is resting it asks WebView2 to use less memory.
+- **Free VRAM when idle** (opt-in): turn it on in **Settings > Connection** and pick **Unload after** (5, 10, 15, 30 or 60 min). After that long with no generations, the managed ComfyUI unloads its models and frees memory, giving back VRAM and RAM. ComfyUI keeps running and the next generation reloads the model. Off by default; a ComfyUI you run yourself is never touched.
+
+---
+
 ## What's New in v2.3.29
 
 ### Style Reference
