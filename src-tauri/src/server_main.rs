@@ -84,6 +84,7 @@ async fn main() {
     // Clean up and create temp image directory
     temp_images::init();
     comfyui_desktop_lib::media_tools::start(state.clone());
+    comfyui_desktop_lib::comfyui::idle_unload::spawn(state.clone());
     // Opt-in local MCP server; a no-op unless mcp.json enables it.
     comfyui_desktop_lib::mcp::sync(state.clone()).await;
 

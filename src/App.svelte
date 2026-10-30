@@ -17,6 +17,7 @@
   import { connection } from "./lib/stores/connection.svelte.js";
   import { startup } from "./lib/stores/startup.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
+  import { idle } from "./lib/stores/idle.svelte.js";
   import { gallery, isVideoImage, GALLERY_MAX_RATING } from "./lib/stores/gallery.svelte.js";
   import { directorTools, directorToolsAvailable } from "./lib/stores/directorTools.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "./lib/stores/naiImageEnhance.svelte.js";
@@ -25,7 +26,7 @@
   import { needsKrea2RefusalLora } from "./lib/utils/krea2Encoder.js";
   import { notifyKrea2RefusalLoraMissing } from "./lib/utils/krea2UncensoredSetup.js";
   import { BETA57_SCHEDULER } from "./lib/utils/samplingRecommendation.js";
-  import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, updateConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, setUiResting } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { UPSCALE_ACTION } from "./lib/utils/novelaiEnhance.js";
@@ -182,6 +183,15 @@
   // save from the other mode (desktop or browser) can change too.
   $effect(() => {
     document.documentElement.classList.toggle("dyslexic-font", accessibility.dyslexicFont);
+  });
+
+  // Rest the UI while nobody is using it and nothing is generating: CSS
+  // animations pause (app.css .app-resting) and the desktop WebView trims its
+  // memory. The first input wakes everything again.
+  $effect(() => {
+    const resting = idle.resting && !progress.isGenerating;
+    document.documentElement.classList.toggle("app-resting", resting);
+    void setUiResting(resting);
   });
 
   // Each generation tab keeps its own last output: switching tabs swaps the
@@ -2566,6 +2576,7 @@
   onMount(async () => {
     // Start heartbeat in browser mode to keep backend alive
     startHeartbeat();
+    idle.start();
 
     // Native drag-drop wiring for the interrogate sidebar button (Tauri only).
     setupInterrogateTauriDragDrop();

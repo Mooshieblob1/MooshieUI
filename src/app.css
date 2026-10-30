@@ -792,6 +792,23 @@ html.light .lightbox-backdrop {
   animation-delay: var(--card-delay, 0ms);
 }
 
+/* ─── Preview tips carousel progress (transform only, no per-frame layout) ─── */
+@keyframes tip-progress {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ─── Idle: freeze animations while nobody is using the app ───
+   App.svelte sets .app-resting from stores/idle.svelte.ts when there has been
+   no input for a while (or the window is hidden) and nothing is generating. A
+   paused animation draws no frames, so an untouched window stops costing GPU
+   and CPU; the first pointer move or key press resumes everything. */
+.app-resting *,
+.app-resting *::before,
+.app-resting *::after {
+  animation-play-state: paused !important;
+}
+
 /* ─── Session gallery action bar bounce-in ─── */
 @keyframes actionBarBounce {
   0%   { transform: translateX(-50%) translateY(-6px) scaleY(0.3); opacity: 0; }

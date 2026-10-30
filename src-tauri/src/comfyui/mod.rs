@@ -2,6 +2,7 @@ pub mod client;
 pub(crate) mod git;
 pub mod gpu_manager;
 pub mod h3_vdn;
+pub mod idle_unload;
 mod managed_process;
 pub(crate) use managed_process::ManagedProcess;
 pub mod nodes;

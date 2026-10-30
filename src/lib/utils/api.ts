@@ -1787,6 +1787,13 @@ export async function getLogs(source: "comfyui" | "app", lines?: number): Promis
   return await ipcInvoke<string[]>("get_logs", { source, lines });
 }
 
+/** Tell the desktop WebView whether the UI is resting, so it can trim memory.
+ *  Browser mode has no native WebView to manage, so this does nothing there. */
+export async function setUiResting(resting: boolean): Promise<void> {
+  if (!isTauri || isBrowserMode) return;
+  await ipcInvoke("set_ui_resting", { resting }).catch(() => {});
+}
+
 export async function getGpuStats(): Promise<GpuStats[]> {
   if (isTauri) {
     return ipcInvoke("get_gpu_stats");

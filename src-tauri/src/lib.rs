@@ -38,6 +38,8 @@ pub mod templates;
 pub mod user_prefs;
 pub mod user_secrets;
 pub mod webserver;
+#[cfg(feature = "desktop")]
+pub mod webview_rest;
 
 use std::sync::Arc;
 
@@ -276,7 +278,8 @@ pub fn run() {
             {
                 let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
                 webserver::spawn_prompt_cleanup_reactor(shared_state.clone());
-                webserver::spawn_stuck_worker_watchdog(shared_state);
+                webserver::spawn_stuck_worker_watchdog(shared_state.clone());
+                comfyui::idle_unload::spawn(shared_state);
             }
 
             // Store the AppHandle so the web server can show/hide the window later.
@@ -814,11 +817,22 @@ pub fn run() {
             commands::api::save_video_to_gallery_manual,
             commands::api::civitai_bulk_scan,
             commands::api::civitai_bulk_scan_cancel,
+            webview_rest::set_ui_resting,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        if let RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Resized(_),
+            ..
+        } = &event
+        {
+            if let Some(window) = app_handle.get_webview_window(label) {
+                webview_rest::sync_minimized(&window);
+            }
+        }
         if let RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<Arc<AppState>>();
             tauri::async_runtime::block_on(async {
