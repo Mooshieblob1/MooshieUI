@@ -2627,6 +2627,22 @@
               <div class="w-4 h-4 rounded-full bg-white shadow transition-transform {config.auto_start !== false ? 'translate-x-5' : 'translate-x-0.5'}"></div>
             </button>
           </div>
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="text-sm text-neutral-200">{locale.t('settings.connection.idle_unload')}</p>
+              <p class="text-xs text-neutral-500">{locale.t('settings.connection.idle_unload_desc')}</p>
+            </div>
+            <select
+              bind:value={config.comfyui_idle_unload_minutes}
+              onchange={() => { autoSave(); }}
+              class="shrink-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+            >
+              <option value={0}>{locale.t('settings.connection.idle_unload_off')}</option>
+              {#each [5, 10, 15, 30, 60] as minutes (minutes)}
+                <option value={minutes}>{locale.t('settings.connection.idle_unload_minutes', { minutes })}</option>
+              {/each}
+            </select>
+          </div>
           {/if}
 
           <div class="grid grid-cols-3 gap-3">

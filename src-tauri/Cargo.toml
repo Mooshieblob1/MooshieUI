@@ -109,6 +109,9 @@ tar = "0.4"
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-win = "5"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+# Same versions wry uses; for the WebView2 controller calls in webview_rest.rs.
+webview2-com = "0.39"
+windows-core = "0.62"
 
 # Dependency debug info is most of target/debug's size and is rarely stepped
 # through. Our own crate keeps full debug info for debugging and backtraces.

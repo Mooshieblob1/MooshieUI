@@ -23,8 +23,6 @@
   import { untrack } from "svelte";
 
   let currentTipIndex = $state(0);
-  let progressPercent = $state(0);
-  let autoPlayInterval: ReturnType<typeof setInterval> | null = null;
   let suppressOpenUntil = 0;
 
   // Right-click context menu for the output preview. Restores right-click-to-save
@@ -75,9 +73,10 @@
     saveVideoError = null;
   }
 
-  const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
-  const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
-
+  // Each tip shows for 6.5 s. The progress bar is a compositor-only CSS
+  // animation (`tip-progress` in app.css) whose end advances the carousel, so
+  // the empty preview does no per-frame layout and stops entirely while the
+  // app is resting (`.app-resting` pauses every animation).
   const baseTips = [
     // Prompt tips
     { category: "preview.tips.prompts", text: "preview.tip.prompt_clear" },
@@ -103,42 +102,12 @@
       : [...baseTips, { category: "preview.tips.quality", text: "preview.tip.quality_tags" }]
   );
 
-  function startAutoPlay() {
-    progressPercent = 0;
-    let elapsedTime = 0;
-    autoPlayInterval = setInterval(() => {
-      elapsedTime += TIP_UPDATE_INTERVAL;
-      progressPercent = (elapsedTime / TIP_DISPLAY_TIME) * 100;
-      
-      if (elapsedTime >= TIP_DISPLAY_TIME) {
-        nextTip();
-        elapsedTime = 0;
-        progressPercent = 0;
-      }
-    }, TIP_UPDATE_INTERVAL);
-  }
-
-  function stopAutoPlay() {
-    if (autoPlayInterval) {
-      clearInterval(autoPlayInterval);
-      autoPlayInterval = null;
-    }
-  }
-
-  function resetAutoPlay() {
-    stopAutoPlay();
-    progressPercent = 0;
-    startAutoPlay();
-  }
-
   function nextTip() {
     currentTipIndex = (currentTipIndex + 1) % tips.length;
-    resetAutoPlay();
   }
 
   function prevTip() {
     currentTipIndex = (currentTipIndex - 1 + tips.length) % tips.length;
-    resetAutoPlay();
   }
 
   function handleWheel(e: WheelEvent) {
@@ -149,16 +118,6 @@
       prevTip();
     }
   }
-
-  $effect(() => {
-    // Start auto-play when component mounts or when not generating
-    if (!progress.isGenerating && !progress.displayImage && !progress.lastOutputVideo) {
-      startAutoPlay();
-    } else {
-      stopAutoPlay();
-    }
-    return () => stopAutoPlay();
-  });
 
   /** Make sure the default refine upscale model is installed, downloading it
    *  on first use (~1.6 MB). Returns false if it can't be made available. */
@@ -635,10 +594,12 @@
         
         <!-- Progress Bar -->
         <div class="w-full h-0.5 bg-neutral-200 dark:bg-neutral-700 rounded-full overflow-hidden mt-2">
-          <div 
-            class="h-full bg-indigo-600 dark:bg-indigo-500 transition-all ease-linear"
-            style="width: {progressPercent}%"
-          />
+          {#key currentTipIndex}
+            <div
+              class="h-full origin-left bg-indigo-600 dark:bg-indigo-500 animate-[tip-progress_6.5s_linear_forwards]"
+              onanimationend={nextTip}
+            ></div>
+          {/key}
         </div>
       </div>
       

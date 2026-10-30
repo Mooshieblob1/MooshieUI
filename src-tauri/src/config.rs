@@ -95,6 +95,10 @@ pub struct AppConfig {
     pub keep_alive: bool,
     /// Automatically start ComfyUI when the app launches (default: true)
     pub auto_start: bool,
+    /// Minutes without ComfyUI activity before the managed ComfyUI unloads its
+    /// models and clears its cache to free VRAM and RAM (0 = never). ComfyUI
+    /// keeps running; see `comfyui::idle_unload`.
+    pub comfyui_idle_unload_minutes: u32,
     /// UI theme mode: "dark", "light"
     pub theme: String,
     /// UI color palette shared across dark and light modes.
@@ -352,6 +356,7 @@ impl Default for AppConfig {
             vram_mode: "normal".to_string(),
             keep_alive: false,
             auto_start: true,
+            comfyui_idle_unload_minutes: crate::comfyui::idle_unload::DEFAULT_IDLE_UNLOAD_MINUTES,
             theme: "dark".to_string(),
             theme_palette: "mooshie".to_string(),
             font_scale: 1.0,
