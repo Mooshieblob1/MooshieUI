@@ -655,7 +655,9 @@ export interface AppConfig {
   vram_mode: string;
   keep_alive: boolean;
   auto_start: boolean;
-  /** Minutes without generations before ComfyUI unloads its models (0 = never). */
+  /** Unload ComfyUI's models after a stretch with no generations (off by default). */
+  comfyui_idle_unload: boolean;
+  /** Minutes without generations before that unload. */
   comfyui_idle_unload_minutes: number;
   theme: string;
   theme_palette: string;
