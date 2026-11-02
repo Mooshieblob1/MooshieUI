@@ -5230,6 +5230,8 @@ async fn dispatch_command(
                     serde_json::json!(data.get("id").and_then(|v| v.as_u64()));
                 result["civitai_model_id"] =
                     serde_json::json!(data.get("modelId").and_then(|v| v.as_u64()));
+                result["civitai_nsfw"] =
+                    serde_json::json!(crate::commands::api::civitai_version_is_mature(&data));
                 if let Some(bm) = data.get("baseModel").and_then(|v| v.as_str()) {
                     if command == "get_checkpoint_civitai_info" {
                         result["base_model"] = serde_json::json!(bm);

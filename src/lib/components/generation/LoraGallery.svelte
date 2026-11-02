@@ -1,5 +1,6 @@
 <script lang="ts">
   import { loraKeywords } from "../../stores/loraKeywords.svelte.js";
+  import { civitaiModelPageUrl } from "../../utils/civitaiUrl.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import {
@@ -871,7 +872,7 @@
               </button>
               {#if info?.civitai_model_id}
                 <a
-                  href="https://civitai.com/models/{info.civitai_model_id}"
+                  href={civitaiModelPageUrl(info.civitai_model_id, info.civitai_nsfw)}
                   target="_blank"
                   rel="noopener noreferrer"
                   class="shrink-0 text-neutral-500 hover:text-indigo-400 transition-colors"
