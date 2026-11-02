@@ -687,6 +687,8 @@ export interface CivitaiModel {
   name: string;
   type: string;
   nsfw: boolean;
+  /** Bitmask rating: 1 PG, 2 PG-13, 4 R, 8 X, 16 XXX. */
+  nsfwLevel?: number;
   tags?: string[];
   creator?: { username: string; image?: string };
   stats?: { downloadCount?: number; thumbsUpCount?: number; commentCount?: number; rating?: number; ratingCount?: number };
@@ -1047,6 +1049,8 @@ export interface LoraCivitaiInfo {
   civitai_name?: string;
   civitai_description?: string;
   civitai_model_id?: number;
+  /** CivitAI rates the model as mature, so its page lives on civitai.red. */
+  civitai_nsfw?: boolean;
   civitai_version_id?: number;
   civitai_base_model?: string;
   civitai_images: LoraCivitaiImage[];
@@ -1071,6 +1075,8 @@ export interface CheckpointCivitaiInfo {
   /** "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or undefined. */
   thumbnail_url?: string;
   civitai_model_id?: number;
+  /** CivitAI rates the model as mature, so its page lives on civitai.red. */
+  civitai_nsfw?: boolean;
   civitai_version_id?: number;
   civitai_description?: string;
   civitai_images: LoraCivitaiImage[];

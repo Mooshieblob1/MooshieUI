@@ -4024,6 +4024,61 @@ async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<
     Ok(data)
 }
 
+/// CivitAI `nsfwLevel` bits for R, X and XXX (1 is PG, 2 is PG-13).
+const CIVITAI_MATURE_LEVEL_BITS: u64 = 4 | 8 | 16;
+
+/// Whether a CivitAI model-version payload (from `/model-versions/by-hash`)
+/// belongs to a mature model. Mature model pages only open on civitai.red,
+/// so the frontend uses this to pick the "Open on CivitAI" host.
+pub(crate) fn civitai_version_is_mature(data: &Value) -> bool {
+    let model = data.get("model");
+    if model
+        .and_then(|m| m.get("nsfw"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    model
+        .and_then(|m| m.get("nsfwLevel"))
+        .or_else(|| data.get("nsfwLevel"))
+        .and_then(|v| v.as_u64())
+        .is_some_and(|level| level & CIVITAI_MATURE_LEVEL_BITS != 0)
+}
+
+#[cfg(test)]
+mod civitai_mature_tests {
+    use super::civitai_version_is_mature;
+    use serde_json::json;
+
+    #[test]
+    fn nsfw_flag_on_model_is_mature() {
+        assert!(civitai_version_is_mature(
+            &json!({ "model": { "name": "x", "nsfw": true } })
+        ));
+    }
+
+    #[test]
+    fn sfw_model_is_not_mature() {
+        assert!(!civitai_version_is_mature(
+            &json!({ "model": { "nsfw": false }, "nsfwLevel": 1 })
+        ));
+        assert!(!civitai_version_is_mature(&json!({ "nsfwLevel": 2 })));
+        assert!(!civitai_version_is_mature(&json!({})));
+    }
+
+    #[test]
+    fn r_or_higher_level_is_mature() {
+        assert!(civitai_version_is_mature(&json!({ "nsfwLevel": 4 })));
+        assert!(civitai_version_is_mature(
+            &json!({ "model": { "nsfwLevel": 1 | 16 } })
+        ));
+        assert!(civitai_version_is_mature(
+            &json!({ "model": { "nsfw": false }, "nsfwLevel": 8 })
+        ));
+    }
+}
+
 /// Parse a CivitAI image id from a numeric string or `https://civitai.com/images/{id}` URL.
 pub(crate) fn parse_civitai_image_id_pub(image_ref: &str) -> Result<u64, AppError> {
     parse_civitai_image_id(image_ref)
@@ -7039,6 +7094,8 @@ pub struct LoraCivitaiInfo {
     pub civitai_name: Option<String>,
     pub civitai_description: Option<String>,
     pub civitai_model_id: Option<u64>,
+    /// CivitAI rates the model as mature, so its page lives on civitai.red.
+    pub civitai_nsfw: Option<bool>,
     pub civitai_version_id: Option<u64>,
     pub civitai_base_model: Option<String>,
     pub civitai_images: Vec<LoraCivitaiImage>,
@@ -7073,6 +7130,8 @@ pub struct CheckpointCivitaiInfo {
     /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
     pub thumbnail_url: Option<String>,
     pub civitai_model_id: Option<u64>,
+    /// CivitAI rates the model as mature, so its page lives on civitai.red.
+    pub civitai_nsfw: Option<bool>,
     pub civitai_version_id: Option<u64>,
     pub civitai_description: Option<String>,
     /// All sample images returned by CivitAI (independent of whether a sidecar exists).
@@ -7399,6 +7458,7 @@ pub async fn get_lora_civitai_info(
         civitai_name: None,
         civitai_description: None,
         civitai_model_id: None,
+        civitai_nsfw: None,
         civitai_version_id: None,
         civitai_base_model: None,
         civitai_images: Vec::new(),
@@ -7449,6 +7509,7 @@ pub async fn get_lora_civitai_info(
                     .and_then(|v| v.as_str())
                     .map(String::from);
                 info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
+                info.civitai_nsfw = Some(civitai_version_is_mature(&data));
 
                 // Trigger words
                 if let Some(words) = data.get("trainedWords").and_then(|v| v.as_array()) {
@@ -7572,6 +7633,7 @@ pub async fn get_checkpoint_civitai_info(
             .and_then(|m| m.get("family").cloned()),
         thumbnail_url: sidecar_thumbnail,
         civitai_model_id: None,
+        civitai_nsfw: None,
         civitai_version_id: None,
         civitai_description: None,
         civitai_images: Vec::new(),
@@ -7641,6 +7703,7 @@ pub async fn get_checkpoint_civitai_info(
             if let Ok(data) = resp.json::<Value>().await {
                 info.civitai_version_id = data.get("id").and_then(|v| v.as_u64());
                 info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
+                info.civitai_nsfw = Some(civitai_version_is_mature(&data));
 
                 // Prefer CivitAI base model over modelspec architecture
                 if let Some(bm) = data.get("baseModel").and_then(|v| v.as_str()) {

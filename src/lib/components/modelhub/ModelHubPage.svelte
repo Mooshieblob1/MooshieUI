@@ -26,6 +26,7 @@
   import { showError } from "../../stores/errorModal.svelte.js";
   import { portal } from "../../utils/portal.js";
   import { sortCivitaiModels } from "../../utils/civitaiSort.js";
+  import { civitaiModelPageUrl, isCivitaiPageHost, isMatureCivitaiModel } from "../../utils/civitaiUrl.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
   const CIVITAI_COLUMNS_KEY = "mooshieui.civitai.columns.v1";
@@ -1022,7 +1023,7 @@
     } catch {
       return null;
     }
-    if (parsed.hostname !== "civitai.com" && !parsed.hostname.endsWith(".civitai.com")) {
+    if (!isCivitaiPageHost(parsed.hostname)) {
       return null;
     }
     const match = parsed.pathname.match(/^\/models\/(\d+)/);
@@ -1138,7 +1139,7 @@
   }
 
   function modelUrl(model: CivitaiModel): string {
-    return `https://civitai.com/models/${model.id}`;
+    return civitaiModelPageUrl(model.id, isMatureCivitaiModel(model));
   }
 
   function isCardExpanded(modelId: number): boolean {
