@@ -2815,6 +2815,10 @@ const en: Record<string, string> = {
   "settings.autocomplete.spellcheck": "Tag spell check",
   "settings.autocomplete.spellcheck_desc": "Underline tags that aren't known Danbooru tags and suggest corrections on right-click.",
   "generation.prompt.spellcheck_no_suggestions": "No suggestions",
+  "settings.autocomplete.lora_keywords": "LoRA keywords first",
+  "settings.autocomplete.lora_keywords_desc": "When a LoRA with trigger words is switched on, suggest those words at the top of the list.",
+  "generation.prompt.lora_keyword_badge": "LoRA",
+  "generation.prompt.lora_keyword_title": "Keyword from {lora}",
 
   "settings.interrogator.model": "Tagger model",
   "settings.interrogator.model_desc": "Models download on first use. Larger models are usually more accurate but slower.",

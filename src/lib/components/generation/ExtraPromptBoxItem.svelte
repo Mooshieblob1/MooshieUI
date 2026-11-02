@@ -120,6 +120,7 @@
     minHeight="min-h-16"
     storageKey={`mooshieui.promptHeight.extra.${side}.${id}`}
     tagAssist={!isVideoMode}
+    suggestLoraKeywords={side === "positive"}
   />
   {#if generation.isNovelAi}
     <NovelAiTokenBar {side} />

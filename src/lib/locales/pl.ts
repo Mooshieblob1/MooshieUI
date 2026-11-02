@@ -2766,6 +2766,10 @@ const pl: Record<string, string> = {
   "settings.autocomplete.spellcheck": "Sprawdzanie pisowni tagów",
   "settings.autocomplete.spellcheck_desc": "Podkreśl tagi, które nie są znanymi tagami Danbooru i zaproponuj poprawki po kliknięciu prawym przyciskiem myszy.",
   "generation.prompt.spellcheck_no_suggestions": "Brak sugestii",
+  "settings.autocomplete.lora_keywords": "Najpierw słowa kluczowe LoRA",
+  "settings.autocomplete.lora_keywords_desc": "Gdy włączona jest LoRA ze słowami wyzwalającymi, te słowa są proponowane na początku listy.",
+  "generation.prompt.lora_keyword_badge": "LoRA",
+  "generation.prompt.lora_keyword_title": "Słowo kluczowe z {lora}",
 
   "settings.interrogator.model": "Model taggera",
   "settings.interrogator.model_desc": "Modele są pobierane przy pierwszym użyciu. Większe modele są zwykle dokładniejsze, ale wolniejsze.",

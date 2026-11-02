@@ -41,6 +41,7 @@
   $effect(() => { const id = musicCover.nativeJob?.prompt_id; if (id) untrack(() => music.rememberPrompt(id)); });
   $effect(() => { if (music.playing) untrack(stopScorePreview); });
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
+  import { loraKeywords } from "./lib/stores/loraKeywords.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
@@ -394,6 +395,17 @@
     autocomplete.notifyModelChanged(
       generation.isAnima || generation.isWan || generation.isQwen,
     );
+  });
+
+  // Feed the enabled LoRAs to the keyword store so prompt autocomplete can
+  // suggest their trigger words first. setActive ignores unchanged lists, so
+  // strength edits (which also reassign generation.loras) cost nothing.
+  $effect(() => {
+    const names =
+      autocomplete.enabled && autocomplete.loraKeywordsEnabled
+        ? generation.loras.filter((l) => l.enabled && l.name).map((l) => l.name)
+        : [];
+    untrack(() => loraKeywords.setActive(names));
   });
 
   // beta57 comes from the RES4LYF node pack. A saved beta57 scheduler on an

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { loraKeywords } from "../../stores/loraKeywords.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import {
@@ -282,6 +283,7 @@
     try {
       const info = await getLoraCivitaiInfo(filename);
       cache = { ...cache, [filename]: { data: info, fetchedAt: Date.now() } };
+      loraKeywords.ingest(filename, info);
       // Only persist to localStorage when CivitAI data was retrieved.
       // Empty results (failed auth, pre-fix) stay in-memory only so they
       // re-fetch fresh next session once an API key is configured.
