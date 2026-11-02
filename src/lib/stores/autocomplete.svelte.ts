@@ -40,6 +40,8 @@ class AutocompleteStore {
   clickableOverlayEnabled = $state(true);
   /** Whether the Danbooru tag-aware spell checker (underlines + right-click suggestions) is on */
   spellcheckEnabled = $state(true);
+  /** Whether keywords of enabled LoRAs are suggested at the top of the dropdown */
+  loraKeywordsEnabled = $state(true);
   /** Whether a custom taglist is currently loading */
   loading = $state(false);
   /** Error message if loading failed */
@@ -388,6 +390,7 @@ class AutocompleteStore {
         if (saved.enabled === false) this.enabled = false;
         if (saved.clickableOverlayEnabled === false) this.clickableOverlayEnabled = false;
         if (saved.spellcheckEnabled === false) this.spellcheckEnabled = false;
+        if (saved.loraKeywordsEnabled !== undefined) this.loraKeywordsEnabled = saved.loraKeywordsEnabled !== false;
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
@@ -429,6 +432,7 @@ class AutocompleteStore {
         enabled: this.enabled,
         clickableOverlayEnabled: this.clickableOverlayEnabled,
         spellcheckEnabled: this.spellcheckEnabled,
+        loraKeywordsEnabled: this.loraKeywordsEnabled,
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,
@@ -560,6 +564,7 @@ class AutocompleteStore {
     return {
       clickableOverlayEnabled: this.clickableOverlayEnabled,
       spellcheckEnabled: this.spellcheckEnabled,
+      loraKeywordsEnabled: this.loraKeywordsEnabled,
       maxResults: this.maxResults,
       sourceMode: this.sourceMode,
       sourceUrl: this.sourceUrl,

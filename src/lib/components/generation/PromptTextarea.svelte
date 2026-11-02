@@ -5,6 +5,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
+  import { loraKeywords, normalizeKeyword } from "../../stores/loraKeywords.svelte.js";
   import {
     renderHighlightedPrompt,
     hasSchedulingTags,
@@ -52,7 +53,21 @@
      * a false positive.
      */
     highlightLoraWords?: boolean;
+    /**
+     * Put keywords of the enabled LoRAs at the top of the completion dropdown
+     * (Settings > Autocomplete can turn this off everywhere). The negative
+     * prompt passes false: trigger words don't belong there.
+     */
+    suggestLoraKeywords?: boolean;
   }
+
+  /** A dropdown row: a tag from the taglist, or an enabled LoRA's keyword. */
+  type Suggestion = TagEntry & {
+    /** Set for LoRA keyword rows: the LoRA filename it came from. */
+    loraFile?: string;
+    /** Display name of that LoRA, for the row tooltip. */
+    loraLabel?: string;
+  };
 
   let {
     value = $bindable(),
@@ -62,6 +77,7 @@
     storageKey,
     tagAssist = true,
     highlightLoraWords = false,
+    suggestLoraKeywords = true,
   }: Props = $props();
 
   // Restored height is applied as inline style (set in $effect on mount).
@@ -126,7 +142,7 @@
       scrollbarWidth = Math.max(0, width);
     }
   }
-  let suggestions = $state<TagEntry[]>([]);
+  let suggestions = $state<Suggestion[]>([]);
   let selectedIndex = $state(0);
   let showSuggestions = $state(false);
   let dropdownTop = $state(0);
@@ -277,7 +293,27 @@
       return;
     }
 
-    suggestions = autocomplete.search(searchFragment, autocomplete.maxResults, categoryFilter);
+    const tagResults: Suggestion[] = autocomplete.search(searchFragment, autocomplete.maxResults, categoryFilter);
+    // LoRA keywords have no tag category, so they only show under "All".
+    const keywordResults: Suggestion[] =
+      suggestLoraKeywords && autocomplete.enabled && autocomplete.loraKeywordsEnabled && categoryFilter === null
+        ? loraKeywords.match(searchFragment, autocomplete.maxResults).map((kw) => ({
+            n: kw.word,
+            c: -1,
+            p: 0,
+            loraFile: kw.lora,
+            loraLabel: kw.label,
+          }))
+        : [];
+    if (keywordResults.length > 0) {
+      const keywordKeys = new Set(keywordResults.map((kw) => normalizeKeyword(kw.n)));
+      suggestions = [
+        ...keywordResults,
+        ...tagResults.filter((tag) => !keywordKeys.has(normalizeKeyword(tag.n))),
+      ].slice(0, autocomplete.maxResults);
+    } else {
+      suggestions = tagResults;
+    }
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;
 
@@ -307,7 +343,7 @@
     dropdownTop = Math.min(Math.max(desiredDropdownTop, minTop), maxTop);
   }
 
-  function acceptSuggestion(tag: TagEntry) {
+  function acceptSuggestion(tag: Suggestion) {
     const result = getCurrentTagFragment();
     if (!result || !textareaEl) return;
 
@@ -319,7 +355,9 @@
     const leadingWhitespace = value.substring(result.start, result.trimmedStart);
     const trailingWhitespace = value.substring(result.trimmedEnd, result.end);
     const after = value.substring(result.end);
-    const rawTagText = formatTagForPrompt(tag.n);
+    // LoRA keywords go in verbatim, the same as the LoRA gallery's trigger-word
+    // chips: underscores and brackets can be part of the trigger token.
+    const rawTagText = tag.loraFile ? tag.n : formatTagForPrompt(tag.n);
 
     // Detect scheduling wrapper in the current fragment and preserve it
     // MooshieUI XML syntax: <from:0.2>tag</from>
@@ -344,6 +382,14 @@
     const suffix = needsCommaSuffix ? ", " : "";
 
     value = before + leadingWhitespace + tagText + trailingWhitespace + suffix + after;
+
+    // Track it like a chip-inserted trigger word, so it is highlighted and
+    // removed again when the LoRA is switched off. Only the positive prompt
+    // (the instance that highlights LoRA words) is tracked.
+    if (tag.loraFile && highlightLoraWords) {
+      generation.recordInsertedLoraWord(tag.loraFile, tag.n);
+      generation.saveSettings();
+    }
 
     showSuggestions = false;
 
@@ -936,7 +982,7 @@
     };
   }
 
-  function bindSuggestionButton(node: HTMLButtonElement, initial: { tag: TagEntry; index: number }) {
+  function bindSuggestionButton(node: HTMLButtonElement, initial: { tag: Suggestion; index: number }) {
     let current = initial;
     const offMouseDown = on(node, "mousedown", (e) => {
       e.preventDefault();
@@ -946,7 +992,7 @@
       selectedIndex = current.index;
     });
     return {
-      update(next: { tag: TagEntry; index: number }) {
+      update(next: { tag: Suggestion; index: number }) {
         current = next;
       },
       destroy() {
@@ -1165,10 +1211,19 @@
             {i === selectedIndex ? 'bg-indigo-600/40 text-white' : 'text-neutral-300 hover:bg-neutral-700'}"
           use:bindSuggestionButton={{ tag, index: i }}
         >
-          <span class={CATEGORY_COLORS[tag.c] ?? "text-neutral-300"}>
-            {formatTagForDisplay(tag.n)}
-          </span>
-          <span class="text-xs text-neutral-500 shrink-0">{formatTagCount(tag)}</span>
+          {#if tag.loraFile}
+            <span class="text-amber-300 truncate" title={locale.t("generation.prompt.lora_keyword_title", { lora: tag.loraLabel ?? tag.loraFile })}>
+              {tag.n}
+            </span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 shrink-0">
+              {locale.t("generation.prompt.lora_keyword_badge")}
+            </span>
+          {:else}
+            <span class={CATEGORY_COLORS[tag.c] ?? "text-neutral-300"}>
+              {formatTagForDisplay(tag.n)}
+            </span>
+            <span class="text-xs text-neutral-500 shrink-0">{formatTagCount(tag)}</span>
+          {/if}
         </button>
       {/each}
     </div>

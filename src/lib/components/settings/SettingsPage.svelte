@@ -4010,6 +4010,23 @@
               </button>
             </label>
 
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p class="text-sm text-neutral-200">{locale.t('settings.autocomplete.lora_keywords')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.autocomplete.lora_keywords_desc')}</p>
+              </div>
+              <button
+                class="relative w-10 h-5 rounded-full transition-colors shrink-0 {autocomplete.loraKeywordsEnabled ? 'bg-indigo-600' : 'bg-neutral-700'}"
+                onclick={() => { autocomplete.loraKeywordsEnabled = !autocomplete.loraKeywordsEnabled; autocomplete.saveSettings(); }}
+                role="switch"
+                aria-checked={autocomplete.loraKeywordsEnabled}
+                aria-label={locale.t('settings.autocomplete.lora_keywords')}
+                title={locale.t('settings.autocomplete.lora_keywords')}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.loraKeywordsEnabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </label>
+
             {#if isAdmin}
             <!-- Current source -->
             <div>
