@@ -4,6 +4,7 @@ import type { ExportFormat } from "./videoExport.js";
 import type { ChatMessage } from "./enhancerSession.js";
 import { locale } from "../stores/locale.svelte.js";
 import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
+import type { SplatCapabilities, SplatJob, SplatParams, SplatStatus } from "../types/model3d.js";
 import type { MusicTranscript } from "./musicReview.js";
 import type { MusicLinkCapabilities, MusicLinkImport } from "./musicLink.js";
 import type { ReferenceSong, MusicReferenceContext } from "../types/music.js";
@@ -102,6 +103,28 @@ export async function loadMusicAudio(job: MusicJob): Promise<string> {
 /** Desktop only: the path comes from the native Save dialog. */
 export async function saveMusicAudio(audioBase64: string, path: string): Promise<void> {
   return ipcInvoke("save_music_audio", { audioBase64, path });
+}
+
+export async function getSplatCapabilities(): Promise<SplatCapabilities> {
+  return ipcInvoke("get_splat_capabilities");
+}
+
+export async function generateSplat(params: SplatParams, imageBase64: string): Promise<SplatJob> {
+  return ipcInvoke("generate_splat", { params, imageBase64 });
+}
+
+export async function getSplatStatus(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<SplatStatus> {
+  return ipcInvoke("get_splat_status", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** The finished splat as a base64 binary PLY. */
+export async function loadSplatPly(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<string> {
+  return ipcInvoke("load_splat_ply", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** Desktop only: the path comes from the native Save dialog. */
+export async function saveSplatFile(dataBase64: string, path: string): Promise<void> {
+  return ipcInvoke("save_splat_file", { dataBase64, path });
 }
 
 export async function saveMusicFile(dataBase64: string, path: string): Promise<void> {

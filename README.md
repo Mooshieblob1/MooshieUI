@@ -70,6 +70,7 @@ Technical references and project planning documents are indexed in [docs/README.
 - **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
 - **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, [Standard and Larryvrh/LightX2V/PDD Turbo methods](docs/VIDEO.md), retained drafts with experimental 2× refinement, TeaCache, animated live previews, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
 - **Music studio** - YuE2 songs, native SheetSage2 covers and score-aware assistance through your configured Prompt Assistant. [Review and edit scores](docs/MUSIC.md), preview melodies, export MIDI, generate sequential candidates, compare saved versions and export projects with original FLAC and settings. Review recognized lyrics and approximate cover timing using xAI transcription and your assistant, with playable evidence. Includes playlists, shared playback, manual lyric timing, reference-song lookup, temporary song-link imports, style analysis from selected audio sections, reusable style profiles, volume-matched A/B listening, scoped edits with before/after previews, and an arrangement-planning prototype.
+- **Image to 3D** - turn one picture of a character or object into a 3D Gaussian splat with [Idol](https://huggingface.co/speridlabs/idol) (or TripoSplat) on ComfyUI's own nodes, about 7 GB of VRAM. Spin it in the built-in viewer, keep it in a device-local library and export `.ply` or `.splat`. Start from a file, a paste or any gallery image. [Details](docs/IMAGE_TO_3D.md).
 - **Pause and continue** - pause ComfyUI text-to-image sampling, inspect a preview, change prompts or sampling settings, or paint a masked correction before continuing. Keep a pause to try different endings.
 - **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
 - **Smart model detection** - 20+ architectures identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
@@ -131,9 +132,9 @@ npm run tauri build    # production build
 
 1. You adjust settings in the Svelte UI.
 2. On Generate, `ipcInvoke()` sends settings to Rust through Tauri IPC on desktop or HTTP in browser mode; `ipcListen()` receives events through Tauri or SSE.
-3. Rust builds an image, video or music ComfyUI workflow from templates, or a NovelAI image request using the selected account's key.
+3. Rust builds an image, video, music or image-to-3D ComfyUI workflow from templates, or a NovelAI image request using the selected account's key.
 4. ComfyUI workflows go to its `/prompt` API; NovelAI requests go to its image API. Optional local post-processing sends returned NovelAI images through ComfyUI.
-5. ComfyUI WebSocket events and NovelAI streaming responses feed progress and previews. Images and videos use the gallery; music has a separate audio player and device-local library.
+5. ComfyUI WebSocket events and NovelAI streaming responses feed progress and previews. Images and videos use the gallery; music and 3D models each have their own device-local library.
 
 MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance, an SDXL↔Flux2 VAE adapter, Nanosaur DiT support, and face fix) that are auto-installed into ComfyUI. Details live in [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub). The tiled diffusion node is also available as a standalone ComfyUI custom node: [ComfyUI-MooshieTiledDiffusion](https://github.com/Mooshieblob1/ComfyUI-MooshieTiledDiffusion).
 
@@ -146,7 +147,7 @@ MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance,
 | Frontend | Svelte 5, TypeScript 6, Tailwind CSS 4 |
 | Runtime | Tauri desktop app + axum headless web server |
 | State | Svelte 5 runes - class-based singleton stores |
-| Persistence | Tauri Store (JSON), SQLite (`rusqlite`), and per-account IndexedDB for the music library |
+| Persistence | Tauri Store (JSON), SQLite (`rusqlite`), and per-account IndexedDB for the music and 3D libraries |
 | Generation transport | ComfyUI REST/WebSocket and NovelAI HTTP/streaming through Rust |
 | Prompt Assistant | Local llama.cpp, configured external LLM endpoint, or [ChatGPT / Gemini account sign-in](docs/PROMPT-ASSISTANT-SIGN-IN.md) |
 | Inference | ONNX Runtime (`ort`) for WD v3 image interrogation |

@@ -7,6 +7,7 @@ pub mod inpainting;
 pub mod music;
 pub mod rife;
 pub mod segment_detail;
+pub mod splat;
 pub mod style_ref;
 pub mod style_transfer;
 pub mod txt2img;

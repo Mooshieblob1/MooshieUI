@@ -51,9 +51,10 @@ pub struct PromptQueue {
     owners: std::sync::RwLock<HashMap<String, Option<String>>>,
     /// prompt_id → worker_id that is executing this prompt.
     worker_map: std::sync::RwLock<HashMap<String, u32>>,
-    /// Standalone music jobs are polled by the Music page, not restored into
-    /// the image generation progress store by queue broadcasts.
-    music_prompts: std::sync::RwLock<HashSet<String>>,
+    /// Standalone jobs (music, 3D) are polled by their own page, not restored
+    /// into the image generation progress store by queue broadcasts. The value
+    /// is the queue-update `kind` the frontend routes on.
+    music_prompts: std::sync::RwLock<HashMap<String, &'static str>>,
     /// Ordered list of (prompt_id, username) for queue position tracking
     pub(crate) queue: std::sync::RwLock<Vec<(String, Option<String>)>>,
     /// Prompts waiting to be submitted to ComfyUI (fair queue held prompts).
@@ -113,7 +114,7 @@ impl PromptQueue {
         Self {
             owners: std::sync::RwLock::new(HashMap::new()),
             worker_map: std::sync::RwLock::new(HashMap::new()),
-            music_prompts: std::sync::RwLock::new(HashSet::new()),
+            music_prompts: std::sync::RwLock::new(HashMap::new()),
             queue: std::sync::RwLock::new(Vec::new()),
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
@@ -345,11 +346,33 @@ impl PromptQueue {
         self.music_prompts
             .write()
             .unwrap()
-            .insert(prompt_id.to_string());
+            .insert(prompt_id.to_string(), "music");
+    }
+
+    /// An image-to-3D (Gaussian splat) job, polled by the 3D page.
+    pub fn mark_splat(&self, prompt_id: &str) {
+        self.music_prompts
+            .write()
+            .unwrap()
+            .insert(prompt_id.to_string(), "3d");
     }
 
     pub fn is_music(&self, prompt_id: &str) -> bool {
-        self.music_prompts.read().unwrap().contains(prompt_id)
+        self.music_prompts.read().unwrap().get(prompt_id) == Some(&"music")
+    }
+
+    pub fn is_splat(&self, prompt_id: &str) -> bool {
+        self.music_prompts.read().unwrap().get(prompt_id) == Some(&"3d")
+    }
+
+    /// The `kind` of a `mooshie:queue_update`: "music", "3d" or "generation".
+    pub fn kind(&self, prompt_id: &str) -> &'static str {
+        self.music_prompts
+            .read()
+            .unwrap()
+            .get(prompt_id)
+            .copied()
+            .unwrap_or("generation")
     }
 
     /// Get the worker handling a prompt.
@@ -1338,7 +1361,7 @@ impl AppState {
                     "prompt_id": prompt_id,
                     "position": pos,
                     "total": total,
-                    "kind": if self.prompt_queue.is_music(prompt_id) { "music" } else { "generation" },
+                    "kind": self.prompt_queue.kind(prompt_id),
                 }),
             );
         }

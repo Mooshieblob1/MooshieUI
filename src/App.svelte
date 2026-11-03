@@ -7,6 +7,7 @@
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import MusicPage from "./lib/components/music/MusicPage.svelte";
+  import Model3DPage from "./lib/components/model3d/Model3DPage.svelte";
   import ScenePage from "./lib/components/scene/ScenePage.svelte";
   import MusicBottomPlayer from "./lib/components/music/MusicBottomPlayer.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -36,6 +37,7 @@
   import { generationTabs } from "./lib/stores/generationTabs.svelte.js";
   import GenerationTabStrip from "./lib/components/generation/GenerationTabStrip.svelte";
   import { music } from "./lib/stores/music.svelte.js";
+  import { model3d } from "./lib/stores/model3d.svelte.js";
   import { musicCover } from "./lib/stores/musicCover.svelte.js";
   import { stopScorePreview } from "./lib/utils/musicPreview.js";
   $effect(() => { const id = musicCover.nativeJob?.prompt_id; if (id) untrack(() => music.rememberPrompt(id)); });
@@ -238,7 +240,7 @@
   const FETCH_TIMEOUT_MS = 45_000;
   const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
   const GENERATION_DONE_TOAST_EXIT_MS = 220;
-  type PrimaryPage = "generate" | "music" | "scene" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
+  type PrimaryPage = "generate" | "music" | "model3d" | "scene" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
   type GenerationDoneToast = {
     id: number;
     imageUrl: string;
@@ -2790,6 +2792,7 @@
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
         if (music.handleEvent("progress", data)) return;
+        if (model3d.handleEvent("progress", data)) return;
         if (!progress.isGenerating) return;
         lastProgressEventAt = Date.now();
         // Filter by prompt_id — reject events for other users' prompts
@@ -2803,7 +2806,7 @@
         progress.updateProgress(data.value, data.max, node);
       }),
       ...["execution_start", "execution_cached", "progress_state", "execution_interrupted"].map((type) =>
-        ipcListen(`comfyui:${type}`, (event: any) => { music.handleEvent(type, event.payload); }),
+        ipcListen(`comfyui:${type}`, (event: any) => { music.handleEvent(type, event.payload); model3d.handleEvent(type, event.payload); }),
       ),
       ipcListen("novelai:face_pass", (event: any) => {
         const data = event.payload;
@@ -2827,6 +2830,11 @@
       }),
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
+        if (data.kind === "3d" || (data.prompt_id && model3d.isModel3DPrompt(data.prompt_id))) {
+          if (data.prompt_id) model3d.rememberPrompt(data.prompt_id);
+          model3d.handleEvent("queue", data);
+          return;
+        }
         if (data.kind === "music" || (data.prompt_id && music.isMusicPrompt(data.prompt_id))) {
           if (data.prompt_id) music.rememberPrompt(data.prompt_id);
           music.handleEvent("queue", data);
@@ -3172,6 +3180,7 @@
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
         if (music.handleEvent("executing", data)) return;
+        if (model3d.handleEvent("executing", data)) return;
         console.log("Executing event:", data);
         // Ignore prompts not in our queue
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
@@ -3247,6 +3256,7 @@
       ipcListen("comfyui:execution_error", (event: any) => {
         const data = event.payload;
         if (music.handleEvent("execution_error", data)) return;
+        if (model3d.handleEvent("execution_error", data)) return;
         console.error("Execution error:", event.payload);
         // Classify the failure into an actionable message. The raw ComfyUI
         // desktop payload exposes exception_message/exception_type/node_type/
@@ -3292,6 +3302,7 @@
       }),
       ipcListen("comfyui:execution_success", (event: any) => {
         music.handleEvent("execution_success", event.payload);
+        model3d.handleEvent("execution_success", event.payload);
         // Image success is handled via executing node=null.
       }),
     ]);
@@ -3768,6 +3779,20 @@
     >
       <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></svg>
     </button>
+    <div class="relative mx-auto">
+      <button
+        class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'model3d' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+        onclick={() => (currentPage = "model3d")}
+        title={locale.t("nav.model3d")}
+        aria-label={locale.t("nav.model3d")}
+        aria-current={currentPage === "model3d" ? "page" : undefined}
+      >
+        <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
+      </button>
+      {#if model3d.busy}
+        <span class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-indigo-400 motion-safe:animate-pulse pointer-events-none" aria-hidden="true"></span>
+      {/if}
+    </div>
     <button
       class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'scene' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
       onclick={() => (currentPage = "scene")}
@@ -4076,10 +4101,12 @@
       <GenerationPage />
     {:else if currentPage === "music"}
       <MusicPage {userRole} />
+    {:else if currentPage === "model3d"}
+      <Model3DPage {userRole} />
     {:else if currentPage === "scene"}
       <ScenePage onOpenSettings={() => (currentPage = "settings")} />
     {:else if currentPage === "gallery"}
-      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} />
+      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} onMake3D={(image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; }} />
     {:else if currentPage === "modelhub"}
       <ModelHubPage />
     {:else if currentPage === "artists"}

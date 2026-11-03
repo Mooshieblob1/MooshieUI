@@ -33,7 +33,7 @@ pub struct MusicWorkerCapabilities {
     audio_encoders: Vec<String>,
 }
 
-fn model_names(info: &Value, node: &str, field: &str) -> Vec<String> {
+pub(crate) fn model_names(info: &Value, node: &str, field: &str) -> Vec<String> {
     let input = &info[node]["input"]["required"][field];
     // Legacy nodes put choices in slot 0. New schema nodes (including
     // AudioEncoderLoader) expose ["COMBO", {"options": [...]}] instead.

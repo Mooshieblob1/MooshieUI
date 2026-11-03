@@ -7234,6 +7234,11 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "models/ipadapter",
             "Models/ipadapter",
         ],
+        "background_removal" => &[
+            "background_removal",
+            "models/background_removal",
+            "Models/background_removal",
+        ],
         "clip_vision" => &[
             "clip_vision",
             "CLIPVision",
