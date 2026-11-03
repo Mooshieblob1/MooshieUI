@@ -83,32 +83,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --ignore-scripts
 
-      # Blocking: a high or critical advisory in a shipped (non-dev) dependency
-      # stops the release. Dev-only advisories are left to Dependabot.
-      - name: Audit npm dependencies
-        run: npm audit --omit=dev --audit-level=high
-
-      # Blocking on vulnerabilities. Informational advisories (unmaintained,
-      # unsound, yanked) only warn: most come from the gtk-rs/webkit stack Tauri
-      # pins on Linux (glib, gtk, unic-*) and have no release to move to. Fix a
-      # vulnerability with `cargo update -p <crate>`; only one with no fixed
-      # release reachable from our dependency tree goes on the ignore list below,
-      # with the reason, and comes off again once a fix lands.
-      - name: Audit Rust dependencies
+      # Blocking: a high or critical npm advisory in a shipped dependency, or a
+      # Rust vulnerability, stops the release. Rules and the ignore list live in
+      # scripts/audit-deps.sh, which the Dependency Audit workflow also runs on
+      # PRs, main and daily, so a new advisory should be fixed before tagging.
+      - name: Audit dependencies
         shell: bash
         run: |
           cargo install cargo-audit --locked
-          cd src-tauri
-          ignored=(
-            # --ignore RUSTSEC-YYYY-NNNN  # crate: why there is no fix yet
-            # zip 4.6.1 via tauri-plugin-updater (2.14.0 still pins zip ^4; fix needs >=9).
-            # Windows-only dep, used solely on minisign-verified update archives, and all
-            # three are Unix symlink/permission-bit issues.
-            --ignore RUSTSEC-2026-0367  # zip: SUID/SGID bits preserved on extract
-            --ignore RUSTSEC-2026-0368  # zip: extracted symlinks may point outside dest
-            --ignore RUSTSEC-2026-0369  # zip: Unix permissions applied through symlinks
-          )
-          cargo audit "${ignored[@]}"
+          bash scripts/audit-deps.sh
 
       # Built as three separate `tauri build` invocations (one process per format)
       # instead of one `--target ... ` call with `targets: "all"`. Tauri's bundler
