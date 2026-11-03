@@ -1,12 +1,18 @@
 # Changelog
 
-## What's New in v2.3.31
+## What's New in v2.3.32
+
+v2.3.31 was tagged but never published (its builds stopped on a new dependency advisory), so this release carries its changes.
 
 ### Prompting
 - **LoRA keywords in autocomplete**: when a LoRA with trigger words is switched on, the prompt autocomplete lists its keywords at the top, marked with a **LoRA** badge (hover to see which LoRA). Picking one inserts it exactly as written, and in the main prompt it is removed again when you switch the LoRA off. Keywords come from the same list the LoRA gallery shows. Not offered in negative prompts. Turn it off with **LoRA keywords first** in **Settings > Autocomplete** (on by default).
 
 ### Fixes
 - **Mature CivitAI models open on civitai.red**: **Open on CivitAI** in the Model Hub and the LoRA and checkpoint galleries now opens mature models on civitai.red, where CivitAI serves them, instead of a blocked civitai.com page. The Model Hub also accepts pasted civitai.red model links. Gallery links cached before this update switch over within 24 hours.
+
+### Maintenance
+- **Updater**: the Windows updater now uses zip 9, which removes a zip advisory that stopped the v2.3.31 builds.
+- **Dependency audit before release**: the npm and Rust advisory audit the release build runs now also runs on dependency PRs, on main and once a day, so a new advisory is fixed before a release is tagged instead of stopping its builds.
 
 ---
 
