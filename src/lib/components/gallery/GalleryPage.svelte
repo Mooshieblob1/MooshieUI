@@ -20,9 +20,11 @@
 
   interface Props {
     onSwitchToGenerate?: () => void;
+    /** Open the 3D page with this image as the source. */
+    onMake3D?: (image: OutputImage) => void;
   }
 
-  let { onSwitchToGenerate }: Props = $props();
+  let { onSwitchToGenerate, onMake3D }: Props = $props();
 
   let newBoardName = $state("");
   let galleryRenderLimit = $state(48);
@@ -595,6 +597,9 @@
                       {/if}
                       {#if directorToolsAvailable()}
                         <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => directorTools.open(image, image.thumbnailUrl || image.url || null)}>{locale.t("novelai.director.action")}</button>
+                      {/if}
+                      {#if onMake3D}
+                        <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" title={locale.t("gallery.make_3d_title")} onclick={() => onMake3D?.(image)}>{locale.t("gallery.make_3d")}</button>
                       {/if}
                       <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>{locale.t("gallery.copy")}</button>
                       <button class="px-2 py-1 text-[11px] rounded text-neutral-100 {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-neutral-800 hover:bg-neutral-700'}" title={comparePinTitle(image)} onclick={() => gallery.toggleComparePin(image)}>{locale.t("gallery.compare.short")}</button>

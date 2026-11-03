@@ -19,6 +19,7 @@ pub mod novelai;
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
 pub mod server;
+pub mod splat;
 pub mod video_drafts;
 pub mod video_export;
 pub mod video_interpolate;

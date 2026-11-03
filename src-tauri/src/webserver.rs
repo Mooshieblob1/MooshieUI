@@ -1813,7 +1813,7 @@ async fn sse_handler(
                     "event": "mooshie:queue_update",
                     "payload": {
                         "prompt_id": pid, "position": pos, "total": total,
-                        "kind": if app.prompt_queue.is_music(pid) { "music" } else { "generation" },
+                        "kind": app.prompt_queue.kind(pid),
                     }
                 });
                 evts.push(Ok(Event::default().data(json.to_string())));
@@ -6557,6 +6557,38 @@ async fn dispatch_command(
                 commands::music::audio(&state, prompt_id, worker_id)
                     .await
                     .map(|audio| serde_json::json!(audio))
+                    .map_err(|e| e.to_string())
+            }
+        }
+        "get_splat_capabilities" => {
+            let result = commands::splat::capabilities(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "generate_splat" => {
+            let params = serde_json::from_value(args["params"].clone())
+                .map_err(|e| format!("Invalid 3D params: {e}"))?;
+            let image = args["imageBase64"].as_str().ok_or("Missing imageBase64")?;
+            commands::splat::submit(&state, params, image, username.map(str::to_string))
+                .await
+                .map_err(|e| e.to_string())
+        }
+        "get_splat_status" | "load_splat_ply" => {
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let worker_id = args["workerId"]
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .ok_or("Invalid workerId")?;
+            ensure_prompt_owned(&state, prompt_id, username)?;
+            if command == "get_splat_status" {
+                commands::splat::status(&state, prompt_id, worker_id)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                commands::splat::ply(&state, prompt_id, worker_id)
+                    .await
+                    .map(|ply| serde_json::json!(ply))
                     .map_err(|e| e.to_string())
             }
         }
