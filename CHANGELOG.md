@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v2.3.33
+
+### Image to 3D
+- **New 3D page**: turn one picture of a character or object into a 3D Gaussian splat, back side included. Open **3D** in the navigation, or press **3D** on a gallery image. Drop, paste or choose an image, or pick one from the gallery, then press **Make 3D model**. It runs Idol by Speridlabs (Apache 2.0, a TripoSplat fine-tune) on ComfyUI's own TripoSplat nodes, so no ComfyUI update or custom nodes are needed. It needs about 7 GB of VRAM.
+- **One-click model download**: **Download Idol** fetches only the missing files (about 3.8 GB when none are there) from Comfy-Org's ungated repackage. No Hugging Face token needed. On shared servers only admins and moderators can download.
+- **Options**: **Remove background** (BiRefNet; turn it off for images that already have a transparent background), **Detail** from Draft to Maximum (131,072 to 1,048,576 Gaussians), and **Advanced** steps, guidance and seed.
+- **Viewer**: a built-in WebGL 2 viewer. Drag to orbit, right-drag or Shift-drag to pan, scroll or pinch to zoom, double-click to reset. **Spin** turns the model on a turntable. Works in the desktop app and browser mode.
+- **Library and export**: finished models are kept under **Your 3D models** in this browser, per account, like the music library. Rename or delete them, and export with **Save .ply** (the file ComfyUI made) or **Save .splat** for web splat viewers. Both open in SuperSplat, Blender add-ons and other Gaussian splat tools.
+
+---
+
 ## What's New in v2.3.32
 
 v2.3.31 was tagged but never published (its builds stopped on a new dependency advisory), so this release carries its changes.

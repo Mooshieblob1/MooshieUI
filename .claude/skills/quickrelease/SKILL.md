@@ -43,7 +43,7 @@ git pull origin main
 The one check this fast path keeps: the tagged **Build & Release** run audits dependencies and fails on any advisory published since the last merge.
 
 ```powershell
-bash scripts/audit-deps.sh
+& "$env:ProgramFiles\Git\bin\bash.exe" scripts/audit-deps.sh
 ```
 
 On a vulnerability, update the crate (or the parent that pulls it in, `cargo tree -i <crate>@<version>`) on a normal PR first, then release.
