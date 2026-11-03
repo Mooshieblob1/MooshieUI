@@ -274,7 +274,7 @@ pub(crate) async fn submit(
         .json()
         .await?;
     if uploaded["name"] != filename
-        || uploaded["subfolder"].as_str().unwrap_or("") != ""
+        || !uploaded["subfolder"].as_str().unwrap_or("").is_empty()
         || uploaded["type"] != "input"
     {
         return Err(AppError::Other(

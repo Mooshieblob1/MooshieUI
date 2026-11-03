@@ -158,7 +158,7 @@ pub fn validate(params: &SplatParams) -> Result<(), String> {
         return Err("Guidance must be between 1 and 10.".into());
     }
     if !(MIN_GAUSSIANS..=MAX_GAUSSIANS).contains(&params.num_gaussians)
-        || params.num_gaussians % 32 != 0
+        || !params.num_gaussians.is_multiple_of(32)
     {
         return Err(format!(
             "Gaussian count must be a multiple of 32 between {MIN_GAUSSIANS} and {MAX_GAUSSIANS}."
