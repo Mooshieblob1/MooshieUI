@@ -130,7 +130,10 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run build
+bash scripts/audit-deps.sh   # same npm + cargo advisory audit the release build runs
 ```
+
+The audit catches advisories published since the last merge, which otherwise only fail the tagged **Build & Release** run. If it reports a vulnerability, find what pulls the crate in (`cargo tree -i <crate>@<version>`) and update that (`cargo update -p <parent>`; check open Dependabot PRs, they often already carry the fix). Ignore an advisory in `scripts/audit-deps.sh` only when no fixed release is reachable, with the reason. Needs `cargo install cargo-audit --locked` once.
 
 ### 7. Release branch and PR
 
@@ -267,7 +270,7 @@ No manual About edit — version from `__APP_VERSION__`; release notes from GitH
 - [ ] Pre-commit-check passed
 - [ ] Three version files match X.Y.Z
 - [ ] docs/RELEASE_NOTES.md + CHANGELOG.md updated
-- [ ] cargo check + npm run build passed
+- [ ] cargo check + npm run build + scripts/audit-deps.sh passed
 - [ ] Release PR merged to main
 - [ ] Post-merge bot pass completed (no unaddressed Fix items)
 - [ ] Tag vX.Y.Z pushed

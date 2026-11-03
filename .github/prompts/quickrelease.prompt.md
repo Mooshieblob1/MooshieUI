@@ -38,6 +38,16 @@ git checkout main
 git pull origin main
 ```
 
+### 1b. Dependency audit [BLOCKING]
+
+The one check this fast path keeps: the tagged **Build & Release** run audits dependencies and fails on any advisory published since the last merge.
+
+```powershell
+bash scripts/audit-deps.sh
+```
+
+On a vulnerability, update the crate (or the parent that pulls it in, `cargo tree -i <crate>@<version>`) on a normal PR first, then release.
+
 ### 2. Version bump (all three must match)
 
 Update version in:
