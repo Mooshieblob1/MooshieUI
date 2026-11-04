@@ -162,13 +162,10 @@ impl ArtistDetector {
         Ok(())
     }
 
-    /// Score `img` and return up to `MAX_ARTISTS` artists whose softmax score
-    /// is at least `threshold`, highest first.
-    pub fn detect(
-        &mut self,
-        img: &image::DynamicImage,
-        threshold: f32,
-    ) -> Result<Vec<TagResult>, AppError> {
+    /// Score `img` and return its `MAX_ARTISTS` best artists, highest first,
+    /// whatever their score. Callers split them at the user's threshold, so the
+    /// near misses can still be offered when nothing clears it.
+    pub fn detect(&mut self, img: &image::DynamicImage) -> Result<Vec<TagResult>, AppError> {
         let session = self
             .session
             .as_mut()
@@ -208,7 +205,7 @@ impl ArtistDetector {
         Ok(top_artists(
             &softmax(&logits),
             &self.labels,
-            threshold,
+            0.0,
             MAX_ARTISTS,
         ))
     }

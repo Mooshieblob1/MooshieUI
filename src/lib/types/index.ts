@@ -871,6 +871,13 @@ export interface InterrogationResult {
   rating_tags: TagResult[];
   /** Reaches the interrogated image server-side, for `describeImage`. */
   image_token?: string;
+  /** Set when Kaloscope ran; absent when artist detection is off. */
+  artist_detection?: {
+    /** The threshold the run used (0-1). */
+    threshold: number;
+    /** Best guesses under the threshold, highest first. */
+    below_threshold: TagResult[];
+  };
 }
 
 /** One selectable tagger, plus whether its files are already on disk. */
