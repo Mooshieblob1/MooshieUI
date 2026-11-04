@@ -2,9 +2,8 @@
 //!
 //! Pixal3D (Tencent ARC, MIT, repackaged as Comfy-Org/Pixal3D) is a
 //! pixel-aligned image-to-3D model on the TRELLIS.2 pipeline. The graph
-//! follows ComfyUI's "Pixal3D & TRELLIS.2: Image to Model" template as of
-//! workflow_templates 69dedd6 (the revision that matches our ComfyUI v0.41.1
-//! pin), Pixal3D branch only:
+//! follows ComfyUI's "Pixal3D & TRELLIS.2: Image to Model" template,
+//! Pixal3D branch only:
 //!
 //! 1. BiRefNet mask (or the image's alpha), `ImageCropToMask` at pad 1.1.
 //! 2. MoGe-2 estimates the horizontal field of view; `Pixal3DConditioning`
@@ -12,7 +11,8 @@
 //! 3. Four sampling passes on the Pixal3D model: sparse structure (shift 5,
 //!    cfg 7.5 with CFG off for the last third, rescale 0.7), shape (cfg 7.5,
 //!    rescale 0.5), the 1536 upsample pass, then texture (cfg 1).
-//! 4. Mesh clean-up and baking: remesh at 768, decimate, smooth normals, UV
+//! 4. Mesh clean-up and baking: remesh at 768 (the template's watertight
+//!    "solid" mode on ComfyUI v0.43+, its earlier "udf" mode before), decimate, smooth normals, UV
 //!    unwrap, bake base colour / metallic / roughness from the texture
 //!    voxels, normal and ambient occlusion from the remeshed high-poly mesh.
 //! 5. `SaveGLB` writes one textured `.glb`.
@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-/// Every node the graph uses. All ship with ComfyUI v0.41.1.
+/// Every node the graph uses. All ship with ComfyUI v0.41.1 and newer.
 pub const REQUIRED_NODES: &[&str] = &[
     "LoadImage",
     "InvertMask",
@@ -117,11 +117,45 @@ pub struct MeshModels {
     pub moge: String,
     /// Only needed when background removal is on.
     pub bg_removal: Option<String>,
+    /// `RemeshMesh` offers the "solid" sign mode (ComfyUI v0.43+).
+    pub solid_remesh: bool,
+}
+
+/// Whether this ComfyUI's `RemeshMesh` has the watertight "solid" sign mode,
+/// which the current template uses (added in ComfyUI v0.43.0).
+pub fn has_solid_remesh(object_info: &Value) -> bool {
+    object_info["RemeshMesh"]["input"]["required"]["sign_mode"][1]["options"]
+        .as_array()
+        .is_some_and(|options| options.iter().any(|o| o["key"] == "solid"))
 }
 
 fn base(name: &str) -> String {
     let l = name.to_lowercase().replace('\\', "/");
     l.rsplit('/').next().unwrap_or(&l).to_string()
+}
+
+/// `RemeshMesh` inputs. The current template uses "solid" (one watertight
+/// shell: double walls removed, small holes closed, fill 20); before ComfyUI
+/// v0.43 the template used "udf" with every clean-up option off.
+fn remesh_inputs(solid: bool) -> Value {
+    let mut inputs = json!({
+        "mesh": ["25", 0], "resolution": 768, "band": 1.0, "project_back": 0.0,
+        "fix_poles": false, "smooth_iters": 20, "drop_small_components": 0.01,
+        "precluster_max_verts": 20_000_000,
+    });
+    let mode = if solid {
+        json!({"sign_mode": "solid", "sign_mode.fill": 20.0, "sign_mode.qef": false})
+    } else {
+        json!({
+            "sign_mode": "udf", "sign_mode.qef": false,
+            "sign_mode.drop_inverted_components": false,
+            "sign_mode.drop_enclosed_components": false,
+        })
+    };
+    for (key, value) in mode.as_object().into_iter().flatten() {
+        inputs[key] = value.clone();
+    }
+    inputs
 }
 
 /// Single-image Pixal3D models in `diffusion_models`. The multi-view model
@@ -338,7 +372,7 @@ pub fn build(params: &MeshParams, models: &MeshModels, image: &str, seed: i64) -
         &mut g,
         "30",
         "RemeshMesh",
-        json!({ "mesh": ["25", 0], "resolution": 768, "sign_mode": "udf", "sign_mode.qef": false, "sign_mode.drop_inverted_components": false, "sign_mode.drop_enclosed_components": false, "band": 1.0, "project_back": 0.0, "fix_poles": false, "smooth_iters": 20, "drop_small_components": 0.01, "precluster_max_verts": 20_000_000}),
+        remesh_inputs(models.solid_remesh),
     );
     node(
         &mut g,
@@ -432,7 +466,43 @@ mod tests {
             texture_vae: "trellis_2_texture_vae_bf16.safetensors".into(),
             moge: "moge_2_vitl_normal_fp16.safetensors".into(),
             bg_removal: Some("birefnet.safetensors".into()),
+            solid_remesh: true,
         }
+    }
+
+    #[test]
+    fn remesh_mode_follows_comfyui() {
+        let g = build(&params(), &models(), "in.png", 1);
+        let r = &g["30"]["inputs"];
+        assert_eq!(r["sign_mode"], "solid");
+        assert_eq!(r["sign_mode.fill"], 20.0);
+        assert_eq!(r["sign_mode.qef"], false);
+        assert!(r.get("sign_mode.drop_inverted_components").is_none());
+        let older = MeshModels {
+            solid_remesh: false,
+            ..models()
+        };
+        let g = build(&params(), &older, "in.png", 1);
+        let r = &g["30"]["inputs"];
+        assert_eq!(r["sign_mode"], "udf");
+        assert_eq!(r["sign_mode.drop_enclosed_components"], false);
+        assert!(r.get("sign_mode.fill").is_none());
+        assert_eq!(r["resolution"], 768);
+        assert_eq!(r["mesh"], json!(["25", 0]));
+    }
+
+    #[test]
+    fn solid_remesh_is_read_from_object_info() {
+        let mut info = json!({"RemeshMesh": {"input": {"required": {"sign_mode": [
+            "COMFY_DYNAMICCOMBO_V3", {"options": [{"key": "udf"}, {"key": "sdf"}]}
+        ]}}}});
+        assert!(!has_solid_remesh(&info));
+        info["RemeshMesh"]["input"]["required"]["sign_mode"][1]["options"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"key": "solid"}));
+        assert!(has_solid_remesh(&info));
+        assert!(!has_solid_remesh(&json!({})));
     }
 
     /// Every `[node, slot]` reference points at a node in the graph.

@@ -28,6 +28,8 @@ pub struct MeshWorkerCapabilities {
     pub texture_vaes: Vec<String>,
     pub moge_models: Vec<String>,
     pub bg_models: Vec<String>,
+    /// `RemeshMesh` has the "solid" sign mode (ComfyUI v0.43+).
+    pub solid_remesh: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -73,6 +75,7 @@ pub(crate) fn worker_capabilities_from_info(
             "bg_removal_name",
             crate::templates::splat::is_birefnet,
         ),
+        solid_remesh: mesh3d::has_solid_remesh(info),
     }
 }
 
@@ -153,6 +156,7 @@ pub(crate) fn resolve_models(
             .cloned()
             .ok_or("MoGe in models/geometry_estimation is missing.")?,
         bg_removal,
+        solid_remesh: worker.solid_remesh,
     })
 }
 

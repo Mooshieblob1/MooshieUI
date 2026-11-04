@@ -17,7 +17,7 @@ back side included. It has two methods, picked at the top of the form:
   It makes a cloud of soft points that looks right from every side, but only
   splat tools open it. It is faster and lighter.
 
-Both need ComfyUI v0.41 or newer (the managed runtime is pinned at v0.41.1).
+Both need ComfyUI v0.41 or newer (the managed runtime is pinned at v0.43.0).
 
 ## Pixal3D (textured mesh)
 
@@ -49,8 +49,8 @@ Both need ComfyUI v0.41 or newer (the managed runtime is pinned at v0.41.1).
 
 ### How it works
 
-`src-tauri/src/templates/mesh3d.rs` builds the graph from ComfyUI's Pixal3D
-template (workflow_templates `69dedd6`, the revision that matches v0.41.1):
+`src-tauri/src/templates/mesh3d.rs` builds the graph from ComfyUI's
+"Pixal3D & TRELLIS.2: Image to Model" template, Pixal3D branch only:
 
 1. `LoadImage` → `RemoveBackground` (BiRefNet) → `ImageCropToMask` (1024², pad 1.1).
 2. MoGe 2 estimates the camera field of view (`MoGeInference` →
@@ -58,7 +58,10 @@ template (workflow_templates `69dedd6`, the revision that matches v0.41.1):
 3. Three TRELLIS.2 sampling stages on the Pixal3D model: sparse structure
    (12 steps), shape (20 steps), and shape upsampled to 1536 (12 steps), each
    with `CFGOverride` + `RescaleCFG`, then the texture stage (12 steps, cfg 1).
-4. Mesh clean-up and baking with core nodes: `RemeshMesh` (768, udf),
+4. Mesh clean-up and baking with core nodes: `RemeshMesh` at 768 in the
+   template's watertight `solid` mode (fill 20) on ComfyUI v0.43 and newer, or
+   its earlier `udf` mode on v0.41 and v0.42, picked from the worker's
+   `object_info`,
    `DecimateMesh`, `MeshSmoothNormals`, `UnwrapMesh`, `BakeTextureFromVoxel`,
    `BakeNormalMapFromMesh`, `BakeAmbientOcclusion`, `ApplyTextureToMesh`.
 5. `SaveGLB` writes `output/3d/mooshie_mesh_*.glb`.
@@ -77,7 +80,7 @@ preview; Blender or a glTF viewer will show the same file with their own lightin
 
 ### Requirements
 
-- ComfyUI v0.41 or newer (the managed runtime is pinned at v0.41.1).
+- ComfyUI v0.41 or newer.
 - About 7 GB of VRAM. Idol's authors report 7.2 GB peak at the default settings.
 - These files, which the page offers to download (about 3.8 GB in total) from
   Comfy-Org's ungated repackage. No Hugging Face token is needed.
