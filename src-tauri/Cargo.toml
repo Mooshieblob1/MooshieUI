@@ -1,6 +1,6 @@
 [package]
 name = "comfyui-desktop"
-version = "2.3.33"
+version = "2.3.34"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 default-run = "comfyui-desktop"
