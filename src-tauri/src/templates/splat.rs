@@ -68,12 +68,18 @@ pub struct SplatParams {
 fn default_true() -> bool {
     true
 }
+// Idol's reference sampling (speridlabs/idol-sdk `sample_flow`): 50 Euler steps, time shift 3.0
+// (ComfyUI's TripoSplat model config already applies shift 3.0) and guidance 3.0 written as
+// `(1 + w) * cond - w * uncond`, which is `cfg = 4.0` in ComfyUI's `uncond + cfg * (cond - uncond)`.
+// ComfyUI's stock Idol template uses TripoSplat's 20 steps, cfg 3.0 and dpmpp_2m instead.
 fn default_steps() -> u32 {
-    20
+    50
 }
 fn default_cfg() -> f64 {
-    3.0
+    4.0
 }
+/// Idol integrates the flow with plain Euler steps.
+const SAMPLER: &str = "euler";
 fn default_gaussians() -> u32 {
     DEFAULT_GAUSSIANS
 }
@@ -183,7 +189,7 @@ pub fn build(params: &SplatParams, models: &SplatModels, image: &str, seed: i64)
             "clip_vision": ["7", 0], "vae": ["9", 0], "image": ["5", 0]}},
         NODE_SAMPLER: {"class_type": "KSampler", "inputs": {
             "model": ["6", 0], "seed": seed, "steps": params.steps, "cfg": params.cfg,
-            "sampler_name": "dpmpp_2m", "scheduler": "simple",
+            "sampler_name": SAMPLER, "scheduler": "simple",
             "positive": [NODE_CONDITIONING, 0], "negative": [NODE_CONDITIONING, 1],
             "latent_image": [NODE_CONDITIONING, 2], "denoise": 1.0}},
         NODE_DECODE: {"class_type": "VAEDecodeTripoSplat", "inputs": {
@@ -313,6 +319,8 @@ mod tests {
         assert!(g.get("4").is_none());
         assert_eq!(g["11"]["inputs"]["seed"], 42);
         assert_eq!(g["11"]["inputs"]["latent_image"], json!(["10", 2]));
+        assert_eq!(g["11"]["inputs"]["sampler_name"], "euler");
+        assert_eq!(g["11"]["inputs"]["scheduler"], "simple");
         assert_eq!(g["12"]["inputs"]["num_gaussians"], DEFAULT_GAUSSIANS);
         assert_eq!(
             g["8"]["inputs"]["vae_name"],
@@ -374,7 +382,8 @@ mod tests {
             serde_json::from_value(json!({"model": "idol_fp16.safetensors", "seed": "-1"}))
                 .unwrap();
         assert!(p.remove_background);
-        assert_eq!(p.steps, 20);
+        assert_eq!(p.steps, 50);
+        assert_eq!(p.cfg, 4.0);
         assert_eq!(p.num_gaussians, DEFAULT_GAUSSIANS);
         assert_eq!(p.seed, -1);
     }
