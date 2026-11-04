@@ -132,6 +132,24 @@
       category: "diffusion_models",
     },
     {
+      label: "MOSS-Image INT8",
+      url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_sft_int8_convrot.safetensors",
+      filename: "moss_image_sft_int8_convrot.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "MOSS-Image Base INT8",
+      url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_base_int8_convrot.safetensors",
+      filename: "moss_image_base_int8_convrot.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Qwen3.5 9B W4A8 (MOSS-Image)",
+      url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+      filename: "qwen3.5_9b_w4a8_gptq.safetensors",
+      category: "text_encoders",
+    },
+    {
       label: "Qwen3-VL 4B FP8 (Krea 2, FLUX 3 Klein)",
       url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
       filename: "qwen3vl_4b_fp8_scaled.safetensors",
