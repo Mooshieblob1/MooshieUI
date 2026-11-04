@@ -1,11 +1,22 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { locale } from "../../stores/locale.svelte.js";
   import { splatBounds, type SplatData } from "../../utils/splatPly.js";
+  import type { MeshData } from "../../utils/glb.js";
   import { SplatRenderer, type OrbitCamera } from "./splatRenderer.js";
+  import { MeshRenderer } from "./meshRenderer.js";
+
+  /**
+   * Orbit viewer for both result kinds: Gaussian splats (Idol) and textured
+   * meshes (Pixal3D). Each kind gets its own canvas, since a canvas keeps the
+   * WebGL context it was first created with.
+   */
+  type ViewerData = SplatData | MeshData;
+  type Kind = "splat" | "mesh";
+  const kindOf = (value: ViewerData): Kind => ("primitives" in value ? "mesh" : "splat");
 
   interface Props {
-    data: SplatData | null;
+    data: ViewerData | null;
     /** Slow turntable spin until the user grabs the model. */
     autoRotate?: boolean;
   }
@@ -13,7 +24,8 @@
   let { data, autoRotate = $bindable(true) }: Props = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
-  let renderer: SplatRenderer | null = null;
+  let renderer: SplatRenderer | MeshRenderer | null = null;
+  let kind = $state<Kind>(untrack(() => (data ? kindOf(data) : "splat")));
   let error = $state("");
   let camera: OrbitCamera | null = null;
   let home: OrbitCamera | null = null;
@@ -43,18 +55,30 @@
     renderer.render(camera);
   }
 
-  function frameData(next: SplatData | null) {
+  let shown: ViewerData | null | undefined = undefined;
+
+  function frameData(next: ViewerData | null) {
     if (!renderer) return;
+    shown = next;
     if (!next) {
       camera = null;
       home = null;
       renderer.clear();
       return;
     }
-    const { center, radius } = splatBounds(next);
-    renderer.setData(next, radius);
+    let center: [number, number, number], radius: number;
+    if (kindOf(next) === "mesh") {
+      const mesh = next as MeshData;
+      ({ center, radius } = mesh);
+      (renderer as MeshRenderer).setData(mesh, radius);
+    } else {
+      ({ center, radius } = splatBounds(next as SplatData));
+      (renderer as SplatRenderer).setData(next as SplatData, radius);
+    }
     const fov = (40 * Math.PI) / 180;
-    home = { yaw: 0, pitch: 0.18, distance: (radius / Math.sin(fov / 2)) * 1.1, target: center, fov };
+    // A mesh's radius is its bounding box's half diagonal, which is loose, so it can sit closer.
+    const fit = kindOf(next) === "mesh" ? 0.85 : 1.1;
+    home = { yaw: 0, pitch: 0.18, distance: (radius / Math.sin(fov / 2)) * fit, target: center, fov };
     camera = { ...home, target: [...home.target] as [number, number, number] };
     requestDraw();
   }
@@ -70,32 +94,44 @@
     try { return canvas?.toDataURL("image/png") ?? null; } catch { return null; }
   }
 
-  onMount(() => {
-    if (!canvas) return;
+  // One renderer per canvas; the canvas is remade when the kind changes.
+  $effect(() => {
+    const element = canvas;
+    if (!element) return;
+    const elementKind = element.dataset.kind === "mesh" ? "mesh" : "splat";
+    let next: SplatRenderer | MeshRenderer;
     try {
-      renderer = new SplatRenderer(canvas);
-      renderer.onsorted = requestDraw;
+      next = elementKind === "mesh" ? new MeshRenderer(element) : new SplatRenderer(element);
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
       return;
     }
+    error = "";
+    renderer = next;
+    next.onsorted = requestDraw;
     const observer = new ResizeObserver(requestDraw);
-    observer.observe(canvas);
-    frameData(data);
-    return () => observer.disconnect();
+    observer.observe(element);
+    untrack(() => frameData(data));
+    return () => {
+      observer.disconnect();
+      next.dispose();
+      if (renderer === next) renderer = null;
+    };
   });
 
   onDestroy(() => {
     if (frame) cancelAnimationFrame(frame);
-    renderer?.dispose();
-    renderer = null;
   });
 
-  let shown: SplatData | null = null;
   $effect(() => {
     const next = data;
+    const nextKind = next ? kindOf(next) : untrack(() => kind);
+    if (nextKind !== untrack(() => kind)) {
+      // The new canvas frames the data when its renderer starts.
+      kind = nextKind;
+      return;
+    }
     if (next === shown) return;
-    shown = next;
     frameData(next);
   });
 
@@ -187,8 +223,10 @@
 </script>
 
 <div class="relative h-full w-full overflow-hidden rounded-md bg-[radial-gradient(circle_at_50%_40%,rgb(38_38_38),rgb(10_10_10))]">
+  {#key kind}
   <canvas
     bind:this={canvas}
+    data-kind={kind}
     class="block h-full w-full touch-none select-none outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 {data ? 'cursor-grab active:cursor-grabbing' : ''}"
     tabindex="0"
     aria-label={locale.t("model3d.viewer_label")}
@@ -201,6 +239,7 @@
     oncontextmenu={(event) => event.preventDefault()}
     ondblclick={resetView}
   ></canvas>
+  {/key}
   {#if error}
     <p class="absolute inset-x-4 top-1/2 -translate-y-1/2 text-center text-sm text-red-300" role="alert">{locale.t("model3d.viewer_unavailable")} {error}</p>
   {/if}

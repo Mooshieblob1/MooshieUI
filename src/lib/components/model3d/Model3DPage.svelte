@@ -1,17 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { model3d, GAUSSIAN_CHOICES } from "../../stores/model3d.svelte.js";
+  import { model3d, ENGINES, GAUSSIAN_CHOICES, MESH_DETAILS } from "../../stores/model3d.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
-  import SplatViewer from "./SplatViewer.svelte";
+  import Model3DViewer from "./Model3DViewer.svelte";
   import type { OutputImage } from "../../types/index.js";
 
   let { userRole = "admin" }: { userRole?: string } = $props();
   const canDownload = $derived(userRole === "admin" || userRole === "moderator");
 
   let fileInput: HTMLInputElement | undefined = $state();
-  let viewer: SplatViewer | undefined = $state();
+  let viewer: Model3DViewer | undefined = $state();
   let pickerOpen = $state(false);
   let dragging = $state(false);
   let autoRotate = $state(true);
@@ -23,6 +23,7 @@
   const missing = $derived(model3d.missingFiles);
   const missingBytes = $derived(missing.reduce((sum, f) => sum + f.sizeBytes, 0));
   const selected = $derived(model3d.selected);
+  const pixal = $derived(model3d.engine === "pixal3d");
   const elapsed = $derived(model3d.busy && model3d.startedAt ? Math.max(0, Math.round((now - model3d.startedAt) / 1000)) : 0);
 
   $effect(() => {
@@ -88,7 +89,7 @@
       <div class="flex items-baseline gap-3 border-l-[3px] border-indigo-400 pl-3">
         <h1 class="text-xl font-semibold tracking-tight text-neutral-100 sm:text-2xl">{locale.t("model3d.title")}</h1>
         <span class="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">{locale.t("model3d.experimental")}</span>
-        <span class="text-xs text-neutral-500">Idol · TripoSplat</span>
+        <span class="text-xs text-neutral-500">{pixal ? "Pixal3D · TRELLIS.2" : "Idol · TripoSplat"}</span>
       </div>
       <button class="touch-target inline-flex shrink-0 items-center justify-center gap-2 rounded-sm px-2 text-xs text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:opacity-40" title={locale.t("model3d.refresh")} disabled={!connection.connected || model3d.refreshing} onclick={() => model3d.refresh()}>
         <svg class={`h-3.5 w-3.5 ${model3d.refreshing ? 'motion-safe:animate-spin' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 2l1 4M4 12l1 4a8 8 0 0 0 13 2"/></svg>
@@ -96,30 +97,42 @@
       </button>
     </header>
 
-    <p class="-mt-3 mb-5 text-xs text-neutral-500">{locale.t("model3d.experimental_note")}</p>
+    <p class="-mt-3 mb-5 text-xs text-neutral-500">{locale.t(pixal ? "model3d.experimental_note_pixal3d" : "model3d.experimental_note")}</p>
 
     {#if !connection.connected}
       <p class="mb-5 text-sm text-neutral-400">{locale.t("model3d.connect")}</p>
-    {:else if model3d.capabilities && !model3d.nodesReady}
-      <p class="mb-5 border-l-2 border-amber-500 pl-3 text-sm text-amber-200">{locale.t("model3d.needs_comfyui", { nodes: model3d.capabilities.missing_nodes.join(", ") })}</p>
-    {:else if model3d.capabilities && missing.length > 0}
+    {:else if model3d.engineCapabilities && !model3d.nodesReady}
+      <p class="mb-5 border-l-2 border-amber-500 pl-3 text-sm text-amber-200">{locale.t("model3d.needs_comfyui", { nodes: model3d.engineCapabilities.missing_nodes.join(", ") })}</p>
+    {:else if model3d.engineCapabilities && missing.length > 0}
       <div class="mb-5 space-y-2 border-l-2 border-indigo-400 pl-3 text-sm text-neutral-300">
-        <p>{locale.t("model3d.needs_models", { size: size(missingBytes) })}</p>
+        <p>{locale.t(pixal ? "model3d.needs_models_pixal3d" : "model3d.needs_models", { size: size(missingBytes) })}</p>
         <ul class="list-inside list-disc text-xs text-neutral-500">
           {#each missing as file (file.filename)}<li>{file.category}/{file.filename}</li>{/each}
         </ul>
         {#if canDownload}
           <button class="touch-target rounded-sm bg-indigo-500 px-4 text-sm text-[var(--theme-accent-foreground)] hover:bg-indigo-400 disabled:opacity-40" disabled={model3d.downloading} onclick={() => model3d.downloadMissing()}>
-            {model3d.downloading ? locale.t("model3d.downloading", { file: model3d.downloadingFile }) : locale.t("model3d.download", { size: size(missingBytes) })}
+            {model3d.downloading ? locale.t("model3d.downloading", { file: model3d.downloadingFile }) : locale.t(pixal ? "model3d.download_pixal3d" : "model3d.download", { size: size(missingBytes) })}
           </button>
         {:else}
-          <p class="text-xs text-neutral-500">{locale.t("model3d.ask_admin")}</p>
+          <p class="text-xs text-neutral-500">{locale.t(pixal ? "model3d.ask_admin_pixal3d" : "model3d.ask_admin")}</p>
         {/if}
       </div>
     {/if}
 
     <div class="grid items-start gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-8">
       <form class="min-w-0 space-y-4" onsubmit={(event) => { event.preventDefault(); void model3d.generate(); }} onchange={() => model3d.saveSettings()}>
+        <fieldset class="space-y-1.5" disabled={model3d.busy}>
+          <legend class="mb-1.5 text-sm font-medium text-neutral-200">{locale.t("model3d.engine")}</legend>
+          <div class="grid gap-2 sm:grid-cols-2">
+            {#each ENGINES as engine (engine)}
+              <label class="flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5 text-sm transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-indigo-400 {model3d.engine === engine ? 'border-indigo-400/60 bg-indigo-500/10 text-neutral-100' : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-700'}">
+                <input type="radio" name="model3d-engine" class="mt-1 accent-indigo-500" value={engine} checked={model3d.engine === engine} onchange={() => model3d.setEngine(engine)} />
+                <span>{locale.t(`model3d.engine_${engine}`)}<span class="block text-xs text-neutral-500">{locale.t(`model3d.engine_${engine}_help`)}</span></span>
+              </label>
+            {/each}
+          </div>
+        </fieldset>
+
         <div>
           <p class="mb-2 text-sm font-medium text-neutral-200">{locale.t("model3d.input")}</p>
           <div
@@ -147,10 +160,38 @@
           </div>
         </div>
 
-        {#if (model3d.capabilities?.models.length ?? 0) > 1}
+        {#if pixal}
+          {#if model3d.models.length > 1}
+            <label class="block space-y-1.5 text-sm text-neutral-200"><span>{locale.t("model3d.model")}</span>
+              <select class={inputClass} bind:value={model3d.meshParams.model} disabled={model3d.busy}>
+                {#each model3d.models as name (name)}<option value={name}>{name}</option>{/each}
+              </select>
+            </label>
+          {/if}
+
+          <label class="flex items-start gap-3 text-sm text-neutral-200">
+            <input type="checkbox" class="mt-1 accent-indigo-500" bind:checked={model3d.meshParams.remove_background} disabled={model3d.busy} />
+            <span>{locale.t("model3d.remove_background")}<span class="block text-xs text-neutral-500">{locale.t("model3d.remove_background_help")}</span></span>
+          </label>
+
+          <label class="block space-y-1.5 text-sm text-neutral-200"><span>{locale.t("model3d.detail")}</span>
+            <select class={inputClass} bind:value={model3d.meshParams.detail} disabled={model3d.busy}>
+              {#each MESH_DETAILS as detail (detail.value)}
+                <option value={detail.value}>{locale.t(`model3d.mesh_detail_${detail.value}`, { faces: locale.formatInteger(detail.faces), size: detail.texture })}</option>
+              {/each}
+            </select>
+          </label>
+
+          <details class="text-sm text-neutral-300">
+            <summary class="touch-target cursor-pointer content-center text-xs text-neutral-400">{locale.t("model3d.advanced")}</summary>
+            <label class="block max-w-48 space-y-1 pt-2 text-xs text-neutral-400"><span>{locale.t("model3d.seed")}</span><input class={inputClass} type="text" inputmode="numeric" pattern="-?[0-9]*" bind:value={model3d.meshParams.seed} disabled={model3d.busy} /></label>
+            <p class="pt-2 text-xs text-neutral-500">{locale.t("model3d.advanced_help_pixal3d")}</p>
+          </details>
+        {:else}
+        {#if model3d.models.length > 1}
           <label class="block space-y-1.5 text-sm text-neutral-200"><span>{locale.t("model3d.model")}</span>
             <select class={inputClass} bind:value={model3d.params.model} disabled={model3d.busy}>
-              {#each model3d.capabilities?.models ?? [] as name (name)}<option value={name}>{name}</option>{/each}
+              {#each model3d.models as name (name)}<option value={name}>{name}</option>{/each}
             </select>
           </label>
         {/if}
@@ -177,6 +218,7 @@
           </div>
           <p class="pt-2 text-xs text-neutral-500">{locale.t("model3d.advanced_help")}</p>
         </details>
+        {/if}
 
         <div class="flex items-center gap-3">
           <button type="submit" class="touch-target inline-flex min-h-12 flex-1 items-center justify-center gap-2.5 rounded-md bg-indigo-500 px-4 text-sm font-semibold text-[var(--theme-accent-foreground)] transition-colors hover:bg-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 disabled:opacity-40" disabled={!connection.connected || !model3d.ready || !model3d.inputUrl || model3d.busy}>
@@ -189,17 +231,17 @@
           <div class="space-y-1.5" role="status">
             <div class="flex justify-between text-xs text-neutral-400"><span>{stageLabel()}</span><span>{elapsed} s</span></div>
             <div class="h-1 overflow-hidden rounded-full bg-neutral-800">
-              <div class="h-full bg-indigo-400 transition-[width]" style="width: {model3d.stage === 'shape' && model3d.stageMax ? (model3d.stageValue / model3d.stageMax) * 100 : model3d.stage === 'prepare' ? 5 : model3d.stage === 'shape' ? 10 : 95}%"></div>
+              <div class="h-full bg-indigo-400 transition-[width]" style="width: {model3d.progressPercent}%"></div>
             </div>
           </div>
         {/if}
         {#if model3d.error}<p class="text-sm text-red-300" role="alert">{model3d.error}</p>{/if}
-        <p class="text-xs leading-relaxed text-neutral-500">{locale.t("model3d.about")}</p>
+        <p class="text-xs leading-relaxed text-neutral-500">{locale.t(pixal ? "model3d.about_pixal3d" : "model3d.about")}</p>
       </form>
 
       <section class="min-w-0 space-y-4" aria-label={locale.t("model3d.result")}>
         <div class="relative h-[min(70vh,40rem)] min-h-72">
-          <SplatViewer bind:this={viewer} data={model3d.current} bind:autoRotate />
+          <Model3DViewer bind:this={viewer} data={model3d.current} bind:autoRotate />
           {#if !model3d.current}
             <p class="pointer-events-none absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-neutral-500">{model3d.loadingResult ? locale.t("model3d.loading_result") : locale.t("model3d.empty")}</p>
           {/if}
@@ -209,11 +251,15 @@
             <input class="{inputClass} max-w-64 flex-1" type="text" maxlength="120" bind:value={titleDraft} onblur={commitTitle} onkeydown={(event) => { if (event.key === "Enter") (event.currentTarget as HTMLInputElement).blur(); }} aria-label={locale.t("model3d.name")} />
             <button type="button" class="touch-target rounded-sm px-2 text-xs text-neutral-300 hover:bg-neutral-900" onclick={() => viewer?.resetView()}>{locale.t("model3d.reset_view")}</button>
             <button type="button" class="touch-target rounded-sm px-2 text-xs hover:bg-neutral-900 {autoRotate ? 'text-indigo-300' : 'text-neutral-300'}" aria-pressed={autoRotate} onclick={() => (autoRotate = !autoRotate)}>{locale.t("model3d.spin")}</button>
-            <button type="button" class="touch-target rounded-sm bg-neutral-800 px-3 text-xs text-neutral-200 hover:bg-neutral-700" onclick={() => model3d.exportResult(selected, "ply")}>{locale.t("model3d.export_ply")}</button>
-            <button type="button" class="touch-target rounded-sm bg-neutral-800 px-3 text-xs text-neutral-200 hover:bg-neutral-700" onclick={() => model3d.exportResult(selected, "splat")}>{locale.t("model3d.export_splat")}</button>
+            {#if selected.kind === "mesh"}
+              <button type="button" class="touch-target rounded-sm bg-neutral-800 px-3 text-xs text-neutral-200 hover:bg-neutral-700" onclick={() => model3d.exportResult(selected, "glb")}>{locale.t("model3d.export_glb")}</button>
+            {:else}
+              <button type="button" class="touch-target rounded-sm bg-neutral-800 px-3 text-xs text-neutral-200 hover:bg-neutral-700" onclick={() => model3d.exportResult(selected, "ply")}>{locale.t("model3d.export_ply")}</button>
+              <button type="button" class="touch-target rounded-sm bg-neutral-800 px-3 text-xs text-neutral-200 hover:bg-neutral-700" onclick={() => model3d.exportResult(selected, "splat")}>{locale.t("model3d.export_splat")}</button>
+            {/if}
           </div>
           <p class="text-xs text-neutral-500">
-            {locale.t("model3d.details", { count: locale.formatInteger(selected.count), seed: selected.seed, model: selected.model })}
+            {locale.t(selected.kind === "mesh" ? "model3d.details_mesh" : "model3d.details", { count: locale.formatInteger(selected.count), seed: selected.seed, model: selected.model })}
             {#if model3d.exportStatus}<span class="ml-2 text-emerald-300">{model3d.exportStatus}</span>{/if}
           </p>
           <p class="text-xs text-neutral-500">{locale.t("model3d.controls")}</p>

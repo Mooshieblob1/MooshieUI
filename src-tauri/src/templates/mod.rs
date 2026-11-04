@@ -4,6 +4,7 @@ pub mod facefix;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
+pub mod mesh3d;
 pub mod music;
 pub mod rife;
 pub mod segment_detail;

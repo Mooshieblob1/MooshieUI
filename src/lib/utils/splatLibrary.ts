@@ -2,7 +2,8 @@ import type { SplatResult } from "../types/model3d.js";
 
 // One database per signed-in user on this browser/device, like the music
 // library. PLY files are stored apart from the records so listing the library
-// never loads every model.
+// never loads every model. The "ply" store also holds the .glb of mesh
+// (Pixal3D) results; the record's `kind` says which.
 function openLibrary(owner: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(`mooshieui.model3d.library.${owner}`, 1);
