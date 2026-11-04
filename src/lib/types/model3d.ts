@@ -1,4 +1,7 @@
-/** Image to 3D (Gaussian splat) types, mirroring `commands/splat.rs`. */
+/** Image to 3D types, mirroring `commands/splat.rs` (Idol) and `commands/mesh3d.rs` (Pixal3D). */
+
+/** Idol makes a Gaussian splat, Pixal3D a textured mesh. */
+export type Model3DEngine = "pixal3d" | "idol";
 
 export interface SplatWorkerCapabilities {
   worker_id: number;
@@ -42,12 +45,47 @@ export type SplatStatus =
   | { status: "completed"; filename: string }
   | { status: "error"; error: string };
 
-/** One finished splat in the per-user library (IndexedDB). */
+export interface MeshWorkerCapabilities {
+  worker_id: number;
+  missing_nodes: string[];
+  models: string[];
+  clip_visions: string[];
+  shape_vaes: string[];
+  texture_vaes: string[];
+  moge_models: string[];
+  bg_models: string[];
+}
+
+export interface MeshCapabilities {
+  missing_nodes: string[];
+  models: string[];
+  clip_visions: string[];
+  shape_vaes: string[];
+  texture_vaes: string[];
+  moge_models: string[];
+  bg_models: string[];
+  workers: MeshWorkerCapabilities[];
+}
+
+/** Face and texture budget: high is 700,000 faces and 4096 px, standard 300,000 and 2048 px. */
+export type MeshDetail = "standard" | "high";
+
+export interface MeshParams {
+  model: string;
+  remove_background: boolean;
+  detail: MeshDetail;
+  /** "-1" for random. */
+  seed: string;
+}
+
+/** One finished model in the per-user library (IndexedDB). */
 export interface SplatResult extends SplatJob {
   id: string;
   title: string;
-  params: SplatParams;
-  /** Number of Gaussians in the stored PLY. */
+  /** Missing on records saved before Pixal3D: those are splats. */
+  kind?: "splat" | "mesh";
+  params: SplatParams | MeshParams;
+  /** Gaussians in the stored PLY, or faces in the stored GLB. */
   count: number;
   /** Small JPEG data URL of the source image, for the library grid. */
   thumbnail: string;
