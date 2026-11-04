@@ -496,7 +496,7 @@ impl LlamaServer {
             .post(&url)
             .bearer_auth(&api_key)
             .json(&body)
-            .timeout(chat_timeout(!images.is_empty()))
+            .timeout(chat_timeout(!images.is_empty(), false))
             .send()
             .await
         {
@@ -606,9 +606,12 @@ fn external_models_urls(base_url: &str) -> Vec<String> {
 ///
 /// A vision turn ships up to four ~1 MP JPEGs and asks for a long answer, and
 /// hosted models routinely take well over two minutes on that; a text-only
-/// turn that has not answered in two minutes is not going to.
-fn chat_timeout(has_images: bool) -> Duration {
-    if has_images {
+/// turn that has not answered in two minutes is not going to, unless the
+/// model reasons first. xAI's own guidance is to allow reasoning calls far
+/// longer than two minutes, and one cut off early is reported as the model
+/// being unavailable, which hands the turn to a fallback for no reason.
+fn chat_timeout(has_images: bool, reasons: bool) -> Duration {
+    if has_images || reasons {
         Duration::from_secs(300)
     } else {
         Duration::from_secs(120)
@@ -709,17 +712,17 @@ pub async fn chat_external(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    tuning: &Tuning,
 ) -> Result<String, AppError> {
     let user_content = openai_user_content(user, images);
-    let body = json!({
-        "model": model,
-        "messages": super::history::openai_messages(system, history, user_content),
-        "temperature": 0.7,
-        "max_tokens": max_tokens,
-        "stream": false
-    });
+    let body = openai_body(
+        model,
+        super::history::openai_messages(system, history, user_content),
+        max_tokens,
+        tuning,
+    );
     let urls = external_chat_urls(base_url);
-    let timeout = chat_timeout(!images.is_empty());
+    let timeout = chat_timeout(!images.is_empty(), tuning.reasons);
     let mut resp = send_external_chat(client, &urls[0], api_key, &body, timeout).await?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
         // A user-entered base URL can carry credentials (`user:pass@`) or a
@@ -746,6 +749,107 @@ pub async fn chat_external(
     }
     let v = bounded_json(resp, RESPONSE_LIMIT, "external LLM response").await?;
     completion_content(&v, "The external model")
+}
+
+/// Per-model adjustments to an OpenAI-style chat request for a model that
+/// reasons. The default leaves the request exactly as it always was, which
+/// is what every self-hosted server and unrecognised model gets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tuning {
+    /// The effort to ask for, if any.
+    pub effort: Option<String>,
+    /// OpenRouter's `reasoning: {effort}` rather than the top-level
+    /// `reasoning_effort` xAI and OpenAI take.
+    pub nested: bool,
+    /// An OpenAI reasoning model: `max_completion_tokens` instead of
+    /// `max_tokens`, and no `temperature`, both of which it rejects.
+    pub openai_reasoning: bool,
+    /// Tokens added to `max_tokens` so thinking does not eat the answer.
+    pub headroom: u32,
+    /// The model reasons, so it gets the longer timeout.
+    pub reasons: bool,
+}
+
+/// The tuning for `model` on `provider_id`. See [`super::reasoning`].
+pub async fn tuning_for(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base: &str,
+    model: &str,
+    setting: super::reasoning::Setting,
+) -> Tuning {
+    use super::reasoning as r;
+    match provider_id {
+        // xAI does not count reasoning against `max_tokens` (Grok 4.5 has
+        // been answering inside a 96-token budget at its default `high`), so
+        // no headroom; only the effort and the timeout change.
+        "xai" | "xai-oauth" => {
+            let efforts = r::xai(model);
+            Tuning {
+                effort: efforts.as_ref().and_then(|e| r::pick(setting, e)),
+                reasons: r::xai_reasons(model),
+                ..Tuning::default()
+            }
+        }
+        "openai" => match r::openai(model) {
+            Some(efforts) => {
+                let effort = r::pick(setting, &efforts);
+                let level = r::effective(effort.as_deref(), &efforts).unwrap_or("medium");
+                Tuning {
+                    headroom: r::headroom(Some(level)),
+                    effort,
+                    openai_reasoning: true,
+                    reasons: true,
+                    nested: false,
+                }
+            }
+            None => Tuning::default(),
+        },
+        "openrouter" => match r::openrouter(client, base, model).await {
+            Some(m) if m.on_by_default => {
+                let effort = r::pick(setting, &m.efforts);
+                let level = r::effective(effort.as_deref(), &m.efforts).unwrap_or("medium");
+                Tuning {
+                    headroom: r::headroom(Some(level)),
+                    effort,
+                    nested: true,
+                    reasons: true,
+                    openai_reasoning: false,
+                }
+            }
+            _ => Tuning::default(),
+        },
+        _ => Tuning::default(),
+    }
+}
+
+/// The JSON body of an OpenAI-style chat completion.
+fn openai_body(
+    model: &str,
+    messages: serde_json::Value,
+    max_tokens: u32,
+    tuning: &Tuning,
+) -> serde_json::Value {
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "stream": false
+    });
+    let limit = max_tokens.saturating_add(tuning.headroom);
+    if tuning.openai_reasoning {
+        body["max_completion_tokens"] = json!(limit);
+    } else {
+        body["temperature"] = json!(0.7);
+        body["max_tokens"] = json!(limit);
+    }
+    if let Some(effort) = &tuning.effort {
+        if tuning.nested {
+            body["reasoning"] = json!({ "effort": effort });
+        } else {
+            body["reasoning_effort"] = json!(effort);
+        }
+    }
+    body
 }
 
 /// The user turn of an OpenAI-style chat request, with any images inlined.
@@ -968,6 +1072,7 @@ pub async fn chat_anthropic(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    effort: super::reasoning::Setting,
 ) -> Result<String, AppError> {
     if api_key.trim().is_empty() {
         return Err(AppError::LlmError(
@@ -996,14 +1101,16 @@ pub async fn chat_anthropic(
         parts.push(json!({ "type": "text", "text": user }));
         json!(parts)
     };
-    let body = json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": system,
-        "temperature": 0.7,
-        "messages": super::history::anthropic_messages(history, user_content)
-    });
-    let timeout = chat_timeout(!images.is_empty());
+    let claude = super::reasoning::anthropic(model);
+    let body = anthropic_body(
+        &claude,
+        effort,
+        model,
+        system,
+        super::history::anthropic_messages(history, user_content),
+        max_tokens,
+    );
+    let timeout = chat_timeout(!images.is_empty(), claude.thinks);
     let resp = client
         .post(anthropic_url(base_url, "messages"))
         .header("x-api-key", api_key)
@@ -1028,6 +1135,44 @@ pub async fn chat_anthropic(
     }
     let v = bounded_json(resp, RESPONSE_LIMIT, "Anthropic response").await?;
     anthropic_text(&v)
+}
+
+/// The JSON body of a Messages API request, shaped for the model.
+///
+/// Claude models from Opus 4.7 on reject a non-default `temperature`, so it
+/// is only sent to the ones that still take it. Models that think unasked
+/// (the 5 generation on) get the chosen effort and room in `max_tokens` for
+/// the thinking, which Anthropic counts against the same limit as the answer.
+fn anthropic_body(
+    claude: &super::reasoning::Claude,
+    effort: super::reasoning::Setting,
+    model: &str,
+    system: &str,
+    messages: serde_json::Value,
+    max_tokens: u32,
+) -> serde_json::Value {
+    use super::reasoning as r;
+    let mut body = json!({
+        "model": model,
+        "system": system,
+        "messages": messages
+    });
+    let mut limit = max_tokens;
+    if claude.sampling {
+        body["temperature"] = json!(0.7);
+    }
+    if claude.thinks {
+        let picked = r::pick(effort, &claude.efforts);
+        limit = limit.saturating_add(r::headroom(r::effective(
+            picked.as_deref(),
+            &claude.efforts,
+        )));
+        if let Some(level) = picked {
+            body["output_config"] = json!({ "effort": level });
+        }
+    }
+    body["max_tokens"] = json!(limit);
+    body
 }
 
 /// Pull the answer out of a Messages API response.
@@ -1087,17 +1232,19 @@ pub async fn chat_provider(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    effort: &str,
 ) -> Result<String, AppError> {
+    let effort = super::reasoning::Setting::parse(effort);
     let base = super::providers::effective_base_url(provider_id, base_url);
     match super::providers::wire_for(provider_id) {
         super::providers::Wire::Companion => {
             // One text turn per request, so the session is written into it.
             let user = super::history::single_turn_text(history, user);
-            super::companion::chat(provider_id, model, system, &user, images, None).await
+            super::companion::chat(provider_id, model, system, &user, images, None, effort).await
         }
         super::providers::Wire::Anthropic => {
             chat_anthropic(
-                client, &base, api_key, model, system, history, user, max_tokens, images,
+                client, &base, api_key, model, system, history, user, max_tokens, images, effort,
             )
             .await
         }
@@ -1108,8 +1255,9 @@ pub async fn chat_provider(
                         .into(),
                 ));
             }
+            let tuning = tuning_for(client, provider_id, &base, model, effort).await;
             chat_external(
-                client, &base, api_key, model, system, history, user, max_tokens, images,
+                client, &base, api_key, model, system, history, user, max_tokens, images, &tuning,
             )
             .await
         }
@@ -1131,6 +1279,8 @@ pub fn model_chain(primary: &str, fallbacks: &[String]) -> Vec<String> {
 
 /// [`chat_provider`] down a chain of models on the same provider.
 ///
+/// `effort` is `AppConfig::llm_reasoning_effort`; see [`super::reasoning`].
+///
 /// The next model is tried only when the previous one was unavailable (see
 /// [`AppError::is_llm_unavailable`]); any other failure is returned at once,
 /// since a refused request would be refused again. When every model is
@@ -1149,6 +1299,7 @@ pub async fn chat_provider_chain(
     user: &str,
     max_tokens: u32,
     images: &[super::vision::VisionImage],
+    effort: &str,
 ) -> Result<String, AppError> {
     let mut last = None;
     for (i, model) in models.iter().enumerate() {
@@ -1169,6 +1320,7 @@ pub async fn chat_provider_chain(
             user,
             max_tokens,
             images,
+            effort,
         )
         .await
         {
@@ -1484,8 +1636,10 @@ mod tests {
 
     #[test]
     fn vision_requests_get_a_longer_budget() {
-        assert!(chat_timeout(true) > chat_timeout(false));
-        assert_eq!(chat_timeout(false), Duration::from_secs(120));
+        assert!(chat_timeout(true, false) > chat_timeout(false, false));
+        assert_eq!(chat_timeout(false, false), Duration::from_secs(120));
+        // A model that reasons first gets the long budget too.
+        assert_eq!(chat_timeout(false, true), chat_timeout(true, false));
     }
 
     #[test]
@@ -1777,6 +1931,7 @@ mod hardening_tests {
             "u",
             16,
             &[],
+            "low",
         )
         .await
     }
@@ -1809,5 +1964,140 @@ mod hardening_tests {
             .await
             .unwrap_err();
         assert!(err.is_llm_unavailable(), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod reasoning_body_tests {
+    use super::super::reasoning::{anthropic, Setting};
+    use super::{anthropic_body, openai_body, tuning_for, Tuning};
+    use serde_json::json;
+
+    fn tuning(provider: &str, model: &str, setting: Setting) -> Tuning {
+        // xAI and OpenAI never touch the network to decide.
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(tuning_for(
+                &reqwest::Client::new(),
+                provider,
+                "",
+                model,
+                setting,
+            ))
+    }
+
+    #[test]
+    fn grok_gets_low_effort_and_the_long_timeout_but_no_extra_tokens() {
+        let t = tuning("xai-oauth", "grok-4.7", Setting::Low);
+        assert_eq!(t.effort.as_deref(), Some("low"));
+        assert!(t.reasons && !t.nested && t.headroom == 0);
+        let body = openai_body("grok-4.7", json!([]), 192, &t);
+        assert_eq!(body["reasoning_effort"], "low");
+        assert_eq!(body["max_tokens"], 192);
+        assert_eq!(body["temperature"], 0.7);
+        // The model default sends no effort at all.
+        let t = tuning("xai", "grok-4.7", Setting::ModelDefault);
+        assert!(openai_body("grok-4.7", json!([]), 192, &t)
+            .get("reasoning_effort")
+            .is_none());
+        // A non-reasoning Grok is left as it was.
+        assert_eq!(
+            tuning("xai", "grok-4.20-non-reasoning", Setting::Low),
+            Tuning::default()
+        );
+    }
+
+    #[test]
+    fn openai_reasoning_models_get_the_shape_they_accept() {
+        let t = tuning("openai", "gpt-5.5", Setting::Low);
+        let body = openai_body("gpt-5.5", json!([]), 192, &t);
+        assert_eq!(body["reasoning_effort"], "low");
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("temperature").is_none());
+        assert_eq!(body["max_completion_tokens"], 192 + 2048);
+        // gpt-4o-mini keeps the request it always had.
+        let t = tuning("openai", "gpt-4o-mini", Setting::Low);
+        let body = openai_body("gpt-4o-mini", json!([]), 192, &t);
+        assert_eq!(body["max_tokens"], 192);
+        assert_eq!(body["temperature"], 0.7);
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn custom_servers_are_untouched() {
+        assert_eq!(
+            tuning("custom", "qwen3:8b", Setting::High),
+            Tuning::default()
+        );
+        assert_eq!(
+            tuning("nous", "hermes-4-405b", Setting::Low),
+            Tuning::default()
+        );
+    }
+
+    #[test]
+    fn openrouter_effort_is_nested() {
+        let t = Tuning {
+            effort: Some("low".into()),
+            nested: true,
+            headroom: 2048,
+            reasons: true,
+            openai_reasoning: false,
+        };
+        let body = openai_body("x-ai/grok-4.7", json!([]), 96, &t);
+        assert_eq!(body["reasoning"], json!({ "effort": "low" }));
+        assert_eq!(body["max_tokens"], 96 + 2048);
+    }
+
+    #[test]
+    fn claude_bodies_follow_the_model() {
+        let sonnet5 = anthropic("claude-sonnet-5");
+        let body = anthropic_body(
+            &sonnet5,
+            Setting::Low,
+            "claude-sonnet-5",
+            "s",
+            json!([]),
+            192,
+        );
+        assert!(body.get("temperature").is_none());
+        assert_eq!(body["output_config"], json!({ "effort": "low" }));
+        assert_eq!(body["max_tokens"], 192 + 2048);
+        // Model default: no effort, but room for its default `high` thinking.
+        let body = anthropic_body(
+            &sonnet5,
+            Setting::ModelDefault,
+            "claude-sonnet-5",
+            "s",
+            json!([]),
+            192,
+        );
+        assert!(body.get("output_config").is_none());
+        assert_eq!(body["max_tokens"], 192 + 16384);
+        // Opus 4.7: no temperature, no thinking, budget unchanged.
+        let opus47 = anthropic("claude-opus-4-7");
+        let body = anthropic_body(
+            &opus47,
+            Setting::Low,
+            "claude-opus-4-7",
+            "s",
+            json!([]),
+            192,
+        );
+        assert!(body.get("temperature").is_none() && body.get("output_config").is_none());
+        assert_eq!(body["max_tokens"], 192);
+        // Sonnet 4.6 keeps the request it always had.
+        let sonnet46 = anthropic("claude-sonnet-4-6");
+        let body = anthropic_body(
+            &sonnet46,
+            Setting::Low,
+            "claude-sonnet-4-6",
+            "s",
+            json!([]),
+            192,
+        );
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["max_tokens"], 192);
     }
 }

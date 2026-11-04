@@ -244,6 +244,12 @@ pub struct AppConfig {
     /// answer with an installed bundled natural-language model instead.
     #[serde(default)]
     pub llm_fallback_local: bool,
+    /// How hard a hosted model that reasons should think before answering:
+    /// `"low"` (the default), `"medium"`, `"high"`, or `"default"` for each
+    /// model's own default. Mapped per model in `prompt_assistant::reasoning`;
+    /// models and providers that take no effort ignore it.
+    #[serde(default = "default_llm_reasoning_effort")]
+    pub llm_reasoning_effort: String,
     /// Refresh token for providers whose sign-in issues a *short-lived* access
     /// token (Nous Portal). Empty for every other provider: an API key does not
     /// expire, and OpenRouter's PKCE flow issues a long-lived key rather than
@@ -302,6 +308,12 @@ pub struct AppConfig {
 /// config explicitly overrides it (null/empty falls back to prefilled issues).
 fn default_report_endpoint() -> Option<String> {
     Some("https://report.mooshieblob.com/report".to_string())
+}
+
+/// Default for `llm_reasoning_effort`: the fast end, which is what a prompt
+/// rewrite needs.
+fn default_llm_reasoning_effort() -> String {
+    "low".to_string()
 }
 
 /// Default external LLM provider id. Kept as a literal because `config` is
@@ -408,6 +420,7 @@ impl Default for AppConfig {
             llm_external_model: String::new(),
             llm_fallback_models: Vec::new(),
             llm_fallback_local: false,
+            llm_reasoning_effort: default_llm_reasoning_effort(),
             llm_oauth_refresh_token: String::new(),
             llm_oauth_client_id: String::new(),
             llm_oauth_expires_at: 0,
@@ -804,8 +817,8 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
 /// provider already rotated out. It would also let a full-config save pair the
 /// stored key with a different provider or base URL, sending it to a host
 /// `set_llm_base_url` would have made it forget the key for. The fields left
-/// to `update_config` are `llm_external_enabled` and `llm_fallback_local`,
-/// which the settings page toggles through its autosave.
+/// to `update_config` are `llm_external_enabled`, `llm_fallback_local` and
+/// `llm_reasoning_effort`, which the settings page sets through its autosave.
 fn keep_llm_provider_row(incoming: &mut AppConfig, current: &AppConfig) {
     incoming.llm_provider.clone_from(&current.llm_provider);
     incoming

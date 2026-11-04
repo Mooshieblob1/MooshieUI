@@ -6972,6 +6972,7 @@ pub async fn chat_any_headless(
         ext_key,
         ext_models,
         fallback_local,
+        reasoning_effort,
     ) = {
         let cfg = state.config.read().await;
         (
@@ -6986,6 +6987,7 @@ pub async fn chat_any_headless(
                 &cfg.llm_fallback_models,
             ),
             cfg.llm_fallback_local,
+            cfg.llm_reasoning_effort.clone(),
         )
     };
 
@@ -7003,6 +7005,7 @@ pub async fn chat_any_headless(
             user,
             max_tokens,
             images,
+            &reasoning_effort,
         )
         .await;
         // Same stand-in as the desktop path: down or busy, and the owner asked

@@ -25,13 +25,27 @@
     /** `config.llm_fallback_local`. Not secret and not part of the provider
      *  row, so like `enabled` it rides the full-config autosave. */
     fallbackLocal?: boolean;
-    /** SettingsPage's autosave, used only by the two toggles. */
+    /** `config.llm_reasoning_effort`: "low", "medium", "high" or "default".
+     *  Rides the full-config autosave like `fallbackLocal`. */
+    reasoningEffort?: string;
+    /** SettingsPage's autosave, used only by the toggles and the effort picker. */
     autoSave: () => Promise<void>;
     /** Re-sync SettingsPage's cached config from the authoritative snapshot. */
     onstate: (state: LlmProviderState) => void;
   }
 
-  let { enabled = $bindable(), fallbackLocal = $bindable(false), autoSave, onstate }: Props = $props();
+  let {
+    enabled = $bindable(),
+    fallbackLocal = $bindable(false),
+    reasoningEffort = $bindable("low"),
+    autoSave,
+    onstate,
+  }: Props = $props();
+
+  /** Providers whose models take a reasoning effort. Self-hosted servers and
+   *  Nous are left at whatever the model does on its own. */
+  const EFFORT_PROVIDERS = ["chatgpt", "gemini-cli", "anthropic", "openai", "xai", "xai-oauth", "openrouter"];
+  const EFFORT_LEVELS = ["low", "medium", "high", "default"] as const;
 
   /** The key field holds an environment variable name, not a key. */
   let llmEnvMode = $state(false);
@@ -107,6 +121,16 @@
       // A save, a clear or a provider switch can each change whether the key
       // names a variable.
       void keyEnv.refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function onReasoningEffort(next: string) {
+    reasoningEffort = next;
+    error = null;
+    try {
+      await autoSave();
     } catch (e) {
       error = String(e);
     }
@@ -399,6 +423,23 @@
           class="accent-indigo-500 w-4 h-4 shrink-0"
         />
       </label>
+    {/if}
+
+    {#if EFFORT_PROVIDERS.includes(providerId)}
+      <div>
+        <label for="llm-reasoning-effort" class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.reasoning_effort')}</label>
+        <select
+          id="llm-reasoning-effort"
+          value={reasoningEffort || "low"}
+          onchange={(e) => onReasoningEffort(e.currentTarget.value)}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          {#each EFFORT_LEVELS as level (level)}
+            <option value={level}>{locale.t(`settings.prompt_assistant.reasoning_effort_${level}`)}</option>
+          {/each}
+        </select>
+        <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.reasoning_effort_hint')}</p>
+      </div>
     {/if}
 
     {#if error}
