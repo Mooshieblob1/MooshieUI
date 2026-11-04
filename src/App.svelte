@@ -188,6 +188,11 @@
     document.documentElement.classList.toggle("dyslexic-font", accessibility.dyslexicFont);
   });
 
+  // The 3D page is experimental and can be turned off in Settings while it is open.
+  $effect(() => {
+    if (!model3d.enabled && currentPage === "model3d") currentPage = "generate";
+  });
+
   // Rest the UI while nobody is using it and nothing is generating: CSS
   // animations pause (app.css .app-resting) and the desktop WebView trims its
   // memory. The first input wakes everything again.
@@ -3779,20 +3784,22 @@
     >
       <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></svg>
     </button>
-    <div class="relative mx-auto">
-      <button
-        class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'model3d' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
-        onclick={() => (currentPage = "model3d")}
-        title={locale.t("nav.model3d")}
-        aria-label={locale.t("nav.model3d")}
-        aria-current={currentPage === "model3d" ? "page" : undefined}
-      >
-        <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
-      </button>
-      {#if model3d.busy}
-        <span class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-indigo-400 motion-safe:animate-pulse pointer-events-none" aria-hidden="true"></span>
-      {/if}
-    </div>
+    {#if model3d.enabled}
+      <div class="relative mx-auto">
+        <button
+          class="touch-target flex items-center justify-center rounded-lg transition-colors {currentPage === 'model3d' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+          onclick={() => (currentPage = "model3d")}
+          title={locale.t("nav.model3d_experimental")}
+          aria-label={locale.t("nav.model3d_experimental")}
+          aria-current={currentPage === "model3d" ? "page" : undefined}
+        >
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
+        </button>
+        {#if model3d.busy}
+          <span class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-indigo-400 motion-safe:animate-pulse pointer-events-none" aria-hidden="true"></span>
+        {/if}
+      </div>
+    {/if}
     <button
       class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'scene' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
       onclick={() => (currentPage = "scene")}
@@ -4101,12 +4108,12 @@
       <GenerationPage />
     {:else if currentPage === "music"}
       <MusicPage {userRole} />
-    {:else if currentPage === "model3d"}
+    {:else if currentPage === "model3d" && model3d.enabled}
       <Model3DPage {userRole} />
     {:else if currentPage === "scene"}
       <ScenePage onOpenSettings={() => (currentPage = "settings")} />
     {:else if currentPage === "gallery"}
-      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} onMake3D={(image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; }} />
+      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} onMake3D={model3d.enabled ? (image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; } : undefined} />
     {:else if currentPage === "modelhub"}
       <ModelHubPage />
     {:else if currentPage === "artists"}

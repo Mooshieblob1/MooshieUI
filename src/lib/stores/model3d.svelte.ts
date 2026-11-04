@@ -48,9 +48,15 @@ const nodeStages: Record<string, Model3DStage> = {
 };
 const stageOrder: Model3DStage[] = ["prepare", "shape", "decode", "save", "retrieve"];
 
+// Idol's own sampler settings (idol-sdk): 50 Euler steps, guidance 3.0 and time shift 3.0. Idol writes
+// guidance as (1 + w) * cond - w * uncond, so its 3.0 is 4.0 on ComfyUI's scale. ComfyUI's stock Idol
+// workflow copied TripoSplat's 20 steps and 3.0, which is weaker than what the published examples used.
 const defaults = (): SplatParams => ({
-  model: "", remove_background: true, steps: 20, cfg: 3, num_gaussians: 262_144, seed: "-1",
+  model: "", remove_background: true, steps: 50, cfg: 4, num_gaussians: 262_144, seed: "-1",
 });
+/** Saved settings older than this kept ComfyUI's stock 20 steps / guidance 3, so those two are reset. */
+const SETTINGS_VERSION = 2;
+const EXPERIMENTAL_KEY = "mooshieui.experimental.model3d";
 
 const libraryAccount = () => {
   const user = getAuthUser();
@@ -121,6 +127,8 @@ function safeName(title: string): string {
 }
 
 class Model3DStore {
+  /** The 3D page is experimental and hidden until turned on in Settings, Appearance. */
+  enabled = $state(false);
   capabilities = $state<SplatCapabilities | null>(null);
   refreshing = $state(false);
   downloading = $state(false);
@@ -193,8 +201,10 @@ class Model3DStore {
       const next = defaults();
       if (typeof saved.model === "string") next.model = saved.model;
       if (typeof saved.remove_background === "boolean") next.remove_background = saved.remove_background;
-      if (Number.isInteger(saved.steps) && saved.steps >= 4 && saved.steps <= 100) next.steps = saved.steps;
-      if (typeof saved.cfg === "number" && saved.cfg >= 1 && saved.cfg <= 10) next.cfg = saved.cfg;
+      if (saved.v === SETTINGS_VERSION) {
+        if (Number.isInteger(saved.steps) && saved.steps >= 4 && saved.steps <= 100) next.steps = saved.steps;
+        if (typeof saved.cfg === "number" && saved.cfg >= 1 && saved.cfg <= 10) next.cfg = saved.cfg;
+      }
       if (GAUSSIAN_CHOICES.includes(saved.num_gaussians)) next.num_gaussians = saved.num_gaussians;
       if (typeof saved.seed === "string" && /^-?\d{1,20}$/.test(saved.seed)) next.seed = saved.seed;
       this.params = next;
@@ -202,7 +212,19 @@ class Model3DStore {
   }
 
   saveSettings() {
-    try { localStorage.setItem(`mooshieui.model3d.${getAuthUser() ?? "host"}`, JSON.stringify(this.params)); } catch { /* private mode */ }
+    try { localStorage.setItem(`mooshieui.model3d.${getAuthUser() ?? "host"}`, JSON.stringify({ ...this.params, v: SETTINGS_VERSION })); } catch { /* private mode */ }
+  }
+
+  loadEnabled() {
+    try { this.enabled = localStorage.getItem(EXPERIMENTAL_KEY) === "1"; } catch { this.enabled = false; }
+  }
+
+  setEnabled(value: boolean) {
+    this.enabled = value;
+    try {
+      if (value) localStorage.setItem(EXPERIMENTAL_KEY, "1");
+      else localStorage.removeItem(EXPERIMENTAL_KEY);
+    } catch { /* private mode */ }
   }
 
   async refresh() {
@@ -491,3 +513,4 @@ class Model3DStore {
 
 export const model3d = new Model3DStore();
 model3d.loadSettings();
+model3d.loadEnabled();

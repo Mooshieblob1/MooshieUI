@@ -87,6 +87,7 @@
     <header class="mb-6 flex items-center justify-between gap-4">
       <div class="flex items-baseline gap-3 border-l-[3px] border-indigo-400 pl-3">
         <h1 class="text-xl font-semibold tracking-tight text-neutral-100 sm:text-2xl">{locale.t("model3d.title")}</h1>
+        <span class="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">{locale.t("model3d.experimental")}</span>
         <span class="text-xs text-neutral-500">Idol · TripoSplat</span>
       </div>
       <button class="touch-target inline-flex shrink-0 items-center justify-center gap-2 rounded-sm px-2 text-xs text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200 focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:opacity-40" title={locale.t("model3d.refresh")} disabled={!connection.connected || model3d.refreshing} onclick={() => model3d.refresh()}>
@@ -94,6 +95,8 @@
         <span>{locale.t("model3d.refresh")}</span>
       </button>
     </header>
+
+    <p class="-mt-3 mb-5 text-xs text-neutral-500">{locale.t("model3d.experimental_note")}</p>
 
     {#if !connection.connected}
       <p class="mb-5 text-sm text-neutral-400">{locale.t("model3d.connect")}</p>

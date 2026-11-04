@@ -10,6 +10,7 @@
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { model3d } from "../../stores/model3d.svelte.js";
   import { DEFAULT_NSFW_KEYWORDS, parseNsfwKeywords } from "../../utils/galleryNsfw.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
@@ -1259,7 +1260,7 @@
   const sections = [
     { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui trust localhost proxy sign in lan network remote access share phone ip address local mooshieui.local firewall" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
-    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color" },
+    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color experimental 3d idol splat image to 3d" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", labelKey: "settings.sections.quality", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", labelKey: "settings.sections.gpu", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
@@ -3000,6 +3001,20 @@
             <div>
               <label for="dyslexic-font" class="text-sm text-neutral-200">{locale.t('settings.appearance.dyslexic_font')}</label>
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.dyslexic_font_desc')}</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="experimental-model3d"
+              checked={model3d.enabled}
+              onchange={(e) => model3d.setEnabled(e.currentTarget.checked)}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="experimental-model3d" class="text-sm text-neutral-200">{locale.t('settings.appearance.experimental_3d')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.experimental_3d_desc')}</p>
             </div>
           </div>
 
