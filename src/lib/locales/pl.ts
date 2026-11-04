@@ -706,7 +706,7 @@ const pl: Record<string, string> = {
   // Performance
   "settings.performance.title": "Wydajność",
   "settings.performance.vram_mode": "Tryb VRAM",
-  "settings.performance.vram_high": "Wysokie VRAM (12 GB+) — przechowuj modele w VRAM",
+  "settings.performance.vram_high": "Wysokie VRAM (24 GB+) — przechowuj modele w VRAM",
   "settings.performance.vram_normal": "Normalny — ładuj do próbkowania, zwalniaj między operacjami",
   "settings.performance.vram_low": "Niskie VRAM (<6 GB) — agresywne zwalnianie",
   "settings.performance.vram_none": "Brak VRAM — wszystko do CPU",

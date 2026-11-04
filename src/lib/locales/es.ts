@@ -647,7 +647,7 @@ const es: Record<string, string> = {
   // Rendimiento
   "settings.performance.title": "Rendimiento",
   "settings.performance.vram_mode": "Modo VRAM",
-  "settings.performance.vram_high": "VRAM alta (12GB+) — mantener modelos en VRAM",
+  "settings.performance.vram_high": "VRAM alta (24GB+) — mantener modelos en VRAM",
   "settings.performance.vram_normal": "Normal — cargar para muestreo, liberar entre usos",
   "settings.performance.vram_low": "VRAM baja (<6GB) — descarga agresiva",
   "settings.performance.vram_none": "Sin VRAM — todo en CPU",
