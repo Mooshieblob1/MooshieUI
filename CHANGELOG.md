@@ -1,5 +1,27 @@
 # Changelog
 
+## What's New in v2.3.34
+
+### New models
+- **MOSS-Image and MOSS-Image Base**: OpenMOSS's MOSS-Image works for txt2img and img2img. Files are recognised by name, CivitAI base model or their own tensors, and get Comfy-Org's defaults (25 steps, CFG 2.5, er_sde on simple, 1024x1024). It needs the Qwen3.5 9B text encoder and the Flux 2 VAE; a missing one downloads on its own, and generating with the wrong one stops with a message naming the right file. The Model Hub has quick links for the INT8 files.
+- **ComfyUI v0.43.0**: new and updating installs get ComfyUI v0.43.0 (was v0.41.1), which MOSS-Image needs.
+
+### Image to 3D (experimental)
+- **Off by default**: the 3D page and the gallery's **3D** button now only show when **Experimental: Image to 3D** is on in **Settings > Appearance**. Results are often much rougher than the published examples.
+- **Textured mesh with Pixal3D**: a new **Method** picker. **Textured mesh (Pixal3D)**, the new default, makes a solid `.glb` with baked colour, roughness and normal maps that opens in Blender, game engines and glTF viewers; save it with **Save .glb**. **Download Pixal3D** fetches its model files (about 10 GB in total). **Gaussian splat (Idol)** is still there.
+- **Idol sampling**: Idol now uses its own reference settings (50 Euler steps, guidance 4). Saved 3D settings switch to the new steps and guidance once.
+
+### Prompt Assistant
+- **Reasoning effort**: a new **Reasoning effort** setting in **Settings > Prompt Assistant** for providers whose models think before answering: **Low** (default), **Medium**, **High** or **Model default**. Before, no effort was sent, so models such as Grok 4.6 and 4.7 thought at their slow default and often timed out as "unavailable".
+- **Newer OpenAI and Claude models answer again**: OpenAI reasoning models and Claude Opus 4.7 and the Claude 5 models no longer get settings they reject, and thinking models get extra room in their answer budget and a longer timeout.
+
+### Fixes
+- **Stuck on "Preparing" after a crash**: if MooshieUI crashed or was killed while ComfyUI was busy, the next launch reused that ComfyUI and queued every prompt behind the stuck job. A ComfyUI left behind by a closed MooshieUI is now stopped and a fresh one started, unless **Keep ComfyUI running after app closes** is on. On Windows the managed ComfyUI now closes with MooshieUI however it exits.
+- **High VRAM on 16 GB cards**: the High VRAM mode is only kept when the largest installed model leaves 6 GB free, for every model family (it used to check MiniMax H3 only). Its label now says **24GB+**.
+- **Interrogate always shows Artists**: when no artist reaches the Kaloscope threshold, the Artists section now shows Kaloscope's closest guesses, unticked, to add with one click. When artist detection is off, it says so and offers **Turn on**.
+
+---
+
 ## What's New in v2.3.33
 
 ### Image to 3D
