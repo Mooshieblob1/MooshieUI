@@ -667,7 +667,7 @@ const ru: Record<string, string> = {
 
   "settings.performance.title": "Производительность",
   "settings.performance.vram_mode": "Режим VRAM",
-  "settings.performance.vram_high": "Много VRAM (12ГБ+) — держать модели в VRAM",
+  "settings.performance.vram_high": "Много VRAM (24ГБ+) — держать модели в VRAM",
   "settings.performance.vram_normal": "Обычный — загружать для сэмплирования, выгружать между",
   "settings.performance.vram_low": "Мало VRAM (<6ГБ) — агрессивная выгрузка",
   "settings.performance.vram_none": "Без VRAM — всё выгружать на CPU",

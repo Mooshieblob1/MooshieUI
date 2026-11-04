@@ -670,7 +670,7 @@ const fr: Record<string, string> = {
   // Performance
   "settings.performance.title": "Performance",
   "settings.performance.vram_mode": "Mode VRAM",
-  "settings.performance.vram_high": "VRAM élevée (12 Go+) — garder les modèles en VRAM",
+  "settings.performance.vram_high": "VRAM élevée (24 Go+) — garder les modèles en VRAM",
   "settings.performance.vram_normal": "Normal — charger pour l'échantillonnage, décharger entre",
   "settings.performance.vram_low": "Faible VRAM (<6 Go) — déchargement agressif",
   "settings.performance.vram_none": "Sans VRAM — tout décharger sur le CPU",

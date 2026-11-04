@@ -667,7 +667,7 @@ const zhTw: Record<string, string> = {
 
   "settings.performance.title": "效能",
   "settings.performance.vram_mode": "顯存模式",
-  "settings.performance.vram_high": "高顯存 (12GB+) — 將模型保留在顯存中",
+  "settings.performance.vram_high": "高顯存 (24GB+) — 將模型保留在顯存中",
   "settings.performance.vram_normal": "正常 — 取樣時載入，間隔時卸載",
   "settings.performance.vram_low": "低顯存 (<6GB) — 積極卸載",
   "settings.performance.vram_none": "無顯存 — 全部卸載至 CPU",

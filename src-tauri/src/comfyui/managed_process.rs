@@ -133,6 +133,13 @@ mod windows_process {
     }
 }
 
+/// The identity of this MooshieUI process, recorded as the owner of each spawn.
+fn current_process_identity() -> Option<ProcessIdentity> {
+    let pid = Pid::from_u32(std::process::id());
+    let system = process_snapshot(ProcessesToUpdate::Some(&[pid]));
+    system.process(pid).and_then(ProcessIdentity::from_process)
+}
+
 fn process_snapshot(pids: ProcessesToUpdate<'_>) -> System {
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -154,6 +161,12 @@ pub(crate) struct ManagedProcess {
     /// Absent in records written before this field existed.
     #[serde(default)]
     app_version: Option<String>,
+    /// The MooshieUI process that spawned this ComfyUI. When it is gone and
+    /// keep-alive is off, the ComfyUI is a leftover from a crash or a forced
+    /// kill, possibly still busy with that session's job, and must not be
+    /// reused. Absent in records written before this field existed.
+    #[serde(default)]
+    owner: Option<ProcessIdentity>,
 }
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -181,6 +194,7 @@ impl ManagedProcess {
             comfyui_path: PathBuf::new(),
             port: 0,
             app_version: None,
+            owner: None,
         })
     }
 
@@ -189,7 +203,22 @@ impl ManagedProcess {
         owned.comfyui_path = std::fs::canonicalize(&config.comfyui_path)?;
         owned.port = port;
         owned.app_version = Some(APP_VERSION.to_string());
+        owned.owner = current_process_identity();
         Ok(owned)
+    }
+
+    /// Whether the MooshieUI process that spawned this ComfyUI is still running.
+    /// This one, or another instance sharing the same install. A record from a
+    /// version that did not save its owner counts as orphaned.
+    pub fn owner_alive(&self) -> bool {
+        let Some(owner) = &self.owner else {
+            return false;
+        };
+        let pid = Pid::from_u32(owner.pid);
+        let system = process_snapshot(ProcessesToUpdate::Some(&[pid]));
+        system
+            .process(pid)
+            .is_some_and(|process| owner.matches(process))
     }
 
     /// Whether this process was spawned by the running app version, and so
@@ -342,6 +371,35 @@ mod tests {
 
         owned.app_version = Some("0.0.0-previous".to_string());
         assert!(!owned.spawned_by_this_version());
+    }
+
+    /// A ComfyUI whose spawning MooshieUI is gone is a leftover from a crash or
+    /// a forced kill. Records without an owner (older versions) count as one.
+    #[test]
+    fn owner_alive_tracks_the_spawning_app() {
+        let directory =
+            std::env::temp_dir().join(format!("mooshie-owner-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let config = AppConfig {
+            comfyui_path: directory.to_string_lossy().into_owned(),
+            venv_path: directory.to_string_lossy().into_owned(),
+            ..AppConfig::default()
+        };
+        let child = TestChild::spawn();
+        let owned = ManagedProcess::capture(&config, child.0.id(), 18288).unwrap();
+        assert!(owned.owner_alive(), "this test process spawned it");
+
+        let mut gone = owned.clone();
+        gone.owner.as_mut().unwrap().started += 1;
+        assert!(!gone.owner_alive(), "a recycled owner PID is not the owner");
+
+        let mut legacy = serde_json::to_value(&owned).unwrap();
+        legacy.as_object_mut().unwrap().remove("owner");
+        let legacy: ManagedProcess = serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.owner_alive());
+
+        drop(child);
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     struct TestChild(std::process::Child);

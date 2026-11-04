@@ -670,7 +670,7 @@ const ja: Record<string, string> = {
   // パフォーマンス
   "settings.performance.title": "パフォーマンス",
   "settings.performance.vram_mode": "VRAMモード",
-  "settings.performance.vram_high": "高VRAM（12GB以上）— モデルをVRAMに保持",
+  "settings.performance.vram_high": "高VRAM（24GB以上）— モデルをVRAMに保持",
   "settings.performance.vram_normal": "通常 — サンプリング時に読み込み、合間にオフロード",
   "settings.performance.vram_low": "低VRAM（6GB未満）— 積極的オフロード",
   "settings.performance.vram_none": "VRAMなし — すべてCPUにオフロード",
