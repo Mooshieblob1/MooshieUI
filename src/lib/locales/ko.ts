@@ -665,7 +665,7 @@ const ko: Record<string, string> = {
 
   "settings.performance.title": "성능",
   "settings.performance.vram_mode": "VRAM 모드",
-  "settings.performance.vram_high": "높은 VRAM (12GB+) — 모델을 VRAM에 유지",
+  "settings.performance.vram_high": "높은 VRAM (24GB+) — 모델을 VRAM에 유지",
   "settings.performance.vram_normal": "일반 — 샘플링 시 로드, 사이에 오프로드",
   "settings.performance.vram_low": "낮은 VRAM (<6GB) — 공격적 오프로드",
   "settings.performance.vram_none": "VRAM 없음 — 모두 CPU로 오프로드",

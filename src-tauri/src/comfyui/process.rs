@@ -187,15 +187,17 @@ async fn has_blackwell_gpu() -> bool {
     }
 }
 
-/// VRAM a pinned diffusion model has to leave free for activations and the video
-/// decode before pinning it does more harm than good. Activations scale with the
-/// output size, not the card, so this is an absolute amount: about what a
-/// 124-frame 1344x768 pass needs on top of the model.
+/// VRAM a pinned diffusion model has to leave free for activations, the text
+/// encoder and the VAE decode before pinning it does more harm than good.
+/// Activations scale with the output size, not the card, so this is an absolute
+/// amount: about what a 124-frame 1344x768 video pass needs on top of the model,
+/// and roughly what an image model's resident text encoder plus a 1-2 MP pass
+/// need.
 const HIGHVRAM_MIN_HEADROOM_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 
-/// How many directory levels deep to look for an H3 diffusion model. Enough for
+/// How many directory levels deep to look for a diffusion model. Enough for
 /// a `diffusion_models/<vendor>/<file>` layout without walking a whole drive.
-const H3_SCAN_DEPTH: u32 = 3;
+const MODEL_SCAN_DEPTH: u32 = 3;
 
 /// Largest total VRAM across installed NVIDIA GPUs, in bytes. `None` when
 /// nvidia-smi is absent or unreadable (AMD, Apple, headless CI).
@@ -220,8 +222,13 @@ async fn detect_max_vram_bytes() -> Option<u64> {
     }
 }
 
-/// Walk `dir` up to `depth` levels, keeping the largest MiniMax H3 weight file found.
-fn scan_h3_dits(dir: &std::path::Path, depth: u32, best_bytes: &mut u64, best_name: &mut String) {
+/// Walk `dir` up to `depth` levels, keeping the largest model weight file found.
+fn scan_model_weights(
+    dir: &std::path::Path,
+    depth: u32,
+    best_bytes: &mut u64,
+    best_name: &mut String,
+) {
     if depth == 0 {
         return;
     }
@@ -233,18 +240,15 @@ fn scan_h3_dits(dir: &std::path::Path, depth: u32, best_bytes: &mut u64, best_na
             continue;
         };
         if file_type.is_dir() {
-            scan_h3_dits(&entry.path(), depth - 1, best_bytes, best_name);
+            scan_model_weights(&entry.path(), depth - 1, best_bytes, best_name);
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
         let lower = name.to_lowercase();
-        if !lower.ends_with(".safetensors") && !lower.ends_with(".sft") && !lower.ends_with(".gguf")
-        {
-            continue;
-        }
-        if !crate::templates::video::H3_DIFFUSION_MARKERS
-            .iter()
-            .any(|marker| lower.contains(marker))
+        if !lower.ends_with(".safetensors")
+            && !lower.ends_with(".sft")
+            && !lower.ends_with(".gguf")
+            && !lower.ends_with(".ckpt")
         {
             continue;
         }
@@ -258,33 +262,42 @@ fn scan_h3_dits(dir: &std::path::Path, depth: u32, best_bytes: &mut u64, best_na
     }
 }
 
-/// Filename and size of the largest MiniMax H3 diffusion model installed, across
-/// the primary ComfyUI models directory and every configured extra model path.
-fn largest_h3_dit(config: &AppConfig) -> Option<(String, u64)> {
+/// Filename and size of the largest diffusion model or checkpoint installed,
+/// across the primary ComfyUI models directory and every configured extra model
+/// path. Any family counts: `--highvram` pins whichever one is loaded.
+fn largest_diffusion_model(config: &AppConfig) -> Option<(String, u64)> {
     let mut best_bytes = 0u64;
     let mut best_name = String::new();
 
     if !config.comfyui_path.is_empty() {
-        let primary = std::path::Path::new(&config.comfyui_path)
-            .join("models")
-            .join("diffusion_models");
-        scan_h3_dits(&primary, H3_SCAN_DEPTH, &mut best_bytes, &mut best_name);
+        let models = std::path::Path::new(&config.comfyui_path).join("models");
+        // `unet` is ComfyUI's legacy name for `diffusion_models`.
+        for subdir in ["diffusion_models", "unet", "checkpoints"] {
+            scan_model_weights(
+                &models.join(subdir),
+                MODEL_SCAN_DEPTH,
+                &mut best_bytes,
+                &mut best_name,
+            );
+        }
     }
 
     if let Some(ref extra) = config.extra_model_paths {
-        let subdirs = crate::commands::api::category_subdirs("diffusion_models");
+        let subdirs = crate::commands::api::category_subdirs("diffusion_models")
+            .iter()
+            .chain(crate::commands::api::category_subdirs("checkpoints"));
         for dir in extra.lines().map(str::trim).filter(|d| !d.is_empty()) {
             let base = crate::commands::api::resolve_extra_model_root(std::path::Path::new(dir));
-            for subdir in subdirs {
-                scan_h3_dits(
+            for subdir in subdirs.clone() {
+                scan_model_weights(
                     &base.join(subdir),
-                    H3_SCAN_DEPTH,
+                    MODEL_SCAN_DEPTH,
                     &mut best_bytes,
                     &mut best_name,
                 );
             }
             // Flat directory: weights sit directly in the root, no category subdir.
-            scan_h3_dits(&base, 1, &mut best_bytes, &mut best_name);
+            scan_model_weights(&base, 1, &mut best_bytes, &mut best_name);
         }
     }
 
@@ -295,26 +308,30 @@ fn largest_h3_dit(config: &AppConfig) -> Option<(String, u64)> {
     }
 }
 
-/// An installed H3 model too large for `--highvram` to be survivable on this card.
+/// An installed model too large for `--highvram` to be survivable on this card.
 struct HighVramConflict {
     model: String,
     model_bytes: u64,
     vram_bytes: u64,
 }
 
-/// Whether `--highvram` would starve a MiniMax H3 pass of activation headroom.
+/// Whether `--highvram` would starve a generation of activation headroom.
 ///
-/// `--highvram` force-loads a model instead of staging it dynamically, so a DiT
-/// that nearly fills the card leaves nothing for activations and every sampler
-/// step spills over PCIe. Measured on a 12 GB RTX 5070 with the 12.5 GB NVFP4
+/// `--highvram` force-loads a model instead of staging it dynamically, so a
+/// model that nearly fills the card leaves nothing for activations and every
+/// sampler step spills over PCIe. On Windows the driver quietly falls back to
+/// system RAM instead of failing, so this shows up as a generation stuck on its
+/// first step with the GPU at 100%, not as an out-of-memory error. First seen
+/// with MiniMax H3 video (issue 824), then with image models on a 16 GB card
+/// (issue 883). Measured on a 12 GB RTX 5070 with the 12.5 GB NVFP4
 /// DiT: 176 s/it under `--highvram` against 4.2 s/it with dynamic loading, and
 /// no out-of-memory error to explain the difference. A 24 GB RTX 4090 with the
 /// 20 GB int8 DiT (4 GB left over) showed the same: no first step after three
 /// minutes, or a video decode still running after twelve.
 ///
-/// `None` whenever VRAM cannot be read or no H3 model is installed — this only
+/// `None` whenever VRAM cannot be read or no model is installed — this only
 /// ever drops the flag on evidence, never on a guess.
-fn h3_highvram_conflict(
+fn highvram_conflict(
     vram_bytes: Option<u64>,
     largest_dit: Option<(String, u64)>,
 ) -> Option<HighVramConflict> {
@@ -331,7 +348,7 @@ fn h3_highvram_conflict(
     }
 }
 
-/// Add `--highvram`, unless an installed H3 model makes it a 40x slowdown.
+/// Add `--highvram`, unless an installed model leaves too little VRAM beside it.
 /// Self-heal in the same shape as the attention-backend fallback below: drop the
 /// flag and log why, rather than letting a config setting silently cost an hour
 /// per clip.
@@ -341,23 +358,23 @@ fn h3_highvram_conflict(
 async fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
     let vram_bytes = detect_max_vram_bytes().await;
-    let largest_dit = match vram_bytes {
+    let largest_model = match vram_bytes {
         Some(_) => {
             let config = config.clone();
-            tokio::task::spawn_blocking(move || largest_h3_dit(&config))
+            tokio::task::spawn_blocking(move || largest_diffusion_model(&config))
                 .await
                 .ok()
                 .flatten()
         }
         None => None,
     };
-    match h3_highvram_conflict(vram_bytes, largest_dit) {
+    match highvram_conflict(vram_bytes, largest_model) {
         Some(conflict) => {
             log::warn!(
-                "vram_mode='high' but the installed MiniMax H3 model '{}' ({:.1} GB) fills \
-                 {:.0}% of this GPU's {:.1} GB of VRAM; --highvram would pin it resident with \
-                 no room for activations (measured ~40x slower per step, with no out-of-memory \
-                 error). Launching ComfyUI without --highvram.",
+                "vram_mode='high' but the installed model '{}' ({:.1} GB) fills {:.0}% of \
+                 this GPU's {:.1} GB of VRAM; --highvram would pin it resident with no room \
+                 for activations (measured ~40x slower per step, with no out-of-memory error). \
+                 Launching ComfyUI without --highvram; VRAM Mode Normal avoids this message.",
                 conflict.model,
                 conflict.model_bytes as f64 / GB,
                 100.0 * conflict.model_bytes as f64 / conflict.vram_bytes as f64,
@@ -928,6 +945,20 @@ fn stop_owned_process_blocking(
     *handle = None;
 }
 
+/// Why a leftover ComfyUI is stopped instead of reused. See [`is_orphaned_leftover`].
+const ORPHAN_RESTART_LOG: &str = "Restarting a ComfyUI left running after MooshieUI \
+     closed without stopping it (a crash or a forced kill). Keep-alive is off, and it \
+     may still be busy with the previous session's job.";
+
+/// A managed ComfyUI that outlived the MooshieUI that spawned it, without
+/// keep-alive asking for that. It is still working through whatever it was
+/// given (a stuck high-VRAM pass keeps the GPU at 100%), so reusing it queues
+/// every new job behind that one and the generation sits on "Preparing".
+/// A ComfyUI spawned by this session, or by another running instance, stays.
+fn is_orphaned_leftover(owned: &ManagedProcess, config: &AppConfig) -> bool {
+    !config.keep_alive && !owned.owner_alive()
+}
+
 async fn remember_spawn(
     config: &AppConfig,
     worker_id: Option<u32>,
@@ -944,6 +975,14 @@ async fn remember_spawn(
         let _ = child.kill().await;
         let _ = child.wait().await;
         return Err(err);
+    }
+    // Without keep-alive, ComfyUI must not outlive MooshieUI, including after a
+    // crash or a Task Manager kill that skips the shutdown hooks.
+    #[cfg(windows)]
+    if !config.keep_alive {
+        if let Some(handle) = child.raw_handle() {
+            super::kill_on_exit::assign(handle);
+        }
     }
     Ok(())
 }
@@ -1152,6 +1191,9 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     if let Some(owned) = ManagedProcess::load(&config, None) {
         if !owned.spawned_by_this_version() {
             log::info!("Restarting ComfyUI left running by another app version");
+            stop_owned_process(&state.comfyui_process, &config, None).await?;
+        } else if is_orphaned_leftover(&owned, &config) {
+            log::warn!("{ORPHAN_RESTART_LOG}");
             stop_owned_process(&state.comfyui_process, &config, None).await?;
         }
     }
@@ -1666,6 +1708,9 @@ pub async fn start_worker_process(
                 "Worker {}: restarting ComfyUI left running by another app version",
                 worker.id
             );
+            stop_owned_process(&worker.process, &config, Some(worker.id)).await?;
+        } else if is_orphaned_leftover(&owned, &config) {
+            log::warn!("Worker {}: {ORPHAN_RESTART_LOG}", worker.id);
             stop_owned_process(&worker.process, &config, Some(worker.id)).await?;
         }
     }
@@ -2408,24 +2453,29 @@ mod extra_model_paths_tests {
 
 #[cfg(test)]
 mod highvram_conflict_tests {
-    use super::h3_highvram_conflict;
+    use super::highvram_conflict;
 
     const GIB: u64 = 1024 * 1024 * 1024;
 
     #[test]
     fn highvram_is_dropped_only_on_evidence() {
         let big = || Some(("h3_nvfp4.safetensors".to_string(), 12 * GIB + GIB / 2));
-        let conflict = h3_highvram_conflict(Some(12 * GIB), big()).expect("DiT fills the card");
+        let conflict = highvram_conflict(Some(12 * GIB), big()).expect("DiT fills the card");
         assert_eq!(conflict.model, "h3_nvfp4.safetensors");
         assert_eq!(conflict.vram_bytes, 12 * GIB);
-        assert!(h3_highvram_conflict(Some(24 * GIB), big()).is_none());
+        assert!(highvram_conflict(Some(24 * GIB), big()).is_none());
         // The 20 GB int8 DiT fits a 24 GB card but leaves too little for activations.
         let int8 = || Some(("h3_int8.safetensors".to_string(), 20 * GIB));
-        assert!(h3_highvram_conflict(Some(24 * GIB), int8()).is_some());
-        assert!(h3_highvram_conflict(Some(32 * GIB), int8()).is_none());
-        // Unreadable VRAM or no H3 model installed: keep the flag.
-        assert!(h3_highvram_conflict(None, big()).is_none());
-        assert!(h3_highvram_conflict(Some(12 * GIB), None).is_none());
+        assert!(highvram_conflict(Some(24 * GIB), int8()).is_some());
+        assert!(highvram_conflict(Some(32 * GIB), int8()).is_none());
+        // An SDXL checkpoint leaves room on a 16 GB card; a 12 GB FLUX fp8 does not.
+        let sdxl = || Some(("illustrious.safetensors".to_string(), 7 * GIB));
+        assert!(highvram_conflict(Some(16 * GIB), sdxl()).is_none());
+        let flux = || Some(("flux1-dev-fp8.safetensors".to_string(), 12 * GIB));
+        assert!(highvram_conflict(Some(16 * GIB), flux()).is_some());
+        // Unreadable VRAM or no model installed: keep the flag.
+        assert!(highvram_conflict(None, big()).is_none());
+        assert!(highvram_conflict(Some(12 * GIB), None).is_none());
     }
 
     #[tokio::test]

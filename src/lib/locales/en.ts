@@ -707,7 +707,7 @@ const en: Record<string, string> = {
   // Performance
   "settings.performance.title": "Performance",
   "settings.performance.vram_mode": "VRAM Mode",
-  "settings.performance.vram_high": "High VRAM (12GB+) — keep models in VRAM",
+  "settings.performance.vram_high": "High VRAM (24GB+) — keep models in VRAM",
   "settings.performance.vram_normal": "Normal — load for sampling, offload between",
   "settings.performance.vram_low": "Low VRAM (<6GB) — aggressive offloading",
   "settings.performance.vram_none": "No VRAM — CPU offload everything",
