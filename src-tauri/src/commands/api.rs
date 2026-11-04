@@ -4430,6 +4430,32 @@ fn flux3_klein_family_from_text(lower: &str) -> Option<&'static str> {
     })
 }
 
+/// MOSS-Image (OpenMOSS), from a lowercase filename or CivitAI base-model name.
+///
+/// Comfy-Org ships `moss_image_{sft,base}_*`; community repos use
+/// `MOSS-Image-SFT-*` / `MOSS-Image-Base-*`. SFT is the default checkpoint: only
+/// a `base` marker selects the pretraining one. Tensor keys cannot tell the two
+/// apart, so a misnamed Base file reads as SFT (same graph, other preset).
+fn moss_image_family_from_text(lower: &str) -> Option<&'static str> {
+    let is_moss = [
+        "moss_image",
+        "moss-image",
+        "moss image",
+        "mossimage",
+        "moss.image",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+    if !is_moss {
+        return None;
+    }
+    Some(if lower.contains("base") {
+        "mossimagebase"
+    } else {
+        "mossimage"
+    })
+}
+
 fn model_family_from_base_model(base_model: &str) -> &'static str {
     let bm = base_model.trim().to_lowercase();
     if bm.is_empty() {
@@ -4440,6 +4466,9 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
         return "nanosaur";
     }
     if let Some(family) = flux3_klein_family_from_text(&bm) {
+        return family;
+    }
+    if let Some(family) = moss_image_family_from_text(&bm) {
         return family;
     }
     if bm == "flux.2 klein 9b-base" {
@@ -4573,6 +4602,9 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     // "flux" and "klein", which the 9b/4b token tests below would otherwise
     // misread once a quantisation suffix adds a stray digit.
     if let Some(family) = flux3_klein_family_from_text(&name) {
+        return Some(family);
+    }
+    if let Some(family) = moss_image_family_from_text(&name) {
         return Some(family);
     }
     if name.contains("flux.2 klein 9b-base")
@@ -4890,6 +4922,8 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
+            | "mossimage"
+            | "mossimagebase"
             | "chroma"
             | "ideogram4"
             | "krea2"
@@ -4939,6 +4973,8 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
             | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
+            | "mossimage"
+            | "mossimagebase"
     ) {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
@@ -4981,6 +5017,17 @@ pub const KREA2_TEXT_ENCODER_MARKERS: [&str; 5] = [
 /// Comfy-Org (for Krea 2) ship the same stock Qwen3-VL-4B-Instruct weights, so
 /// the markers are Krea 2's. Shared with the generate-time guard in templates/mod.rs.
 pub const FLUX3_TEXT_ENCODER_MARKERS: [&str; 5] = KREA2_TEXT_ENCODER_MARKERS;
+
+/// MOSS-Image conditions on the stock Qwen3.5 9B (`qwen3.5_9b_*` from Comfy-Org).
+/// ComfyUI only builds the MOSS encoder for that model under CLIP type
+/// `moss_image`, so nothing else may be paired with it.
+pub const MOSS_IMAGE_TEXT_ENCODER_MARKERS: [&str; 5] = [
+    "qwen3.5_9b",
+    "qwen3.5-9b",
+    "qwen35_9b",
+    "qwen3_5_9b",
+    "qwen3.5 9b",
+];
 
 /// Returns (recommended encoder filename if a compatible one exists, CLIP type).
 /// A `None` filename with `Some` type means: the family's CLIP type is known but
@@ -5078,6 +5125,13 @@ fn recommended_clip_from_available(
         return Some((preferred, "flux3"));
     }
 
+    if matches!(family, "mossimage" | "mossimagebase") {
+        // Strict: MOSS-Image reads the last hidden state of Qwen3.5 9B.
+        let preferred =
+            find_first_text_encoder_matching(encoders, &MOSS_IMAGE_TEXT_ENCODER_MARKERS);
+        return Some((preferred, "moss_image"));
+    }
+
     if family == "krea2" {
         // Strict: Krea 2 expects 12x2560=30720-dim conditioning from Qwen3-VL 4B.
         // Recommending any other encoder produces a confusing ComfyUI error.
@@ -5094,6 +5148,60 @@ mod split_model_pairing_tests {
 
     fn list(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn moss_image_filenames_and_base_models_resolve() {
+        for (name, family) in [
+            ("moss_image_sft_int8_convrot.safetensors", "mossimage"),
+            ("moss_image_sft_bf16.safetensors", "mossimage"),
+            ("MOSS-Image-SFT-8-steps-dmd.safetensors", "mossimage"),
+            ("moss_image_base_int8_convrot.safetensors", "mossimagebase"),
+            ("MOSS-Image-Base-Q8_0.gguf", "mossimagebase"),
+        ] {
+            assert_eq!(model_family_from_filename(name), Some(family), "{name}");
+        }
+        assert_eq!(model_family_from_base_model("MOSS-Image"), "mossimage");
+        assert_eq!(
+            model_family_from_base_model("MOSS-Image Base"),
+            "mossimagebase"
+        );
+        assert!(family_requires_separate_clip("mossimage"));
+        assert_eq!(family_from_architecture("moss_image"), Some("mossimage"));
+        assert_eq!(
+            architecture_class("mossimage"),
+            architecture_class("mossimagebase")
+        );
+    }
+
+    #[test]
+    fn moss_image_pairs_with_qwen35_9b_and_the_flux2_vae() {
+        let encoders = vec![
+            "qwen3vl_4b_fp8_scaled.safetensors".to_string(),
+            "qwen3.5_9b_w4a8_gptq.safetensors".to_string(),
+        ];
+        let vaes = vec![
+            "sdxl_vae.safetensors".to_string(),
+            "flux2-vae_small.safetensors".to_string(),
+        ];
+        for family in ["mossimage", "mossimagebase"] {
+            assert_eq!(
+                recommended_clip_from_available("diffusion_models", family, &encoders),
+                Some((
+                    Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string()),
+                    "moss_image"
+                ))
+            );
+            assert_eq!(
+                recommended_vae_from_available("diffusion_models", family, &vaes),
+                Some("flux2-vae_small.safetensors".to_string())
+            );
+        }
+        // Strict: no Qwen3.5 9B on disk means no encoder, not a wrong one.
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "mossimage", &encoders[..1]),
+            Some((None, "moss_image"))
+        );
     }
 
     #[test]
@@ -5153,6 +5261,19 @@ mod split_model_pairing_tests {
             );
             assert!(family_requires_separate_clip(family));
         }
+    }
+
+    #[test]
+    fn moss_image_tensor_keys_are_recognised() {
+        let keys = [
+            "shared_block_modulation.weight",
+            "layers.0.proj.ffn_up_gate.weight",
+            "layers.0.proj.qkv.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&keys).as_deref(),
+            Some("moss_image")
+        );
     }
 
     #[test]
@@ -6808,6 +6929,12 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         });
     }
 
+    // MOSS-Image: one shared block modulation plus fused FFN up/gate layers, as
+    // in ComfyUI's detect_unet_config. SFT and Base share the same keys.
+    if has_key("shared_block_modulation.weight") && has_key("layers.0.proj.ffn_up_gate.weight") {
+        return Some("moss_image".to_string());
+    }
+
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
@@ -7004,6 +7131,7 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
+        "moss_image" => Some("mossimage"),
         "qwen_image" => Some("qwen"),
         "stable-diffusion-3-medium" => Some("sd3"),
         "auraflow" => Some("auraflow"),
@@ -7038,6 +7166,8 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // so they correct a filename that names the other checkpoint.
         "flux3klein" => Some("flux3_flowmap"),
         "flux3kleinbase" => Some("flux3"),
+        // SFT and Base share every tensor key: one class for both.
+        "mossimage" | "mossimagebase" => Some("moss_image"),
         "anima" => Some("anima"),
         "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),

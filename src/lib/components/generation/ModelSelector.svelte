@@ -99,6 +99,26 @@
     url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
     category: "text_encoders",
   };
+  // MOSS-Image: Comfy-Org's repackaged files (ungated). The W4A8 Qwen3.5 9B
+  // encoder and the small Flux 2 VAE are what Comfy-Org's own templates load.
+  const MOSS_IMAGE_ENCODER_FILE: ModelFile = {
+    filename: "qwen3.5_9b_w4a8_gptq.safetensors",
+    url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors",
+    category: "text_encoders",
+  };
+  const MOSS_IMAGE_VAE_FILE: ModelFile = {
+    filename: "flux2-vae_small.safetensors",
+    url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/vae/flux2-vae_small.safetensors",
+    category: "vae",
+  };
+  // Mirrors MOSS_IMAGE_TEXT_ENCODER_MARKERS in src-tauri/src/commands/api.rs.
+  const MOSS_IMAGE_ENCODER_MARKERS = ["qwen3.5_9b", "qwen3.5-9b", "qwen35_9b", "qwen3_5_9b", "qwen3.5 9b"];
+  function isMossImageEncoder(filename: string | null | undefined): boolean {
+    if (!filename) return false;
+    const lower = filename.toLowerCase();
+    return MOSS_IMAGE_ENCODER_MARKERS.some((marker) => lower.includes(marker));
+  }
+
   const FLUX2_VAE_FILE: ModelFile = {
     filename: "flux2-vae.safetensors",
     url: "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/main/split_files/vae/flux2-vae.safetensors",
@@ -509,6 +529,46 @@
         scheduler: "simple",
       },
     },
+    // MOSS-Image (OpenMOSS), Comfy-Org's INT8 ConvRot files. SFT is the
+    // finetuned checkpoint for everyday use, Base the pretraining one.
+    {
+      label: "MOSS-Image (INT8)",
+      size: "~13 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "moss_image_sft_int8_convrot.safetensors",
+          url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_sft_int8_convrot.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: { ...MOSS_IMAGE_ENCODER_FILE, clipType: "moss_image" },
+        vaeModel: MOSS_IMAGE_VAE_FILE,
+      },
+      autoSettings: {
+        steps: 25,
+        cfg: 2.5,
+        samplerName: "er_sde",
+        scheduler: "simple",
+      },
+    },
+    {
+      label: "MOSS-Image Base (INT8)",
+      size: "~13 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "moss_image_base_int8_convrot.safetensors",
+          url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_base_int8_convrot.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: { ...MOSS_IMAGE_ENCODER_FILE, clipType: "moss_image" },
+        vaeModel: MOSS_IMAGE_VAE_FILE,
+      },
+      autoSettings: {
+        steps: 25,
+        cfg: 2.5,
+        samplerName: "er_sde",
+        scheduler: "simple",
+      },
+    },
     {
       // Z-Image diffusion weights usually arrive from the Model Hub on their
       // own. Detection-only for the diffusion file; the Qwen3-4B encoder and
@@ -725,6 +785,15 @@
     vaeFile: FLUX2_VAE_FILE,
   };
 
+  const MOSS_IMAGE_REQUIREMENT: RequiredSplitEncoder = {
+    label: "MOSS-Image",
+    clipType: "moss_image",
+    isEncoder: isMossImageEncoder,
+    encoderFile: MOSS_IMAGE_ENCODER_FILE,
+    isVae: (filename) => /flux2[-_]vae/i.test(filename),
+    vaeFile: MOSS_IMAGE_VAE_FILE,
+  };
+
   const REQUIRED_SPLIT_ENCODERS: Partial<Record<ModelFamily, RequiredSplitEncoder>> = {
     krea2: {
       label: "Krea 2",
@@ -738,6 +807,8 @@
     zib: ZIMAGE_REQUIREMENT,
     flux3klein: FLUX3_REQUIREMENT,
     flux3kleinbase: FLUX3_REQUIREMENT,
+    mossimage: MOSS_IMAGE_REQUIREMENT,
+    mossimagebase: MOSS_IMAGE_REQUIREMENT,
   };
 
   let requiredEncoderEnsureRunning = false;
