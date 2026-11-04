@@ -38,7 +38,7 @@
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import { escapeArtistParens, isArtistTagToken } from "../../utils/artistTag.js";
-  import { getConfig } from "../../utils/api.js";
+  import { getConfig, updateConfig } from "../../utils/api.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import { normalizeTag, pickCandidates, type DetectTags } from "../../utils/characterDetect.js";
   import InterrogateDescribe from "./InterrogateDescribe.svelte";
@@ -66,15 +66,42 @@
   /** When replacing, preserve existing artist tags (@ prefixed, not @_@) from the current prompt */
   let preserveArtistTags = $state(false);
 
+  /**
+   * Artist chips: what cleared the threshold, or, when nothing did, Kaloscope's
+   * best guesses under it, so a near miss is still one click away.
+   */
+  const artistChoices = $derived.by((): TagResult[] => {
+    if (!result) return [];
+    if (result.artist_tags.length > 0) return result.artist_tags;
+    return result.artist_detection?.below_threshold ?? [];
+  });
+
+  /** Set once "Turn on" saved artist detection, until the next result. */
+  let artistDetectTurnedOn = $state(false);
+
   // Initialize checked states when result changes
   $effect(() => {
     if (result) {
       checkedCharacter = Object.fromEntries(result.character_tags.map((t) => [t.name, true]));
-      checkedArtist = Object.fromEntries(result.artist_tags.map((t) => [t.name, true]));
+      // Kaloscope's near misses are offered unticked: they fell under the threshold.
+      const tickArtists = result.artist_tags.length > 0;
+      checkedArtist = Object.fromEntries(artistChoices.map((t) => [t.name, tickArtists]));
       checkedGeneral = Object.fromEntries(result.general_tags.map((t) => [t.name, true]));
       checkedCopyright = Object.fromEntries(result.copyright_tags.map((t) => [t.name, false]));
+      artistDetectTurnedOn = false;
     }
   });
+
+  async function turnOnArtistDetection() {
+    try {
+      const config = await getConfig();
+      config.interrogator_detect_artists = true;
+      await updateConfig(config);
+      artistDetectTurnedOn = true;
+    } catch (e) {
+      console.warn("Failed to turn on artist detection:", e);
+    }
+  }
 
   /** A saved character the prompt assistant found in the image. */
   type SavedSuggestion = { character: SavedCharacter; covered: string[] };
@@ -220,7 +247,7 @@
   function selectAll() {
     if (result) {
       checkedCharacter = Object.fromEntries(result.character_tags.map((t) => [t.name, true]));
-      checkedArtist = Object.fromEntries(result.artist_tags.map((t) => [t.name, true]));
+      checkedArtist = Object.fromEntries(artistChoices.map((t) => [t.name, true]));
       checkedGeneral = Object.fromEntries(result.general_tags.map((t) => [t.name, true]));
       checkedCopyright = Object.fromEntries(result.copyright_tags.map((t) => [t.name, true]));
     }
@@ -229,7 +256,7 @@
   function deselectAll() {
     if (result) {
       checkedCharacter = Object.fromEntries(result.character_tags.map((t) => [t.name, false]));
-      checkedArtist = Object.fromEntries(result.artist_tags.map((t) => [t.name, false]));
+      checkedArtist = Object.fromEntries(artistChoices.map((t) => [t.name, false]));
       checkedGeneral = Object.fromEntries(result.general_tags.map((t) => [t.name, false]));
       checkedCopyright = Object.fromEntries(result.copyright_tags.map((t) => [t.name, false]));
       checkedSaved = {};
@@ -268,7 +295,7 @@
     const otherTags: string[] = [];
     let animaArtistTagLookup: Record<string, string> | undefined;
 
-    if (isAnima && result.artist_tags.some((tag) => checkedArtist[tag.name])) {
+    if (isAnima && artistChoices.some((tag) => checkedArtist[tag.name])) {
       try {
         animaArtistTagLookup = await getAnimaArtistTagLookup();
       } catch {
@@ -277,7 +304,7 @@
     }
 
     // Collect checked artist tags
-    for (const tag of result.artist_tags) {
+    for (const tag of artistChoices) {
       if (checkedArtist[tag.name]) {
         if (isAnima) {
           artistTags.push(formatArtistTagForAnima(tag.name, animaArtistTagLookup));
@@ -363,7 +390,7 @@
     if (!result) return;
 
     const allTags: string[] = [];
-    for (const tag of result.artist_tags) {
+    for (const tag of artistChoices) {
       if (checkedArtist[tag.name]) allTags.push(tag.name);
     }
     for (const tag of result.character_tags) {
@@ -398,7 +425,7 @@
     if (!result) return;
 
     const allTags: string[] = [];
-    for (const tag of result.artist_tags) {
+    for (const tag of artistChoices) {
       if (checkedArtist[tag.name]) allTags.push(tag.name);
     }
     for (const tag of result.character_tags) {
@@ -604,16 +631,33 @@
           </div>
         {/if}
 
-        <!-- Artist tags -->
-        {#if result.artist_tags.length > 0}
-          <div>
-            <button onclick={() => toggleCollapse("artist")} class="flex items-center gap-1 text-sm font-medium text-purple-400 mb-2 hover:text-purple-300">
-              <svg class="w-3 h-3 transition-transform {collapsedSections['artist'] ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
-              {locale.t('generation.interrogate.artists', { count: result.artist_tags.length })}
-            </button>
-            {#if !collapsedSections["artist"]}
+        <!-- Artist tags. Always shown, so Kaloscope finding nothing (or being
+             off) says so instead of the section quietly going missing. -->
+        <div>
+          <button onclick={() => toggleCollapse("artist")} class="flex items-center gap-1 text-sm font-medium text-purple-400 mb-2 hover:text-purple-300">
+            <svg class="w-3 h-3 transition-transform {collapsedSections['artist'] ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+            {locale.t('generation.interrogate.artists', { count: result.artist_tags.length })}
+          </button>
+          {#if !collapsedSections["artist"]}
+            {#if result.artist_tags.length === 0}
+              {#if result.artist_detection}
+                <p class="text-xs text-neutral-500 mb-2">
+                  {result.artist_detection.below_threshold.length > 0
+                    ? locale.t('generation.interrogate.artists_below_threshold', { threshold: locale.formatPercent(result.artist_detection.threshold * 100, 0) })
+                    : locale.t('generation.interrogate.artists_none', { threshold: locale.formatPercent(result.artist_detection.threshold * 100, 0) })}
+                </p>
+              {:else if artistDetectTurnedOn}
+                <p class="text-xs text-neutral-500">{locale.t('generation.interrogate.artists_turned_on')}</p>
+              {:else}
+                <p class="text-xs text-neutral-500">
+                  {locale.t('generation.interrogate.artists_off')}
+                  <button onclick={() => void turnOnArtistDetection()} class="underline text-neutral-400 hover:text-neutral-200 ml-1">{locale.t('generation.interrogate.artists_turn_on')}</button>
+                </p>
+              {/if}
+            {/if}
+            {#if artistChoices.length > 0}
               <div class="flex flex-wrap gap-1.5">
-                {#each result.artist_tags as tag}
+                {#each artistChoices as tag (tag.name)}
                   <button
                     onclick={() => (checkedArtist = { ...checkedArtist, [tag.name]: !checkedArtist[tag.name] })}
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors border {checkedArtist[tag.name] ? 'bg-purple-600/20 border-purple-500/50 text-purple-300' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}"
@@ -624,8 +668,8 @@
                 {/each}
               </div>
             {/if}
-          </div>
-        {/if}
+          {/if}
+        </div>
 
         <!-- General tags -->
         {#if result.general_tags.length > 0}

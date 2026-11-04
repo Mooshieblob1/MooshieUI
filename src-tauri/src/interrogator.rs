@@ -197,6 +197,20 @@ pub struct InterrogationResult {
     /// again. Set by the command layer after a successful run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_token: Option<String>,
+    /// Set when Kaloscope ran, so the results can say it found nothing
+    /// instead of leaving no trace. Absent when artist detection is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist_detection: Option<ArtistDetection>,
+}
+
+/// What the Kaloscope pass saw beyond the artists it added to `artist_tags`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArtistDetection {
+    /// The threshold the run used (0-1).
+    pub threshold: f32,
+    /// Kaloscope's best guesses that fell under `threshold`, highest first.
+    /// Offered unticked, since one image often spreads its score thin.
+    pub below_threshold: Vec<TagResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -481,19 +495,26 @@ impl InterrogatorState {
         character_threshold: f32,
         artist_threshold: Option<f32>,
     ) -> Result<InterrogationResult, AppError> {
-        let artists = match artist_threshold {
+        let detection = match artist_threshold {
             Some(threshold) => {
                 if !self.artist.is_loaded() {
                     self.init_ort()?;
                     self.artist.load(&self.root_dir)?;
                 }
-                self.artist.detect(&img, threshold)?
+                Some((threshold, self.artist.detect(&img)?))
             }
-            None => Vec::new(),
+            None => None,
         };
         let mut result =
             self.run_inference_from_image(img, general_threshold, character_threshold)?;
-        merge_artist_tags(&mut result.artist_tags, artists);
+        if let Some((threshold, guesses)) = detection {
+            let (artists, below) = split_at_threshold(guesses, threshold);
+            merge_artist_tags(&mut result.artist_tags, artists);
+            result.artist_detection = Some(ArtistDetection {
+                threshold,
+                below_threshold: below,
+            });
+        }
         Ok(result)
     }
 
@@ -694,8 +715,15 @@ impl InterrogatorState {
             copyright_tags,
             rating_tags,
             image_token: None,
+            artist_detection: None,
         })
     }
+}
+
+/// Split Kaloscope's guesses into the ones at or above `threshold` and the rest,
+/// keeping their order.
+fn split_at_threshold(guesses: Vec<TagResult>, threshold: f32) -> (Vec<TagResult>, Vec<TagResult>) {
+    guesses.into_iter().partition(|t| t.confidence >= threshold)
 }
 
 /// Add detected artists to the tagger's own artist tags (custom taggers may
@@ -1228,6 +1256,27 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn split_at_threshold_keeps_near_misses_in_order() {
+        let tag = |name: &str, confidence: f32| TagResult {
+            name: name.to_string(),
+            confidence,
+        };
+        let (hits, below) =
+            split_at_threshold(vec![tag("a", 0.3), tag("b", 0.1), tag("c", 0.04)], 0.1);
+        assert_eq!(
+            hits.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        assert_eq!(
+            below.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            ["c"]
+        );
+        let (hits, below) = split_at_threshold(vec![tag("a", 0.05), tag("b", 0.02)], 0.1);
+        assert!(hits.is_empty());
+        assert_eq!(below.len(), 2);
     }
 
     #[test]
