@@ -750,6 +750,8 @@ export interface AppConfig {
   llm_fallback_models?: string[];
   /** Answer with an installed local model when the external provider cannot. */
   llm_fallback_local?: boolean;
+  /** "low" (default), "medium", "high", or "default" for each model's own. */
+  llm_reasoning_effort?: string;
   /** OAuth client id presented to xAI; empty until an operator supplies one. */
   llm_xai_client_id: string;
   /** Scope override for the xAI sign-in; empty means the backend default. */

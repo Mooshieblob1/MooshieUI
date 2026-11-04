@@ -159,6 +159,7 @@ async fn chat_any(
         ext_key,
         ext_models,
         fallback_local,
+        reasoning_effort,
     ) = {
         let cfg = state.config.read().await;
         (
@@ -173,6 +174,7 @@ async fn chat_any(
                 &cfg.llm_fallback_models,
             ),
             cfg.llm_fallback_local,
+            cfg.llm_reasoning_effort.clone(),
         )
     };
 
@@ -190,6 +192,7 @@ async fn chat_any(
             user,
             max_tokens,
             images,
+            &reasoning_effort,
         )
         .await;
         // Down or busy, and the owner asked for the bundled model to stand in:

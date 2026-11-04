@@ -4440,6 +4440,7 @@
             <LlmProviderPanel
               bind:enabled={config.llm_external_enabled}
               bind:fallbackLocal={config.llm_fallback_local}
+              bind:reasoningEffort={config.llm_reasoning_effort}
               {autoSave}
               onstate={onProviderState}
             />
