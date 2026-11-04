@@ -4,7 +4,7 @@ import type { ExportFormat } from "./videoExport.js";
 import type { ChatMessage } from "./enhancerSession.js";
 import { locale } from "../stores/locale.svelte.js";
 import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
-import type { SplatCapabilities, SplatJob, SplatParams, SplatStatus } from "../types/model3d.js";
+import type { MeshCapabilities, MeshParams, SplatCapabilities, SplatJob, SplatParams, SplatStatus } from "../types/model3d.js";
 import type { MusicTranscript } from "./musicReview.js";
 import type { MusicLinkCapabilities, MusicLinkImport } from "./musicLink.js";
 import type { ReferenceSong, MusicReferenceContext } from "../types/music.js";
@@ -125,6 +125,28 @@ export async function loadSplatPly(job: Pick<SplatJob, "prompt_id" | "worker_id"
 /** Desktop only: the path comes from the native Save dialog. */
 export async function saveSplatFile(dataBase64: string, path: string): Promise<void> {
   return ipcInvoke("save_splat_file", { dataBase64, path });
+}
+
+export async function getMeshCapabilities(): Promise<MeshCapabilities> {
+  return ipcInvoke("get_mesh_capabilities");
+}
+
+export async function generateMesh(params: MeshParams, imageBase64: string): Promise<SplatJob> {
+  return ipcInvoke("generate_mesh", { params, imageBase64 });
+}
+
+export async function getMeshStatus(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<SplatStatus> {
+  return ipcInvoke("get_mesh_status", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** The finished Pixal3D mesh as a base64 binary glTF (.glb). */
+export async function loadMeshGlb(job: Pick<SplatJob, "prompt_id" | "worker_id">): Promise<string> {
+  return ipcInvoke("load_mesh_glb", { promptId: job.prompt_id, workerId: job.worker_id });
+}
+
+/** Desktop only: write an exported .glb to a path from the native Save dialog. */
+export async function saveMeshFile(dataBase64: string, path: string): Promise<void> {
+  return ipcInvoke("save_mesh_file", { dataBase64, path });
 }
 
 export async function saveMusicFile(dataBase64: string, path: string): Promise<void> {

@@ -119,10 +119,14 @@ pub fn is_splat_decoder(name: &str) -> bool {
     (b.contains("idol") || b.contains("triposplat")) && b.contains("decoder")
 }
 
-/// DINOv3 ViT-H/16+ image encoder in `clip_vision`.
+/// DINOv3 ViT-H/16+ image encoder in `clip_vision`. Pixal3D's ViT-L (with
+/// NAF) lives in the same folder and sorts first, so it is excluded here.
 pub fn is_dinov3(name: &str) -> bool {
     let b = base(name);
-    b.contains("dino_v3") || b.contains("dinov3")
+    (b.contains("dino_v3") || b.contains("dinov3"))
+        && !["vit_l", "vitl", "_l_", "naf", "large"]
+            .iter()
+            .any(|tag| b.contains(tag))
 }
 
 /// The FLUX.2 VAE in `vae` (shared with the FLUX.2 / Klein image families).
@@ -374,6 +378,14 @@ mod tests {
                 "{class} missing from REQUIRED_NODES"
             );
         }
+    }
+
+    #[test]
+    fn idol_encoder_skips_pixal3d_vit_l() {
+        assert!(is_dinov3("dino_v3_vit_h_bf16.safetensors"));
+        assert!(is_dinov3("dino_v3_vit_h.safetensors"));
+        assert!(!is_dinov3("dino_v3_L_naf_fp32.safetensors"));
+        assert!(!is_dinov3("dino_v3_vit_l.safetensors"));
     }
 
     #[test]

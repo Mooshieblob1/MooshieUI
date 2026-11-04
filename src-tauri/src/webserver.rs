@@ -6592,6 +6592,38 @@ async fn dispatch_command(
                     .map_err(|e| e.to_string())
             }
         }
+        "get_mesh_capabilities" => {
+            let result = commands::mesh3d::capabilities(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "generate_mesh" => {
+            let params = serde_json::from_value(args["params"].clone())
+                .map_err(|e| format!("Invalid 3D params: {e}"))?;
+            let image = args["imageBase64"].as_str().ok_or("Missing imageBase64")?;
+            commands::mesh3d::submit(&state, params, image, username.map(str::to_string))
+                .await
+                .map_err(|e| e.to_string())
+        }
+        "get_mesh_status" | "load_mesh_glb" => {
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let worker_id = args["workerId"]
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .ok_or("Invalid workerId")?;
+            ensure_prompt_owned(&state, prompt_id, username)?;
+            if command == "get_mesh_status" {
+                commands::mesh3d::status(&state, prompt_id, worker_id)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                commands::mesh3d::glb(&state, prompt_id, worker_id)
+                    .await
+                    .map(|glb| serde_json::json!(glb))
+                    .map_err(|e| e.to_string())
+            }
+        }
         "get_h3_upscaler_status" => Ok(commands::video_drafts::upscaler_status(&state).await),
         "install_h3_upscaler" => commands::video_drafts::install_upscaler(&state)
             .await

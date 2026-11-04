@@ -153,7 +153,9 @@ pub(crate) fn resolve_models(
     })
 }
 
-pub(crate) async fn capabilities(state: &AppState) -> Result<SplatCapabilities, AppError> {
+/// `/object_info` of every reachable worker, idle workers first so a free
+/// GPU takes the job. Shared with the Pixal3D mesh page.
+pub(crate) async fn worker_infos(state: &AppState) -> Result<Vec<(u32, Value)>, AppError> {
     use crate::comfyui::gpu_manager::WorkerStatus;
     crate::comfyui::process::mark_legacy_worker_idle(state).await;
     let candidates =
@@ -174,10 +176,7 @@ pub(crate) async fn capabilities(state: &AppState) -> Result<SplatCapabilities, 
                 .json()
                 .await
                 .ok()?;
-            Some((
-                status == WorkerStatus::Running,
-                worker_capabilities_from_info(&info, worker.id),
-            ))
+            Some((status == WorkerStatus::Running, worker.id, info))
         }))
         .await;
     let mut candidates: Vec<_> = candidates.into_iter().flatten().collect();
@@ -186,10 +185,20 @@ pub(crate) async fn capabilities(state: &AppState) -> Result<SplatCapabilities, 
             "No ComfyUI worker is reachable.".into(),
         ));
     }
-    // Idle workers first, so a free GPU takes the job.
-    candidates.sort_by_key(|(running, _)| *running);
+    candidates.sort_by_key(|(running, _, _)| *running);
+    Ok(candidates
+        .into_iter()
+        .map(|(_, id, info)| (id, info))
+        .collect())
+}
+
+pub(crate) async fn capabilities(state: &AppState) -> Result<SplatCapabilities, AppError> {
     Ok(merge_capabilities(
-        candidates.into_iter().map(|(_, caps)| caps).collect(),
+        worker_infos(state)
+            .await?
+            .iter()
+            .map(|(id, info)| worker_capabilities_from_info(info, *id))
+            .collect(),
     ))
 }
 
@@ -218,31 +227,15 @@ pub(crate) fn decode_input_image(image_base64: &str) -> Result<(Vec<u8>, &'stati
     Ok((bytes, ext))
 }
 
-pub(crate) async fn submit(
+/// Upload the source picture to the worker that will run the job, under a
+/// fresh name with `prefix`, and return that name.
+pub(crate) async fn upload_input(
     state: &AppState,
-    params: SplatParams,
-    image_base64: &str,
-    owner: Option<String>,
-) -> Result<Value, AppError> {
-    splat::validate(&params).map_err(AppError::InvalidWorkflow)?;
-    let (bytes, ext) = decode_input_image(image_base64)?;
-    let caps = capabilities(state).await?;
-    let mut last_error = None;
-    let mut chosen = None;
-    for worker in &caps.workers {
-        match resolve_models(worker, &params) {
-            Ok(models) => {
-                chosen = Some((worker.worker_id, models));
-                break;
-            }
-            Err(e) => last_error = Some(e),
-        }
-    }
-    let (worker_id, models) = chosen.ok_or_else(|| {
-        AppError::InvalidWorkflow(last_error.unwrap_or_else(|| {
-            "No ComfyUI worker can run image to 3D. Refresh the 3D page.".into()
-        }))
-    })?;
+    worker_id: u32,
+    bytes: Vec<u8>,
+    ext: &str,
+    prefix: &str,
+) -> Result<String, AppError> {
     let endpoint = state
         .gpu_manager
         .workers
@@ -250,7 +243,7 @@ pub(crate) async fn submit(
         .find(|w| w.id == worker_id)
         .ok_or_else(|| AppError::ConnectionFailed("The 3D worker is unavailable.".into()))?
         .base_url();
-    let filename = format!("mooshie_splat_in_{}.{ext}", uuid::Uuid::new_v4());
+    let filename = format!("{prefix}{}.{ext}", uuid::Uuid::new_v4());
     let mime = match ext {
         "png" => "image/png",
         "jpg" => "image/jpeg",
@@ -281,6 +274,35 @@ pub(crate) async fn submit(
             "Unexpected 3D source image upload path.".into(),
         ));
     }
+    Ok(filename)
+}
+
+pub(crate) async fn submit(
+    state: &AppState,
+    params: SplatParams,
+    image_base64: &str,
+    owner: Option<String>,
+) -> Result<Value, AppError> {
+    splat::validate(&params).map_err(AppError::InvalidWorkflow)?;
+    let (bytes, ext) = decode_input_image(image_base64)?;
+    let caps = capabilities(state).await?;
+    let mut last_error = None;
+    let mut chosen = None;
+    for worker in &caps.workers {
+        match resolve_models(worker, &params) {
+            Ok(models) => {
+                chosen = Some((worker.worker_id, models));
+                break;
+            }
+            Err(e) => last_error = Some(e),
+        }
+    }
+    let (worker_id, models) = chosen.ok_or_else(|| {
+        AppError::InvalidWorkflow(last_error.unwrap_or_else(|| {
+            "No ComfyUI worker can run image to 3D. Refresh the 3D page.".into()
+        }))
+    })?;
+    let filename = upload_input(state, worker_id, bytes, ext, "mooshie_splat_in_").await?;
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {
@@ -309,7 +331,11 @@ pub(crate) async fn submit(
     }))
 }
 
-fn worker_url(state: &AppState, worker_id: u32, prompt_id: &str) -> Result<String, AppError> {
+pub(crate) fn worker_url(
+    state: &AppState,
+    worker_id: u32,
+    prompt_id: &str,
+) -> Result<String, AppError> {
     if prompt_id.is_empty()
         || prompt_id.len() > 128
         || !prompt_id
@@ -327,7 +353,11 @@ fn worker_url(state: &AppState, worker_id: u32, prompt_id: &str) -> Result<Strin
         .ok_or_else(|| AppError::Other("The 3D GPU worker is no longer configured.".into()))
 }
 
-async fn history(state: &AppState, base: &str, prompt_id: &str) -> Result<Value, AppError> {
+pub(crate) async fn history(
+    state: &AppState,
+    base: &str,
+    prompt_id: &str,
+) -> Result<Value, AppError> {
     Ok(state
         .http_client
         .get(format!("{base}/history/{prompt_id}"))
@@ -380,11 +410,22 @@ pub(crate) async fn status(
     prompt_id: &str,
     worker_id: u32,
 ) -> Result<Value, AppError> {
+    status_with(state, prompt_id, worker_id, completed_status).await
+}
+
+/// Job status from the worker's history (final) or queue. `complete` turns a
+/// finished history entry into the reply. Shared with the mesh page.
+pub(crate) async fn status_with(
+    state: &AppState,
+    prompt_id: &str,
+    worker_id: u32,
+    complete: fn(&Value) -> Result<Value, AppError>,
+) -> Result<Value, AppError> {
     let base = worker_url(state, worker_id, prompt_id)?;
     let history = history(state, &base, prompt_id).await?;
     if let Some(entry) = history.get(prompt_id) {
         // History is final. Reconcile here too, so a lost websocket event
-        // cannot keep the worker reserved after the splat is done.
+        // cannot keep the worker reserved after the job is done.
         if state.prompt_queue.is_splat(prompt_id) {
             if let Some(worker) = state.prompt_queue.finish(prompt_id) {
                 state.gpu_manager.mark_worker_idle(worker).await;
@@ -392,7 +433,7 @@ pub(crate) async fn status(
                 state.prompt_queue.drain_notify.notify_one();
             }
         }
-        return completed_status(entry);
+        return complete(entry);
     }
     let queue: Value = state
         .http_client
@@ -414,6 +455,39 @@ pub(crate) async fn status(
         }
     }
     Ok(json!({"status": "missing"}))
+}
+
+/// Download one output file from the worker, refusing anything over `limit`.
+pub(crate) async fn fetch_output(
+    state: &AppState,
+    base: &str,
+    filename: &str,
+    subfolder: &str,
+    limit: usize,
+) -> Result<Vec<u8>, AppError> {
+    let mut response = state
+        .http_client
+        .get(format!("{base}/view"))
+        .query(&[
+            ("filename", filename),
+            ("subfolder", subfolder),
+            ("type", "output"),
+        ])
+        .timeout(Duration::from_secs(300))
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if bytes.len() + chunk.len() > limit {
+            return Err(AppError::Other(format!(
+                "The 3D file exceeds {} MiB. Retrieve it from ComfyUI's output/3d folder.",
+                limit / (1024 * 1024)
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// 1,048,576 Gaussians at SH degree 0 is about 71 MB of PLY.
@@ -442,27 +516,14 @@ pub(crate) async fn ply(
     let output = ply_output(&history[prompt_id])?.ok_or_else(|| {
         AppError::Other("The 3D file is not available in ComfyUI history.".into())
     })?;
-    let mut response = state
-        .http_client
-        .get(format!("{base}/view"))
-        .query(&[
-            ("filename", output["filename"].as_str().unwrap_or("")),
-            ("subfolder", splat::OUTPUT_SUBFOLDER),
-            ("type", "output"),
-        ])
-        .timeout(Duration::from_secs(180))
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if bytes.len() + chunk.len() > PLY_LIMIT {
-            return Err(AppError::Other(
-                "The 3D file exceeds 128 MiB. Retrieve it from ComfyUI's output/3d folder.".into(),
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = fetch_output(
+        state,
+        &base,
+        output["filename"].as_str().unwrap_or(""),
+        splat::OUTPUT_SUBFOLDER,
+        PLY_LIMIT,
+    )
+    .await?;
     if !is_splat_ply(&bytes) {
         return Err(AppError::Other(
             "ComfyUI did not return a Gaussian splat PLY file.".into(),
