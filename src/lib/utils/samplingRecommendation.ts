@@ -105,6 +105,17 @@ export const FLUX3_KLEIN_BASE_SAMPLING: SamplingRecommendation = {
 };
 
 /**
+ * MOSS-Image (SFT and Base): Comfy-Org's bundled templates, 25 steps at CFG 2.5
+ * with er_sde on the simple schedule. Matches the store's MOSS preset.
+ */
+export const MOSS_IMAGE_SAMPLING: SamplingRecommendation = {
+  steps: 25,
+  cfg: 2.5,
+  samplerName: "er_sde",
+  scheduler: "simple",
+};
+
+/**
  * A conservative middle for a model nothing is known about.
  *
  * Only the NovelAI local pass uses this: it has to put some sampler in the
@@ -138,6 +149,7 @@ export function recommendedSamplingFor(
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
   if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
   if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;
+  if (fam === "mossimage" || fam === "mossimagebase") return MOSS_IMAGE_SAMPLING;
   if (fam === "anima" || name.includes("anima")) return ANIMA_SAMPLING;
   if (name.includes("nanosaur")) return NANOSAUR_SAMPLING;
   if (
