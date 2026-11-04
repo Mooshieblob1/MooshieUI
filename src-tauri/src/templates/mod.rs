@@ -382,6 +382,37 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
+    // MOSS-Image needs ComfyUI's "moss_image" CLIP type (v0.43.0+), which only
+    // builds the MOSS encoder around Qwen3.5 9B. Anything else fails inside
+    // ComfyUI with an unhelpful error, so fail fast with the fix instead.
+    if matches!(
+        params.model_architecture.as_str(),
+        "mossimage" | "mossimagebase"
+    ) && params.use_split_model
+    {
+        if params.clip_type.as_deref() != Some("moss_image") {
+            return Err(
+                "MOSS-Image requires the CLIP loader type \"moss_image\" (ComfyUI 0.43.0 or newer). Re-select the MOSS-Image model so the text encoder settings refresh, or update ComfyUI.".into(),
+            );
+        }
+        let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
+        let clip_lower = clip_model.to_lowercase();
+        if clip_model.is_empty()
+            || !crate::commands::api::MOSS_IMAGE_TEXT_ENCODER_MARKERS
+                .iter()
+                .any(|marker| clip_lower.contains(marker))
+        {
+            return Err(format!(
+                "MOSS-Image requires the Qwen3.5 9B text encoder, but {} is selected. Open the model panel to download it (qwen3.5_9b_w4a8_gptq.safetensors), or if this file really is a Qwen3.5 9B encoder, rename it to include \"qwen3.5_9b\".",
+                if clip_model.is_empty() {
+                    "none".to_string()
+                } else {
+                    format!("\"{clip_model}\"")
+                }
+            ));
+        }
+    }
+
     // INT8-Fast guard: when enabled for a split-model family, the family must
     // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
     // are incompatible with the INT8-Fast loader (they route through
@@ -406,6 +437,15 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         ) {
             return Err(
                 "FLUX 3 Klein loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
+                    .to_string(),
+            );
+        }
+        if matches!(
+            params.model_architecture.as_str(),
+            "mossimage" | "mossimagebase"
+        ) {
+            return Err(
+                "MOSS-Image loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
                     .to_string(),
             );
         }
@@ -1393,6 +1433,8 @@ pub fn needs_flux2_latent(params: &GenerationParams) -> bool {
             | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
+            | "mossimage"
+            | "mossimagebase"
             | "ideogram4"
     )
 }
@@ -1790,6 +1832,36 @@ mod validation_and_seed_tests {
         p.int8_fast_enabled = true;
         let err = validate_generation_params(&p).unwrap_err();
         assert!(err.contains("INT8-Fast"), "{err}");
+    }
+
+    #[test]
+    fn moss_image_needs_the_moss_clip_type_and_a_qwen35_9b_encoder() {
+        for family in ["mossimage", "mossimagebase"] {
+            let mut p = params("txt2img", family);
+            p.use_split_model = true;
+            p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.clip_type = Some("moss_image".to_string());
+            assert!(validate_generation_params(&p).is_ok());
+            assert!(
+                needs_flux2_latent(&p),
+                "MOSS-Image samples in the Flux 2 latent space"
+            );
+
+            p.clip_type = Some("flux3".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("\"moss_image\""), "{err}");
+
+            p.clip_type = Some("moss_image".to_string());
+            p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("Qwen3.5 9B"), "{err}");
+
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.int8_fast_enabled = true;
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("INT8-Fast"), "{err}");
+        }
     }
 
     #[test]
@@ -2325,6 +2397,43 @@ mod tests {
             json!("None"),
             "Use the INT8-Fast loader's default LoRA mode"
         );
+    }
+
+    /// MOSS-Image txt2img as in Comfy-Org's template: UNETLoader, CLIPLoader
+    /// with type moss_image, the Flux 2 VAE and an EmptyFlux2LatentImage.
+    #[test]
+    fn moss_image_txt2img_wires_the_moss_clip_type_and_flux2_latent() {
+        let mut value = serde_json::to_value(klein_int8_params("mossimage", false)).unwrap();
+        value["diffusion_model"] = json!("moss_image_sft_int8_convrot.safetensors");
+        value["clip_model"] = json!("qwen3.5_9b_w4a8_gptq.safetensors");
+        value["clip_type"] = json!("moss_image");
+        value["vae"] = json!("flux2-vae_small.safetensors");
+        value["steps"] = json!(25);
+        value["cfg"] = json!(2.5);
+        value["sampler_name"] = json!("er_sde");
+        value["scheduler"] = json!("simple");
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+        let nodes: Vec<&Value> = workflow.as_object().unwrap().values().collect();
+        let of = |class: &str| {
+            nodes
+                .iter()
+                .find(|n| n["class_type"] == json!(class))
+                .unwrap_or_else(|| panic!("{class} missing: {workflow}"))
+        };
+        assert_eq!(
+            of("UNETLoader")["inputs"]["unet_name"],
+            json!("moss_image_sft_int8_convrot.safetensors")
+        );
+        let clip = of("CLIPLoader");
+        assert_eq!(clip["inputs"]["type"], json!("moss_image"));
+        assert_eq!(
+            clip["inputs"]["clip_name"],
+            json!("qwen3.5_9b_w4a8_gptq.safetensors")
+        );
+        of("EmptyFlux2LatentImage");
+        assert_eq!(of("KSampler")["inputs"]["cfg"], json!(2.5));
     }
 
     #[test]

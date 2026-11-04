@@ -2734,6 +2734,20 @@ class GenerationStore {
         };
         break;
 
+      // MOSS-Image SFT and Base: Comfy-Org's bundled templates (25 steps at
+      // CFG 2.5, er_sde on simple, 1024x1024), with a real negative prompt.
+      case "mossimage":
+      case "mossimagebase":
+        preset = {
+          steps: 25,
+          cfg: 2.5,
+          samplerName: "er_sde",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
       // Flux.2 klein.
       case "flux2klein9b":
       case "flux2klein4b":
