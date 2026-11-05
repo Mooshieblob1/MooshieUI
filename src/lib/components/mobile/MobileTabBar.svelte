@@ -9,16 +9,15 @@ export type MobileTab = "generate" | "video" | "music" | "gallery" | "modelhub" 
     current: MobileTab;
     onChange: (tab: MobileTab) => void;
     showModelhub?: boolean;
-    showVideo?: boolean;
   }
 
-  let { current, onChange, showModelhub = true, showVideo = true }: Props = $props();
+  let { current, onChange, showModelhub = true }: Props = $props();
 
   const tabs = $derived(
     (
       [
         { id: "generate", labelKey: "nav.generate" },
-        ...(showVideo ? [{ id: "video", labelKey: "generation.mode.video" }] : []),
+        { id: "video", labelKey: "generation.mode.video" },
         { id: "music", labelKey: "nav.music" },
         { id: "gallery", labelKey: "nav.gallery" },
         ...(showModelhub ? [{ id: "modelhub", labelKey: "nav.modelhub" }] : []),

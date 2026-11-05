@@ -1537,11 +1537,16 @@ class GenerationStore {
   /**
    * True when the selected model runs on NovelAI rather than local ComfyUI.
    *
-   * This is the switch the whole NovelAI mode hangs off: it picks the backend
-   * in `requestGeneration`, and the UI uses it to hide controls ComfyUI owns.
+   * This is the switch the whole NovelAI mode hangs off: the UI uses it to hide
+   * controls ComfyUI owns, and prompt building uses it for NovelAI's syntax.
+   *
+   * Video never runs on NovelAI (it has no video endpoint) and loads its own
+   * model trio from the `video_*` fields, so a NovelAI image checkpoint left
+   * selected does not put Video into NovelAI mode. `requestGeneration` applies
+   * the same rule when it picks the backend.
    */
   get isNovelAi(): boolean {
-    return isNovelAiModel(this.checkpoint);
+    return this._mode !== "video" && isNovelAiModel(this.checkpoint);
   }
 
   /** Capability flags for the selected NovelAI model, or null outside NovelAI mode. */
@@ -3704,7 +3709,7 @@ class GenerationStore {
    * top-level prompt is still the ComfyUI-syntax one the free local pass wants.
    */
   private novelAiParams(characters: NovelAiCharacter[]): NovelAiParams | null {
-    if (!isNovelAiModel(this.checkpoint)) return null;
+    if (!this.isNovelAi) return null;
     const action =
       this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
     return {

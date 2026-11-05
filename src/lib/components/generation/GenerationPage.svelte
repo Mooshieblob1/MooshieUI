@@ -96,13 +96,9 @@
   ];
 
   // Video has its own primary navigation entry. These tabs only switch image modes.
-  const modes = $derived(
-    generation.mode === "video"
-      ? []
-      : generation.isNovelAi
-        ? ALL_MODES.filter((m) => m.id !== "image_edit")
-        : ALL_MODES,
-  );
+  // Image Edit stays offered in NovelAI mode: the Model section is right there,
+  // and the Image Edit panel says which models it needs.
+  const modes = $derived(generation.mode === "video" ? [] : ALL_MODES);
 
   let canvasEditorRef: CanvasEditor | undefined = $state();
   let imagePreviewUrl = $state<string | null>(null);

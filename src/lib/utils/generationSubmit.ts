@@ -1,5 +1,6 @@
 import { generate, novelaiGenerate, type GenerateResponse } from "./api.js";
 import { isNovelAiModel } from "./novelaiModels.js";
+import { locale } from "../stores/locale.svelte.js";
 import { progress } from "../stores/progress.svelte.js";
 import type { GenerationParams } from "../types/index.js";
 
@@ -16,9 +17,19 @@ import type { GenerationParams } from "../types/index.js";
 export async function requestGeneration(params: GenerationParams): Promise<GenerateResponse> {
   // The checkpoint is the backend switch. NovelAI reports through the same
   // events and prompt-id contract, so everything downstream is unchanged.
-  const result = isNovelAiModel(params.checkpoint)
-    ? await novelaiGenerate(params)
-    : await generate(params);
+  // Video is the exception: NovelAI has no video endpoint, and video loads its
+  // own models from the `video_*` fields, so an image checkpoint from NovelAI
+  // left selected must not send it there.
+  const toNovelAi = params.mode !== "video" && isNovelAiModel(params.checkpoint);
+  // NovelAI has no instruction-edit model either. A plain Image Edit run would
+  // reach it as a fresh text-to-image request and spend Anlas on an image that
+  // ignores the reference, so stop it here and say which models it needs. The
+  // Enhance passes also tag themselves image_edit, but they set their own
+  // NovelAI action and so get through.
+  if (toNovelAi && params.mode === "image_edit" && params.novelai?.action === "generate") {
+    throw new Error(locale.t("generation.image_edit.wrong_model"));
+  }
+  const result = toNovelAi ? await novelaiGenerate(params) : await generate(params);
   // The backend resolves seed "-1" to a concrete value; write it back so a
   // caller reusing the same params object keeps the resolved seed.
   params.seed = result.seed;

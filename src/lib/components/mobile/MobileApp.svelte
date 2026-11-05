@@ -111,6 +111,5 @@
     current={currentTab === "generate" && generation.mode === "video" ? "video" : currentTab}
     onChange={go}
     showModelhub={canUseModelhub}
-    showVideo={!generation.isNovelAi}
   />
 </div>
