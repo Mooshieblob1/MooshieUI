@@ -36,9 +36,11 @@
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
+    /** Phone dock: tighter gaps so Generate keeps its width beside the panel buttons. */
+    compact?: boolean;
   }
 
-  let { canvasEditorRef }: Props = $props();
+  let { canvasEditorRef, compact = false }: Props = $props();
   let errorMsg = $state<string | null>(null);
   let isSubmitting = $state(false);
   let orderedRunPromptIds = $state<string[]>([]);
@@ -676,12 +678,12 @@
   <NovelAiUsage />
 {/if}
 
-<div class="relative flex gap-3">
+<div class="relative flex {compact ? 'gap-1.5' : 'gap-3'}">
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
     title={generateButtonTitle}
-    class="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors
+    class="min-w-0 flex-1 py-3 rounded-xl font-semibold text-sm transition-colors {compact ? 'px-2 truncate' : ''}
       {canGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
         : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'}"
@@ -728,7 +730,7 @@
     <button
       onclick={handleCancelCurrent}
       oncontextmenu={handleCancelAll}
-      class="px-5 py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
+      class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
       title={locale.t('generation.cancel_hint')}
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -740,7 +742,7 @@
     <button
       disabled
       title={locale.t('generation.cancel_hint')}
-      class="px-5 py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
+      class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"></line>

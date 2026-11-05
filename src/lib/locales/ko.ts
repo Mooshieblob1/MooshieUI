@@ -4770,5 +4770,12 @@ const ko: Record<string, string> = {
   "model3d.about_pixal3d": "Tencent ARC의 Pixal3D(MIT)를 ComfyUI 기본 TRELLIS.2와 MoGe 노드로 사용합니다. 뒷면까지 포함한 텍스처 메시(.glb)를 만듭니다. 필요한 VRAM은 아직 공개되지 않았고 Idol보다 오래 걸립니다.",
   "model3d.export_glb": ".glb 저장",
   "model3d.details_mesh": "면 {count}개 · 시드 {seed} · {model}",
+  "mobile.nav.label": "주 메뉴",
+  "mobile.nav.more": "더보기",
+  "mobile.dock.prompt": "프롬프트",
+  "mobile.dock.model": "모델",
+  "mobile.dock.library": "라이브러리",
+  "mobile.dock.modes": "생성 모드",
+  "artist_gallery.hint_copy_touch": "카드를 길게 눌러 태그를 복사하세요.",
 };
 export default ko;

@@ -4770,5 +4770,12 @@ const zhTw: Record<string, string> = {
   "model3d.about_pixal3d": "使用 Tencent ARC 的 Pixal3D（MIT），執行於 ComfyUI 內建的 TRELLIS.2 與 MoGe 節點。產生包含背面的帶貼圖網格（.glb）。所需顯示記憶體尚未公布，耗時比 Idol 長。",
   "model3d.export_glb": "儲存 .glb",
   "model3d.details_mesh": "{count} 個面 · 種子 {seed} · {model}",
+  "mobile.nav.label": "主導覽",
+  "mobile.nav.more": "更多",
+  "mobile.dock.prompt": "提示詞",
+  "mobile.dock.model": "模型",
+  "mobile.dock.library": "資料庫",
+  "mobile.dock.modes": "生成模式",
+  "artist_gallery.hint_copy_touch": "長按卡片即可複製標籤。",
 };
 export default zhTw;

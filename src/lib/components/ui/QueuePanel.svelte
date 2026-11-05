@@ -39,7 +39,7 @@
 
   <!-- Panel -->
   <div
-    class="absolute bottom-full right-0 mb-2 w-96 max-h-[28rem] flex flex-col rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl z-50"
+    class="absolute bottom-full right-0 mb-2 w-96 max-w-[calc(100vw-1.5rem)] max-h-[min(28rem,70dvh)] flex flex-col rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl z-50"
     role="dialog"
     aria-label={locale.t("queue.panel.title")}
   >

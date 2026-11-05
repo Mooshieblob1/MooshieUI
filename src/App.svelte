@@ -817,9 +817,9 @@
   }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
+  // The open page, shared by both layouts: the phone shell binds to it too, so
+  // every "go to Generate" below works there as well.
   let currentPage = $state<PrimaryPage>("generate");
-  let mobileCurrentTab = $state<PrimaryPage>("generate");
-  let mobileGenerateNavigationVersion = $state(0);
   let generationDoneToast = $state<GenerationDoneToast | null>(null);
 
   function openGenerationWorkspace(workspace: "image" | "video") {
@@ -2298,7 +2298,7 @@
   }
 
   function viewingGeneratePage(): boolean {
-    return useMobileLayout ? mobileCurrentTab === "generate" : currentPage === "generate";
+    return currentPage === "generate";
   }
 
   function dismissGenerationDoneToast() {
@@ -2357,10 +2357,6 @@
 
   function openGenerateFromDoneToast() {
     currentPage = "generate";
-    if (useMobileLayout) {
-      mobileCurrentTab = "generate";
-      mobileGenerateNavigationVersion += 1;
-    }
     dismissGenerationDoneToast();
   }
 
@@ -3662,11 +3658,20 @@
   <SetupWizard onSetupComplete={onSetupDone} />
 {:else if useMobileLayout}
   <MobileApp
-    canUseModelhub={canUseModelhub}
+    bind:page={currentPage}
+    {canUseModelhub}
     {userRole}
-    navigationTarget="generate"
-    navigationVersion={mobileGenerateNavigationVersion}
-    onTabChange={(tab) => (mobileCurrentTab = tab)}
+    logoUrl={themeLogoUrl}
+    {appVersion}
+    banner={startupBanner}
+    onOpenWorkspace={openGenerationWorkspace}
+    onInterrogate={() => { dismissInterrogateHint(); showInterrogateQuickModal = true; }}
+    onReportBug={() => (showBugReport = true)}
+    onInsertArtistTag={handleArtistTagInsert}
+    onInsertCharacter={handleCharacterInsert}
+    onGenerateArtistPreview={handleArtistGeneratePreview}
+    {artistPreviewStatus}
+    onMake3D={model3d.enabled ? (image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; } : undefined}
   />
 {:else}
 <div class="relative flex h-full flex-col bg-neutral-950">
@@ -4017,81 +4022,7 @@
   <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
     <UpdateNotification {userRole} />
     <DownloadBanner />
-    <ExternalComfyModal
-      open={externalComfyOpen}
-      payload={externalComfyPayload}
-      serverUrl={comfyServerUrl}
-      onclose={() => {
-        externalComfyOpen = false;
-      }}
-      onrestarted={() => {
-        externalComfyOpen = false;
-        startupStatus = locale.t("app.status.starting_comfyui");
-        startupStatusKind = "starting";
-      }}
-    />
-    <PhotopeaEditor
-      open={photopeaOpen}
-      image={photopeaImage}
-      onclose={() => {
-        photopeaOpen = false;
-        photopeaImage = null;
-      }}
-      onsaved={(filename) => {
-        void gallery.addPersistedImage(filename);
-        gallery.showToast(locale.t("photopea.saved"), "success");
-      }}
-    />
-    {#if startupStatus && !connection.connected && !startup.locked}
-      <div class="mb-1 flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
-        {#if startupStatusKind === "manual" || startupStatusKind === "error"}
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          {startupStatus}
-          <button
-            class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
-            onclick={async () => {
-              try {
-                startupStatus = locale.t("app.status.starting_comfyui");
-                startupStatusKind = "starting";
-                const result = await ipcInvoke<string>("start_comfyui");
-                if (result === "spawned") {
-                  startupStatus = locale.t("app.status.starting_comfyui");
-                  startupStatusKind = "starting";
-                } else if (result === "already_running" || result === "skipped") {
-                  startupStatus = locale.t("app.status.connecting");
-                  startupStatusKind = "connecting";
-                  try {
-                    await models.refresh();
-                    if (models.checkpoints.length > 0) {
-                      connection.connected = true;
-                      generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
-                    }
-                    startupStatus = "";
-                    startupStatusKind = "idle";
-                  } catch (refreshError) {
-                    console.error("Model refresh failed (already running):", refreshError);
-                  }
-                }
-              } catch (e) {
-                startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
-                startupStatusKind = "error";
-              }
-            }}
-          >
-            {locale.t("app.start_comfyui")}
-          </button>
-        {:else}
-          <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-          {startupStatus}
-        {/if}
-      </div>
-    {/if}
-    {#if startup.locked}
-      <div class="mb-1 flex shrink-0 items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300" role="status">
-        <div class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
-        <span>{startupStatus || locale.t("app.startup.initializing")}</span>
-      </div>
-    {/if}
+    {@render startupBanner(false)}
     <div class="relative flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950" inert={startup.locked}>
     {#if currentPage === "generate"}
       <GenerationPage />
@@ -4123,6 +4054,87 @@
 <MusicBottomPlayer onOpen={() => { music.view = "generate"; currentPage = "music"; }} />
 </div>
 {/if}
+
+<!-- Startup / ComfyUI status line; both layouts render it. -->
+{#snippet startupBanner(phone: boolean)}
+  {#if startupStatus && !connection.connected && !startup.locked}
+    <div class="{phone ? 'mx-2 mt-2' : 'mb-1'} flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
+      {#if startupStatusKind === "manual" || startupStatusKind === "error"}
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        {startupStatus}
+        <button
+          class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
+          onclick={async () => {
+            try {
+              startupStatus = locale.t("app.status.starting_comfyui");
+              startupStatusKind = "starting";
+              const result = await ipcInvoke<string>("start_comfyui");
+              if (result === "spawned") {
+                startupStatus = locale.t("app.status.starting_comfyui");
+                startupStatusKind = "starting";
+              } else if (result === "already_running" || result === "skipped") {
+                startupStatus = locale.t("app.status.connecting");
+                startupStatusKind = "connecting";
+                try {
+                  await models.refresh();
+                  if (models.checkpoints.length > 0) {
+                    connection.connected = true;
+                    generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+                  }
+                  startupStatus = "";
+                  startupStatusKind = "idle";
+                } catch (refreshError) {
+                  console.error("Model refresh failed (already running):", refreshError);
+                }
+              }
+            } catch (e) {
+              startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
+              startupStatusKind = "error";
+            }
+          }}
+        >
+          {locale.t("app.start_comfyui")}
+        </button>
+      {:else}
+        <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+        {startupStatus}
+      {/if}
+    </div>
+  {/if}
+  {#if startup.locked}
+    <div class="{phone ? 'mx-2 mt-2' : 'mb-1'} flex shrink-0 items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300" role="status">
+      <div class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
+      <span>{startupStatus || locale.t("app.startup.initializing")}</span>
+    </div>
+  {/if}
+{/snippet}
+
+<!-- App-wide modals (both portaled), opened from either layout. -->
+<ExternalComfyModal
+  open={externalComfyOpen}
+  payload={externalComfyPayload}
+  serverUrl={comfyServerUrl}
+  onclose={() => {
+    externalComfyOpen = false;
+  }}
+  onrestarted={() => {
+    externalComfyOpen = false;
+    startupStatus = locale.t("app.status.starting_comfyui");
+    startupStatusKind = "starting";
+  }}
+/>
+<PhotopeaEditor
+  open={photopeaOpen}
+  image={photopeaImage}
+  onclose={() => {
+    photopeaOpen = false;
+    photopeaImage = null;
+  }}
+  onsaved={(filename) => {
+    void gallery.addPersistedImage(filename);
+    gallery.showToast(locale.t("photopea.saved"), "success");
+  }}
+/>
 
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}

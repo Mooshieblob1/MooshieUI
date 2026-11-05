@@ -4770,5 +4770,12 @@ const ru: Record<string, string> = {
   "model3d.about_pixal3d": "Использует Pixal3D от Tencent ARC (MIT) на встроенных узлах TRELLIS.2 и MoGe в ComfyUI. Создаёт текстурированную сетку (.glb) вместе с обратной стороной. Требования к VRAM пока не опубликованы, и работает он дольше, чем Idol.",
   "model3d.export_glb": "Сохранить .glb",
   "model3d.details_mesh": "{count} граней · сид {seed} · {model}",
+  "mobile.nav.label": "Основная навигация",
+  "mobile.nav.more": "Ещё",
+  "mobile.dock.prompt": "Промпт",
+  "mobile.dock.model": "Модель",
+  "mobile.dock.library": "Библиотека",
+  "mobile.dock.modes": "Режим генерации",
+  "artist_gallery.hint_copy_touch": "Нажмите и удерживайте карточку, чтобы скопировать тег.",
 };
 export default ru;
