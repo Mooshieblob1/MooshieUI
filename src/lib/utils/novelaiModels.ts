@@ -37,6 +37,8 @@ export interface NovelAiModelInfo {
    * positioning was demonstrated with up to 22 characters; V4/V4.5 stop at 6.
    */
   maxCharacters: number;
+  /** Trained on NovelAI's full dataset, NSFW included: the model picker marks it 18+. */
+  adult: boolean;
   /** Offers the Light quality stack. Mirrors `presets::quality_tags`. */
   lightQuality: boolean;
   /**
@@ -103,6 +105,7 @@ const ALL_UC_PRESETS: readonly number[] = [
 export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
   {
     id: "nai-diffusion-5-full",
+    adult: true,
     label: "NovelAI V5 Full",
     inpaintingId: "nai-diffusion-5-full-inpainting",
     v4Prompt: true,
@@ -118,6 +121,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
   },
   {
     id: "nai-diffusion-5-curated",
+    adult: false,
     label: "NovelAI V5 Curated",
     // V5 Curated's own inpainting model is still training upstream, and
     // NovelAI's client substitutes V4.5 Curated's in the meantime. Point back
@@ -136,6 +140,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
   },
   {
     id: "nai-diffusion-4-5-full",
+    adult: true,
     label: "NovelAI V4.5 Full",
     inpaintingId: "nai-diffusion-4-5-full-inpainting",
     v4Prompt: true,
@@ -151,6 +156,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
   },
   {
     id: "nai-diffusion-4-full",
+    adult: true,
     label: "NovelAI V4 Full",
     inpaintingId: "nai-diffusion-4-full-inpainting",
     v4Prompt: true,

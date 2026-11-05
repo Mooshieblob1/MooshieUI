@@ -1048,6 +1048,7 @@ const ru: Record<string, string> = {
   "generation.model.downloading_checkpoint": "Скачивание чекпоинта...",
   "generation.model.auto_download": "Автоскачивание",
   "generation.model.cloud_badge": "Облако",
+  "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Архитектура:",
   "generation.model.resolution_label": "Разрешение:",
   "generation.model.prediction_label": "Предсказание:",

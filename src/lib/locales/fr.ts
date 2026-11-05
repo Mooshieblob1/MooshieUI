@@ -1062,6 +1062,7 @@ const fr: Record<string, string> = {
   "generation.model.downloading_checkpoint": "Téléchargement du checkpoint...",
   "generation.model.auto_download": "téléchargement auto",
   "generation.model.cloud_badge": "Cloud",
+  "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Architecture :",
   "generation.model.resolution_label": "Résolution :",
   "generation.model.prediction_label": "Prédiction :",
