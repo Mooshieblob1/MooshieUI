@@ -25,6 +25,7 @@
    * session grid and the gallery on their own.
    */
   import { portal } from "../../utils/portal.js";
+  import InfoTip from "../ui/InfoTip.svelte";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -397,13 +398,11 @@
       aria-label={locale.t(headerKey)}
     >
       <div class="mb-4 flex items-start justify-between gap-3">
-        <div>
+        <div class="flex items-center gap-1.5">
           <h2 class="text-lg font-semibold text-neutral-100">
             {locale.t(headerKey)}
           </h2>
-          <p class="mt-1 text-sm text-neutral-400">
-            {locale.t(subtitleKey, { factor: UPSCALE_FACTOR })}
-          </p>
+          <InfoTip text={locale.t(subtitleKey, { factor: UPSCALE_FACTOR })} />
         </div>
         <!-- Sized to a comfortable pointer target rather than to the glyph: this
              is the only close affordance besides Escape and the backdrop. -->

@@ -415,7 +415,6 @@
         </svg>
       </button>
     </div>
-    <p class="text-[10px] text-neutral-500 mt-1">{locale.t('generation.dimensions.ratio_hint')}</p>
     {/if}
   </div>
 

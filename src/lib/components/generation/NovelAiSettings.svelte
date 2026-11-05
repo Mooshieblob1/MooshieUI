@@ -135,7 +135,11 @@
       <div class="text-[11px] text-neutral-500">
         <span class="flex items-center gap-2">
           {locale.t("generation.novelai.advanced.effort")}
-          <InfoTip text={locale.t("generation.novelai.advanced.effort_desc")} />
+          <InfoTip
+            text={mediumEffort
+              ? `${locale.t("generation.novelai.advanced.effort_desc")}\n\n${locale.t("generation.novelai.advanced.effort_medium_note")}`
+              : locale.t("generation.novelai.advanced.effort_desc")}
+          />
         </span>
         <div
           class="mt-1 grid grid-cols-2 gap-1 rounded-md bg-neutral-950 border border-neutral-800 p-0.5"
@@ -157,11 +161,6 @@
             </button>
           {/each}
         </div>
-        {#if mediumEffort}
-          <p class="mt-1 text-[11px] text-neutral-500">
-            {locale.t("generation.novelai.advanced.effort_medium_note")}
-          </p>
-        {/if}
       </div>
     {/if}
 
