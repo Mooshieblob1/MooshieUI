@@ -1054,6 +1054,12 @@ const pl: Record<string, string> = {
   "generation.dimensions.recommended": "Zalecane dla {model}: {res}",
   "generation.dimensions.result": "Wynik",
   "generation.swap_panels": "Zamień lewy/prawy panel",
+  "generation.layout.title": "Układ",
+  "generation.layout.all_left": "Wszystko po lewej",
+  "generation.layout.all_right": "Wszystko po prawej",
+  "generation.layout.reset": "Resetuj układ",
+  "generation.layout.move_left": "Przenieś na lewo",
+  "generation.layout.move_right": "Przenieś na prawo",
   "generation.settings.title": "Ustawienia generowania",
 
   // Sampler

@@ -950,6 +950,12 @@ const fr: Record<string, string> = {
   "generation.dimensions.recommended": "Recommandé pour {model} : {res}",
   "generation.dimensions.result": "Résultat",
   "generation.swap_panels": "Échanger les panneaux gauche/droite",
+  "generation.layout.title": "Disposition",
+  "generation.layout.all_left": "Tout à gauche",
+  "generation.layout.all_right": "Tout à droite",
+  "generation.layout.reset": "Réinitialiser la disposition",
+  "generation.layout.move_left": "Déplacer à gauche",
+  "generation.layout.move_right": "Déplacer à droite",
   "generation.settings.title": "Paramètres de génération",
 
   // Échantillonneur
