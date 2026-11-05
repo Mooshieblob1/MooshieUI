@@ -1047,6 +1047,7 @@ const zh: Record<string, string> = {
   "generation.model.downloading_checkpoint": "正在下载检查点...",
   "generation.model.auto_download": "自动下载",
   "generation.model.cloud_badge": "云端",
+  "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "架构:",
   "generation.model.resolution_label": "分辨率:",
   "generation.model.prediction_label": "预测:",

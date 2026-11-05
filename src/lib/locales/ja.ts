@@ -1061,6 +1061,7 @@ const ja: Record<string, string> = {
   "generation.model.downloading_checkpoint": "チェックポイントをダウンロード中...",
   "generation.model.auto_download": "自動ダウンロード",
   "generation.model.cloud_badge": "クラウド",
+  "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "アーキテクチャ:",
   "generation.model.resolution_label": "解像度:",
   "generation.model.prediction_label": "予測:",

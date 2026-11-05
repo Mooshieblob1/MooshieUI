@@ -1047,6 +1047,7 @@ const zhTw: Record<string, string> = {
   "generation.model.downloading_checkpoint": "正在下載檢查點...",
   "generation.model.auto_download": "自動下載",
   "generation.model.cloud_badge": "雲端",
+  "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "架構:",
   "generation.model.resolution_label": "解析度:",
   "generation.model.prediction_label": "預測:",
