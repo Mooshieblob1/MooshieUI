@@ -1048,6 +1048,7 @@ const ko: Record<string, string> = {
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
   "generation.model.auto_download": "자동 다운로드",
   "generation.model.cloud_badge": "클라우드",
+  "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "아키텍처:",
   "generation.model.resolution_label": "해상도:",
   "generation.model.prediction_label": "예측:",
