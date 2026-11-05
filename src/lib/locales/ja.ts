@@ -950,6 +950,12 @@ const ja: Record<string, string> = {
   "generation.dimensions.recommended": "{model}の推奨: {res}",
   "generation.dimensions.result": "結果",
   "generation.swap_panels": "左右パネルを入れ替える",
+  "generation.layout.title": "レイアウト",
+  "generation.layout.all_left": "すべて左側",
+  "generation.layout.all_right": "すべて右側",
+  "generation.layout.reset": "レイアウトをリセット",
+  "generation.layout.move_left": "左側へ移動",
+  "generation.layout.move_right": "右側へ移動",
   "generation.settings.title": "生成設定",
 
   // サンプラー

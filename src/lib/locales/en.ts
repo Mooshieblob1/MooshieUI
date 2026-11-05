@@ -1072,6 +1072,12 @@ const en: Record<string, string> = {
   "generation.dimensions.recommended": "Recommended for {model}: {res}",
   "generation.dimensions.result": "Result",
   "generation.swap_panels": "Swap left/right panels",
+  "generation.layout.title": "Layout",
+  "generation.layout.all_left": "Everything on the left",
+  "generation.layout.all_right": "Everything on the right",
+  "generation.layout.reset": "Reset layout",
+  "generation.layout.move_left": "Move to the left side",
+  "generation.layout.move_right": "Move to the right side",
   "generation.settings.title": "Generation Settings",
 
   // Sampler
