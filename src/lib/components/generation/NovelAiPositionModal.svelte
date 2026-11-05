@@ -20,6 +20,7 @@
    * does not match (or fails to load) falls back to the plain black canvas.
    */
   import { portal } from "../../utils/portal.js";
+  import InfoTip from "../ui/InfoTip.svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -258,13 +259,11 @@
       style="width: {panelWidth}px; max-width: calc(100vw - 2rem);"
     >
       <div class="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-700 px-5 py-4">
-        <div>
+        <div class="flex items-center gap-1">
           <h2 class="text-sm font-medium text-neutral-100">
             {locale.t("generation.novelai.characters.position_modal_title")}
           </h2>
-          <p class="mt-0.5 text-[11px] text-neutral-500">
-            {locale.t("generation.novelai.characters.drag_hint")}
-          </p>
+          <InfoTip text={locale.t("generation.novelai.characters.drag_hint")} />
         </div>
         <button
           class="rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200 cursor-pointer"
