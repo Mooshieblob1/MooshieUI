@@ -120,7 +120,7 @@
                 type="button"
                 class="h-9 rounded-md text-[11px] tabular-nums transition-colors {generation.cameraAzimuth ===
                 azimuth
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-neutral-700 text-neutral-50'
                   : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
                 title={CAMERA_AZIMUTHS[azimuth]}
                 aria-pressed={generation.cameraAzimuth === azimuth}

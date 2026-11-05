@@ -153,7 +153,7 @@
               role="radio"
               aria-checked={active}
               class="px-2 py-1 text-xs rounded transition-colors {active
-                ? 'bg-indigo-600 text-white'
+                ? 'bg-neutral-700 text-neutral-50'
                 : 'text-neutral-300 hover:bg-neutral-800'}"
               onclick={() => generation.updateNovelAiSettings({ effort })}
             >

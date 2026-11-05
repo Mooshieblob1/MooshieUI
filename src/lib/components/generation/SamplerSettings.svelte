@@ -782,7 +782,7 @@
           {/if}
           <button
             class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
-              ? 'bg-indigo-600 text-white'
+              ? 'bg-neutral-700 text-neutral-50'
               : 'bg-neutral-700 text-neutral-300'} transition-colors"
             onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? "0") : "-1")}
           >
@@ -833,7 +833,7 @@
             disabled={depthLocked}
             title={depthLocked ? locale.t('generation.sampler.bit_16_webp_disabled') : undefined}
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputBitDepth === depth
-              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'} {depthLocked ? 'opacity-40 cursor-not-allowed hover:border-neutral-700' : ''}"
             onclick={() => generation.outputBitDepth = depth as "8bit" | "16bit"}
           >
@@ -848,7 +848,7 @@
         {#each ["png", "jxl", "webp"] as fmt}
           <button
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputFormat === fmt
-              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
             onclick={() => {
               generation.outputFormat = fmt as "png" | "jxl" | "webp";
@@ -873,7 +873,7 @@
         {#each [["text_chunk", locale.t('generation.sampler.metadata_text')], ["stealth", locale.t('generation.sampler.metadata_stealth')], ["both", locale.t('generation.sampler.metadata_both')]] as [value, label]}
           <button
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {effectiveMetadataMode === value
-              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
             onclick={() => generation.metadataMode = value as "text_chunk" | "stealth" | "both"}
           >
