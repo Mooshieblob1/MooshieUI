@@ -106,7 +106,6 @@
       role="dialog"
       aria-label={locale.t("generation.profiles.button")}
     >
-      <p class="mb-2 text-[11px] leading-snug text-neutral-400">{locale.t("generation.profiles.hint")}</p>
       <div class="flex gap-1">
         <input
           bind:this={inputRef}
@@ -115,6 +114,7 @@
             if (e.key === "Enter") save();
           }}
           placeholder={locale.t("generation.profiles.name_placeholder")}
+          title={locale.t("generation.profiles.hint")}
           class="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-200 focus:border-neutral-500 focus:outline-none"
         />
         <button
