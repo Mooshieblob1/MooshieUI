@@ -285,22 +285,20 @@
           : isAnima
             ? locale.t("generation.style_ref.anima_mode")
             : locale.t("generation.style_ref.ipadapter_mode")}
+        {#if isAnima}<InfoTip text={locale.t("generation.style_ref.anima_note")} />{/if}
       </div>
 
       {#if isAnima}
-        <p class="text-[11px] text-neutral-500">{locale.t("generation.style_ref.anima_note")}</p>
         {#if !animaLoraInstalled}
           <div class="space-y-1">
             <button
               class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-100 transition-colors hover:border-indigo-500 disabled:opacity-50"
               disabled={loraDownloading}
               onclick={downloadAnimaLora}
+              title={locale.t("generation.style_ref.anima_lora_auto")}
             >
               {locale.t("generation.style_ref.anima_lora_download")}
             </button>
-            <p class="text-[11px] text-neutral-500">
-              {locale.t("generation.style_ref.anima_lora_auto")}
-            </p>
           </div>
         {/if}
         {#if loraDownloading}
@@ -364,7 +362,9 @@
       {#each slots as slot (slot)}
         {@const image = slotImage(slot)}
         <div>
-          <div class="mb-1 text-neutral-400">{slotLabel(slot)}</div>
+          <div class="mb-1 text-neutral-400">
+            {slotLabel(slot)}{#if isAnima && slot === 1}<InfoTip text={locale.t("generation.style_ref.anima_two_characters_tip")} />{/if}
+          </div>
           {#if image && previews[slot]}
             <div class="relative mb-2">
               <img
@@ -415,11 +415,6 @@
           </div>
         </div>
       {/each}
-      {#if isAnima && generation.styleRefImage2}
-        <p class="text-[11px] text-neutral-500">
-          {locale.t("generation.style_ref.anima_two_characters_tip")}
-        </p>
-      {/if}
 
       {#if isAnima}
         <!-- Reference guidance -->

@@ -209,6 +209,17 @@
     );
     generation.saveSettings();
   }
+
+  // How Image Edit works, plus the selected family's own rules, behind one tip.
+  const referenceTip = $derived(
+    [
+      locale.t("generation.image_edit.hint"),
+      generation.isFlux3 ? locale.t("generation.image_edit.flux3_note") : null,
+      generation.isAnima ? locale.t("generation.image_edit.anima_note") : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
 </script>
 
 <div class="space-y-3" bind:this={dropZone}>
@@ -233,16 +244,7 @@
       {locale.t("generation.image_edit.wrong_model")}
     </div>
   {:else}
-    <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.hint")}</p>
-
-    {#if generation.isFlux3}
-      <p class="text-[11px] text-neutral-500">{locale.t("generation.image_edit.flux3_note")}</p>
-    {/if}
-
     {#if generation.isAnima}
-      <p class="text-[11px] text-neutral-500">
-        {locale.t("generation.image_edit.anima_note")}
-      </p>
       {#if !animaLoraInstalled}
         <button
           class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
@@ -327,11 +329,11 @@
       <div>
         {#if slotCount > 1}
           <span class="text-xs text-neutral-400 block mb-1.5">
-            {locale.t("generation.image_edit.reference_image_n", { n: slot + 1 })}
+            {locale.t("generation.image_edit.reference_image_n", { n: slot + 1 })}{#if slot === 0}<InfoTip text={referenceTip} />{/if}
           </span>
         {:else}
           <span class="text-xs text-neutral-400 block mb-1.5">
-            {locale.t("generation.image_edit.reference_image")}
+            {locale.t("generation.image_edit.reference_image")}<InfoTip text={referenceTip} />
           </span>
         {/if}
         <!-- svelte-ignore a11y_no_static_element_interactions -->

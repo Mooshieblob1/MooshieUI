@@ -512,12 +512,12 @@
                   : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
                 disabled={kreaDownloadingFile !== null}
                 onclick={() => setKreaSteps(option)}
+                title={locale.t(`generation.sampler.krea_steps_${option}_hint`)}
               >
                 {locale.t(`generation.sampler.krea_steps_${option}`)}
               </button>
             {/each}
           </div>
-          <p class="text-[11px] text-neutral-400">{locale.t(`generation.sampler.krea_steps_${kreaSteps}_hint`)}</p>
         </div>
         {#if kreaDownloadingFile}
           <div class="mx-2.5 mb-2.5 bg-neutral-900/60 rounded-lg px-3 py-2">

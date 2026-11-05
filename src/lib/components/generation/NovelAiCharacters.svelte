@@ -95,7 +95,7 @@
 
     <div class="space-y-1.5">
       <span class="text-[11px] text-neutral-500">
-        {locale.t("generation.novelai.characters.position")}
+        {locale.t("generation.novelai.characters.position")}<InfoTip text={locale.t("generation.novelai.characters.use_coords_desc")} />
       </span>
       <div class="flex items-center gap-2">
         <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
@@ -128,9 +128,6 @@
           </button>
         {/if}
       </div>
-      <p class="text-[11px] text-neutral-500">
-        {locale.t("generation.novelai.characters.use_coords_desc")}
-      </p>
     </div>
 
     {#if atLimit}

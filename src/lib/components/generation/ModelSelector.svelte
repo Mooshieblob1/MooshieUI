@@ -1410,6 +1410,7 @@
   interface DropdownItem {
     type: "checkpoint" | "recommended" | "diffusion" | "novelai";
     label: string;
+    adult?: boolean;
     value: string;
     rec?: RecommendedModel;
     installed: boolean;
@@ -1459,6 +1460,7 @@
             type: "novelai",
             label: m.label,
             value: m.id,
+            adult: m.adult,
             installed: true,
           });
         }
@@ -1776,6 +1778,7 @@
 
   /** Display name for the current model */
   const displayCheckpoint = $derived(() => {
+    if (generation.novelAiModel) return generation.novelAiModel.label;
     if (generation.useSplitModel && generation.diffusionModel) {
       const match = recommendedModels.find((r) => r.splitModel && matchesRecommendedModel(r));
       return match?.label ?? generation.diffusionModel;
@@ -1786,6 +1789,10 @@
     return generation.checkpoint || locale.t('generation.model.select_checkpoint');
   });
 </script>
+
+{#snippet adultPill()}
+  <span class="shrink-0 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-rose-300">{locale.t('generation.model.adult_badge')}</span>
+{/snippet}
 
 <div bind:this={modelSelectorRootEl} class="space-y-3">
   <!-- Checkpoint -->
@@ -1838,6 +1845,9 @@
       disabled={downloading !== null}
     >
       <span class="truncate">{displayCheckpoint()}</span>
+      {#if generation.novelAiModel?.adult}
+        {@render adultPill()}
+      {/if}
     </button>
     {#if unavailableSelection.length > 0}
       <p class="mt-2 text-[11px] text-amber-300">{locale.t("generation.model.unavailable_server")}: {unavailableSelection.join(", ")}</p>
@@ -1936,6 +1946,9 @@
                 title={item.label}
               >
                 <span class="min-w-0 flex-1">{item.label}</span>
+                {#if item.adult}
+                  {@render adultPill()}
+                {/if}
                 <span class="shrink-0 rounded border border-teal-500/40 bg-teal-500/10 px-1 py-0.5 text-[9px] uppercase tracking-wide text-teal-300">{locale.t('generation.model.cloud_badge')}</span>
               </button>
             {:else if item.type === "diffusion"}
