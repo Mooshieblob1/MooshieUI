@@ -939,6 +939,12 @@ const ko: Record<string, string> = {
   "generation.dimensions.recommended": "{model} 권장: {res}",
   "generation.dimensions.result": "결과",
   "generation.swap_panels": "왼쪽/오른쪽 패널 전환",
+  "generation.layout.title": "레이아웃",
+  "generation.layout.all_left": "모두 왼쪽으로",
+  "generation.layout.all_right": "모두 오른쪽으로",
+  "generation.layout.reset": "레이아웃 초기화",
+  "generation.layout.move_left": "왼쪽으로 이동",
+  "generation.layout.move_right": "오른쪽으로 이동",
   "generation.settings.title": "생성 설정",
 
   "generation.sampler.title": "샘플러",

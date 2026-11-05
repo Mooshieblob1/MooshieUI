@@ -118,7 +118,11 @@
   /** Per-target enter/leave counters to handle nested element events */
   let metadataDropCounters: Record<string, number> = {};
 
-  let sectionSides = $state<Record<SectionId, SectionSide>>({
+  // Prompt-first: the model and prompt open on the left, above the image size, so the
+  // first things a visit touches sit together next to Generate. Only the default; a
+  // saved layout keeps its sides. (`mobileFriendly` is fixed per mount.)
+  // svelte-ignore state_referenced_locally
+  const DEFAULT_SECTION_SIDES: Record<SectionId, SectionSide> = {
     dimensions: "left",
     prompts: "left",
     imageInputs: "left",
@@ -126,7 +130,7 @@
     videoSettings: "left",
     inpaintLayers: "right",
     generationSettings: "right",
-    model: "right",
+    model: mobileFriendly ? "right" : "left",
     sampler: "right",
     novelai: "right",
     naiFaceDetail: "right",
@@ -135,7 +139,9 @@
     styleRef: "right",
     facefix: "right",
     upscaleHistory: "right",
-  });
+  };
+
+  let sectionSides = $state<Record<SectionId, SectionSide>>({ ...DEFAULT_SECTION_SIDES });
 
   let draggingSection = $state<SectionId | null>(null);
   let pendingDrop = $state<{ side: SectionSide; index: number } | null>(null);
@@ -175,7 +181,7 @@
   // svelte-ignore state_referenced_locally
   const DEFAULT_SECTION_ORDER: SectionId[] = mobileFriendly
     ? ["prompts", ...SECTION_ORDER.filter((id) => id !== "prompts")]
-    : SECTION_ORDER;
+    : ["model", "prompts", ...SECTION_ORDER.filter((id) => id !== "model" && id !== "prompts")];
 
   let sectionOrder = $state<SectionId[]>([...DEFAULT_SECTION_ORDER]);
 
@@ -271,6 +277,51 @@
     sectionSides = swapped;
   }
 
+  function setAllSections(side: SectionSide) {
+    sectionSides = Object.fromEntries(SECTION_ORDER.map((id) => [id, side])) as Record<SectionId, SectionSide>;
+  }
+
+  function resetSectionLayout() {
+    sectionSides = { ...DEFAULT_SECTION_SIDES };
+    sectionOrder = [...DEFAULT_SECTION_ORDER];
+    resetLeftWidth();
+    resetRightWidth();
+  }
+
+  /** Sends a section to the bottom of the other side (the header arrow). */
+  function moveSectionToOtherSide(section: SectionId) {
+    const target: SectionSide = sectionSides[section] === "left" ? "right" : "left";
+    const targetSections = sectionsForSide(target);
+    const order = sectionOrder.filter((id) => id !== section);
+    const last = targetSections[targetSections.length - 1];
+    const at = last ? order.indexOf(last) + 1 : order.length;
+    sectionOrder = [...order.slice(0, at), section, ...order.slice(at)];
+    sectionSides = { ...sectionSides, [section]: target };
+  }
+
+  let showLayoutMenu = $state(false);
+  let layoutMenuX = $state(0);
+  let layoutMenuY = $state(0);
+
+  // The menu closes itself on any outside click, which lands before the button's own
+  // click. Remembering the state at pointerdown lets the button close it as a toggle.
+  let layoutMenuWasOpen = false;
+
+  function openLayoutMenu(e: MouseEvent) {
+    if (layoutMenuWasOpen) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    layoutMenuX = rect.left;
+    layoutMenuY = rect.bottom + 4;
+    showLayoutMenu = true;
+  }
+
+  const layoutMenuItems = $derived.by((): ContextMenuItem[] => [
+    { label: locale.t("generation.swap_panels"), action: swapPanels },
+    { label: locale.t("generation.layout.all_left"), action: () => setAllSections("left") },
+    { label: locale.t("generation.layout.all_right"), action: () => setAllSections("right") },
+    { label: locale.t("generation.layout.reset"), action: resetSectionLayout, separator: true },
+  ]);
+
   if (typeof window !== "undefined") {
     loadSectionPlacement();
   }
@@ -320,6 +371,7 @@
     if (section === "sampler") return locale.t('generation.sampler.title');
     if (section === "novelai") return locale.t('generation.novelai.title');
     if (section === "naiFaceDetail") return locale.t('generation.nai_face_detail.title');
+    if (section === "controlnet") return locale.t('generation.controlnet.title');
     if (section === "facefix") return locale.t('generation.facefix.title');
     if (section === "styleTransfer") return locale.t('generation.style_transfer.title');
     if (section === "styleRef") return locale.t('generation.style_ref.title');
@@ -1585,10 +1637,103 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       onmousedown={(e) => startSectionDrag(section, e)}
-      class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400"
+      class="flex items-center pl-2 pr-1.5 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-300"
       title={locale.t('generation.drag_to_move')}
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+    </div>
+  {/snippet}
+
+  {#snippet sectionHeader(section: SectionId, open: boolean, toggle: () => void)}
+    {@const label = sectionLabel(section)}
+    {@const toggleTitle = open ? locale.t('common.collapse', { section: label }) : locale.t('common.expand', { section: label })}
+    <div class="flex items-stretch w-full rounded-t-xl transition-colors hover:bg-neutral-800/40 {open ? '' : 'rounded-b-xl'}">
+      {@render dragHandle(section)}
+      <button
+        class="flex-1 min-w-0 py-2.5 pr-1 text-left text-[13px] font-semibold text-neutral-200 hover:text-white focus:outline-none"
+        onclick={toggle}
+        aria-expanded={open}
+        title={toggleTitle}
+      >
+        <span class="block truncate">{label}</span>
+      </button>
+      {#if !mobileFriendly}
+        {@const moveTitle = sectionSides[section] === "left" ? locale.t('generation.layout.move_right') : locale.t('generation.layout.move_left')}
+        <button
+          class="flex items-center px-1.5 text-neutral-500 hover:text-neutral-200 transition-colors"
+          onclick={() => moveSectionToOtherSide(section)}
+          title={moveTitle}
+          aria-label={moveTitle}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 {sectionSides[section] === 'left' ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+      {/if}
+      <button
+        class="flex items-center pl-1.5 pr-3 text-neutral-500 hover:text-neutral-200 transition-colors"
+        onclick={toggle}
+        title={toggleTitle}
+        aria-label={toggleTitle}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {open ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+  {/snippet}
+
+  <!-- Desktop: the mode tabs and the layout menu sit over the preview, so both side
+       panels hold only sections and either side can be emptied. -->
+  {#snippet previewTopBar()}
+    <div class="shrink-0 flex items-center gap-2 px-6 pt-4">
+      {#if generation.mode === "video"}
+        <h1 class="px-1 text-sm font-semibold text-neutral-200">{locale.t("generation.mode.video")}</h1>
+      {:else}
+        <div class="flex gap-1 rounded-xl border border-neutral-800 bg-neutral-900 p-1" role="tablist" aria-label={locale.t("mobile.dock.modes")}>
+          {#each modes as mode}
+            <button
+              role="tab"
+              aria-selected={generation.mode === mode.id}
+              onclick={() => {
+                generation.mode = mode.id;
+                if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+              }}
+              class="h-8 px-3.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors {generation.mode === mode.id
+                ? 'bg-neutral-700 text-white shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200'}"
+            >
+              {mode.label()}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if generation.mode === "inpainting"}
+        <button
+          onclick={() => {
+            canvas.isCanvasMode = !canvas.isCanvasMode;
+            if (canvas.isCanvasMode && canvas.layers.length === 0) {
+              canvas.initCanvas(generation.width, generation.height);
+            }
+          }}
+          aria-pressed={canvas.isCanvasMode}
+          class="flex h-10 items-center gap-2 rounded-xl border px-3 text-[13px] font-medium transition-colors {canvas.isCanvasMode
+            ? 'border-indigo-500/50 bg-indigo-600/20 text-indigo-300'
+            : 'border-neutral-800 bg-neutral-900 text-neutral-400 hover:text-neutral-200'}"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          {locale.t('generation.inpaint.canvas_editor')}
+        </button>
+      {/if}
+      <span class="flex-1"></span>
+      <button
+        onpointerdown={() => (layoutMenuWasOpen = showLayoutMenu)}
+        onclick={openLayoutMenu}
+        aria-haspopup="menu"
+        aria-expanded={showLayoutMenu}
+        class="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] transition-colors {showLayoutMenu
+          ? 'bg-neutral-800 text-neutral-100'
+          : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+        {locale.t('generation.layout.title')}
+      </button>
     </div>
   {/snippet}
 
@@ -1605,30 +1750,20 @@
   {/snippet}
 
   {#snippet dimensionsSection()}
-    <div bind:this={sectionRefs['dimensions']} data-drop-section="dimensions" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['dimensions']} data-drop-section="dimensions" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "dimensions")}
       ondragover={(e) => onMetadataDragOver(e, "dimensions")}
       ondragleave={(e) => onMetadataDragLeave(e, "dimensions")}
       ondrop={(e) => onMetadataDrop(e, "dimensions")}
     >
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("dimensions")}
-        <button
-          class="flex-1 flex items-center justify-between py-2 pr-3 text-xs text-neutral-300 hover:text-neutral-100 focus:outline-none"
-          onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
-          title={dimensionsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.title') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.dimensions.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+      {@render sectionHeader("dimensions", dimensionsSectionOpen, () => (dimensionsSectionOpen = !dimensionsSectionOpen))}
       {#if dimensionsSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 cursor-default">
+        <div class="px-3 pb-3 pt-0.5 cursor-default">
           <DimensionControls suggestedAspect={imageAspect} />
         </div>
       {/if}
       {#if metadataDropTarget === "dimensions"}
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.dimensions.title') })}
           </span>
@@ -1638,25 +1773,15 @@
   {/snippet}
 
   {#snippet promptsSection()}
-    <div bind:this={sectionRefs['prompts']} data-drop-section="prompts" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['prompts']} data-drop-section="prompts" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "prompts")}
       ondragover={(e) => onMetadataDragOver(e, "prompts")}
       ondragleave={(e) => onMetadataDragLeave(e, "prompts")}
       ondrop={(e) => onMetadataDrop(e, "prompts")}
     >
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("prompts")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (promptsSectionOpen = !promptsSectionOpen)}
-          title={promptsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.prompts.title') }) : locale.t('common.expand', { section: locale.t('generation.prompts.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.prompts.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {promptsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+      {@render sectionHeader("prompts", promptsSectionOpen, () => (promptsSectionOpen = !promptsSectionOpen))}
       {#if promptsSectionOpen}
-        <div class="px-3 pb-2 pt-0.5">
+        <div class="px-3 pb-3 pt-0.5">
           <PromptInputs
             showHistory={false}
             onOpenRegionalPrompt={() => (regionalPromptModalOpen = true)}
@@ -1664,7 +1789,7 @@
         </div>
       {/if}
       {#if metadataDropTarget === "prompts"}
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.prompts.title') })}
           </span>
@@ -1674,20 +1799,10 @@
   {/snippet}
 
   {#snippet imageInputsSection()}
-    <div bind:this={sectionRefs['imageInputs']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("imageInputs")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (imageSectionOpen = !imageSectionOpen)}
-          title={imageSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.image.title') }) : locale.t('common.expand', { section: locale.t('generation.image.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.image.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {imageSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['imageInputs']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("imageInputs", imageSectionOpen, () => (imageSectionOpen = !imageSectionOpen))}
       {#if imageSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-2">
+        <div class="px-3 pb-3 pt-0.5 space-y-2">
           {#if canvas.currentPreparedInputImage}
             <div class="rounded-md border border-amber-700/50 bg-amber-900/20 p-2 flex items-center justify-between gap-2">
               <span class="text-[11px] text-amber-300">{locale.t('generation.image.staged_active')}</span>
@@ -1899,20 +2014,10 @@
   {/snippet}
 
   {#snippet inpaintLayersSection()}
-    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("inpaintLayers")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (layersSectionOpen = !layersSectionOpen)}
-          title={layersSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.inpaint.title') }) : locale.t('common.expand', { section: locale.t('generation.inpaint.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.inpaint.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {layersSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("inpaintLayers", layersSectionOpen, () => (layersSectionOpen = !layersSectionOpen))}
       {#if layersSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-2">
+        <div class="px-3 pb-3 pt-0.5 space-y-2">
           <div class="grid grid-cols-2 gap-1">
             <button
               onclick={() => canvas.setInpaintDrawMode("mask")}
@@ -1959,20 +2064,10 @@
   {/snippet}
 
   {#snippet generationSettingsSection()}
-    <div bind:this={sectionRefs['generationSettings']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("generationSettings")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (controlsSectionOpen = !controlsSectionOpen)}
-          title={controlsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.settings.title') }) : locale.t('common.expand', { section: locale.t('generation.settings.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.settings.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['generationSettings']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("generationSettings", controlsSectionOpen, () => (controlsSectionOpen = !controlsSectionOpen))}
       {#if controlsSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <ModelSelector />
 
           <div class="border-t border-neutral-800 pt-3">
@@ -1988,30 +2083,20 @@
   {/snippet}
 
   {#snippet modelSection()}
-    <div bind:this={sectionRefs['model']} data-drop-section="model" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['model']} data-drop-section="model" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "model")}
       ondragover={(e) => onMetadataDragOver(e, "model")}
       ondragleave={(e) => onMetadataDragLeave(e, "model")}
       ondrop={(e) => onMetadataDrop(e, "model")}
     >
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("model")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (modelSectionOpen = !modelSectionOpen)}
-          title={modelSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.model.title') }) : locale.t('common.expand', { section: locale.t('generation.model.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.model.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {modelSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+      {@render sectionHeader("model", modelSectionOpen, () => (modelSectionOpen = !modelSectionOpen))}
       {#if modelSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <ModelSelector />
         </div>
       {/if}
       {#if metadataDropTarget === "model"}
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.model.title') })}
           </span>
@@ -2021,30 +2106,20 @@
   {/snippet}
 
   {#snippet samplerSection()}
-    <div bind:this={sectionRefs['sampler']} data-drop-section="sampler" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['sampler']} data-drop-section="sampler" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "sampler")}
       ondragover={(e) => onMetadataDragOver(e, "sampler")}
       ondragleave={(e) => onMetadataDragLeave(e, "sampler")}
       ondrop={(e) => onMetadataDrop(e, "sampler")}
     >
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("sampler")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (samplerSectionOpen = !samplerSectionOpen)}
-          title={samplerSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.sampler.title') }) : locale.t('common.expand', { section: locale.t('generation.sampler.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.sampler.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {samplerSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+      {@render sectionHeader("sampler", samplerSectionOpen, () => (samplerSectionOpen = !samplerSectionOpen))}
       {#if samplerSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <SamplerSettings />
         </div>
       {/if}
       {#if metadataDropTarget === "sampler"}
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.sampler.title') })}
           </span>
@@ -2054,20 +2129,10 @@
   {/snippet}
 
   {#snippet novelaiSection()}
-    <div bind:this={sectionRefs['novelai']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'novelai' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("novelai")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (novelaiSectionOpen = !novelaiSectionOpen)}
-          title={novelaiSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.novelai.title') }) : locale.t('common.expand', { section: locale.t('generation.novelai.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.novelai.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {novelaiSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['novelai']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'novelai' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("novelai", novelaiSectionOpen, () => (novelaiSectionOpen = !novelaiSectionOpen))}
       {#if novelaiSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <NovelAiSettings />
         </div>
       {/if}
@@ -2075,20 +2140,10 @@
   {/snippet}
 
   {#snippet naiFaceDetailSection()}
-    <div bind:this={sectionRefs['naiFaceDetail']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'naiFaceDetail' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("naiFaceDetail")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (naiFaceDetailSectionOpen = !naiFaceDetailSectionOpen)}
-          title={naiFaceDetailSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.nai_face_detail.title') }) : locale.t('common.expand', { section: locale.t('generation.nai_face_detail.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.nai_face_detail.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {naiFaceDetailSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['naiFaceDetail']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'naiFaceDetail' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("naiFaceDetail", naiFaceDetailSectionOpen, () => (naiFaceDetailSectionOpen = !naiFaceDetailSectionOpen))}
       {#if naiFaceDetailSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <NaiFaceDetailSettings />
         </div>
       {/if}
@@ -2096,20 +2151,10 @@
   {/snippet}
 
   {#snippet controlnetSection()}
-    <div bind:this={sectionRefs['controlnet']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("controlnet")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (controlnetSectionOpen = !controlnetSectionOpen)}
-          title={controlnetSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.controlnet.title') }) : locale.t('common.expand', { section: locale.t('generation.controlnet.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.controlnet.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlnetSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['controlnet']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("controlnet", controlnetSectionOpen, () => (controlnetSectionOpen = !controlnetSectionOpen))}
       {#if controlnetSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <ControlNetSettings />
         </div>
       {/if}
@@ -2117,20 +2162,10 @@
   {/snippet}
 
   {#snippet styleTransferSection()}
-    <div bind:this={sectionRefs['styleTransfer']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'styleTransfer' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("styleTransfer")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (styleTransferSectionOpen = !styleTransferSectionOpen)}
-          title={styleTransferSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.style_transfer.title') }) : locale.t('common.expand', { section: locale.t('generation.style_transfer.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.style_transfer.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {styleTransferSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['styleTransfer']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'styleTransfer' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("styleTransfer", styleTransferSectionOpen, () => (styleTransferSectionOpen = !styleTransferSectionOpen))}
       {#if styleTransferSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <StyleTransferSettings />
         </div>
       {/if}
@@ -2138,20 +2173,10 @@
   {/snippet}
 
   {#snippet styleRefSection()}
-    <div bind:this={sectionRefs['styleRef']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'styleRef' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("styleRef")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (styleRefSectionOpen = !styleRefSectionOpen)}
-          title={styleRefSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.style_ref.title') }) : locale.t('common.expand', { section: locale.t('generation.style_ref.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.style_ref.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {styleRefSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['styleRef']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'styleRef' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("styleRef", styleRefSectionOpen, () => (styleRefSectionOpen = !styleRefSectionOpen))}
       {#if styleRefSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <StyleReferenceSection />
         </div>
       {/if}
@@ -2159,20 +2184,10 @@
   {/snippet}
 
   {#snippet imageEditSection()}
-    <div bind:this={sectionRefs['imageEdit']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'imageEdit' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("imageEdit")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (imageEditSectionOpen = !imageEditSectionOpen)}
-          title={imageEditSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.image_edit.title') }) : locale.t('common.expand', { section: locale.t('generation.image_edit.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.image_edit.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {imageEditSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['imageEdit']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'imageEdit' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("imageEdit", imageEditSectionOpen, () => (imageEditSectionOpen = !imageEditSectionOpen))}
       {#if imageEditSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <ImageEditSettings />
         </div>
       {/if}
@@ -2180,50 +2195,30 @@
   {/snippet}
 
   {#snippet videoSettingsSection()}
-    <div bind:this={sectionRefs['videoSettings']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'videoSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("videoSettings")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (videoSettingsSectionOpen = !videoSettingsSectionOpen)}
-          title={videoSettingsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.video.title') }) : locale.t('common.expand', { section: locale.t('generation.video.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.video.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {videoSettingsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+    <div bind:this={sectionRefs['videoSettings']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'videoSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      {@render sectionHeader("videoSettings", videoSettingsSectionOpen, () => (videoSettingsSectionOpen = !videoSettingsSectionOpen))}
       <!-- Keep readiness probes and installation listeners alive while collapsed. -->
-      <div hidden={!videoSettingsSectionOpen} class="px-3 pb-2 pt-0.5 space-y-3">
+      <div hidden={!videoSettingsSectionOpen} class="px-3 pb-3 pt-0.5 space-y-3">
         <VideoSettingsPanel />
       </div>
     </div>
   {/snippet}
 
   {#snippet facefixSection()}
-    <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "facefix")}
       ondragover={(e) => onMetadataDragOver(e, "facefix")}
       ondragleave={(e) => onMetadataDragLeave(e, "facefix")}
       ondrop={(e) => onMetadataDrop(e, "facefix")}
     >
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("facefix")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (facefixSectionOpen = !facefixSectionOpen)}
-          title={facefixSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.facefix.title') }) : locale.t('common.expand', { section: locale.t('generation.facefix.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.facefix.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {facefixSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+      {@render sectionHeader("facefix", facefixSectionOpen, () => (facefixSectionOpen = !facefixSectionOpen))}
       {#if facefixSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <FaceFixSettings />
         </div>
       {/if}
       {#if metadataDropTarget === "facefix"}
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.facefix.title') })}
           </span>
@@ -2233,30 +2228,20 @@
   {/snippet}
 
   {#snippet upscaleHistorySection()}
-    <div bind:this={sectionRefs['upscaleHistory']} data-drop-section="upscaleHistory" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['upscaleHistory']} data-drop-section="upscaleHistory" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "upscaleHistory")}
       ondragover={(e) => onMetadataDragOver(e, "upscaleHistory")}
       ondragleave={(e) => onMetadataDragLeave(e, "upscaleHistory")}
       ondrop={(e) => onMetadataDrop(e, "upscaleHistory")}
     >
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("upscaleHistory")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (postSectionOpen = !postSectionOpen)}
-          title={postSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.upscale.title') }) : locale.t('common.expand', { section: locale.t('generation.upscale.title') })}
-        >
-          <span class="font-medium">{locale.t('generation.upscale.title')}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {postSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
+      {@render sectionHeader("upscaleHistory", postSectionOpen, () => (postSectionOpen = !postSectionOpen))}
       {#if postSectionOpen}
-        <div class="px-3 pb-2 pt-0.5 space-y-3">
+        <div class="px-3 pb-3 pt-0.5 space-y-3">
           <UpscaleSettings />
         </div>
       {/if}
       {#if metadataDropTarget === "upscaleHistory"}
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-xl bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.upscale.title') })}
           </span>
@@ -2423,60 +2408,6 @@
           </div>
         {/if}
         <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-3 pr-5 pt-1 pb-6 flex flex-col gap-2' : 'contents'}">
-        {#if controlsSide === "left" && !mobileFriendly}
-          <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
-            <div class="flex gap-1.5 items-center">
-              <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
-                {#if generation.mode === "video"}
-                  <h1 class="flex-1 py-1.5 text-center text-xs font-medium text-neutral-200">{locale.t("generation.mode.video")}</h1>
-                {/if}
-                {#each modes as mode}
-                  <button
-                    onclick={() => {
-                      generation.mode = mode.id;
-                      if (mode.id !== "inpainting") canvas.isCanvasMode = false;
-                    }}
-                    class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
-                      ? 'bg-neutral-700 text-white'
-                      : 'text-neutral-400 hover:text-neutral-200'}"
-                  >
-                    {mode.label()}
-                  </button>
-                {/each}
-              </div>
-              <button
-                onclick={swapPanels}
-                class="p-1.5 rounded-md text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
-                title={locale.t('generation.swap_panels')}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7H20m0 0l-4-4m4 4l-4 4"/><path d="M16 17H4m0 0l4 4m-4-4l4-4"/></svg>
-              </button>
-            </div>
-
-            {#if generation.mode === "inpainting"}
-              <button
-                onclick={() => {
-                  canvas.isCanvasMode = !canvas.isCanvasMode;
-                  if (canvas.isCanvasMode && canvas.layers.length === 0) {
-                    canvas.initCanvas(generation.width, generation.height);
-                  }
-                }}
-                class="flex items-center justify-between w-full px-3 py-2 mt-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
-                  ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
-                  : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
-              >
-                <span class="flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                  {locale.t('generation.inpaint.canvas_editor')}
-                </span>
-                <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-                  {canvas.isCanvasMode ? locale.t('common.on') : locale.t('common.off')}
-                </span>
-              </button>
-            {/if}
-          </div>
-        {/if}
-
         {@render sectionDropZone("left", 0)}
         {#each leftRenderSections as section, i}
           {@render renderSection(section)}
@@ -2485,7 +2416,6 @@
 
         {#if controlsSide === "left" && !mobileFriendly}
           <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
-            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
@@ -2516,15 +2446,19 @@
       </div>
     {/if}
 
+    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+    {#if !mobileFriendly}
+      {@render previewTopBar()}
+    {/if}
     {#if canvas.isCanvasMode}
-      <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
         <CanvasEditor bind:this={canvasEditorRef} />
       </div>
     {:else}
-      <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
-          class="relative flex-1 min-h-0 {mobileFriendly ? 'px-3 pt-1 pb-3 gap-3' : 'p-6 gap-4'} flex flex-col overflow-hidden"
+          class="relative flex-1 min-h-0 {mobileFriendly ? 'px-3 pt-1 pb-3 gap-3' : 'px-6 pt-4 pb-6 gap-4'} flex flex-col overflow-hidden"
         >
           <ProgressBar />
           <!-- The preview is a square (aspect-square), so it must be sized to the
@@ -2542,13 +2476,14 @@
                it is read while writing the prompt, so the side panels must stay
                lit and clickable. Padding mirrors this container's own. -->
           {#if h3Guide.open && generation.mode === "video"}
-            <div class="absolute inset-0 z-20 {mobileFriendly ? 'px-3 pt-1 pb-3' : 'p-6'}">
+            <div class="absolute inset-0 z-20 {mobileFriendly ? 'px-3 pt-1 pb-3' : 'px-6 pt-4 pb-6'}">
               <H3PromptGuidePanel onClose={() => h3Guide.hide()} />
             </div>
           {/if}
         </div>
       </div>
     {/if}
+    </div>
 
     {#if !mobileFriendly && (rightHasSections || controlsSide === "right" || draggingSection)}
       <!-- Right divider with collapse button -->
@@ -2605,60 +2540,6 @@
           </div>
         {/if}
         <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto overscroll-contain pl-5 pr-3 pt-1 pb-6 space-y-2' : 'contents'}">
-        {#if controlsSide === "right" && !mobileFriendly}
-          <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">
-            <div class="flex gap-1.5 items-center">
-              <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
-                {#if generation.mode === "video"}
-                  <h1 class="flex-1 py-1.5 text-center text-xs font-medium text-neutral-200">{locale.t("generation.mode.video")}</h1>
-                {/if}
-                {#each modes as mode}
-                  <button
-                    onclick={() => {
-                      generation.mode = mode.id;
-                      if (mode.id !== "inpainting") canvas.isCanvasMode = false;
-                    }}
-                    class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
-                      ? 'bg-neutral-700 text-white'
-                      : 'text-neutral-400 hover:text-neutral-200'}"
-                  >
-                    {mode.label()}
-                  </button>
-                {/each}
-              </div>
-              <button
-                onclick={swapPanels}
-                class="p-1.5 rounded-md text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
-                title={locale.t('generation.swap_panels')}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7H20m0 0l-4-4m4 4l-4 4"/><path d="M16 17H4m0 0l4 4m-4-4l4-4"/></svg>
-              </button>
-            </div>
-
-            {#if generation.mode === "inpainting"}
-              <button
-                onclick={() => {
-                  canvas.isCanvasMode = !canvas.isCanvasMode;
-                  if (canvas.isCanvasMode && canvas.layers.length === 0) {
-                    canvas.initCanvas(generation.width, generation.height);
-                  }
-                }}
-                class="flex items-center justify-between w-full px-3 py-2 mt-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
-                  ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
-                  : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
-              >
-                <span class="flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                  {locale.t('generation.inpaint.canvas_editor')}
-                </span>
-                <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-                  {canvas.isCanvasMode ? locale.t('common.on') : locale.t('common.off')}
-                </span>
-              </button>
-            {/if}
-          </div>
-        {/if}
-
         {@render sectionDropZone("right", 0)}
         {#each rightRenderSections as section, i}
           {@render renderSection(section)}
@@ -2667,7 +2548,6 @@
 
         {#if controlsSide === "right" && !mobileFriendly}
           <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
-            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
@@ -2783,6 +2663,8 @@
       </div>
     </div>
   {/if}
+
+  <ContextMenu items={layoutMenuItems} x={layoutMenuX} y={layoutMenuY} visible={showLayoutMenu} onclose={() => (showLayoutMenu = false)} />
 
   <ContextMenu items={sessionCtxMenuItems} x={ctxMenuX} y={ctxMenuY} visible={showCtxMenu} onclose={() => showCtxMenu = false} />
 

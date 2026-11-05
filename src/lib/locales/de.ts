@@ -960,6 +960,12 @@ const de: Record<string, string> = {
   "generation.dimensions.recommended": "Empfohlen für {model}: {res}",
   "generation.dimensions.result": "Ergebnis",
   "generation.swap_panels": "Linkes/rechtes Panel tauschen",
+  "generation.layout.title": "Layout",
+  "generation.layout.all_left": "Alles links",
+  "generation.layout.all_right": "Alles rechts",
+  "generation.layout.reset": "Layout zurücksetzen",
+  "generation.layout.move_left": "Nach links verschieben",
+  "generation.layout.move_right": "Nach rechts verschieben",
   "generation.settings.title": "Generierungseinstellungen",
 
   "generation.sampler.title": "Sampler",

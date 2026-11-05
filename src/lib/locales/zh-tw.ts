@@ -939,6 +939,12 @@ const zhTw: Record<string, string> = {
   "generation.dimensions.recommended": "{model} 建議：{res}",
   "generation.dimensions.result": "結果",
   "generation.swap_panels": "切換左右面板",
+  "generation.layout.title": "版面配置",
+  "generation.layout.all_left": "全部放左側",
+  "generation.layout.all_right": "全部放右側",
+  "generation.layout.reset": "重設版面配置",
+  "generation.layout.move_left": "移到左側",
+  "generation.layout.move_right": "移到右側",
   "generation.settings.title": "生成設定",
 
   "generation.sampler.title": "取樣器",

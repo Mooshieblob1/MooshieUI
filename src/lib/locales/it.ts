@@ -939,6 +939,12 @@ const it: Record<string, string> = {
   "generation.dimensions.recommended": "Consigliato per {model}: {res}",
   "generation.dimensions.result": "Risultato",
   "generation.swap_panels": "Scambia pannelli sinistra/destra",
+  "generation.layout.title": "Layout",
+  "generation.layout.all_left": "Tutto a sinistra",
+  "generation.layout.all_right": "Tutto a destra",
+  "generation.layout.reset": "Ripristina layout",
+  "generation.layout.move_left": "Sposta a sinistra",
+  "generation.layout.move_right": "Sposta a destra",
   "generation.settings.title": "Impostazioni di generazione",
 
   "generation.sampler.title": "Sampler",
