@@ -1,6 +1,7 @@
 import { generation } from "./generation.svelte.js";
 import { novelai } from "./novelai.svelte.js";
 import type { DirectorTool } from "../utils/api.js";
+import { isNovelAiModel } from "../utils/novelaiModels.js";
 import type { OutputImage } from "../types/index.js";
 
 /**
@@ -133,7 +134,11 @@ export const directorTools = new DirectorToolsStore();
  * local backend is selected, and it needs the key that the same account pays
  * the Anlas from. Offering it without either produces a request that can only
  * fail.
+ *
+ * Reads the checkpoint rather than `generation.isNovelAi`, which is false while
+ * Video is open. Director Tools take only the source image, so they still work
+ * from the gallery with Video as the last generation mode.
  */
 export function directorToolsAvailable(): boolean {
-  return generation.isNovelAi && novelai.apiKeyConfigured;
+  return isNovelAiModel(generation.checkpoint) && novelai.apiKeyConfigured;
 }
