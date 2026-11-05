@@ -4795,5 +4795,12 @@ const ja: Record<string, string> = {
   "model3d.about_pixal3d": "Tencent ARC の Pixal3D（MIT）を ComfyUI 標準の TRELLIS.2 と MoGe ノードで使います。背面も含むテクスチャ付きメッシュ（.glb）を作ります。必要な VRAM はまだ公開されておらず、Idol より時間がかかります。",
   "model3d.export_glb": ".glbを保存",
   "model3d.details_mesh": "{count}面 · シード {seed} · {model}",
+  "mobile.nav.label": "メインナビゲーション",
+  "mobile.nav.more": "その他",
+  "mobile.dock.prompt": "プロンプト",
+  "mobile.dock.model": "モデル",
+  "mobile.dock.library": "ライブラリ",
+  "mobile.dock.modes": "生成モード",
+  "artist_gallery.hint_copy_touch": "カードを長押しするとタグをコピーできます。",
 };
 export default ja;

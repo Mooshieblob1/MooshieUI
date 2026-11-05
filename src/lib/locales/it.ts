@@ -4770,5 +4770,12 @@ const it: Record<string, string> = {
   "model3d.about_pixal3d": "Usa Pixal3D di Tencent ARC (MIT) con i nodi TRELLIS.2 e MoGe integrati in ComfyUI. Crea una mesh texturizzata (.glb), retro compreso. I requisiti di VRAM non sono ancora pubblicati ed è più lento di Idol.",
   "model3d.export_glb": "Salva .glb",
   "model3d.details_mesh": "{count} facce · seed {seed} · {model}",
+  "mobile.nav.label": "Navigazione principale",
+  "mobile.nav.more": "Altro",
+  "mobile.dock.prompt": "Prompt",
+  "mobile.dock.model": "Modello",
+  "mobile.dock.library": "Libreria",
+  "mobile.dock.modes": "Modalità di generazione",
+  "artist_gallery.hint_copy_touch": "Tieni premuta una scheda per copiarne il tag.",
 };
 export default it;

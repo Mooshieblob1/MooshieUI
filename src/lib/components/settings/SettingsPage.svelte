@@ -2050,17 +2050,17 @@
 <div class="h-full flex flex-col overflow-hidden">
   <!-- Persistent top bar -->
   {#if config}
-    <div class="shrink-0 px-6 py-3 bg-neutral-900 border-b border-neutral-800 flex items-center gap-3">
+    <div class="shrink-0 {mobileFriendly ? 'flex-wrap px-4 gap-x-2 gap-y-2' : 'px-6 gap-3'} py-3 bg-neutral-900 border-b border-neutral-800 flex items-center">
       <h1 class="text-lg font-medium text-neutral-100 shrink-0">{locale.t('settings.title')}</h1>
 
       <input
         type="text"
         bind:value={search}
         placeholder={locale.t('settings.search_placeholder')}
-        class="flex-1 min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        class="{mobileFriendly ? 'order-last basis-full py-2' : 'flex-1 py-1.5'} min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
       />
 
-      <div class="ml-auto flex items-center gap-3 shrink-0">
+      <div class="ml-auto flex items-center {mobileFriendly ? 'gap-2' : 'gap-3'} shrink-0">
       {#if canManageServer}
       {#if restartNeeded}
         <div class="flex items-center gap-1.5 text-amber-200 text-xs mr-2">
@@ -2685,7 +2685,7 @@
                 max="65535"
               />
             </div>
-            <div>
+            <div class={mobileFriendly ? "col-span-3" : ""}>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.network_proxy')}</label>
               <input
                 type="text"
@@ -2696,7 +2696,7 @@
               />
               <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.network_proxy_desc')}</p>
             </div>
-            <div>
+            <div class={mobileFriendly ? "col-span-3" : ""}>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.pip_index_url')}</label>
               <input
                 type="text"

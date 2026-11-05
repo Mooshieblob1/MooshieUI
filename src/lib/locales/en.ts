@@ -4724,5 +4724,12 @@ const en: Record<string, string> = {
   "model3d.about_pixal3d": "Uses Pixal3D by Tencent ARC (MIT) on ComfyUI's own TRELLIS.2 and MoGe nodes. It makes a textured mesh (.glb), back side included. Its VRAM needs are not published yet, and it takes longer than Idol.",
   "model3d.export_glb": "Save .glb",
   "model3d.details_mesh": "{count} faces · seed {seed} · {model}",
+  "mobile.nav.label": "Main navigation",
+  "mobile.nav.more": "More",
+  "mobile.dock.prompt": "Prompt",
+  "mobile.dock.model": "Model",
+  "mobile.dock.library": "Library",
+  "mobile.dock.modes": "Generation mode",
+  "artist_gallery.hint_copy_touch": "Press and hold a card to copy its tag.",
 };
 export default en;

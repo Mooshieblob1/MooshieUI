@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { useMobileLayout } from "../../utils/device.js";
   import { portal } from "../../utils/portal.js";
   import { onMount, tick } from "svelte";
   import { createArtistGalleryStore, type ArtistSortField, type ArtistSortDir, type ArtistPageSize } from "../store.svelte.js";
@@ -841,7 +842,7 @@
         {#if isSearching}
           {store.searchLoading && !showOnlyFavourites ? locale.t('artist_gallery.searching') : (searchEntries.length === 1 ? locale.t('artist_gallery.search_result_one', { query: queryInput }) : locale.t('artist_gallery.search_results', { count: locale.formatInteger(searchEntries.length), query: queryInput }))}
         {:else}
-          {locale.t('artist_gallery.hint_copy')}
+          {locale.t(useMobileLayout ? 'artist_gallery.hint_copy_touch' : 'artist_gallery.hint_copy')}
         {/if}
       </p>
       {#if totalPages > 1 && !isSearching}

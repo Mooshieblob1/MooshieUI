@@ -10,6 +10,8 @@
   import SamplerSettings from "./SamplerSettings.svelte";
   import DimensionControls from "./DimensionControls.svelte";
   import GenerateButton from "./GenerateButton.svelte";
+  import GenerationTabStrip from "./GenerationTabStrip.svelte";
+  import MobileNavIcon from "../mobile/MobileNavIcon.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
   import NaiFaceDetailSettings from "./NaiFaceDetailSettings.svelte";
@@ -167,10 +169,18 @@
     "upscaleHistory",
   ];
 
-  let sectionOrder = $state<SectionId[]>([...SECTION_ORDER]);
+  // Phones open the panel to the prompt first: it is what most visits are for, and
+  // sections can't be dragged into another order on a touch screen. Only the default;
+  // a saved mobile layout keeps its order. (`mobileFriendly` is fixed per mount.)
+  // svelte-ignore state_referenced_locally
+  const DEFAULT_SECTION_ORDER: SectionId[] = mobileFriendly
+    ? ["prompts", ...SECTION_ORDER.filter((id) => id !== "prompts")]
+    : SECTION_ORDER;
+
+  let sectionOrder = $state<SectionId[]>([...DEFAULT_SECTION_ORDER]);
 
   function normalizeSectionOrder(order: unknown): SectionId[] {
-    if (!Array.isArray(order)) return [...SECTION_ORDER];
+    if (!Array.isArray(order)) return [...DEFAULT_SECTION_ORDER];
     const allowed = new Set<SectionId>(SECTION_ORDER);
     const seen = new Set<SectionId>();
     const out: SectionId[] = [];
@@ -191,7 +201,7 @@
       seen.add(id);
       out.push(id);
     }
-    for (const id of SECTION_ORDER) {
+    for (const id of DEFAULT_SECTION_ORDER) {
       if (!seen.has(id)) out.push(id);
     }
     return out;
@@ -957,11 +967,55 @@
     return mobileBottomPeek ?? (bottomCollapsed ? 0 : 1);
   }
 
-  // Pixel width of the visible "peek" portion of a mobile panel handle when the panel is fully closed.
-  // The handle (the thin grab bar with `···`) is rendered inside the panel container, positioned at the
-  // edge that faces the viewport; this is how much of the panel container we leave visible so the user
-  // can grab the handle to drag the panel open.
-  const MOBILE_HANDLE_PEEK_PX = 14;
+  // Pixel width of a closed mobile panel left peeking in from its edge. The panels open from the
+  // dock's buttons now, so a closed panel hides completely and gives the preview the full width;
+  // the grab bar (`···`) on an open panel still drags or taps it shut.
+  const MOBILE_HANDLE_PEEK_PX = 0;
+
+  // Phone layout: the mode header sits above the preview and the dock (panel buttons + Generate)
+  // below it, both in normal flow. The panels are `fixed` overlays that fill exactly the space
+  // between the two, so they never cover the Generate button or the mode switcher. Measured rather
+  // than assumed because the header wraps (tab strip, long mode names) and the dock grows (NovelAI
+  // usage, pause banner, errors), and a music player can appear under it.
+  let mobileHeaderEl = $state<HTMLElement | null>(null);
+  let mobileDockEl = $state<HTMLElement | null>(null);
+  let mobileInsetTop = $state(112);
+  let mobileInsetBottom = $state(136);
+
+  function measureMobileInsets() {
+    if (!mobileHeaderEl || !mobileDockEl) return;
+    mobileInsetTop = Math.round(mobileHeaderEl.getBoundingClientRect().bottom);
+    mobileInsetBottom = Math.max(0, Math.round(window.innerHeight - mobileDockEl.getBoundingClientRect().top));
+  }
+
+  $effect(() => {
+    if (!mobileFriendly || !mobileHeaderEl || !mobileDockEl) return;
+    measureMobileInsets();
+    const ro = new ResizeObserver(measureMobileInsets);
+    ro.observe(mobileHeaderEl);
+    ro.observe(mobileDockEl);
+    ro.observe(document.body);
+    // The page's own box moves when banners or the music player appear around it.
+    if (mobileDockEl.parentElement) ro.observe(mobileDockEl.parentElement);
+    window.addEventListener("resize", measureMobileInsets);
+    window.visualViewport?.addEventListener("resize", measureMobileInsets);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measureMobileInsets);
+      window.visualViewport?.removeEventListener("resize", measureMobileInsets);
+    };
+  });
+
+  /** Dock label for a side panel: named after what the user goes there for. */
+  function mobilePanelLabel(sections: SectionId[]): string {
+    if (sections.includes("prompts")) return locale.t("mobile.dock.prompt");
+    if (sections.includes("model") || sections.includes("sampler") || sections.includes("generationSettings"))
+      return locale.t("mobile.dock.model");
+    return sections.length > 0 ? sectionLabel(sections[0]) : locale.t("mobile.dock.model");
+  }
+
+  const mobileLeftLabel = $derived(mobilePanelLabel(leftSections));
+  const mobileRightLabel = $derived(mobilePanelLabel(rightSections));
 
   function mobilePanelTransform(panel: "left" | "right" | "bottom"): string {
     // When another panel is actively being dragged, slide this panel fully off-screen so its handle
@@ -1066,9 +1120,11 @@
     mobileBottomPeek = progress;
   }
 
-  function onMobileHandleUp(panel: "left" | "right" | "bottom", _e: PointerEvent) {
+  function onMobileHandleUp(panel: "left" | "right" | "bottom", e: PointerEvent) {
     if (mobileHandleDrag !== panel) return;
-    const progress = panelProgress(panel);
+    const moved = Math.hypot(e.clientX - mobileHandleStartX, e.clientY - mobileHandleStartY) > 6;
+    // A tap (no drag) toggles, so the grab bar works as a close button too.
+    const progress = moved ? panelProgress(panel) : 1 - mobileHandleStartProgress;
     mobileHandleDrag = null;
     setMobilePanel(panel, progress >= MOBILE_SNAP_THRESHOLD);
     mobileLeftPeek = null;
@@ -2245,6 +2301,28 @@
     {/if}
   {/snippet}
 
+  {#snippet mobileDockButton(
+    panel: "left" | "right" | "bottom",
+    label: string,
+    icon: "prompt" | "sliders" | "library",
+    open: boolean,
+    toggle: () => void,
+  )}
+    <button
+      type="button"
+      onclick={toggle}
+      aria-expanded={open}
+      aria-label={label}
+      data-mobile-dock={panel}
+      class="touch-target flex w-14 flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 transition-colors {open
+        ? 'bg-indigo-500/20 text-indigo-200'
+        : 'bg-neutral-900 text-neutral-400 active:bg-neutral-800'}"
+    >
+      <MobileNavIcon id={icon} class="size-5" />
+      <span class="max-w-full truncate text-[10px] font-medium leading-none">{label}</span>
+    </button>
+  {/snippet}
+
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="flex flex-col h-full select-none {draggingSection ? 'cursor-grabbing' : ''}"
@@ -2252,41 +2330,75 @@
     onmouseup={onPointerUp}
     onmouseleave={onPointerUp}
   >
-    <!-- Main row: side panels + preview. The bottom panel spans the full width below this row. -->
-    <div class="flex flex-1 min-h-0">
     {#if mobileFriendly}
-      <div class="fixed top-2 left-1/2 -translate-x-1/2 z-50 w-[min(96vw,34rem)] px-2">
-        <div class="w-full flex gap-1 bg-neutral-900 rounded-lg p-1 border border-neutral-700 shadow">
+      <!-- Phone header: settings tabs + profiles, then the mode switcher. Stacked above the
+           panels (z-50) so modes and tabs stay reachable while a panel is open. -->
+      <div bind:this={mobileHeaderEl} class="relative z-50 shrink-0 bg-neutral-950 pb-2">
+        <GenerationTabStrip />
+        <div class="mt-2 px-3">
           {#if generation.mode === "video"}
-            <h1 class="flex-1 px-2.5 py-2 text-center text-xs font-medium text-neutral-200">{locale.t("generation.mode.video")}</h1>
+            <div class="flex h-10 items-center justify-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 text-sm font-medium text-neutral-200">
+              <MobileNavIcon id="video" class="size-4 text-indigo-300" />
+              <h1>{locale.t("generation.mode.video")}</h1>
+            </div>
+          {:else}
+            <div class="flex gap-1 rounded-xl border border-neutral-800 bg-neutral-900 p-1" role="tablist" aria-label={locale.t("mobile.dock.modes")}>
+              {#each modes as mode}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={generation.mode === mode.id}
+                  onclick={() => {
+                    generation.mode = mode.id;
+                    if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                  }}
+                  class="h-9 min-w-0 flex-1 truncate rounded-lg px-1.5 text-xs font-medium transition-colors {generation.mode === mode.id
+                    ? 'bg-neutral-700 text-white shadow-sm'
+                    : 'text-neutral-400 active:bg-neutral-800'}"
+                >
+                  {mode.label()}
+                </button>
+              {/each}
+            </div>
           {/if}
-          {#each modes as mode}
+          {#if generation.mode === "inpainting"}
             <button
+              type="button"
               onclick={() => {
-                generation.mode = mode.id;
-                if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                canvas.isCanvasMode = !canvas.isCanvasMode;
+                if (canvas.isCanvasMode && canvas.layers.length === 0) {
+                  canvas.initCanvas(generation.width, generation.height);
+                }
               }}
-              class="min-w-0 flex-1 whitespace-nowrap text-[11px] leading-none px-2.5 py-2 rounded-md transition-colors {generation.mode === mode.id
-                ? 'bg-neutral-700 text-white'
-                : 'text-neutral-400 hover:text-neutral-200'}"
+              class="mt-2 flex h-9 w-full items-center justify-between rounded-lg px-3 text-xs transition-colors {canvas.isCanvasMode
+                ? 'border border-indigo-500/50 bg-indigo-600/20 text-indigo-300'
+                : 'border border-neutral-800 bg-neutral-900 text-neutral-400'}"
             >
-              {mode.label()}
+              <span class="flex items-center gap-2">
+                <MobileNavIcon id="generate" class="size-3.5" />
+                {locale.t('generation.inpaint.canvas_editor')}
+              </span>
+              <span class="text-[11px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
+                {canvas.isCanvasMode ? locale.t('common.on') : locale.t('common.off')}
+              </span>
             </button>
-          {/each}
+          {/if}
         </div>
       </div>
     {/if}
 
+    <!-- Main row: side panels + preview. The bottom panel spans the full width below this row. -->
+    <div class="flex flex-1 min-h-0">
     {#if leftHasSections || controlsSide === "left" || draggingSection}
       {#if !leftCollapsed || mobileFriendly}
         <div
           bind:this={leftColumnRef}
           use:wheelScrollLock
           class="{mobileFriendly
-            ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
+            ? 'fixed left-0 right-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
             : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
           style={mobileFriendly
-            ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
+            ? `top: ${mobileInsetTop}px; bottom: ${mobileInsetBottom}px; transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
             : `width: ${leftWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
         >
         {#if mobileFriendly}
@@ -2299,7 +2411,7 @@
             onpointerup={(e) => onMobileHandleUp("left", e)}
             onpointercancel={() => onMobileHandleCancel("left")}
             ondblclick={toggleLeftPanel}
-            class="absolute right-0 top-24 bottom-4 z-20 w-3.5 rounded-l-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
+            class="absolute right-0 top-4 bottom-4 z-20 w-3.5 rounded-l-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
             title={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
             aria-label={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
           >
@@ -2310,7 +2422,7 @@
             </div>
           </div>
         {/if}
-        <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden pl-3 pr-5 pt-20 pb-6 flex flex-col gap-2' : 'contents'}">
+        <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-3 pr-5 pt-1 pb-6 flex flex-col gap-2' : 'contents'}">
         {#if controlsSide === "left" && !mobileFriendly}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
             <div class="flex gap-1.5 items-center">
@@ -2371,7 +2483,7 @@
           {@render sectionDropZone("left", i + 1)}
         {/each}
 
-        {#if controlsSide === "left"}
+        {#if controlsSide === "left" && !mobileFriendly}
           <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
             <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
@@ -2412,7 +2524,7 @@
       <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
-          class="relative flex-1 min-h-0 p-6 {mobileFriendly ? 'pt-20' : ''} flex flex-col gap-4 overflow-hidden"
+          class="relative flex-1 min-h-0 {mobileFriendly ? 'px-3 pt-1 pb-3 gap-3' : 'p-6 gap-4'} flex flex-col overflow-hidden"
         >
           <ProgressBar />
           <!-- The preview is a square (aspect-square), so it must be sized to the
@@ -2430,7 +2542,7 @@
                it is read while writing the prompt, so the side panels must stay
                lit and clickable. Padding mirrors this container's own. -->
           {#if h3Guide.open && generation.mode === "video"}
-            <div class="absolute inset-0 z-20 p-6 {mobileFriendly ? 'pt-20' : ''}">
+            <div class="absolute inset-0 z-20 {mobileFriendly ? 'px-3 pt-1 pb-3' : 'p-6'}">
               <H3PromptGuidePanel onClose={() => h3Guide.hide()} />
             </div>
           {/if}
@@ -2465,10 +2577,10 @@
         bind:this={rightColumnRef}
         use:wheelScrollLock
         class="{mobileFriendly
-          ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
+          ? 'fixed left-0 right-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
           : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
         style={mobileFriendly
-          ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
+          ? `top: ${mobileInsetTop}px; bottom: ${mobileInsetBottom}px; transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
           : `width: ${rightWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
       >
         {#if mobileFriendly}
@@ -2481,7 +2593,7 @@
             onpointerup={(e) => onMobileHandleUp("right", e)}
             onpointercancel={() => onMobileHandleCancel("right")}
             ondblclick={toggleRightPanel}
-            class="absolute left-0 top-24 bottom-4 z-20 w-3.5 rounded-r-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
+            class="absolute left-0 top-4 bottom-4 z-20 w-3.5 rounded-r-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
             title={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
             aria-label={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
           >
@@ -2492,7 +2604,7 @@
             </div>
           </div>
         {/if}
-        <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto pl-5 pr-3 pt-20 pb-6 space-y-2' : 'contents'}">
+        <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto overscroll-contain pl-5 pr-3 pt-1 pb-6 space-y-2' : 'contents'}">
         {#if controlsSide === "right" && !mobileFriendly}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">
             <div class="flex gap-1.5 items-center">
@@ -2553,7 +2665,7 @@
           {@render sectionDropZone("right", i + 1)}
         {/each}
 
-        {#if controlsSide === "right"}
+        {#if controlsSide === "right" && !mobileFriendly}
           <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
             <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
@@ -2563,6 +2675,26 @@
       </div>
     {/if}
     </div>
+
+    {#if mobileFriendly}
+      <!-- Phone dock: the three panels one tap away, and Generate always in reach. -->
+      <div bind:this={mobileDockEl} class="relative z-50 shrink-0 border-t border-neutral-800 bg-neutral-950 px-3 pt-2 pb-2">
+        <div class="flex items-end gap-2">
+          <div class="flex shrink-0 gap-1">
+            {#if leftHasSections || controlsSide === "left"}
+              {@render mobileDockButton("left", mobileLeftLabel, "prompt", !leftCollapsed, toggleLeftPanel)}
+            {/if}
+            {#if rightHasSections || controlsSide === "right"}
+              {@render mobileDockButton("right", mobileRightLabel, "sliders", !rightCollapsed, toggleRightPanel)}
+            {/if}
+            {@render mobileDockButton("bottom", locale.t("mobile.dock.library"), "library", !bottomCollapsed, toggleBottomPanel)}
+          </div>
+          <div class="min-w-0 flex-1">
+            <GenerateButton canvasEditorRef={canvasEditorRef} compact />
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <!-- Bottom panel (LoRAs / Images / Prompts) — full width, below the side panels -->
     {#if !mobileFriendly && !canvas.isCanvasMode}
@@ -2606,7 +2738,7 @@
     -->
     <div
       class="fixed left-0 right-0 overflow-hidden pointer-events-none"
-      style="top: 4rem; bottom: calc(env(safe-area-inset-bottom) + 4rem); z-index: {mobilePanelZIndex('bottom')};"
+      style="top: {mobileInsetTop}px; bottom: {mobileInsetBottom}px; z-index: {mobilePanelZIndex('bottom')};"
     >
       <div
         class="absolute inset-0 bg-neutral-950 pointer-events-auto flex flex-col will-change-transform shadow-[0_-8px_24px_rgba(0,0,0,0.4)]"

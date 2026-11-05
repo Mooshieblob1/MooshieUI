@@ -4796,5 +4796,12 @@ const fr: Record<string, string> = {
   "model3d.about_pixal3d": "Utilise Pixal3D de Tencent ARC (MIT) avec les nœuds TRELLIS.2 et MoGe intégrés à ComfyUI. Il produit un maillage texturé (.glb), face arrière comprise. Ses besoins en VRAM ne sont pas encore publiés, et il est plus lent qu'Idol.",
   "model3d.export_glb": "Enregistrer en .glb",
   "model3d.details_mesh": "{count} faces · graine {seed} · {model}",
+  "mobile.nav.label": "Navigation principale",
+  "mobile.nav.more": "Plus",
+  "mobile.dock.prompt": "Prompt",
+  "mobile.dock.model": "Modèle",
+  "mobile.dock.library": "Bibliothèque",
+  "mobile.dock.modes": "Mode de génération",
+  "artist_gallery.hint_copy_touch": "Appuyez longuement sur une carte pour copier son tag.",
 };
 export default fr;
