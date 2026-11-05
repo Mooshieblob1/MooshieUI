@@ -359,8 +359,8 @@
           onclick={() => applyPreset(preset.w, preset.h)}
           class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors {activePreset === preset.label
             ? isFree
-              ? 'bg-indigo-600 border-green-400 text-white'
-              : 'bg-indigo-600 border-indigo-600 text-white'
+              ? 'bg-neutral-700 border-green-400 text-neutral-50'
+              : 'bg-neutral-700 border-neutral-500 text-neutral-50'
             : isFree
               ? 'bg-neutral-800 border-green-500/60 text-neutral-400 hover:bg-neutral-700'
               : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
@@ -462,7 +462,7 @@
         <button
           onclick={() => applySideLength(side)}
           class="relative text-xs px-2 py-1 rounded transition-colors {sideLength === side
-            ? 'bg-indigo-600 text-white'
+            ? 'bg-neutral-700 border border-neutral-500 text-neutral-50'
             : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
           title={isRecommended && familyLabel
             ? locale.t('generation.dimensions.recommended', { model: familyLabel, res: recommendedLabel })
