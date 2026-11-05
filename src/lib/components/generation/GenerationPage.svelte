@@ -1696,7 +1696,7 @@
                 if (mode.id !== "inpainting") canvas.isCanvasMode = false;
               }}
               class="h-8 px-3.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors {generation.mode === mode.id
-                ? 'bg-neutral-700 text-white shadow-sm'
+                ? 'bg-neutral-700 text-neutral-50 shadow-sm'
                 : 'text-neutral-400 hover:text-neutral-200'}"
             >
               {mode.label()}
@@ -2338,7 +2338,7 @@
                     if (mode.id !== "inpainting") canvas.isCanvasMode = false;
                   }}
                   class="h-9 min-w-0 flex-1 truncate rounded-lg px-1.5 text-xs font-medium transition-colors {generation.mode === mode.id
-                    ? 'bg-neutral-700 text-white shadow-sm'
+                    ? 'bg-neutral-700 text-neutral-50 shadow-sm'
                     : 'text-neutral-400 active:bg-neutral-800'}"
                 >
                   {mode.label()}
