@@ -1,5 +1,32 @@
 # Changelog
 
+## What's New in v2.3.35
+
+### Invisible watermark and fingerprint
+- **Stripped images find their settings**: when an image you drop or open has lost its metadata (reposted, resized, screenshotted), MooshieUI now looks it up in your own gallery and restores its settings. The toast says **Restored ... from the watermark** or **Restored ... from a gallery match**.
+- **Fingerprint (always on)**: every gallery save stores a perceptual hash in the gallery index. Nothing in the file changes.
+- **Watermark (opt-in)**: new **Watermark** Off/On chips under **Metadata** hide an invisible ID in the pixels of every saved image (TrustMark, no visible change). The first use downloads about 65 MB. Off by default. NovelAI PNGs, 16-bit images, videos, images under 256 px and JXL saves are not marked yet.
+
+### Generate page redesign
+- **Mode bar and Layout menu**: the mode tabs, the Canvas Editor toggle and a new **Layout** menu sit in a bar above the preview. The menu can swap the panels, put **Everything on the left** or **Everything on the right**, or **Reset layout**. Every section header has an arrow to move it to the other side.
+- **Prompt first**: a fresh install (or **Reset layout**) puts Model, Prompts and Dimensions on the left. Saved layouts keep their order.
+- **Cards**: the side panels, preview and bottom drawer are separate rounded cards. The gaps between them are the resize handles, each with a small hide/show button.
+- **New Generate footer**: a one-line Anlas row with a small allowance bar, a batch stepper (1 to 8), a Stop button while generating (click skips the current image, right-click cancels all), and the Anlas cost inside the Generate button.
+- **Drawer**: the collapse button moved to the right of the drawer's tab row. Collapsed, the tab row stays visible and any tab opens it again.
+- **Quieter panels**: help text moved into tooltips next to the control it describes, and picked options show as neutral chips so the accent colour is left for Generate, switches and sliders.
+- **NovelAI 18+ pill**: V5 Full, V4.5 Full and V4 Full show an **18+** pill in the model picker, and the picker shows the model's name instead of its API id.
+
+### Phone layout
+- **New bottom bar**: Generate, Video, Gallery, Music and **More**, instead of eight overlapping tabs. **More** holds Artists, Characters, Scenes, Image to 3D, Model Hub, Settings, Interrogate, notifications, bug reports and the connection status.
+- **Generate on phones**: generation tabs and Profiles, the mode switcher and the Canvas Editor toggle are in the header, and Prompt, Model, Library and Generate are always visible in a dock above the bar. Prompts come first.
+- **Features phones were missing**: Image to 3D, Scenes, Interrogate, the Photopea editor, Make 3D from the gallery, artist "Insert tag" and local previews, and the startup and update notices.
+
+### Fixes
+- **Video and Image Edit with a NovelAI model**: the Video page and the Image Edit tab no longer disappear while a NovelAI model is selected. Video runs on ComfyUI as always, and a plain Image Edit run on NovelAI stops with a message instead of spending Anlas.
+- **No raw HTML in error messages**: when NovelAI (or CivitAI, ElevenLabs, fal.ai, an LLM provider, xAI sign-in or a remote ComfyUI) answers with a web page instead of an API error, you now get one short sentence instead of a screen of HTML. A failed Anlas refresh keeps the last balance, shows a warning icon with the reason, and retries on its own.
+
+---
+
 ## What's New in v2.3.34
 
 ### New models
