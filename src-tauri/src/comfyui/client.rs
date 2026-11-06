@@ -103,7 +103,7 @@ fn classify_upload_error(url: &str, status: u16, body: &str) -> AppError {
     } else {
         AppError::ApiError {
             status,
-            message: body.to_string(),
+            message: crate::http_error::readable_body("ComfyUI", status, body),
         }
     }
 }

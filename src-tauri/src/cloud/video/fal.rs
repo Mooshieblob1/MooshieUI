@@ -414,6 +414,9 @@ fn classify_error(status: u16, body: &str) -> ApiFailure {
         401 | 403 => "fal.ai rejected the API key. Check it in Settings.".to_string(),
         402 => "Not enough fal.ai balance for this video.".to_string(),
         429 => "fal.ai is rate limiting this account. Try again shortly.".to_string(),
+        _ if crate::http_error::is_web_page(body) => {
+            crate::http_error::readable_body("fal.ai", status, body)
+        }
         _ if message.is_empty() => format!("fal.ai request failed (HTTP {status})."),
         _ => format!("fal.ai: {message}"),
     };

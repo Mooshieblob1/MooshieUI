@@ -1863,12 +1863,12 @@ export async function getGpuStats(): Promise<GpuStats[]> {
     return ipcInvoke("get_gpu_stats");
   }
   if (!isBrowserMode) return [];
-  const { getAuthToken } = await import("./ipc.js");
+  const { getAuthToken, responseErrorText } = await import("./ipc.js");
   const headers: Record<string, string> = {};
   const token = getAuthToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const resp = await fetch("/internal-api/_gpu_stats", { headers });
-  if (!resp.ok) throw new Error(await resp.text());
+  if (!resp.ok) throw new Error(await responseErrorText(resp));
   return resp.json();
 }
 export interface H3UpscalerStatus {

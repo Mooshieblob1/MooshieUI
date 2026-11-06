@@ -25,7 +25,7 @@
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
@@ -1178,10 +1178,7 @@
         const resp = await fetch("/internal-api/_check_update", {
           headers: authHeaders(),
         });
-        if (!resp.ok) {
-          const message = await resp.text();
-          throw new Error(message || `Update check failed (${resp.status})`);
-        }
+        if (!resp.ok) throw new Error(await responseErrorText(resp));
         const data = await resp.json();
         if (data.error) throw new Error(String(data.error));
         if (data.update_available) {

@@ -29,6 +29,9 @@ use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 // failed there with "model doesn't exist". See `upscale` for the current body.
 const IMAGE_BASE: &str = "https://image.novelai.net";
 
+/// Sent on every NovelAI request. See `NovelAiClient::request`.
+const USER_AGENT: &str = concat!("MooshieUI/", env!("CARGO_PKG_VERSION"));
+
 /// Model the upscale endpoint runs, as NovelAI's web client sends it.
 const UPSCALE_MODEL: &str = "nai-diffusion-5-curated";
 /// Blur NovelAI's web client declares for an upscale source: none.
@@ -64,12 +67,24 @@ impl<'a> NovelAiClient<'a> {
         Ok(Self { http, api_key })
     }
 
+    /// Every NovelAI call starts here, so each carries the key and a real
+    /// User-Agent. reqwest sends no User-Agent by default, and Cloudflare in
+    /// front of image.novelai.net is far more likely to turn away a request
+    /// that has none (a 403 with an HTML block page instead of JSON).
+    fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
+        self.http
+            .request(method, url)
+            .bearer_auth(self.api_key)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+    }
+
     /// Generate images and return the decoded PNG bytes, one entry per sample.
     pub async fn generate(&self, body: &Value) -> Result<Vec<Vec<u8>>, AppError> {
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/generate-image"))
-            .bearer_auth(self.api_key)
+            .request(
+                reqwest::Method::POST,
+                format!("{IMAGE_BASE}/ai/generate-image"),
+            )
             .timeout(GENERATION_TIMEOUT)
             .json(body)
             .send()
@@ -90,9 +105,7 @@ impl<'a> NovelAiClient<'a> {
     /// identically.
     pub async fn upscale(&self, image: &str) -> Result<Vec<Vec<u8>>, AppError> {
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/upscale"))
-            .bearer_auth(self.api_key)
+            .request(reqwest::Method::POST, format!("{IMAGE_BASE}/ai/upscale"))
             .timeout(GENERATION_TIMEOUT)
             .json(&upscale_body(image))
             .send()
@@ -126,9 +139,10 @@ impl<'a> NovelAiClient<'a> {
         }
 
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/generate-image-stream"))
-            .bearer_auth(self.api_key)
+            .request(
+                reqwest::Method::POST,
+                format!("{IMAGE_BASE}/ai/generate-image-stream"),
+            )
             .timeout(GENERATION_TIMEOUT)
             .json(&streaming_body)
             .send()
@@ -208,9 +222,10 @@ impl<'a> NovelAiClient<'a> {
         information_extracted: f64,
     ) -> Result<String, AppError> {
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/encode-vibe"))
-            .bearer_auth(self.api_key)
+            .request(
+                reqwest::Method::POST,
+                format!("{IMAGE_BASE}/ai/encode-vibe"),
+            )
             .timeout(ENCODE_TIMEOUT)
             .json(&serde_json::json!({
                 "image": image,
@@ -240,9 +255,10 @@ impl<'a> NovelAiClient<'a> {
     /// is a list even though four of the six tools only ever fill one slot.
     pub async fn augment_image(&self, body: &Value) -> Result<Vec<Vec<u8>>, AppError> {
         let res = self
-            .http
-            .post(format!("{IMAGE_BASE}/ai/augment-image"))
-            .bearer_auth(self.api_key)
+            .request(
+                reqwest::Method::POST,
+                format!("{IMAGE_BASE}/ai/augment-image"),
+            )
             .timeout(GENERATION_TIMEOUT)
             .json(body)
             .send()
@@ -262,9 +278,10 @@ impl<'a> NovelAiClient<'a> {
     /// Fetch the subscription record backing the Anlas and Opus readouts.
     pub async fn subscription(&self) -> Result<Subscription, AppError> {
         let res = self
-            .http
-            .get(format!("{IMAGE_BASE}/user/subscription"))
-            .bearer_auth(self.api_key)
+            .request(
+                reqwest::Method::GET,
+                format!("{IMAGE_BASE}/user/subscription"),
+            )
             .timeout(ACCOUNT_TIMEOUT)
             .send()
             .await?;
@@ -319,24 +336,19 @@ async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, AppEr
         return Ok(res);
     }
 
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let body = res.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<Value>(&body)
-        .ok()
-        .and_then(|v| {
-            v.get("message")
-                .or_else(|| v.get("error"))
-                .and_then(|m| m.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| body.chars().take(200).collect());
-
-    let message = match status.as_u16() {
-        401 => "NovelAI rejected the API key. Check it in Settings.".to_string(),
-        402 => "Not enough Anlas for this generation.".to_string(),
-        429 => "NovelAI is rate limiting this account. Try again shortly.".to_string(),
-        _ if detail.is_empty() => "NovelAI request failed.".to_string(),
-        _ => detail,
-    };
+    let message = error_message(status.as_u16(), &content_type, &body);
+    if looks_like_html(&content_type, &body) {
+        // The page itself is useless on screen but says who answered (a
+        // Cloudflare ray ID, a challenge), so the log keeps the start of it.
+        crate::http_error::readable_body("NovelAI", status.as_u16(), &body);
+    }
 
     Err(AppError::ApiError {
         status: status.as_u16(),
@@ -344,9 +356,85 @@ async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, AppEr
     })
 }
 
+/// A web page rather than an API answer: Cloudflare's block, challenge and
+/// 5xx pages, or a proxy's. NovelAI's API itself only ever answers in JSON.
+fn looks_like_html(content_type: &str, body: &str) -> bool {
+    content_type.to_ascii_lowercase().contains("text/html") || crate::http_error::is_web_page(body)
+}
+
+/// What the user reads for a failed NovelAI call. Pure, for the tests.
+fn error_message(status: u16, content_type: &str, body: &str) -> String {
+    match status {
+        401 => return "NovelAI rejected the API key. Check it in Settings.".to_string(),
+        402 => return "Not enough Anlas for this generation.".to_string(),
+        429 => return "NovelAI is rate limiting this account. Try again shortly.".to_string(),
+        _ => {}
+    }
+
+    // Never put a web page on screen. A 403 page is Cloudflare refusing the
+    // connection (it comes and goes, often on a VPN or a shared IP); anything
+    // else is NovelAI or Cloudflare being down.
+    if looks_like_html(content_type, body) {
+        return crate::http_error::web_page_message("NovelAI", status);
+    }
+
+    let detail = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("message")
+                .or_else(|| v.get("error"))
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| body.trim().chars().take(200).collect());
+
+    if detail.is_empty() {
+        "NovelAI request failed.".to_string()
+    } else {
+        detail
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The start of the page Blob's Anlas row printed verbatim.
+    const CLOUDFLARE_PAGE: &str = "<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->";
+
+    #[test]
+    fn a_cloudflare_block_page_never_reaches_the_screen() {
+        for content_type in ["text/html; charset=UTF-8", ""] {
+            let message = error_message(403, content_type, CLOUDFLARE_PAGE);
+            assert!(!message.contains('<'), "{message}");
+            assert!(message.contains("Cloudflare"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_5xx_page_reads_as_novelai_being_down() {
+        let message = error_message(502, "text/html", "<html><body>Bad gateway</body></html>");
+        assert_eq!(
+            message,
+            "NovelAI is not responding right now (HTTP 502). Try again shortly."
+        );
+    }
+
+    #[test]
+    fn json_errors_keep_novelai_s_own_message() {
+        let body = r#"{"statusCode":403,"message":"Subscription required"}"#;
+        assert_eq!(
+            error_message(403, "application/json", body),
+            "Subscription required"
+        );
+        assert_eq!(error_message(500, "", ""), "NovelAI request failed.");
+    }
+
+    #[test]
+    fn known_statuses_get_fixed_wording_even_as_html() {
+        assert!(error_message(429, "text/html", CLOUDFLARE_PAGE).contains("rate limiting"));
+        assert!(error_message(401, "", "").contains("API key"));
+    }
 
     #[test]
     fn a_blank_key_fails_before_any_request() {

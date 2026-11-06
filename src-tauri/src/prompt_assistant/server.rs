@@ -942,12 +942,7 @@ async fn error_detail(mut resp: reqwest::Response) -> String {
         Ok((bytes, _)) => bytes,
         Err(_) => return String::new(),
     };
-    let detail: String = String::from_utf8_lossy(&body).chars().take(300).collect();
-    if detail.trim().is_empty() {
-        String::new()
-    } else {
-        format!(": {detail}")
-    }
+    crate::http_error::detail_suffix(resp.status().as_u16(), &String::from_utf8_lossy(&body))
 }
 
 /// Whether the body of `resp` may be quoted back in an error message. Checks

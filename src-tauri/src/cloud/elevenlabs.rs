@@ -465,6 +465,9 @@ fn classify_error(status: u16, body: &str) -> ApiFailure {
             "All your ElevenLabs voice slots are in use. Delete a voice you no longer need, or pick an existing one.".to_string()
         }
         (429, _) => "ElevenLabs is rate limiting this account. Try again shortly.".to_string(),
+        _ if crate::http_error::is_web_page(body) => {
+            crate::http_error::readable_body("ElevenLabs", status, body)
+        }
         _ if detail_message.is_empty() => format!("ElevenLabs request failed (HTTP {status})."),
         _ => format!("ElevenLabs: {detail_message}"),
     };
