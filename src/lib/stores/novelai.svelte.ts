@@ -10,6 +10,25 @@ import {
 const RETRY_AFTER_FAILURE_MS = 30_000;
 
 /**
+ * Background retries after a failed fetch: 30 s, then doubling, at most
+ * 5 minutes apart and 5 tries in a row. NovelAI's Cloudflare front turns
+ * requests away now and then (a 403 block page), and that clears on its own.
+ */
+const BACKGROUND_RETRY_BASE_MS = 30_000;
+const BACKGROUND_RETRY_MAX_MS = 5 * 60_000;
+const BACKGROUND_RETRY_LIMIT = 5;
+
+/** Failures that retrying cannot fix: a bad key or an empty balance. */
+function isPermanentFailure(message: string): boolean {
+  return /^API error \((401|402)\)/.test(message);
+}
+
+/** The backend's "API error (403): ..." prefix is noise on screen. */
+function shortError(message: string): string {
+  return message.replace(/^API error \(\d+\):\s*/, "");
+}
+
+/**
  * Whether a NovelAI API key is stored, kept reactive.
  *
  * The config itself is a plain cache in `utils/api.ts` with no change event, so
@@ -64,6 +83,8 @@ class NovelAiStore {
    */
   private lastFetchFailed = false;
   private lastFailureAt = 0;
+  private consecutiveFailures = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Anlas is the monthly allowance plus any purchased balance. */
   get anlas(): number {
@@ -152,6 +173,8 @@ class NovelAiStore {
     this.subscription = null;
     this.subscriptionError = null;
     this.attempted = false;
+    this.cancelRetry();
+    this.consecutiveFailures = 0;
     if (this.apiKeyConfigured) await this.refreshSubscription();
   }
 
@@ -177,23 +200,46 @@ class NovelAiStore {
    */
   async refreshSubscription(): Promise<void> {
     if (!this.apiKeyConfigured || this.subscriptionLoading) return;
+    this.cancelRetry();
     this.attempted = true;
     this.subscriptionLoading = true;
-    this.subscriptionError = null;
     try {
       this.subscription = await novelaiSubscription();
+      this.subscriptionError = null;
       this.lastFetchFailed = false;
+      this.consecutiveFailures = 0;
     } catch (e) {
-      this.subscription = null;
-      this.subscriptionError = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : String(e);
+      // The last good record stays: a balance a few minutes old beats a
+      // blank one, and the Opus discount in the cost estimate depends on it.
+      this.subscriptionError = shortError(message);
       this.lastFetchFailed = true;
       this.lastFailureAt = Date.now();
+      this.consecutiveFailures += 1;
       // Into the ring buffer, so an exported log shows why the Anlas
-      // readout is blank instead of nothing at all.
+      // readout is stale or blank.
       console.error("NovelAI subscription fetch failed:", e);
+      if (!isPermanentFailure(message)) this.scheduleRetry();
     } finally {
       this.subscriptionLoading = false;
     }
+  }
+
+  private scheduleRetry() {
+    if (this.consecutiveFailures > BACKGROUND_RETRY_LIMIT) return;
+    const delay = Math.min(
+      BACKGROUND_RETRY_BASE_MS * 2 ** (this.consecutiveFailures - 1),
+      BACKGROUND_RETRY_MAX_MS,
+    );
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refreshSubscription();
+    }, delay);
+  }
+
+  private cancelRetry() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 }
 

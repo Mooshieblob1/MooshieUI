@@ -30,8 +30,8 @@
   <!-- One quiet line above Generate: Anlas, then the Opus allowance as a small bar. -->
   <div class="mb-2.5 flex items-center gap-2 text-xs">
     <span class="text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
-    <span class="font-mono text-neutral-200">{novelai.subscription ? novelai.anlas.toLocaleString() : '--'}</span>
-    {#if allowance && !novelai.subscriptionError}
+    <span class="font-mono {novelai.subscriptionError ? 'text-neutral-500' : 'text-neutral-200'}">{novelai.subscription ? novelai.anlas.toLocaleString() : '--'}</span>
+    {#if allowance}
       {@const allowanceText = allowance.isEmpty
         ? locale.t('settings.novelai.allowance_empty')
         : locale.t('settings.novelai.allowance_remaining', {
@@ -53,6 +53,21 @@
         <span class="font-mono {allowance.isLow ? 'text-amber-400' : 'text-neutral-300'}">{allowance.percent}%</span>
       </span>
     {/if}
+    {#if novelai.subscriptionError}
+      <!-- Stale or missing balance: an icon with the reason on hover, never the raw error text. -->
+      <span
+        class="flex shrink-0 text-amber-400"
+        title={novelai.subscriptionError}
+        aria-label={novelai.subscriptionError}
+        role="img"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </span>
+    {/if}
     <button
       class="ml-auto rounded p-1 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
       disabled={novelai.subscriptionLoading}
@@ -67,7 +82,4 @@
       </svg>
     </button>
   </div>
-  {#if novelai.subscriptionError}
-    <p class="-mt-1.5 mb-2 text-[11px] text-red-400">{novelai.subscriptionError}</p>
-  {/if}
 {/if}
