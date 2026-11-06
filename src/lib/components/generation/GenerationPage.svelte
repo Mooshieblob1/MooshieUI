@@ -2584,35 +2584,26 @@
 
     <!-- Bottom panel (LoRAs / Images / Prompts) — full width, below the side panels -->
     {#if !mobileFriendly && !canvas.isCanvasMode}
-      <div class="relative shrink-0 h-3 flex flex-col group">
+      <!-- Bottom divider: drag to resize (the collapse button sits at the right of the drawer's tab row) -->
+      {#if bottomCollapsed}
+        <div class="shrink-0 h-3"></div>
+      {:else}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="flex-1 flex flex-col justify-center cursor-row-resize"
+          class="shrink-0 h-3 flex flex-col justify-center cursor-row-resize group"
           onmousedown={(e) => onDividerDown("bottom", e)}
           ondblclick={resetBottomHeight}
           title={locale.t('generation.drag_to_resize')}
         >
           <div class="h-0.5 rounded-full transition-colors {dragging === 'bottom' ? 'bg-indigo-500' : 'bg-transparent group-hover:bg-neutral-600'}"></div>
         </div>
-        <button
-          onclick={toggleBottomPanel}
-          class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 h-4 w-11 flex items-center justify-center rounded-md border transition-colors {bottomCollapsed
-            ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
-            : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800'}"
-          title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
-          aria-label={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
-      {#if !bottomCollapsed}
-        <div
-          class="overflow-hidden shrink-0 min-w-0 rounded-2xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))]"
-          style="height: {bottomHeight}px"
-        >
-          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
-        </div>
       {/if}
+      <div
+        class="overflow-hidden shrink-0 min-w-0 rounded-2xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))]"
+        style={bottomCollapsed ? undefined : `height: ${bottomHeight}px`}
+      >
+        <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} collapsed={bottomCollapsed} ontogglecollapse={toggleBottomPanel} />
+      </div>
     {/if}
   </div>
 
