@@ -27,48 +27,47 @@
 </script>
 
 {#if show}
-  <div class="mb-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2.5 py-1.5 space-y-1">
-    <div class="flex items-center justify-between gap-2">
-      <span class="text-[10px] text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
-      <div class="flex items-center gap-1.5">
-        <span class="text-xs font-mono text-neutral-200">
-          {novelai.subscription ? novelai.anlas.toLocaleString() : '--'}
-        </span>
-        <button
-          class="p-0.5 rounded text-neutral-500 hover:text-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          disabled={novelai.subscriptionLoading}
-          title={locale.t('settings.novelai.refresh_account')}
-          aria-label={locale.t('settings.novelai.refresh_account')}
-          onclick={() => { void novelai.refreshSubscription(); }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 {novelai.subscriptionLoading ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    {#if novelai.subscriptionError}
-      <p class="text-[10px] text-red-400">{novelai.subscriptionError}</p>
-    {:else if allowance}
-      <div class="h-1 w-full rounded-full bg-neutral-800 overflow-hidden">
-        <div
-          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : allowance.isBonus ? 'bg-emerald-500' : 'bg-teal-500'}"
-          style="width: {allowance.barPercent}%"
-        ></div>
-      </div>
-      <p class="text-[10px] {allowance.isLow ? 'text-amber-400' : 'text-neutral-500'}">
-        {#if allowance.isEmpty}
-          {locale.t('settings.novelai.allowance_empty')}
-        {:else}
-          {locale.t('settings.novelai.allowance_remaining', {
+  <!-- One quiet line above Generate: Anlas, then the Opus allowance as a small bar. -->
+  <div class="mb-2.5 flex items-center gap-2 text-xs">
+    <span class="text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
+    <span class="font-mono text-neutral-200">{novelai.subscription ? novelai.anlas.toLocaleString() : '--'}</span>
+    {#if allowance && !novelai.subscriptionError}
+      {@const allowanceText = allowance.isEmpty
+        ? locale.t('settings.novelai.allowance_empty')
+        : locale.t('settings.novelai.allowance_remaining', {
             percent: allowance.percent,
             images: allowance.approxImages.toLocaleString(),
           })}
-        {/if}
-      </p>
+      <span class="text-neutral-600" aria-hidden="true">·</span>
+      <span
+        class="flex min-w-0 items-center gap-1.5"
+        title="{locale.t('settings.novelai.allowance_title')}: {allowanceText}"
+        aria-label="{locale.t('settings.novelai.allowance_title')}: {allowanceText}"
+      >
+        <span class="h-1 w-10 shrink-0 overflow-hidden rounded-full bg-neutral-800">
+          <span
+            class="block h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : allowance.isBonus ? 'bg-emerald-500' : 'bg-teal-500'}"
+            style="width: {allowance.barPercent}%"
+          ></span>
+        </span>
+        <span class="font-mono {allowance.isLow ? 'text-amber-400' : 'text-neutral-300'}">{allowance.percent}%</span>
+      </span>
     {/if}
+    <button
+      class="ml-auto rounded p-1 text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
+      disabled={novelai.subscriptionLoading}
+      title={locale.t('settings.novelai.refresh_account')}
+      aria-label={locale.t('settings.novelai.refresh_account')}
+      onclick={() => { void novelai.refreshSubscription(); }}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 {novelai.subscriptionLoading ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <polyline points="1 20 1 14 7 14"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </svg>
+    </button>
   </div>
+  {#if novelai.subscriptionError}
+    <p class="-mt-1.5 mb-2 text-[11px] text-red-400">{novelai.subscriptionError}</p>
+  {/if}
 {/if}

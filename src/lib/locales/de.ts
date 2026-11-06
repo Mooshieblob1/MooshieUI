@@ -959,6 +959,8 @@ const de: Record<string, string> = {
   "generation.dimensions.recommended": "Empfohlen für {model}: {res}",
   "generation.dimensions.result": "Ergebnis",
   "generation.swap_panels": "Linkes/rechtes Panel tauschen",
+  "generation.batch_fewer": "Weniger Bilder",
+  "generation.batch_more": "Mehr Bilder",
   "generation.layout.title": "Layout",
   "generation.layout.all_left": "Alles links",
   "generation.layout.all_right": "Alles rechts",

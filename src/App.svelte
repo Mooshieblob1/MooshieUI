@@ -4019,11 +4019,14 @@
   {#if currentPage === "generate"}
     <GenerationTabStrip />
   {/if}
-  <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
+  <!-- The Generate page draws its own cards (side panels, preview, drawer), so it skips the frame. -->
+  <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden {currentPage === 'generate'
+    ? ''
+    : 'md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30'}">
     <UpdateNotification {userRole} />
     <DownloadBanner />
     {@render startupBanner(false)}
-    <div class="relative flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950" inert={startup.locked}>
+    <div class="relative flex-1 overflow-hidden md:min-h-0 {currentPage === 'generate' ? '' : 'md:rounded-xl md:bg-neutral-950'}" inert={startup.locked}>
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "music"}

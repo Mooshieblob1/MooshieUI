@@ -74,9 +74,9 @@
 <button
   bind:this={anchor}
   type="button"
-  class="flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors {open
-    ? 'border-indigo-500/60 bg-neutral-800 text-neutral-100'
-    : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:border-neutral-700 hover:text-neutral-100'}"
+  class="flex h-9 shrink-0 items-center gap-1.5 rounded-[10px] border px-3 text-[13px] transition-colors {open
+    ? 'border-neutral-600 bg-neutral-800/70 text-neutral-50'
+    : 'border-neutral-800 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200'}"
   title={locale.t("generation.profiles.hint")}
   aria-haspopup="dialog"
   aria-expanded={open}
