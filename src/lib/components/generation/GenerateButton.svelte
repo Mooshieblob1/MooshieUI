@@ -678,12 +678,50 @@
   <NovelAiUsage />
 {/if}
 
-<div class="relative flex {compact ? 'gap-1.5' : 'gap-3'}">
+<div class="relative flex items-center {compact ? 'gap-1.5' : 'gap-2'}">
+  {#if !compact && generation.mode !== "video"}
+    <!-- Batch size, the same value as the Sampler section's Batch slider. -->
+    <div class="flex h-11 shrink-0 items-center rounded-xl border border-neutral-700" role="group" aria-label={locale.t('generation.sampler.batch')} title={locale.t('generation.sampler.batch')}>
+      <button
+        type="button"
+        class="flex h-full w-7 items-center justify-center rounded-l-xl text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        aria-label={locale.t('generation.batch_fewer')}
+        disabled={generation.batchSize <= 1}
+        onclick={() => (generation.batchSize = Math.max(1, generation.batchSize - 1))}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/></svg>
+      </button>
+      <span class="w-5 text-center font-mono text-sm tabular-nums text-neutral-100">{generation.batchSize}</span>
+      <button
+        type="button"
+        class="flex h-full w-7 items-center justify-center rounded-r-xl text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        aria-label={locale.t('generation.batch_more')}
+        disabled={generation.batchSize >= 8}
+        onclick={() => (generation.batchSize = Math.min(8, generation.batchSize + 1))}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      </button>
+    </div>
+  {/if}
+
+  {#if !compact && progress.isGenerating}
+    <!-- Stop: click skips the current image, right-click cancels everything. -->
+    <button
+      onclick={handleCancelCurrent}
+      oncontextmenu={handleCancelAll}
+      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-700 text-neutral-200 transition-colors hover:border-red-500/70 hover:bg-red-500/10 hover:text-red-300"
+      title={locale.t('generation.cancel_hint')}
+      aria-label={locale.t('generation.cancel_hint')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+    </button>
+  {/if}
+
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
     title={generateButtonTitle}
-    class="min-w-0 flex-1 py-3 rounded-xl font-semibold text-sm transition-colors {compact ? 'px-2 truncate' : ''}
+    class="min-w-0 flex-1 rounded-xl transition-colors {compact ? 'py-3 px-2 truncate font-semibold text-sm' : 'h-11 px-3 font-bold text-[15px]'}
       {canGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
         : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'}"
@@ -700,7 +738,7 @@
       {locale.t('generation.generate')}
     {/if}
     {#if anlasEstimate !== null}
-      <span class="ml-2 text-[11px] font-normal opacity-80" title={locale.t('generation.novelai.cost_tip')}>
+      <span class="ml-2 rounded-md bg-black/15 px-1.5 py-0.5 align-middle text-[11px] font-semibold" title={locale.t('generation.novelai.cost_tip')}>
         {locale.t('generation.novelai.cost_badge', { anlas: anlasEstimate })}
       </span>
     {/if}
@@ -711,7 +749,7 @@
       onclick={() => queue.togglePanel()}
       title={locale.t("queue.panel.title")}
       aria-label={locale.t("queue.panel.title")}
-      class="px-3 py-3 rounded-xl font-semibold text-sm bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors relative"
+      class="{compact ? 'py-3' : 'h-11'} px-3 rounded-xl font-semibold text-sm bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors relative"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
@@ -723,32 +761,33 @@
         </span>
       {/if}
     </button>
-    <QueuePanel />
   {/if}
 
-  {#if progress.isGenerating}
-    <button
-      onclick={handleCancelCurrent}
-      oncontextmenu={handleCancelAll}
-      class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
-      title={locale.t('generation.cancel_hint')}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
-  {:else}
-    <button
-      disabled
-      title={locale.t('generation.cancel_hint')}
-      class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    </button>
+  {#if compact}
+    {#if progress.isGenerating}
+      <button
+        onclick={handleCancelCurrent}
+        oncontextmenu={handleCancelAll}
+        class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
+        title={locale.t('generation.cancel_hint')}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    {:else}
+      <button
+        disabled
+        title={locale.t('generation.cancel_hint')}
+        class="{compact ? 'px-3.5' : 'px-5'} py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    {/if}
   {/if}
 </div>
 

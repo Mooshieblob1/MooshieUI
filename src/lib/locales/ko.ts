@@ -938,6 +938,8 @@ const ko: Record<string, string> = {
   "generation.dimensions.recommended": "{model} 권장: {res}",
   "generation.dimensions.result": "결과",
   "generation.swap_panels": "왼쪽/오른쪽 패널 전환",
+  "generation.batch_fewer": "이미지 수 줄이기",
+  "generation.batch_more": "이미지 수 늘리기",
   "generation.layout.title": "레이아웃",
   "generation.layout.all_left": "모두 왼쪽으로",
   "generation.layout.all_right": "모두 오른쪽으로",

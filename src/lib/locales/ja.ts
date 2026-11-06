@@ -950,6 +950,8 @@ const ja: Record<string, string> = {
   "generation.dimensions.recommended": "{model}の推奨: {res}",
   "generation.dimensions.result": "結果",
   "generation.swap_panels": "左右パネルを入れ替える",
+  "generation.batch_fewer": "枚数を減らす",
+  "generation.batch_more": "枚数を増やす",
   "generation.layout.title": "レイアウト",
   "generation.layout.all_left": "すべて左側",
   "generation.layout.all_right": "すべて右側",

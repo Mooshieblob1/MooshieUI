@@ -1072,6 +1072,8 @@ const en: Record<string, string> = {
   "generation.dimensions.recommended": "Recommended for {model}: {res}",
   "generation.dimensions.result": "Result",
   "generation.swap_panels": "Swap left/right panels",
+  "generation.batch_fewer": "Fewer images",
+  "generation.batch_more": "More images",
   "generation.layout.title": "Layout",
   "generation.layout.all_left": "Everything on the left",
   "generation.layout.all_right": "Everything on the right",

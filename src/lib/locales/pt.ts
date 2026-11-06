@@ -938,6 +938,8 @@ const pt: Record<string, string> = {
   "generation.dimensions.recommended": "Recomendado para {model}: {res}",
   "generation.dimensions.result": "Resultado",
   "generation.swap_panels": "Trocar painéis esquerdo/direito",
+  "generation.batch_fewer": "Menos imagens",
+  "generation.batch_more": "Mais imagens",
   "generation.layout.title": "Layout",
   "generation.layout.all_left": "Tudo à esquerda",
   "generation.layout.all_right": "Tudo à direita",

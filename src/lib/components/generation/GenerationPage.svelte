@@ -1750,7 +1750,7 @@
   {/snippet}
 
   {#snippet dimensionsSection()}
-    <div bind:this={sectionRefs['dimensions']} data-drop-section="dimensions" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['dimensions']} data-drop-section="dimensions" class="relative rounded-xl bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "dimensions")}
       ondragover={(e) => onMetadataDragOver(e, "dimensions")}
       ondragleave={(e) => onMetadataDragLeave(e, "dimensions")}
@@ -1773,7 +1773,7 @@
   {/snippet}
 
   {#snippet promptsSection()}
-    <div bind:this={sectionRefs['prompts']} data-drop-section="prompts" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['prompts']} data-drop-section="prompts" class="relative rounded-xl bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "prompts")}
       ondragover={(e) => onMetadataDragOver(e, "prompts")}
       ondragleave={(e) => onMetadataDragLeave(e, "prompts")}
@@ -1799,7 +1799,7 @@
   {/snippet}
 
   {#snippet imageInputsSection()}
-    <div bind:this={sectionRefs['imageInputs']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['imageInputs']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("imageInputs", imageSectionOpen, () => (imageSectionOpen = !imageSectionOpen))}
       {#if imageSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-2">
@@ -2014,7 +2014,7 @@
   {/snippet}
 
   {#snippet inpaintLayersSection()}
-    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("inpaintLayers", layersSectionOpen, () => (layersSectionOpen = !layersSectionOpen))}
       {#if layersSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-2">
@@ -2064,7 +2064,7 @@
   {/snippet}
 
   {#snippet generationSettingsSection()}
-    <div bind:this={sectionRefs['generationSettings']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['generationSettings']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("generationSettings", controlsSectionOpen, () => (controlsSectionOpen = !controlsSectionOpen))}
       {#if controlsSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2083,7 +2083,7 @@
   {/snippet}
 
   {#snippet modelSection()}
-    <div bind:this={sectionRefs['model']} data-drop-section="model" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['model']} data-drop-section="model" class="relative rounded-xl bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "model")}
       ondragover={(e) => onMetadataDragOver(e, "model")}
       ondragleave={(e) => onMetadataDragLeave(e, "model")}
@@ -2106,7 +2106,7 @@
   {/snippet}
 
   {#snippet samplerSection()}
-    <div bind:this={sectionRefs['sampler']} data-drop-section="sampler" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['sampler']} data-drop-section="sampler" class="relative rounded-xl bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "sampler")}
       ondragover={(e) => onMetadataDragOver(e, "sampler")}
       ondragleave={(e) => onMetadataDragLeave(e, "sampler")}
@@ -2129,7 +2129,7 @@
   {/snippet}
 
   {#snippet novelaiSection()}
-    <div bind:this={sectionRefs['novelai']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'novelai' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['novelai']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'novelai' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("novelai", novelaiSectionOpen, () => (novelaiSectionOpen = !novelaiSectionOpen))}
       {#if novelaiSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2140,7 +2140,7 @@
   {/snippet}
 
   {#snippet naiFaceDetailSection()}
-    <div bind:this={sectionRefs['naiFaceDetail']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'naiFaceDetail' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['naiFaceDetail']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'naiFaceDetail' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("naiFaceDetail", naiFaceDetailSectionOpen, () => (naiFaceDetailSectionOpen = !naiFaceDetailSectionOpen))}
       {#if naiFaceDetailSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2151,7 +2151,7 @@
   {/snippet}
 
   {#snippet controlnetSection()}
-    <div bind:this={sectionRefs['controlnet']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['controlnet']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("controlnet", controlnetSectionOpen, () => (controlnetSectionOpen = !controlnetSectionOpen))}
       {#if controlnetSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2162,7 +2162,7 @@
   {/snippet}
 
   {#snippet styleTransferSection()}
-    <div bind:this={sectionRefs['styleTransfer']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'styleTransfer' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['styleTransfer']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'styleTransfer' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("styleTransfer", styleTransferSectionOpen, () => (styleTransferSectionOpen = !styleTransferSectionOpen))}
       {#if styleTransferSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2173,7 +2173,7 @@
   {/snippet}
 
   {#snippet styleRefSection()}
-    <div bind:this={sectionRefs['styleRef']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'styleRef' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['styleRef']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'styleRef' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("styleRef", styleRefSectionOpen, () => (styleRefSectionOpen = !styleRefSectionOpen))}
       {#if styleRefSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2184,7 +2184,7 @@
   {/snippet}
 
   {#snippet imageEditSection()}
-    <div bind:this={sectionRefs['imageEdit']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'imageEdit' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['imageEdit']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'imageEdit' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("imageEdit", imageEditSectionOpen, () => (imageEditSectionOpen = !imageEditSectionOpen))}
       {#if imageEditSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2195,7 +2195,7 @@
   {/snippet}
 
   {#snippet videoSettingsSection()}
-    <div bind:this={sectionRefs['videoSettings']} class="rounded-xl border border-neutral-800 bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'videoSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['videoSettings']} class="rounded-xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'videoSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       {@render sectionHeader("videoSettings", videoSettingsSectionOpen, () => (videoSettingsSectionOpen = !videoSettingsSectionOpen))}
       <!-- Keep readiness probes and installation listeners alive while collapsed. -->
       <div hidden={!videoSettingsSectionOpen} class="px-3 pb-3 pt-0.5 space-y-3">
@@ -2205,7 +2205,7 @@
   {/snippet}
 
   {#snippet facefixSection()}
-    <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-xl bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "facefix")}
       ondragover={(e) => onMetadataDragOver(e, "facefix")}
       ondragleave={(e) => onMetadataDragLeave(e, "facefix")}
@@ -2228,7 +2228,7 @@
   {/snippet}
 
   {#snippet upscaleHistorySection()}
-    <div bind:this={sectionRefs['upscaleHistory']} data-drop-section="upscaleHistory" class="relative rounded-xl bg-neutral-900/60 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['upscaleHistory']} data-drop-section="upscaleHistory" class="relative rounded-xl bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "upscaleHistory")}
       ondragover={(e) => onMetadataDragOver(e, "upscaleHistory")}
       ondragleave={(e) => onMetadataDragLeave(e, "upscaleHistory")}
@@ -2381,7 +2381,7 @@
           use:wheelScrollLock
           class="{mobileFriendly
             ? 'fixed left-0 right-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
+            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-2.5 pt-2.5 flex flex-col gap-2 shrink-0 rounded-2xl border bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))]'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : mobileFriendly ? 'border-transparent' : 'border-neutral-800'} {compare.active ? 'compare-cell-glow' : ''}"
           style={mobileFriendly
             ? `top: ${mobileInsetTop}px; bottom: ${mobileInsetBottom}px; transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
             : `width: ${leftWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
@@ -2415,7 +2415,7 @@
         {/each}
 
         {#if controlsSide === "left" && !mobileFriendly}
-          <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
+          <div class="sticky bottom-0 z-20 mt-auto -mx-2.5 border-t border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] px-3.5 pt-3 pb-3.5">
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
@@ -2425,28 +2425,31 @@
     {/if}
 
     {#if !mobileFriendly && (leftHasSections || controlsSide === "left" || draggingSection)}
-      <!-- Left divider with collapse button -->
-      <div class="relative shrink-0 flex flex-col items-center group">
+      <!-- Left divider: drag to resize, button hides the side -->
+      <div class="relative shrink-0 w-3 flex group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+          class="flex-1 flex justify-center cursor-col-resize"
           onmousedown={(e) => onDividerDown("left", e)}
           ondblclick={resetLeftWidth}
           title={locale.t('generation.drag_to_resize')}
-        ></div>
+        >
+          <div class="w-0.5 rounded-full transition-colors {dragging === 'left' ? 'bg-indigo-500' : 'bg-transparent group-hover:bg-neutral-600'}"></div>
+        </div>
         <button
           onclick={toggleLeftPanel}
-          class="absolute top-1/2 -translate-y-1/2 left-0 z-20 w-6 h-12 flex items-center justify-center rounded-r border border-l-0 transition-colors {leftCollapsed
+          class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-4 h-11 flex items-center justify-center rounded-md border transition-colors {leftCollapsed
             ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
-            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
+            : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800'}"
           title={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
+          aria-label={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {leftCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {leftCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
       </div>
     {/if}
 
-    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+    <div class="flex-1 min-w-0 flex flex-col overflow-hidden {mobileFriendly ? '' : 'rounded-2xl border border-neutral-800 bg-neutral-950'}">
     {#if !mobileFriendly}
       {@render previewTopBar()}
     {/if}
@@ -2486,23 +2489,26 @@
     </div>
 
     {#if !mobileFriendly && (rightHasSections || controlsSide === "right" || draggingSection)}
-      <!-- Right divider with collapse button -->
-      <div class="relative shrink-0 flex flex-col items-center group">
+      <!-- Right divider: drag to resize, button hides the side -->
+      <div class="relative shrink-0 w-3 flex group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+          class="flex-1 flex justify-center cursor-col-resize"
           onmousedown={(e) => onDividerDown("right", e)}
           ondblclick={resetRightWidth}
           title={locale.t('generation.drag_to_resize')}
-        ></div>
+        >
+          <div class="w-0.5 rounded-full transition-colors {dragging === 'right' ? 'bg-indigo-500' : 'bg-transparent group-hover:bg-neutral-600'}"></div>
+        </div>
         <button
           onclick={toggleRightPanel}
-          class="absolute top-1/2 -translate-y-1/2 right-0 z-20 w-6 h-12 flex items-center justify-center rounded-l border border-r-0 transition-colors {rightCollapsed
+          class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-4 h-11 flex items-center justify-center rounded-md border transition-colors {rightCollapsed
             ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
-            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
+            : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800'}"
           title={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
+          aria-label={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {rightCollapsed ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {rightCollapsed ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
       </div>
     {/if}
@@ -2513,7 +2519,7 @@
         use:wheelScrollLock
         class="{mobileFriendly
           ? 'fixed left-0 right-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-          : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
+          : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-2.5 pt-2.5 flex flex-col gap-2 shrink-0 rounded-2xl border bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))]'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : mobileFriendly ? 'border-transparent' : 'border-neutral-800'} {compare.active ? 'compare-cell-glow' : ''}"
         style={mobileFriendly
           ? `top: ${mobileInsetTop}px; bottom: ${mobileInsetBottom}px; transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
           : `width: ${rightWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
@@ -2547,7 +2553,7 @@
         {/each}
 
         {#if controlsSide === "right" && !mobileFriendly}
-          <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
+          <div class="sticky bottom-0 z-20 mt-auto -mx-2.5 border-t border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))] px-3.5 pt-3 pb-3.5">
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
@@ -2578,27 +2584,30 @@
 
     <!-- Bottom panel (LoRAs / Images / Prompts) — full width, below the side panels -->
     {#if !mobileFriendly && !canvas.isCanvasMode}
-      <div class="relative shrink-0 flex items-center group">
+      <div class="relative shrink-0 h-3 flex flex-col group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+          class="flex-1 flex flex-col justify-center cursor-row-resize"
           onmousedown={(e) => onDividerDown("bottom", e)}
           ondblclick={resetBottomHeight}
           title={locale.t('generation.drag_to_resize')}
-        ></div>
+        >
+          <div class="h-0.5 rounded-full transition-colors {dragging === 'bottom' ? 'bg-indigo-500' : 'bg-transparent group-hover:bg-neutral-600'}"></div>
+        </div>
         <button
           onclick={toggleBottomPanel}
-          class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
+          class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 h-4 w-11 flex items-center justify-center rounded-md border transition-colors {bottomCollapsed
             ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
-            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
+            : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800'}"
           title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+          aria-label={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
       {#if !bottomCollapsed}
         <div
-          class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
+          class="overflow-hidden shrink-0 min-w-0 rounded-2xl border border-neutral-800 bg-[color-mix(in_srgb,var(--color-neutral-900)_60%,var(--color-neutral-950))]"
           style="height: {bottomHeight}px"
         >
           <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />

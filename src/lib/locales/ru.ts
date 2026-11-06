@@ -938,6 +938,8 @@ const ru: Record<string, string> = {
   "generation.dimensions.recommended": "Рекомендуется для {model}: {res}",
   "generation.dimensions.result": "Результат",
   "generation.swap_panels": "Поменять левую/правую панели",
+  "generation.batch_fewer": "Меньше изображений",
+  "generation.batch_more": "Больше изображений",
   "generation.layout.title": "Макет",
   "generation.layout.all_left": "Всё слева",
   "generation.layout.all_right": "Всё справа",
