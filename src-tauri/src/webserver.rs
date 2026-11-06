@@ -621,6 +621,8 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "unload_llm",
     // writes `{stem}.png` next to a shared model file, which every account sees
     "save_model_sidecar_thumbnail",
+    // downloads the shared watermark models (about 65 MB) onto the host
+    "prepare_watermark",
 ];
 
 /// Commands only an admin may run. Each one reads or writes an arbitrary host
@@ -3655,6 +3657,13 @@ async fn dispatch_command(
         "get_mcp_status" => {
             serde_json::to_value(crate::mcp::status().await).map_err(|e| e.to_string())
         }
+        "get_watermark_status" => Ok(serde_json::json!(crate::watermark::is_ready())),
+        "prepare_watermark" => {
+            crate::watermark::prepare(&state.http_client)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(crate::watermark::is_ready()))
+        }
         "set_mcp_settings" => {
             let enabled = args["enabled"].as_bool().ok_or("Missing enabled")?;
             let port = args["port"]
@@ -4221,6 +4230,7 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
                 output_template.as_deref(),
+                watermark_choice(args, username),
             )?;
             let payload = serde_json::json!({
                 "filename": result.clone(),
@@ -4274,6 +4284,7 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
                 output_template.as_deref(),
+                watermark_choice(args, username),
             )?;
             let payload = serde_json::json!({
                 "filename": result.clone(),
@@ -4333,6 +4344,7 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
                 output_template.as_deref(),
+                watermark_choice(args, username),
             )?;
             let payload = serde_json::json!({
                 "filename": result.clone(),
@@ -4407,14 +4419,23 @@ async fn dispatch_command(
         "read_image_metadata_bytes" => {
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
-            let result =
-                crate::metadata::read_image_metadata(&image_bytes).map_err(|e| e.to_string())?;
+            let dir = user_gallery_dir(username);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::watermark::read_or_recover(&image_bytes, dir.as_deref())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "read_image_metadata_path" => {
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let result = crate::metadata::read_image_metadata(&bytes).map_err(|e| e.to_string())?;
+            let dir = user_gallery_dir(username);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::watermark::read_or_recover(&bytes, dir.as_deref())
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "embed_image_metadata_bytes" => {
@@ -7967,6 +7988,19 @@ fn user_gallery_subdir(username: &str) -> Option<String> {
     is_single_safe_filename(&safe).then_some(safe)
 }
 
+/// The `watermark` flag of a save request. The owner's (no signed-in user)
+/// choice is also remembered for saves MCP makes on their behalf.
+fn watermark_choice(args: &serde_json::Value, username: Option<&str>) -> bool {
+    let enabled = args
+        .get("watermark")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if username.is_none() {
+        crate::watermark::remember_owner_choice(enabled);
+    }
+    enabled
+}
+
 /// Save image bytes to a specific gallery directory with metadata embedding.
 /// This is a per-directory variant of `commands::api::save_to_gallery_inner`.
 #[allow(clippy::too_many_arguments)]
@@ -7979,6 +8013,7 @@ pub(crate) fn save_to_gallery_in_dir(
     metadata: Option<&std::collections::HashMap<String, String>>,
     metadata_mode: Option<&str>,
     output_template: Option<&str>,
+    watermark: bool,
 ) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
@@ -8120,6 +8155,10 @@ pub(crate) fn save_to_gallery_in_dir(
         }
     }
 
+    // Watermark first (it rewrites the pixels), then embed the metadata.
+    let protected = crate::watermark::protect_for_save(bytes, watermark);
+    let bytes = protected.bytes.as_slice();
+
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
             // Byte-for-byte counterpart of the guard in `save_to_gallery_inner`:
@@ -8159,6 +8198,7 @@ pub(crate) fn save_to_gallery_in_dir(
         commands::api::write_new_gallery_file(dir, &rendered_base, ext, &final_bytes)
             .map_err(|e| e.to_string())?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
+    crate::watermark::index_saved(&path, &final_bytes, &protected);
     Ok(gallery_filename)
 }
 

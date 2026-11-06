@@ -421,6 +421,7 @@ async fn save_outputs(
             Some(&metadata),
             Some("both"),
             template.as_deref(),
+            crate::watermark::owner_choice(),
         )?;
         let payload = serde_json::json!({
             "filename": filename,

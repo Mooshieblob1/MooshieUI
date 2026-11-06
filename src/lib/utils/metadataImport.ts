@@ -612,6 +612,9 @@ export async function handleMetadataImport(
  * dropped along with it, because the dialog covers every section a drop could
  * have aimed at.
  */
+/** Key Rust adds to metadata it recovered for a stripped image. */
+const RECOVERED_KEY = "mooshie_recovered";
+
 function applyParsedMetadata(
   meta: Record<string, string> | null,
   target: DroppableSectionId | "all",
@@ -622,6 +625,18 @@ function applyParsedMetadata(
     return;
   }
 
+  // The file had no metadata of its own; Rust found its gallery original by
+  // watermark or fingerprint (src-tauri/src/watermark).
+  const recovered = meta[RECOVERED_KEY];
+  if (recovered !== undefined) {
+    meta = { ...meta };
+    delete meta[RECOVERED_KEY];
+    if (recovered === "watermark_foreign" || Object.keys(meta).length === 0) {
+      gallery.showToast(locale.t("metadata.toast.made_with_mooshieui"), "info");
+      return;
+    }
+  }
+
   if (isNovelAiMetadata(meta)) {
     novelaiImport.open(meta, source);
     return;
@@ -630,7 +645,13 @@ function applyParsedMetadata(
   if (target === "all") {
     const applied = applyAllMetadata(meta);
     if (applied.length > 0) {
-      gallery.showToast(locale.t("metadata.toast.applied_all", { fields: applied.join(", ") }), "success");
+      const key =
+        recovered === "watermark"
+          ? "metadata.toast.recovered_watermark"
+          : recovered === "fingerprint"
+            ? "metadata.toast.recovered_fingerprint"
+            : "metadata.toast.applied_all";
+      gallery.showToast(locale.t(key, { fields: applied.join(", ") }), "success");
       generation.saveSettings();
     } else {
       gallery.showToast(locale.t("metadata.toast.no_applicable"), "info");

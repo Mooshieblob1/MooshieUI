@@ -949,6 +949,8 @@ class GenerationStore {
   /** WebP is lossless VP8L and always 8-bit (no 16-bit VP8L variant exists). */
   outputFormat = $state<"png" | "jxl" | "webp">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
+  /** Weave an invisible TrustMark ID into saved images (see src-tauri/src/watermark). */
+  invisibleWatermark = $state(false);
   autoQualityTags = $state(true);
   /** UI-reveal toggle for the custom quality tags editor (values apply based on autoQualityTags). */
   customQualityTagsEnabled = $state(false);
@@ -3260,6 +3262,7 @@ class GenerationStore {
     if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
     if (saved.outputFormat === "png" || saved.outputFormat === "jxl" || saved.outputFormat === "webp") this.outputFormat = saved.outputFormat;
     if (saved.metadataMode) this.metadataMode = saved.metadataMode;
+    if (saved.invisibleWatermark !== undefined) this.invisibleWatermark = saved.invisibleWatermark;
     if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
     if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;
     if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
@@ -3424,6 +3427,7 @@ class GenerationStore {
         outputBitDepth: this.outputBitDepth,
         outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
+        invisibleWatermark: this.invisibleWatermark,
         autoQualityTags: this.autoQualityTags,
         customQualityTagsEnabled: this.customQualityTagsEnabled,
         customAnimaPositiveQuality: this.customAnimaPositiveQuality,
@@ -3599,6 +3603,7 @@ class GenerationStore {
       outputBitDepth: this.outputBitDepth,
       outputFormat: this.outputFormat,
       metadataMode: this.metadataMode,
+      invisibleWatermark: this.invisibleWatermark,
       autoQualityTags: this.autoQualityTags,
       customQualityTagsEnabled: this.customQualityTagsEnabled,
       customAnimaPositiveQuality: this.customAnimaPositiveQuality,

@@ -186,6 +186,15 @@ fn walk_boxes(bytes: &[u8]) -> (BoxList, bool) {
     (out, false)
 }
 
+/// Bits per colour sample a JXL declares (8 for an 8-bit encode, 16 for a
+/// 16-bit one). `None` when the header does not parse.
+pub fn bits_per_sample(jxl: &[u8]) -> Option<u32> {
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(jxl))
+        .ok()?;
+    Some(image.image_header().metadata.bit_depth.bits_per_sample())
+}
+
 /// Read the first `xml ` (XMP) box from a JXL container, returning its UTF-8
 /// payload if present.
 pub fn read_xmp_box(jxl: &[u8]) -> Option<String> {

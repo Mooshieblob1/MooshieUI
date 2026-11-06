@@ -145,6 +145,10 @@ fn apply_migrations(c: &Connection) {
         "ALTER TABLE images ADD COLUMN duration_seconds REAL",
         "ALTER TABLE images ADD COLUMN fps REAL",
         "ALTER TABLE images ADD COLUMN poster_path TEXT",
+        // Perceptual hash and watermark ID (`crate::watermark`), stored as
+        // the i64 bit pattern of their u64.
+        "ALTER TABLE images ADD COLUMN fingerprint INTEGER",
+        "ALTER TABLE images ADD COLUMN watermark_id INTEGER",
     ] {
         if let Err(e) = c.execute_batch(ddl) {
             let msg = e.to_string();
@@ -152,6 +156,11 @@ fn apply_migrations(c: &Connection) {
                 log::warn!("gallery_index: migration failed ({ddl}): {msg}");
             }
         }
+    }
+    if let Err(e) =
+        c.execute_batch("CREATE INDEX IF NOT EXISTS idx_images_watermark ON images(watermark_id)")
+    {
+        log::warn!("gallery_index: watermark index failed: {e}");
     }
 }
 
@@ -684,6 +693,84 @@ fn rows_for_in(c: &Connection, paths: &[PathBuf]) -> HashMap<String, IndexedImag
         .collect()
 }
 
+/// Record a saved image's fingerprint and, when it was watermarked, its
+/// watermark ID. Best-effort: errors are logged.
+pub fn set_protection(path: &Path, fingerprint: u64, watermark_id: Option<u64>) {
+    let res = with_conn(|c, _| set_protection_in(c, path, fingerprint, watermark_id));
+    if let Some(Err(e)) = res {
+        log::warn!(
+            "gallery_index: protection update failed for {}: {e}",
+            path.display()
+        );
+    }
+}
+
+fn set_protection_in(
+    c: &Connection,
+    path: &Path,
+    fingerprint: u64,
+    watermark_id: Option<u64>,
+) -> rusqlite::Result<usize> {
+    c.execute(
+        "UPDATE images SET fingerprint = ?1, watermark_id = ?2 WHERE path = ?3",
+        params![
+            fingerprint as i64,
+            watermark_id.map(|id| id as i64),
+            path.to_string_lossy()
+        ],
+    )
+}
+
+/// The image directly inside `dir` carrying watermark `id`, if any.
+pub fn path_for_watermark(id: u64, dir: &Path) -> Option<PathBuf> {
+    with_conn(|c, _| path_for_watermark_in(c, id, dir)).flatten()
+}
+
+fn path_for_watermark_in(c: &Connection, id: u64, dir: &Path) -> Option<PathBuf> {
+    let mut stmt = c
+        .prepare("SELECT path FROM images WHERE watermark_id = ?1")
+        .ok()?;
+    let rows = stmt
+        .query_map(params![id as i64], |r| r.get::<_, String>(0))
+        .ok()?;
+    let found = rows
+        .flatten()
+        .map(PathBuf::from)
+        .find(|p| p.parent() == Some(dir));
+    found
+}
+
+/// The image directly inside `dir` whose fingerprint is closest to
+/// `fingerprint`, when that is at most `max_distance` bits away. A linear scan:
+/// 100,000 rows compare in a few milliseconds.
+pub fn nearest_fingerprint(fingerprint: u64, dir: &Path, max_distance: u32) -> Option<PathBuf> {
+    with_conn(|c, _| nearest_fingerprint_in(c, fingerprint, dir, max_distance)).flatten()
+}
+
+fn nearest_fingerprint_in(
+    c: &Connection,
+    fingerprint: u64,
+    dir: &Path,
+    max_distance: u32,
+) -> Option<PathBuf> {
+    let mut stmt = c
+        .prepare(
+            "SELECT path, fingerprint FROM images \
+             WHERE fingerprint IS NOT NULL AND media_type = 'image'",
+        )
+        .ok()?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        .ok()?;
+    let nearest = rows
+        .flatten()
+        .map(|(path, fp)| ((fp as u64 ^ fingerprint).count_ones(), PathBuf::from(path)))
+        .filter(|(d, p)| *d <= max_distance && p.parent() == Some(dir))
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, p)| p);
+    nearest
+}
+
 /// Update an image's path in the index after a rename. Best-effort: errors are
 /// logged. Preserves the existing row (and its metadata/created_at) rather than
 /// dropping and re-inserting.
@@ -775,6 +862,34 @@ mod tests {
         assert_eq!(p.steps, Some(28));
         assert_eq!(p.cfg, Some(5.5));
         assert_eq!((p.width, p.height), (Some(832), Some(1216)));
+    }
+
+    #[test]
+    fn protection_lookups_stay_in_the_folder() {
+        let dir = scratch_dir("protection");
+        let other = dir.join("someone_else");
+        let c = open_index(&dir).unwrap();
+        let mine = dir.join("a.jxl");
+        let theirs = other.join("b.jxl");
+        upsert_in(&c, &mine, 10, ImageFormat::Jxl, None);
+        upsert_in(&c, &theirs, 10, ImageFormat::Jxl, None);
+        set_protection_in(&c, &mine, 0xF0F0_0000_0000_00FF, Some(7)).unwrap();
+        set_protection_in(&c, &theirs, 0xF0F0_0000_0000_00FF, Some(8)).unwrap();
+
+        assert_eq!(path_for_watermark_in(&c, 7, &dir), Some(mine.clone()));
+        assert_eq!(path_for_watermark_in(&c, 8, &dir), None);
+        assert_eq!(path_for_watermark_in(&c, 8, &other), Some(theirs.clone()));
+
+        // Three bits off is a match; far off is not.
+        assert_eq!(
+            nearest_fingerprint_in(&c, 0xF0F0_0000_0000_00F8, &dir, 10),
+            Some(mine)
+        );
+        assert_eq!(
+            nearest_fingerprint_in(&c, !0xF0F0_0000_0000_00FF, &dir, 10),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

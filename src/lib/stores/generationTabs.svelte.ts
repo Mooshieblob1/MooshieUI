@@ -18,6 +18,7 @@ const SHARED_KEYS = new Set([
   "outputBitDepth",
   "outputFormat",
   "metadataMode",
+  "invisibleWatermark",
   "autoQualityTags",
   "customQualityTagsEnabled",
   "customAnimaPositiveQuality",

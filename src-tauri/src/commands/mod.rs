@@ -25,6 +25,8 @@ pub mod video_drafts;
 pub mod video_export;
 pub mod video_interpolate;
 #[cfg(feature = "desktop")]
+pub mod watermark;
+#[cfg(feature = "desktop")]
 pub mod websocket;
 #[cfg(feature = "desktop")]
 pub mod workflow;

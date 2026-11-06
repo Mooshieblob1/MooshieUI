@@ -20,7 +20,8 @@
     type SamplingRecommendation,
   } from "../../utils/samplingRecommendation.js";
   import { connection } from "../../stores/connection.svelte.js";
-  import { checkNodeAvailable, downloadModel } from "../../utils/api.js";
+  import { checkNodeAvailable, downloadModel, getWatermarkStatus, prepareWatermark } from "../../utils/api.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
   import { ipcListen } from "../../utils/ipc.js";
   import {
     KREA_FEW_STEP_LORAS,
@@ -305,6 +306,30 @@
   const effectiveMetadataMode = $derived(
     metadataUpgradedToBoth ? "both" : generation.metadataMode
   );
+
+  let watermarkPreparing = $state(false);
+
+  /** Turning the watermark on downloads its models the first time. */
+  async function setWatermark(on: boolean) {
+    if (!on) {
+      generation.invisibleWatermark = false;
+      generation.saveSettings();
+      return;
+    }
+    watermarkPreparing = true;
+    try {
+      const ready = (await getWatermarkStatus()) || (await prepareWatermark());
+      generation.invisibleWatermark = ready;
+      if (!ready) gallery.showToast(locale.t('generation.sampler.watermark_failed'), "error");
+    } catch (e) {
+      console.error("Watermark setup failed:", e);
+      generation.invisibleWatermark = false;
+      gallery.showToast(locale.t('generation.sampler.watermark_failed'), "error");
+    } finally {
+      watermarkPreparing = false;
+      generation.saveSettings();
+    }
+  }
 
   /** CFG++ samplers use an alternative guidance method that works best at low CFG (~1-2). */
   function isCfgPpSampler(name: string): boolean {
@@ -878,6 +903,22 @@
             onclick={() => generation.metadataMode = value as "text_chunk" | "stealth" | "both"}
           >
             {label}
+          </button>
+        {/each}
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.watermark')}<InfoTip text={locale.t('generation.sampler.watermark_tip')} /></label>
+      <div class="flex gap-1">
+        {#each [[false, locale.t('generation.sampler.watermark_off')], [true, locale.t('generation.sampler.watermark_on')]] as [value, label]}
+          <button
+            class="flex-1 py-1 text-[11px] rounded-lg border transition-colors disabled:opacity-60 {generation.invisibleWatermark === value
+              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
+              : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
+            disabled={watermarkPreparing}
+            onclick={() => setWatermark(value as boolean)}
+          >
+            {value && watermarkPreparing ? '…' : label}
           </button>
         {/each}
       </div>
