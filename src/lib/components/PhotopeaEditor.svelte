@@ -68,6 +68,7 @@
         image?.generation_mode,
         metadata,
         generation.metadataMode,
+        generation.invisibleWatermark,
       );
       onsaved?.(saved);
     } catch (e) {

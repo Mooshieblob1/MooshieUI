@@ -1379,6 +1379,7 @@ class GalleryStore {
               img.generation_mode,
               metadata,
               metadataMode,
+              generation.invisibleWatermark,
             );
           } catch (tempError) {
             if (!blob) throw tempError;
@@ -1391,6 +1392,7 @@ class GalleryStore {
               img.generation_mode,
               metadata,
               metadataMode,
+              generation.invisibleWatermark,
             );
           }
         } else if (blob) {
@@ -1403,6 +1405,7 @@ class GalleryStore {
             img.generation_mode,
             metadata,
             metadataMode,
+            generation.invisibleWatermark,
           );
           console.log("[persistImages] saved → galleryFilename:", galleryFilename);
         } else {
@@ -1413,6 +1416,7 @@ class GalleryStore {
             img.generation_mode,
             metadata,
             metadataMode,
+            generation.invisibleWatermark,
           );
         }
         const sessionKey = this._assignmentKey(img);

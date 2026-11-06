@@ -755,7 +755,7 @@ fn tags_path_in(model_dir: &std::path::Path) -> PathBuf {
     model_dir.join(TAGS_FILENAME)
 }
 
-fn ort_library_path_in(model_dir: &std::path::Path) -> PathBuf {
+pub(crate) fn ort_library_path_in(model_dir: &std::path::Path) -> PathBuf {
     model_dir.join(ORT_LIB_NAME)
 }
 

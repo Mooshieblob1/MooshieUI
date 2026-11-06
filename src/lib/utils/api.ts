@@ -820,8 +820,9 @@ export async function saveToGallery(
   mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
+  watermark?: boolean,
 ): Promise<string> {
-  return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode, watermark });
 }
 
 export async function saveToGalleryBytes(
@@ -831,8 +832,9 @@ export async function saveToGalleryBytes(
   mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
+  watermark?: boolean,
 ): Promise<string> {
-  return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode, watermark });
 }
 
 export async function getMcpStatus(): Promise<McpStatus> {
@@ -858,8 +860,19 @@ export async function saveToGalleryTemp(
   mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
+  watermark?: boolean,
 ): Promise<string> {
-  return ipcInvoke("save_to_gallery_temp", { tempFilename, filename, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery_temp", { tempFilename, filename, promptId, mode, metadata, metadataMode, watermark });
+}
+
+/** Whether the invisible watermark's models are downloaded. */
+export async function getWatermarkStatus(): Promise<boolean> {
+  return ipcInvoke("get_watermark_status");
+}
+
+/** Download (about 65 MB, once) and load the invisible watermark's models. */
+export async function prepareWatermark(): Promise<boolean> {
+  return ipcInvoke("prepare_watermark");
 }
 
 export async function readImageMetadata(

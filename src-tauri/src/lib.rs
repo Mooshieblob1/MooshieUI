@@ -37,6 +37,7 @@ pub mod temp_images;
 pub mod templates;
 pub mod user_prefs;
 pub mod user_secrets;
+pub mod watermark;
 pub mod webserver;
 #[cfg(feature = "desktop")]
 pub mod webview_rest;
@@ -731,6 +732,8 @@ pub fn run() {
             commands::config::get_config,
             commands::config::update_config,
             commands::mcp::get_mcp_status,
+            commands::watermark::get_watermark_status,
+            commands::watermark::prepare_watermark,
             commands::mcp::set_mcp_settings,
             commands::mcp::regenerate_mcp_token,
             commands::config::get_user_prefs,

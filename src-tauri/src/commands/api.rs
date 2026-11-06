@@ -1424,8 +1424,10 @@ pub async fn save_to_gallery(
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
+    watermark: Option<bool>,
 ) -> Result<String, AppError> {
     let bytes = state.get_output_image_bytes(&filename, &subfolder).await?;
+    crate::watermark::remember_owner_choice(watermark.unwrap_or(false));
     let saved = save_to_gallery_inner(
         &bytes,
         &filename,
@@ -1433,6 +1435,7 @@ pub async fn save_to_gallery(
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
+        watermark.unwrap_or(false),
     )?;
     let payload = serde_json::json!({
         "filename": saved,
@@ -1459,7 +1462,9 @@ pub async fn save_to_gallery_bytes(
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
+    watermark: Option<bool>,
 ) -> Result<String, AppError> {
+    crate::watermark::remember_owner_choice(watermark.unwrap_or(false));
     let saved = save_to_gallery_inner(
         &image_bytes,
         &filename,
@@ -1467,6 +1472,7 @@ pub async fn save_to_gallery_bytes(
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
+        watermark.unwrap_or(false),
     )?;
     let payload = serde_json::json!({
         "filename": saved,
@@ -1494,9 +1500,11 @@ pub async fn save_to_gallery_temp(
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
+    watermark: Option<bool>,
 ) -> Result<String, AppError> {
     let bytes = crate::temp_images::load(&temp_filename)
         .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", temp_filename)))?;
+    crate::watermark::remember_owner_choice(watermark.unwrap_or(false));
     let saved = save_to_gallery_inner(
         &bytes,
         &filename,
@@ -1504,6 +1512,7 @@ pub async fn save_to_gallery_temp(
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
+        watermark.unwrap_or(false),
     )?;
     let payload = serde_json::json!({
         "filename": saved,
@@ -1719,6 +1728,7 @@ pub fn save_to_gallery_inner(
     mode: Option<&str>,
     metadata: Option<&std::collections::HashMap<String, String>>,
     metadata_mode: Option<&str>,
+    watermark: bool,
 ) -> Result<String, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
@@ -1785,6 +1795,10 @@ pub fn save_to_gallery_inner(
         metadata.is_some()
     );
 
+    // Watermark first (it rewrites the pixels), then embed the metadata.
+    let protected = crate::watermark::protect_for_save(bytes, watermark);
+    let bytes = protected.bytes.as_slice();
+
     // If metadata provided, embed it using the format-appropriate mechanism.
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
@@ -1841,6 +1855,7 @@ pub fn save_to_gallery_inner(
 
     let (gallery_filename, path) = write_new_gallery_file(&dir, &rendered_base, ext, &final_bytes)?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
+    crate::watermark::index_saved(&path, &final_bytes, &protected);
     Ok(gallery_filename)
 }
 
@@ -2127,7 +2142,22 @@ pub async fn read_image_metadata(
 pub async fn read_image_metadata_bytes(
     image_bytes: Vec<u8>,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    crate::metadata::read_image_metadata(&image_bytes).map_err(AppError::Other)
+    read_or_recover_blocking(image_bytes).await
+}
+
+/// Read an imported image's metadata, falling back to the watermark and
+/// fingerprint lookup in the gallery when the file carries none.
+#[cfg(feature = "desktop")]
+async fn read_or_recover_blocking(
+    bytes: Vec<u8>,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let dir = crate::config::gallery_dir();
+        crate::watermark::read_or_recover(&bytes, dir.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("metadata read task: {e}")))?
+    .map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -2136,7 +2166,7 @@ pub async fn read_image_metadata_path(
     path: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
+    read_or_recover_blocking(bytes).await
 }
 
 /// Whether a gallery directory entry should appear in gallery listings and
