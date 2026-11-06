@@ -295,15 +295,12 @@ async fn exchange_code(
         .map_err(|e| AppError::LlmError(format!("Key exchange request failed: {e}")))?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let detail: String = resp
-            .text()
-            .await
-            .unwrap_or_default()
-            .chars()
-            .take(300)
-            .collect();
+        let detail = crate::http_error::detail_suffix(
+            status.as_u16(),
+            &resp.text().await.unwrap_or_default(),
+        );
         return Err(AppError::LlmError(format!(
-            "Key exchange returned {status}: {detail}"
+            "Key exchange returned {status}{detail}"
         )));
     }
     let v: serde_json::Value = resp
@@ -627,15 +624,12 @@ async fn redeem(
         .map_err(|e| AppError::LlmError(format!("Token request failed: {e}")))?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let detail: String = resp
-            .text()
-            .await
-            .unwrap_or_default()
-            .chars()
-            .take(300)
-            .collect();
+        let detail = crate::http_error::detail_suffix(
+            status.as_u16(),
+            &resp.text().await.unwrap_or_default(),
+        );
         return Err(AppError::LlmError(format!(
-            "Token request returned {status}: {detail}"
+            "Token request returned {status}{detail}"
         )));
     }
     let v: serde_json::Value = resp
@@ -794,15 +788,12 @@ async fn register_client(
         .map_err(|e| AppError::LlmError(format!("Client registration failed: {e}")))?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let detail: String = resp
-            .text()
-            .await
-            .unwrap_or_default()
-            .chars()
-            .take(300)
-            .collect();
+        let detail = crate::http_error::detail_suffix(
+            status.as_u16(),
+            &resp.text().await.unwrap_or_default(),
+        );
         return Err(AppError::LlmError(format!(
-            "Client registration returned {status}: {detail}"
+            "Client registration returned {status}{detail}"
         )));
     }
     let v: serde_json::Value = resp
@@ -942,15 +933,12 @@ pub async fn connect_xai(
         .map_err(|e| AppError::LlmError(format!("Device authorization request failed: {e}")))?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let detail: String = resp
-            .text()
-            .await
-            .unwrap_or_default()
-            .chars()
-            .take(300)
-            .collect();
+        let detail = crate::http_error::detail_suffix(
+            status.as_u16(),
+            &resp.text().await.unwrap_or_default(),
+        );
         return Err(AppError::LlmError(format!(
-            "Device authorization returned {status}: {detail}{}",
+            "Device authorization returned {status}{detail}{}",
             xai_hint(status.as_u16())
         )));
     }
@@ -1039,10 +1027,10 @@ async fn poll_device_token(
                 let detail = body["error_description"]
                     .as_str()
                     .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| text.chars().take(300).collect());
+                    .map(|s| format!(": {s}"))
+                    .unwrap_or_else(|| crate::http_error::detail_suffix(status.as_u16(), &text));
                 return Err(AppError::LlmError(format!(
-                    "Token request returned {status}: {detail}{}",
+                    "Token request returned {status}{detail}{}",
                     xai_hint(status.as_u16())
                 )));
             }

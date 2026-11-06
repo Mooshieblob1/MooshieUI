@@ -5841,7 +5841,7 @@ pub async fn civitai_search_models_internal(
             message: if body.is_empty() {
                 status.to_string()
             } else {
-                body
+                crate::http_error::readable_body("CivitAI", status.as_u16(), &body)
             },
         });
     }
@@ -5948,7 +5948,7 @@ pub async fn civitai_get_model_internal(
             message: if body.is_empty() {
                 status.to_string()
             } else {
-                body
+                crate::http_error::readable_body("CivitAI", status.as_u16(), &body)
             },
         });
     }

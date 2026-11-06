@@ -407,7 +407,7 @@ impl GpuManager {
                 let body = r.text().await.unwrap_or_default();
                 Err(AppError::ApiError {
                     status: status_code,
-                    message: body,
+                    message: crate::http_error::readable_body("ComfyUI", status_code, &body),
                 })
             }
             Err(e) => Err(AppError::ConnectionFailed(format!(
@@ -466,7 +466,7 @@ impl GpuManager {
                 let body = r.text().await.unwrap_or_default();
                 Err(AppError::ApiError {
                     status: status_code,
-                    message: body,
+                    message: crate::http_error::readable_body("ComfyUI", status_code, &body),
                 })
             }
             Err(e) => {
@@ -551,9 +551,11 @@ impl GpuManager {
         let url = format!("{}{}", worker.base_url(), path);
         let resp = self.http_client.get(&url).send().await?;
         if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
             return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
+                status,
+                message: crate::http_error::readable_body("ComfyUI", status, &body),
             });
         }
         Ok(resp.json().await?)
@@ -572,9 +574,11 @@ impl GpuManager {
         let url = format!("{}{}", worker.base_url(), path);
         let resp = self.http_client.post(&url).json(body).send().await?;
         if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
             return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
+                status,
+                message: crate::http_error::readable_body("ComfyUI", status, &body),
             });
         }
         let text = resp.text().await?;
@@ -636,9 +640,11 @@ impl GpuManager {
         let url = format!("{}/history/{}", worker.base_url(), prompt_id);
         let resp = self.http_client.get(&url).send().await?;
         if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
             return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
+                status,
+                message: crate::http_error::readable_body("ComfyUI", status, &body),
             });
         }
         Ok(resp.json().await?)

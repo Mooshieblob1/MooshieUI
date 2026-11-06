@@ -347,11 +347,7 @@ async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, AppEr
     if looks_like_html(&content_type, &body) {
         // The page itself is useless on screen but says who answered (a
         // Cloudflare ray ID, a challenge), so the log keeps the start of it.
-        log::warn!(
-            "NovelAI answered {} with an HTML page: {}",
-            status.as_u16(),
-            body.chars().take(300).collect::<String>()
-        );
+        crate::http_error::readable_body("NovelAI", status.as_u16(), &body);
     }
 
     Err(AppError::ApiError {
@@ -363,7 +359,7 @@ async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, AppEr
 /// A web page rather than an API answer: Cloudflare's block, challenge and
 /// 5xx pages, or a proxy's. NovelAI's API itself only ever answers in JSON.
 fn looks_like_html(content_type: &str, body: &str) -> bool {
-    content_type.to_ascii_lowercase().contains("text/html") || body.trim_start().starts_with('<')
+    content_type.to_ascii_lowercase().contains("text/html") || crate::http_error::is_web_page(body)
 }
 
 /// What the user reads for a failed NovelAI call. Pure, for the tests.
@@ -379,11 +375,7 @@ fn error_message(status: u16, content_type: &str, body: &str) -> String {
     // connection (it comes and goes, often on a VPN or a shared IP); anything
     // else is NovelAI or Cloudflare being down.
     if looks_like_html(content_type, body) {
-        return if status == 403 {
-            "NovelAI's Cloudflare check blocked the request. Try again in a minute.".to_string()
-        } else {
-            "NovelAI is not responding right now. Try again shortly.".to_string()
-        };
+        return crate::http_error::web_page_message("NovelAI", status);
     }
 
     let detail = serde_json::from_str::<Value>(body)
@@ -424,7 +416,7 @@ mod tests {
         let message = error_message(502, "text/html", "<html><body>Bad gateway</body></html>");
         assert_eq!(
             message,
-            "NovelAI is not responding right now. Try again shortly."
+            "NovelAI is not responding right now (HTTP 502). Try again shortly."
         );
     }
 

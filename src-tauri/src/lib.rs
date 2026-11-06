@@ -8,6 +8,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod gallery_index;
+pub mod http_error;
 pub mod http_range;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
