@@ -53,9 +53,13 @@
     oninpaint: (image: OutputImage) => void;
     onrefine: (image: OutputImage) => void;
     oncontextmenu?: (image: OutputImage, x: number, y: number) => void;
+    /** Desktop drawer: only the tab row shows while collapsed. */
+    collapsed?: boolean;
+    /** Desktop drawer: shows the collapse button at the right end of the tab row. */
+    ontogglecollapse?: () => void;
   }
 
-  let { onupscale, oninpaint, onrefine, oncontextmenu }: Props = $props();
+  let { onupscale, oninpaint, onrefine, oncontextmenu, collapsed = false, ontogglecollapse }: Props = $props();
 
   type TabId = "loras" | "checkpoints" | "images" | "prompts" | "characters" | "compare" | "artists" | "styles" | "style_creator" | "schedule" | "timeline" | "notes";
 
@@ -549,12 +553,13 @@
 </script>
 
 <div class="flex flex-col h-full min-w-0">
-  <!-- Tab bar (scroll horizontally when many/long tabs) -->
-  <div class="flex items-center gap-0.5 px-2 pt-1 pb-0.5 border-b border-neutral-800 shrink-0 overflow-x-auto overflow-y-hidden">
+  <!-- Tab bar (tabs scroll horizontally when many/long; the collapse button stays at the right) -->
+  <div class="flex items-center shrink-0 {collapsed ? '' : 'border-b border-neutral-800'}">
+  <div class="flex flex-1 min-w-0 items-center gap-0.5 px-2 pt-1 pb-0.5 overflow-x-auto overflow-y-hidden">
     {#each visibleTabs as tab}
       <button
-        onclick={() => { activeTab = tab; }}
-        class="shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab
+        onclick={() => { activeTab = tab; if (collapsed) ontogglecollapse?.(); }}
+        class="shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab && !collapsed
           ? 'bg-neutral-800/80 text-neutral-100 border-b-2 border-indigo-500'
           : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/40'}"
       >
@@ -606,8 +611,22 @@
       </button>
     {/each}
   </div>
+  {#if ontogglecollapse}
+    <button
+      type="button"
+      onclick={ontogglecollapse}
+      class="mr-2 ml-1 flex size-7 shrink-0 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-100"
+      title={collapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+      aria-label={collapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+      aria-expanded={!collapsed}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {collapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+  {/if}
+  </div>
 
   <!-- Tab content -->
+  {#if !collapsed}
   <div class="flex-1 min-h-0 min-w-0 overflow-auto [scrollbar-gutter:stable]">
     {#if activeTab === "loras"}
       <LoraGallery cardSize={loraCardSize} onCardSizeChange={(s) => { loraCardSize = s; }} />    {:else if activeTab === "checkpoints"}
@@ -984,6 +1003,7 @@
       {/if}
     {/if}
   </div>
+  {/if}
 </div>
 
 <ContextMenu
