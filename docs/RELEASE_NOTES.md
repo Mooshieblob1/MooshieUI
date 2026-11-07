@@ -1,3 +1,20 @@
+## What's New in v2.3.37
+
+### Saved characters
+- **Memory files**: each saved character can keep short Markdown notes (personality, backstory, relationships, outfits) in the new **Memory** tab of its Edit window. **Remember** asks the prompt assistant to file a fact in the right note, and you review the change before it is saved. With an external LLM provider (Claude, ChatGPT, Gemini, Grok or a capable model on your own endpoint), Use, Update and Enhance read the notes when the scene calls for them, and Enhance saves lasting details it works out (for example a character's school uniform) with a **Saved to memory for next time** toast you can undo.
+- **Full Edit window**: Edit now opens an app-wide window with **Details** (name, prompt, UC) and **Memory** tabs. Changes stay a draft until Save.
+- **Portrait as the card picture**: the card's picture menu has a new **Portrait** option that renders a front-on, neck-up portrait of the character with the selected model, with optional artist tags, chunks and artist styles. NovelAI portraits are 1024 x 1024. The result becomes the card's picture, with Undo.
+- **Names on the cards**: Characters tab cards show the character's name on its own line again, with the action buttons along the bottom.
+
+### Generate page
+- **Preview fits the image**: the preview takes the shape of the image or video it shows instead of a fixed square, so landscape and portrait results fill the free space.
+- **Separate drawer for video**: image modes and Video each keep their own bottom drawer height and collapsed state.
+
+### Fixes
+- **Undo toasts work**: the Undo button on the Characters tab's toasts (Update, extract review) now shows up.
+
+---
+
 ## What's New in v2.3.36
 
 ### LAN access from the desktop window
