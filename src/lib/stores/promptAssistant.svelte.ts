@@ -122,6 +122,16 @@ import {
   type CharacterMergeInput,
   type CharacterMergeResult,
 } from "../utils/characterMerge.js";
+import {
+  MEMORY_REMEMBER_RETRY,
+  memoryContext,
+  parseRemember,
+  rememberRequest,
+  splitLearnedMemory,
+  type LearnedMemory,
+  type CharacterMemoryFile,
+  type MemoryChange,
+} from "../utils/characterMemory.js";
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -202,6 +212,16 @@ class PromptAssistantStore {
    *  OpenAI-compatible endpoint is configured. Gates the enhance/compose actions. */
   get isAvailable(): boolean {
     return this.hasInstalledModel || !!this.status?.external_enabled;
+  }
+
+  /**
+   * Whether the assistant reads and suggests character memory files. Only an
+   * external provider (Claude, ChatGPT, Gemini, Grok, or a capable model on
+   * the user's own endpoint) gets them: the bundled models are small, and
+   * whole memory files would crowd out their context.
+   */
+  get canUseMemory(): boolean {
+    return !!this.status?.external_enabled;
   }
 
   /** Launch-time bootstrap: detect hardware, load catalog + status, pre-select. */
@@ -571,10 +591,12 @@ class PromptAssistantStore {
     character: { name: string; prompt: string; negative: string },
     prompt: string,
     negative: string,
+    memory: readonly CharacterMemoryFile[] | null = null,
   ): Promise<CharacterUpdate | "missing"> {
     if (this.isGenerating) throw new Error("busy_generation");
-    assertAllowedRequest([character.prompt, prompt]);
-    const request = characterUpdateRequest(character, prompt, negative);
+    const files = memory && this.canUseMemory ? memory : null;
+    assertAllowedRequest([character.prompt, prompt, files ? memoryContext(files, 0) : ""]);
+    const request = characterUpdateRequest(character, prompt, negative, files);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
@@ -583,6 +605,7 @@ class PromptAssistantStore {
           const parsed = parseCharacterUpdate(
             await callExternalLlm(request.system, user, request.maxTokens),
             character.negative,
+            files,
           );
           if (parsed) return parsed;
           user = `${request.prompt}\n\n${CHARACTER_UPDATE_RETRY}`;
@@ -634,7 +657,8 @@ class PromptAssistantStore {
    */
   async mergeCharacter(input: CharacterMergeInput): Promise<CharacterMergeResult> {
     if (this.isGenerating) throw new Error("busy_generation");
-    assertAllowedRequest([input.prompt, input.character.prompt, ...(input.box?.boxes ?? [])]);
+    if (!this.canUseMemory) input = { ...input, memory: "" };
+    assertAllowedRequest([input.prompt, input.character.prompt, input.memory ?? "", ...(input.box?.boxes ?? [])]);
     const request = characterMergeRequest(input);
     this.isGenerating = true;
     try {
@@ -650,6 +674,37 @@ class PromptAssistantStore {
           user = `${request.prompt}\n\n${CHARACTER_MERGE_RETRY}`;
         }
         throw new Error("invalid_character_merge");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * File something the user wants remembered into a character's memory
+   * files. Returns the suggested changes for the user to review; an empty
+   * list means it is already there. One retry when the reply is not the JSON
+   * asked for.
+   */
+  async rememberForCharacter(
+    character: { name: string; prompt: string; negative: string },
+    files: readonly CharacterMemoryFile[],
+    fact: string,
+  ): Promise<MemoryChange[]> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    if (!this.canUseMemory) throw new Error("memory_needs_external");
+    assertAllowedRequest([character.prompt, memoryContext(files, 0), fact]);
+    const request = rememberRequest(character, files, fact);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const parsed = parseRemember(await callExternalLlm(request.system, user, request.maxTokens), files);
+          if (parsed) return parsed;
+          user = `${request.prompt}\n\n${MEMORY_REMEMBER_RETRY}`;
+        }
+        throw new Error("invalid_character_memory");
       });
     } finally {
       this.isGenerating = false;
@@ -675,7 +730,7 @@ class PromptAssistantStore {
     images: string[];
     /** Aborting it stops the request on the backend too (see `runPromptAssistant`). */
     signal?: AbortSignal;
-  }): Promise<{ prompt: string; sessionUser: string }> {
+  }): Promise<{ prompt: string; sessionUser: string; learned: LearnedMemory[] }> {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
     const images = req.images;
@@ -686,7 +741,7 @@ class PromptAssistantStore {
         userText: existing ? `${existing}\n${text}` : text,
         maxOutputTokens: 384,
       });
-      const prompt = await this.withStageListener(() =>
+      const answer = await this.withStageListener(() =>
         existing
           ? enhancePrompt(
               existing,
@@ -698,10 +753,13 @@ class PromptAssistantStore {
             )
           : composePrompt(text, req.family, req.opts, history.messages, images, req.signal),
       );
+      // Facts to save to a saved character's memory come after the prompt
+      // when character notes went out (see `character_notes`).
+      const { prompt, learned } = splitLearnedMemory(answer);
       // The pasted current prompt is left out, like the V5 session: the next
       // turn sends whatever the prompt box holds by then.
       const sessionUser = withImageMarker(text || existing || "", images.length, "reference");
-      return { prompt, sessionUser };
+      return { prompt, sessionUser, learned: req.opts.character_notes ? learned : [] };
     } finally {
       this.isGenerating = false;
     }

@@ -33,6 +33,10 @@ pub struct PromptAssistantOpts {
     /// One optional label per image in `image_data`, in the same order.
     #[serde(default)]
     pub reference_labels: Vec<String>,
+    /// Saved characters the request refers to, with their look and memory
+    /// notes. Added to the system prompt for external providers only.
+    #[serde(default)]
+    pub character_notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -324,8 +328,14 @@ async fn run_generation(
 
     let style = grounding::prompt_style(&purpose, family);
     let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
+    let notes = if ext_enabled {
+        grounding::character_notes(opts.character_notes.as_deref().unwrap_or(""))
+    } else {
+        String::new()
+    };
     let system = grounding::system_prompt(style, mode, &candidates, opts.include_artists)
-        + &grounding::reference_rules(images.len());
+        + &grounding::reference_rules(images.len())
+        + &notes;
     let max_tokens = grounding::max_tokens(mode, opts.length.as_deref());
     let user = grounding::user_turn(mode, input, instruction, &labels);
 
@@ -347,7 +357,17 @@ async fn run_generation(
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
     // "blue hair" prompt). No-op for Compose and for prose families.
-    Ok(grounding::finish(input, &raw, mode, style))
+    // With character notes the reply may end in facts to save to memory:
+    // split them off before the prompt is finished, and hand them back after it.
+    let (raw, facts) = if notes.is_empty() {
+        (raw, String::new())
+    } else {
+        grounding::split_memory(&raw)
+    };
+    Ok(grounding::with_memory(
+        grounding::finish(input, &raw, mode, style),
+        &facts,
+    ))
 }
 
 /// One label per image actually sent, padded or cut to match. An image that
