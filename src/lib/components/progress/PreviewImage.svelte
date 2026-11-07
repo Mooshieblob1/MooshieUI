@@ -25,6 +25,45 @@
   let currentTipIndex = $state(0);
   let suppressOpenUntil = 0;
 
+  // The box takes the shape of what it shows, so a landscape or portrait
+  // result fills the free space instead of sitting letterboxed in a square.
+  // A loaded image or video reports its own size; before that (empty,
+  // generating with no preview yet) the requested size stands in.
+  let mediaAspect = $state<number | null>(null);
+  const hasMedia = $derived(
+    !!progress.lastOutputVideo || (!progress.lastUnsavedVideoPath && !!progress.displayImage),
+  );
+  const boxAspect = $derived.by(() => {
+    if (hasMedia && mediaAspect) return mediaAspect;
+    const { width, height } = generation;
+    return width > 0 && height > 0 ? width / height : 1;
+  });
+  // Fit the box to the frame (a size container in GenerationPage) at that
+  // aspect. The floors keep the hover actions and the tips readable: when an
+  // extreme shape would make the box narrower or shorter than that, the box
+  // stops shrinking and the media letterboxes inside it instead.
+  const boxStyle = $derived(
+    `--preview-aspect: ${boxAspect};` +
+      " width: clamp(min(100cqw, 22rem), 100cqh * var(--preview-aspect), 100cqw);" +
+      " height: clamp(min(100cqh, 16rem), 100cqw / var(--preview-aspect), 100cqh);",
+  );
+
+  // load/loadedmetadata don't bubble, so this runs on the capture phase to
+  // catch both the preview <img> and VideoPlayer's <video>.
+  function handleMediaLoad(e: Event) {
+    const el = e.target;
+    let w = 0;
+    let h = 0;
+    if (el instanceof HTMLImageElement) {
+      w = el.naturalWidth;
+      h = el.naturalHeight;
+    } else if (el instanceof HTMLVideoElement) {
+      w = el.videoWidth;
+      h = el.videoHeight;
+    }
+    if (w > 0 && h > 0) mediaAspect = w / h;
+  }
+
   // Right-click context menu for the output preview. Restores right-click-to-save
   // that the global native-menu suppressor (#392) removed, in desktop and browser.
   let ctxMenuItems = $state<ContextMenuItem[]>([]);
@@ -459,7 +498,11 @@
   }
 </script>
 
-<div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
+<div
+  style={boxStyle}
+  onloadcapture={handleMediaLoad}
+  onloadedmetadatacapture={handleMediaLoad}
+  class="relative shrink-0 bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
   {#if progress.lastOutputVideo}
     <!-- A finished video wins over the last sampled still frame. No context
          menu: openPreviewContextMenu is image-scoped, and the player's own
