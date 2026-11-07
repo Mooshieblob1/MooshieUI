@@ -1,5 +1,19 @@
 # Changelog
 
+## What's New in v2.3.38
+
+### Character portraits
+- **Neck-up filter**: a portrait now leaves out what a neck-up picture can't show (legwear, shoes, skirts, hands, poses, held items, full-body framing). What was dropped shows under the prompt as **Left out** chips; click one to put it back. It reads tag and sentence prompts in English, Japanese, Chinese, German, Spanish and Portuguese, and filters picked chunks too.
+- **Expression box**: the portrait window has an **Expression** box, filled from the last portrait, the card's own expression tags or the character's usual expression in memory. The ✨ button asks the prompt assistant to pick one from memory or canon. Portraits no longer default to a blank stare.
+
+### Character memory
+- **Write with AI**: the Memory tab has a **Write with AI** button that drafts a character's memory files from canon, their prompt and an optional brief. You review the files before they are saved.
+- **Better Remember**: Remember writes your note up as a proper entry, ties it to what the notes already say and reads the notes of other saved characters it names. Relationships go both ways: "Mumei is Miku's sister" also adds the matching line to Miku's memory.
+- **Usual expression**: the expression used for a portrait is saved to the character's memory, so Enhance draws the same face.
+- **Your version beats canon**: for gender-swapped, alternate or original takes on a known character, what you wrote wins over canon in memory writing, expression picks and Enhance.
+
+---
+
 ## What's New in v2.3.37
 
 ### Saved characters
