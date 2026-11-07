@@ -65,7 +65,7 @@ export function naiSavedCharacterDirective(
     })
     .join("\n");
   const memoryRule = roster.some((c) => c.notes?.trim())
-    ? "\n- Memory is the user's notes on who a saved character is: personality, story, relationships, habits. When that character is in the image, let it shape what fits them where the request leaves room, such as their expression, how they hold themselves, or an item they always carry. It never overrides the request or the saved appearance, story facts are not things to draw unless the scene calls for them, and it never brings in someone the text does not refer to."
+    ? "\n- Memory is the user's notes on who a saved character is: personality, story, relationships, habits. It exists only to help you write the prompt for that character. When they are in the image, turn what fits the scene into things a picture can show where the request leaves room, such as their expression, how they hold themselves, an item they always carry, or a companion who belongs in the scene. It never overrides the request or the saved appearance, a story fact goes in only when the scene calls for it and as something visible, and it never brings in someone the text does not refer to."
     : "";
   return `SAVED CHARACTERS
 The user has saved these characters of their own. Each has a name, the prompt text that draws them, and things to avoid when drawing them${memoryRule ? ", and some have memory notes" : ""}.

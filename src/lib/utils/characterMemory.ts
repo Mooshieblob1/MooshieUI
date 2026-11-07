@@ -245,13 +245,21 @@ function jsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * What memory files are for, stated in every request that reads or writes
+ * them, so the model treats them as prompt material rather than lore.
+ */
+export const MEMORY_PURPOSE =
+  "Memory files exist for one job: writing better image generation prompts for this character. They are not a story, a profile or a chat log. Everything in them is there to help decide what a picture of the character shows: how they look, dress, pose and emote, what they carry, who they are with and where they are found.";
+
 /** How memory files are written, shared by every request that writes them. */
 const WRITING_RULES = `- Memory files are short Markdown notes, mostly bullet points, written in the language the user writes in.
+- Write each fact so it helps a prompt: where it changes what a picture shows, say how (shy: often looks away and blushes; left-handed: holds her sword in her left hand).
 - Return each file you change with its whole new content: everything already in it, with the new facts worked in. Where a new fact contradicts an old line, the new fact wins and the old line goes. Never drop anything else.
 - Put a fact in the existing file it fits best. Start a new file only when none fits, named in lowercase with hyphens and ending in .md, such as personality.md, backstory.md, relationships.md or habits.md.
 - Never invent a fact the texts do not state.`;
 
-const REMEMBER_SYSTEM = `You keep the memory files of one saved character in an image generation app. Memory files hold what the user wants remembered about the character beyond their image prompt: personality, backstory, relationships, habits, likes and dislikes, how they talk and act, items they always carry, and anything else the user tells you. You get the character's name and image prompt, their memory files, and what the user wants remembered now.
+const REMEMBER_SYSTEM = `You keep the memory files of one saved character in an image generation app. ${MEMORY_PURPOSE} They hold what the user wants remembered about the character beyond their image prompt: personality, backstory, relationships, habits, likes and dislikes, how they act, items they always carry, and anything else the user tells you. You get the character's name and image prompt, their memory files, and what the user wants remembered now.
 
 File it away:
 ${WRITING_RULES}
@@ -300,7 +308,7 @@ export function parseRemember(text: string, files: readonly CharacterMemoryFile[
  * and asks for lasting facts the prompt adds.
  */
 export const UPDATE_MEMORY_RULES = `
-The saved character also has memory files: notes on who they are beyond their look. Read them to understand the character. If the current prompt states a lasting fact about this character that is not appearance and the files do not have yet (the name of a companion or pet, a weapon or item they always carry, their job or role), suggest it in memory:
+The saved character also has memory files: notes on who they are beyond their look. ${MEMORY_PURPOSE} Read them to understand the character. If the current prompt states a lasting fact about this character that is not appearance and the files do not have yet (the name of a companion or pet, a weapon or item they always carry, their job or role), suggest it in memory:
 ${WRITING_RULES}
 - Pose, action, expression, setting and a one-off outfit are not lasting facts. Leave memory as [] when there is nothing lasting to add, which is the usual case.`;
 
@@ -309,7 +317,7 @@ ${WRITING_RULES}
  * that shapes the picture where it leaves room, never a list of things to draw.
  */
 export const READ_MEMORY_RULE =
-  "The memory notes are the user's notes on who the character is: personality, story, relationships, habits. Let them shape what fits the character where the prompt leaves room, such as an expression that suits their personality, how they hold themselves, or an item they always carry. They never override what the prompt or the saved character's prompt says, and story facts are not things to draw unless the scene calls for them.";
+  "The memory notes are the user's notes on who the character is: personality, story, relationships, habits. They exist only to help you write this prompt for the character, so turn what fits the scene into things a picture can show: an expression that suits their personality, how they hold themselves, an item they always carry, a companion who belongs in the scene. They never override what the prompt or the saved character's prompt says, and a story fact goes in only when the scene calls for it, as something visible.";
 
 /** A saved card with the memory it uses, as the Enhance requests pick them. */
 export interface MemoryCandidate {
