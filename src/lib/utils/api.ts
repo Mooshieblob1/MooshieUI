@@ -1604,6 +1604,39 @@ export async function unloadLlm(): Promise<void> {
 }
 
 /**
+ * Thrown by a prompt-assistant call whose `signal` was aborted. The caller asked
+ * for it, so it is never worth a toast: check with `isLlmCancelled`.
+ */
+export class LlmCancelledError extends Error {
+  constructor() {
+    super("prompt_assistant.cancelled");
+    this.name = "LlmCancelledError";
+  }
+}
+
+export function isLlmCancelled(e: unknown): boolean {
+  return e instanceof LlmCancelledError;
+}
+
+function newRequestId(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+}
+
+/**
+ * Stop the backend request tagged `requestId`. Fire and forget: the caller has
+ * already moved on, and a cancel that fails only means the old request runs to
+ * the end the way every request did before cancelling existed.
+ */
+function cancelLlmRequest(requestId: string): void {
+  ipcInvoke("cancel_llm_request", { requestId }).catch((e) =>
+    console.warn("[prompt-assistant] cancel failed", e),
+  );
+}
+
+/**
  * Run a prompt-assistant command (enhance/compose/raw external call).
  *
  * Desktop (Tauri) calls the command synchronously — there is no proxy in front.
@@ -1612,17 +1645,21 @@ export async function unloadLlm(): Promise<void> {
  * local LLM and generating can easily outlast that, so rather than block on the
  * POST body we fire the request with a correlation id and await the result over
  * the SSE event channel, which keep-alives and isn't bound by the proxy timeout.
+ *
+ * Aborting `signal` rejects at once with `LlmCancelledError` and tells the
+ * backend to drop the request, which closes the provider connection (or kills
+ * the sign-in companion) so the next request does not wait behind it.
  */
 async function runPromptAssistant(
   command: "enhance_prompt" | "compose_prompt" | "call_external_llm" | "describe_image",
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<string> {
-  if (!isBrowserMode) {
+  if (signal?.aborted) throw new LlmCancelledError();
+  if (!isBrowserMode && !signal) {
     return ipcInvoke<string>(command, args);
   }
-  const requestId =
-    globalThis.crypto?.randomUUID?.() ??
-    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const requestId = newRequestId();
   return new Promise<string>((resolve, reject) => {
     let settled = false;
     let unlistenResult: (() => void) | null = null;
@@ -1634,8 +1671,28 @@ async function runPromptAssistant(
       if (timer) clearTimeout(timer);
       unlistenResult?.();
       unlistenError?.();
+      signal?.removeEventListener("abort", onAbort);
       action();
     };
+    function onAbort() {
+      if (settled) return;
+      cancelLlmRequest(requestId);
+      finish(() => reject(new LlmCancelledError()));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    if (!isBrowserMode) {
+      // Desktop: the command answers directly; the id only names it for a cancel.
+      ipcInvoke<string>(command, { ...args, requestId }).then(
+        (text) => finish(() => resolve(text)),
+        (err) =>
+          finish(() =>
+            reject(err instanceof Error ? err : new Error(String(err))),
+          ),
+      );
+      return;
+    }
+
     Promise.all([
       ipcListen("llm:result", (e: { payload: any }) => {
         if (e.payload?.request_id !== requestId) return;
@@ -1649,7 +1706,8 @@ async function runPromptAssistant(
       }),
     ])
       .then(([ur, ue]) => {
-        // The request settled before listeners attached — clean up immediately.
+        // The request settled (or was cancelled) before listeners attached —
+        // clean up immediately.
         if (settled) {
           ur();
           ue();
@@ -1697,14 +1755,19 @@ export async function enhancePrompt(
   opts?: PromptAssistantOpts,
   history: ChatMessage[] = [],
   imageData: string[] = [],
+  signal?: AbortSignal,
 ): Promise<string> {
-  return runPromptAssistant("enhance_prompt", {
-    prompt,
-    family,
-    opts,
-    history,
-    imageData: imageData.length > 0 ? imageData : undefined,
-  });
+  return runPromptAssistant(
+    "enhance_prompt",
+    {
+      prompt,
+      family,
+      opts,
+      history,
+      imageData: imageData.length > 0 ? imageData : undefined,
+    },
+    signal,
+  );
 }
 
 export async function composePrompt(
@@ -1713,14 +1776,19 @@ export async function composePrompt(
   opts?: PromptAssistantOpts,
   history: ChatMessage[] = [],
   imageData: string[] = [],
+  signal?: AbortSignal,
 ): Promise<string> {
-  return runPromptAssistant("compose_prompt", {
-    description,
-    family,
-    opts,
-    history,
-    imageData: imageData.length > 0 ? imageData : undefined,
-  });
+  return runPromptAssistant(
+    "compose_prompt",
+    {
+      description,
+      family,
+      opts,
+      history,
+      imageData: imageData.length > 0 ? imageData : undefined,
+    },
+    signal,
+  );
 }
 
 /**
@@ -1814,15 +1882,20 @@ export async function callExternalLlm(
   imageFilename?: string | null,
   imageData?: string[] | null,
   history: ChatMessage[] = [],
+  signal?: AbortSignal,
 ): Promise<string> {
-  return runPromptAssistant("call_external_llm", {
-    system,
-    prompt,
-    maxTokens,
-    imageFilename: imageFilename || undefined,
-    imageData: imageData && imageData.length > 0 ? imageData : undefined,
-    history,
-  });
+  return runPromptAssistant(
+    "call_external_llm",
+    {
+      system,
+      prompt,
+      maxTokens,
+      imageFilename: imageFilename || undefined,
+      imageData: imageData && imageData.length > 0 ? imageData : undefined,
+      history,
+    },
+    signal,
+  );
 }
 
 export async function readClipboardImage(): Promise<number[]> {

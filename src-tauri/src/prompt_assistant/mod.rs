@@ -1,3 +1,4 @@
+pub mod cancel;
 pub mod catalog;
 pub mod companion;
 pub mod describe;
