@@ -42,7 +42,7 @@
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import BottomPanel from "./BottomPanel.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
@@ -898,6 +898,11 @@
 
   const PANEL_LAYOUT_KEY = `mooshieui.panelLayout.v1${storageSuffix}`;
 
+  /** The bottom drawer keeps its own height and collapse state for image and for video. */
+  type BottomWorkspace = "image" | "video";
+  type BottomPaneState = { height: number; collapsed: boolean };
+  const bottomWorkspaceFor = (mode: string): BottomWorkspace => (mode === "video" ? "video" : "image");
+
   function loadPanelLayout() {
     try {
       const raw = localStorage.getItem(PANEL_LAYOUT_KEY);
@@ -905,23 +910,54 @@
         const s = JSON.parse(raw) as {
           left?: number; right?: number; bottom?: number;
           leftCollapsed?: boolean; rightCollapsed?: boolean; bottomCollapsed?: boolean;
+          bottomVideo?: number; bottomVideoCollapsed?: boolean;
         };
+        const clampBottom = (h: unknown) =>
+          typeof h === "number" ? Math.min(BOTTOM_MAX, Math.max(BOTTOM_MIN, h)) : null;
+        const imageBottom = clampBottom(s.bottom) ?? BOTTOM_DEFAULT;
+        const imageCollapsed = s.bottomCollapsed === true;
         return {
           left: typeof s.left === "number" ? Math.min(LEFT_MAX, Math.max(LEFT_MIN, s.left)) : LEFT_DEFAULT,
           right: typeof s.right === "number" ? Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, s.right)) : RIGHT_DEFAULT,
-          bottom: typeof s.bottom === "number" ? Math.min(BOTTOM_MAX, Math.max(BOTTOM_MIN, s.bottom)) : BOTTOM_DEFAULT,
           leftCollapsed: s.leftCollapsed === true,
           rightCollapsed: s.rightCollapsed === true,
-          bottomCollapsed: s.bottomCollapsed === true,
+          // Layouts saved before the per-mode drawer start video from the image values.
+          bottomPanes: {
+            image: { height: imageBottom, collapsed: imageCollapsed },
+            video: {
+              height: clampBottom(s.bottomVideo) ?? imageBottom,
+              collapsed: typeof s.bottomVideoCollapsed === "boolean" ? s.bottomVideoCollapsed : imageCollapsed,
+            },
+          } as Record<BottomWorkspace, BottomPaneState>,
         };
       }
     } catch {}
-    return { left: LEFT_DEFAULT, right: RIGHT_DEFAULT, bottom: BOTTOM_DEFAULT, leftCollapsed: false, rightCollapsed: false, bottomCollapsed: false };
+    return {
+      left: LEFT_DEFAULT,
+      right: RIGHT_DEFAULT,
+      leftCollapsed: false,
+      rightCollapsed: false,
+      bottomPanes: {
+        image: { height: BOTTOM_DEFAULT, collapsed: false },
+        video: { height: BOTTOM_DEFAULT, collapsed: false },
+      } as Record<BottomWorkspace, BottomPaneState>,
+    };
   }
 
   function savePanelLayout() {
+    // The live drawer values belong to the workspace on screen; the other one keeps its stash.
+    const panes = { ...bottomPanes, [bottomWorkspace]: { height: bottomHeight, collapsed: bottomCollapsed } };
     try {
-      localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify({ left: leftWidth, right: rightWidth, bottom: bottomHeight, leftCollapsed, rightCollapsed, bottomCollapsed }));
+      localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify({
+        left: leftWidth,
+        right: rightWidth,
+        bottom: panes.image.height,
+        leftCollapsed,
+        rightCollapsed,
+        bottomCollapsed: panes.image.collapsed,
+        bottomVideo: panes.video.height,
+        bottomVideoCollapsed: panes.video.collapsed,
+      }));
     } catch {}
   }
 
@@ -936,20 +972,44 @@
   const BOTTOM_MAX = 500;
 
   const _savedLayout = loadPanelLayout();
+  // Drawer state for each workspace. The live values below are the visible
+  // workspace's; the entry for the other one is what it gets back on return.
+  let bottomPanes = _savedLayout.bottomPanes;
+  let bottomWorkspace: BottomWorkspace = bottomWorkspaceFor(generation.mode);
   let leftWidth = $state(_savedLayout.left);
   let rightWidth = $state(_savedLayout.right);
-  let bottomHeight = $state(_savedLayout.bottom);
+  let bottomHeight = $state(bottomPanes[bottomWorkspace].height);
 
   // Panel collapse state (restored from persisted layout)
   let leftCollapsed = $state(_savedLayout.leftCollapsed);
   let rightCollapsed = $state(_savedLayout.rightCollapsed);
-  let bottomCollapsed = $state(_savedLayout.bottomCollapsed);
+  let bottomCollapsed = $state(bottomPanes[bottomWorkspace].collapsed);
 
   // Store pre-collapse widths/heights so we can restore them. Seed from the saved
   // sizes so expanding a panel that was restored as collapsed brings back its real size.
   let leftWidthBeforeCollapse = _savedLayout.left;
   let rightWidthBeforeCollapse = _savedLayout.right;
-  let bottomHeightBeforeCollapse = _savedLayout.bottom;
+  let bottomHeightBeforeCollapse = bottomPanes[bottomWorkspace].height;
+
+  // Switching between image and video swaps in that workspace's drawer height
+  // and collapse state. The phone layout opens and closes its drawer as a
+  // sheet instead, so it only tracks which workspace is showing.
+  $effect(() => {
+    const next = bottomWorkspaceFor(generation.mode);
+    untrack(() => {
+      if (next === bottomWorkspace) return;
+      if (mobileFriendly) {
+        bottomWorkspace = next;
+        return;
+      }
+      bottomPanes = { ...bottomPanes, [bottomWorkspace]: { height: bottomHeight, collapsed: bottomCollapsed } };
+      bottomWorkspace = next;
+      bottomHeight = bottomPanes[next].height;
+      bottomHeightBeforeCollapse = bottomHeight;
+      bottomCollapsed = bottomPanes[next].collapsed;
+      savePanelLayout();
+    });
+  });
 
   function toggleLeftPanel() {
     if (mobileFriendly) {
