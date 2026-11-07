@@ -343,6 +343,22 @@ pub fn run() {
                 log::info!("Opening browser at {}", url);
                 let _ = open::that(&url);
             } else {
+                // App mode with LAN access on: serve the browser UI to other
+                // devices while the owner keeps using this window. No
+                // heartbeat watchdog (the window, not a tab, owns the process)
+                // and no browser tab is opened.
+                if lan_enabled {
+                    let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                    shared_state
+                        .app_mode_active
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    tauri::async_runtime::spawn(async move {
+                        let (port, _handle) =
+                            webserver::start_server(shared_state, ui_server_port, true).await;
+                        log::info!("LAN web server started in app mode on port {}", port);
+                    });
+                }
+
                 // Normal app mode — configure WebView
                 #[cfg(target_os = "linux")]
                 {
@@ -742,6 +758,7 @@ pub fn run() {
             commands::config::get_gallery_path,
             commands::config::set_gallery_path,
             commands::config::switch_to_browser_mode,
+            commands::config::lan_admin,
             commands::interrogator::interrogate_image,
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,

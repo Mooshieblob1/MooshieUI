@@ -40,6 +40,10 @@ pub struct WebState {
     pub app: Arc<AppState>,
     pub auth: Arc<AuthState>,
     pub lan_enabled: bool,
+    /// Set only for requests the desktop window makes in-process (see
+    /// [`desktop_lan_admin`]). The window is the machine owner, so it gets the
+    /// admin rights a trusted localhost browser has, without HTTP headers.
+    pub desktop_owner: bool,
 }
 
 pub type SharedState = Arc<WebState>;
@@ -197,6 +201,9 @@ fn local_trust_active(enabled: bool, has_admin_account: impl FnOnce() -> bool) -
 /// indistinguishable from a local client, which is what the `trust_localhost`
 /// setting is for.
 fn is_trusted_local_request(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> bool {
+    if state.desktop_owner {
+        return true;
+    }
     local_request_is_trusted(is_localhost(remote) || !state.lan_enabled, headers)
         && local_trust_active(
             state
@@ -1051,8 +1058,9 @@ pub async fn start_server(
 
     let web_state = Arc::new(WebState {
         app: state.clone(),
-        auth: Arc::new(AuthState::new()),
+        auth: state.web_auth(),
         lan_enabled,
+        desktop_owner: false,
     });
     web_state
         .auth
@@ -7964,6 +7972,65 @@ async fn auth_lan_firewall_allow_handler(
                 .into_response()
         }
     }
+}
+
+/// Run one of the LAN settings endpoints for the desktop window, which talks to
+/// the backend over Tauri IPC rather than HTTP. It goes through the same
+/// handlers as the browser, so validation and side effects stay in one place;
+/// the window is the machine owner and gets the admin rights of a trusted
+/// localhost browser. Returns the HTTP status and the JSON body.
+#[cfg(feature = "desktop")]
+pub(crate) async fn desktop_lan_admin(
+    app: Arc<AppState>,
+    action: &str,
+    body: serde_json::Value,
+) -> (u16, serde_json::Value) {
+    // Mirror the running server, if any: before it is on the LAN, `lan_info`
+    // reports `listening: false` so Settings can ask for a restart.
+    let lan_enabled = crate::lan_discovery::snapshot()
+        .0
+        .is_some_and(|endpoint| endpoint.lan);
+    let state: SharedState = Arc::new(WebState {
+        auth: app.web_auth(),
+        app,
+        lan_enabled,
+        desktop_owner: true,
+    });
+    let remote = ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    let headers = HeaderMap::new();
+    let st = AxumState(state);
+    let response = match action {
+        "accounts" => auth_list_accounts_handler(st, remote, headers).await,
+        "lan_info" => auth_lan_info_handler(st, remote, headers).await,
+        "lan_firewall" => auth_lan_firewall_status_handler(st, remote, headers).await,
+        "lan_firewall_allow" => auth_lan_firewall_allow_handler(st, remote, headers).await,
+        "register" => match serde_json::from_value::<AuthRequest>(body) {
+            Ok(req) => auth_register_handler(st, remote, headers, Json(req)).await,
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        "delete" => auth_delete_account_handler(st, remote, headers, Json(body)).await,
+        "reset_password" => auth_reset_password_handler(st, remote, headers, Json(body)).await,
+        "set_role" => auth_set_role_handler(st, remote, headers, Json(body)).await,
+        "set_modelhub_access" => {
+            auth_set_modelhub_access_handler(st, remote, headers, Json(body)).await
+        }
+        "set_storage_limit" => storage_set_limit_handler(st, remote, headers, Json(body)).await,
+        _ => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Unknown LAN action: {action}") })),
+        )
+            .into_response(),
+    };
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap_or_default();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
 }
 
 /// Resolve the gallery directory for a given user.

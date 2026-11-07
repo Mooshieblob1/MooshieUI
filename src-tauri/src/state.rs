@@ -808,6 +808,10 @@ pub struct AppState {
     pub app_mode_active: std::sync::atomic::AtomicBool,
     /// True once the embedded web server has been started (prevents double-bind).
     pub web_server_running: std::sync::atomic::AtomicBool,
+    /// LAN accounts and sessions. One instance for the process, shared by the
+    /// web server and the desktop window's LAN settings, so both see the same
+    /// accounts. Created on first use (see [`AppState::web_auth`]).
+    pub web_auth: std::sync::OnceLock<Arc<crate::auth::AuthState>>,
     /// Effective `trust_localhost` (see [`crate::config::local_trust_enabled`]),
     /// kept outside the config lock so the web server's synchronous trust check
     /// can read it. Updated wherever the settings UI replaces the config.
@@ -897,6 +901,7 @@ impl AppState {
             app_handle: Mutex::new(None),
             app_mode_active: std::sync::atomic::AtomicBool::new(false),
             web_server_running: std::sync::atomic::AtomicBool::new(false),
+            web_auth: std::sync::OnceLock::new(),
             trust_localhost: std::sync::atomic::AtomicBool::new(trust_localhost),
             cleanup_reactors_started: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
@@ -1341,6 +1346,13 @@ impl AppState {
             event: event.to_string(),
             payload,
         });
+    }
+
+    /// The process-wide LAN account store, loaded from disk on first use.
+    pub fn web_auth(&self) -> Arc<crate::auth::AuthState> {
+        self.web_auth
+            .get_or_init(|| Arc::new(crate::auth::AuthState::new()))
+            .clone()
     }
 
     /// Broadcast queue position updates to all SSE clients.
