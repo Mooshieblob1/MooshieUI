@@ -58,7 +58,12 @@ pub async fn update_config(
         crate::config::local_trust_enabled(config.trust_localhost),
         std::sync::atomic::Ordering::SeqCst,
     );
+    let upnp_enabled = config.upnp_enabled;
     *current = config;
+    drop(current);
+    // The router toggle lives in the desktop window too (LAN access in app
+    // mode); a no-op unless the web server is on the LAN.
+    crate::lan_upnp::sync(upnp_enabled);
     Ok(())
 }
 
@@ -112,6 +117,25 @@ pub async fn set_gallery_path(
     };
 
     Ok(resolved)
+}
+
+/// The LAN settings (addresses, firewall, accounts) for the desktop window.
+/// `action` names the browser endpoint it stands in for (`accounts`,
+/// `register`, ...); the reply carries that endpoint's status and JSON body,
+/// so the settings page handles both modes the same way.
+#[tauri::command]
+pub async fn lan_admin(
+    state: State<'_, Arc<AppState>>,
+    action: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, AppError> {
+    let (status, data) = webserver::desktop_lan_admin(
+        state.inner().clone(),
+        &action,
+        body.unwrap_or(serde_json::Value::Null),
+    )
+    .await;
+    Ok(serde_json::json!({ "status": status, "data": data }))
 }
 
 /// Switch to browser mode at runtime: save config, start the web server,
@@ -168,6 +192,10 @@ pub async fn switch_to_browser_mode(
             );
         }
         port = actual_port;
+    } else if let Some(endpoint) = crate::lan_discovery::snapshot().0 {
+        // Started earlier (app mode with LAN access on), possibly on a
+        // fallback port.
+        port = endpoint.port;
     }
 
     // Start a new heartbeat watchdog — the previous one exits when

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { portal } from "../../utils/portal.js";
   import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, lanRequest, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -541,13 +541,8 @@
     resetError = null;
     resetSuccess = false;
     try {
-      const resp = await fetch("/internal-api/_auth/reset_password", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username: resetTargetUser, temp_password: resetTempPass }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) { resetError = data.error ?? locale.t("settings.lan.reset_failed"); return; }
+      const resp = await lanRequest("reset_password", { username: resetTargetUser, temp_password: resetTempPass });
+      if (!resp.ok) { resetError = resp.data.error ?? locale.t("settings.lan.reset_failed"); return; }
       resetSuccess = true;
       resetTempPass = "";
     } catch (e) {
@@ -590,8 +585,7 @@
 
   async function loadLanAccounts() {
     try {
-      const resp = await fetch("/internal-api/_auth/accounts", { headers: authHeaders() });
-      const data = await resp.json();
+      const { data } = await lanRequest("accounts");
       const raw = data.accounts ?? [];
       // Normalise: backend now returns {username, role, online, created_at, last_online}
       lanAccounts = raw.map((a: any) =>
@@ -606,8 +600,7 @@
 
   async function loadLanInfo() {
     try {
-      const resp = await fetch("/internal-api/_auth/lan_info", { headers: authHeaders() });
-      const data = await resp.json();
+      const { data } = await lanRequest("lan_info");
       lanAddresses = data.addresses ?? [];
       lanHostnameUrl = data.hostname_url ?? null;
       lanListening = data.listening !== false;
@@ -620,8 +613,8 @@
 
   async function loadLanFirewall() {
     try {
-      const resp = await fetch("/internal-api/_auth/lan_firewall", { headers: authHeaders() });
-      lanFirewall = resp.ok ? await resp.json() : null;
+      const resp = await lanRequest("lan_firewall");
+      lanFirewall = resp.ok ? resp.data : null;
     } catch {
       lanFirewall = null;
     }
@@ -632,13 +625,8 @@
     lanFirewallBusy = true;
     lanFirewallError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/lan_firewall", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: "{}",
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (resp.ok) {
+      const { ok, data } = await lanRequest("lan_firewall_allow");
+      if (ok) {
         lanFirewall = data;
       } else {
         lanFirewallError = locale.t(data.code === "cancelled" ? "settings.lan.firewall_cancelled" : "settings.lan.firewall_failed");
@@ -694,14 +682,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/register", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username: lanNewUser.trim(), password: lanNewPass }),
-      });
-      const data = await resp.json();
+      const resp = await lanRequest("register", { username: lanNewUser.trim(), password: lanNewPass });
       if (!resp.ok) {
-        lanAuthError = data.error ?? locale.t("settings.lan.create_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.create_failed");
       } else {
         lanNewUser = "";
         lanNewPass = "";
@@ -718,14 +701,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/delete", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username, keep_data: keepData }),
-      });
+      const resp = await lanRequest("delete", { username, keep_data: keepData });
       if (!resp.ok) {
-        const data = await resp.json();
-        lanAuthError = data.error ?? locale.t("settings.lan.delete_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.delete_failed");
       } else {
         await loadLanAccounts();
       }
@@ -748,14 +726,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/set_role", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username, role: newRole }),
-      });
+      const resp = await lanRequest("set_role", { username, role: newRole });
       if (!resp.ok) {
-        const data = await resp.json();
-        lanAuthError = data.error ?? locale.t("settings.lan.role_update_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.role_update_failed");
       } else {
         await loadLanAccounts();
       }
@@ -770,14 +743,9 @@
     lanAuthBusy = true;
     lanAuthError = null;
     try {
-      const resp = await fetch("/internal-api/_auth/set_modelhub_access", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username, allowed: !currentValue }),
-      });
+      const resp = await lanRequest("set_modelhub_access", { username, allowed: !currentValue });
       if (!resp.ok) {
-        const data = await resp.json();
-        lanAuthError = data.error ?? locale.t("settings.lan.modelhub_update_failed");
+        lanAuthError = resp.data.error ?? locale.t("settings.lan.modelhub_update_failed");
       } else {
         await loadLanAccounts();
       }
@@ -1571,6 +1539,11 @@
       loadLanInfo();
       void loadLanFirewall();
       void refreshPasswordSecurityStatus();
+    } else if (isTauri) {
+      // The desktop window manages LAN access in-process (lanRequest).
+      loadLanAccounts();
+      loadLanInfo();
+      void loadLanFirewall();
     }
     startQueuePolling();
   });
@@ -1582,7 +1555,7 @@
 
   // Poll account list every 10s to refresh online/offline indicators (admin/mod).
   $effect(() => {
-    if (!isBrowserMode || !canManageServer) return;
+    if (!(isBrowserMode || (isTauri && config?.lan_enabled)) || !canManageServer) return;
     const id = setInterval(loadLanAccounts, 10_000);
     return () => clearInterval(id);
   });
@@ -2201,7 +2174,6 @@
                 {/if}
               </p>
             {/if}
-            {#if config.browser_mode}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
                   <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.lan.enable')}</label>
@@ -2219,6 +2191,7 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              {#if config.browser_mode}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
                   <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.browser_shutdown.enable')}</label>
@@ -2236,6 +2209,8 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              {/if}
+              {#if config.browser_mode || config.lan_enabled}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
                   <label for="settings-trust-localhost" class="text-xs text-neutral-300 font-medium">{locale.t('settings.trust_localhost.enable')}</label>
@@ -2254,6 +2229,7 @@
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
+              {/if}
               {#if config.lan_enabled}
                 <div class="space-y-3 pt-2 border-t border-neutral-800">
                   <p class="text-xs text-amber-400">
@@ -2420,7 +2396,6 @@
                   >{locale.t('settings.lan.add_account')}</button>
                 </div>
               {/if}
-            {/if}
           </div>
         </section>
         {/if}

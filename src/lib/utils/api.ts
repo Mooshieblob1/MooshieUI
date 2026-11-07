@@ -1015,17 +1015,51 @@ export async function getStorageInfo(): Promise<StorageInfo> {
 }
 
 export async function setStorageLimit(username: string, limitBytes: number): Promise<void> {
-  const { isBrowserMode, authHeaders } = await import("./ipc.js");
-  if (!isBrowserMode) return;
-  const resp = await fetch("/internal-api/_storage/set_limit", {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ username, limit_bytes: limitBytes }),
-  });
+  const resp = await lanRequest("set_storage_limit", { username, limit_bytes: limitBytes });
   if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data.error || `Failed to set storage limit: ${resp.status}`);
+    throw new Error(resp.data?.error || `Failed to set storage limit: ${resp.status}`);
   }
+}
+
+/** Read-only LAN settings actions; every other action is a POST. */
+const LAN_GET_ACTIONS = new Set(["accounts", "lan_info", "lan_firewall"]);
+
+/** Browser endpoint for a LAN settings action. */
+function lanActionPath(action: string): string {
+  if (action === "set_storage_limit") return "/internal-api/_storage/set_limit";
+  if (action === "lan_firewall_allow") return "/internal-api/_auth/lan_firewall";
+  return `/internal-api/_auth/${action}`;
+}
+
+export interface LanResponse {
+  ok: boolean;
+  status: number;
+  data: any;
+}
+
+/**
+ * A LAN settings call (addresses, firewall, accounts, storage limits). The
+ * browser UI reaches the web server's `/internal-api` endpoints; the desktop
+ * window runs the same handlers in-process through `lan_admin`, so LAN access
+ * can be managed without switching to browser mode.
+ */
+export async function lanRequest(action: string, body?: unknown): Promise<LanResponse> {
+  const { isBrowserMode, authHeaders, ipcInvoke } = await import("./ipc.js");
+  if (!isBrowserMode) {
+    const res = await ipcInvoke<{ status: number; data: unknown }>("lan_admin", {
+      action,
+      body: body ?? null,
+    });
+    return { ok: res.status >= 200 && res.status < 300, status: res.status, data: res.data ?? {} };
+  }
+  const isGet = LAN_GET_ACTIONS.has(action);
+  const resp = await fetch(lanActionPath(action), {
+    method: isGet ? "GET" : "POST",
+    headers: isGet ? authHeaders() : authHeaders({ "Content-Type": "application/json" }),
+    body: isGet ? undefined : JSON.stringify(body ?? {}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  return { ok: resp.ok, status: resp.status, data };
 }
 
 export interface ModelSpec {
