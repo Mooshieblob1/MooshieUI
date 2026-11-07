@@ -989,7 +989,7 @@
   // sizes so expanding a panel that was restored as collapsed brings back its real size.
   let leftWidthBeforeCollapse = _savedLayout.left;
   let rightWidthBeforeCollapse = _savedLayout.right;
-  let bottomHeightBeforeCollapse = bottomHeight;
+  let bottomHeightBeforeCollapse = bottomPanes[bottomWorkspace].height;
 
   // Switching between image and video swaps in that workspace's drawer height
   // and collapse state. The phone layout opens and closes its drawer as a
