@@ -2359,6 +2359,7 @@ const en: Record<string, string> = {
   "characters.memory.nothing": "That's already in {name}'s memory.",
   "characters.memory.invalid": "The prompt assistant didn't return memory changes. Try again.",
   "characters.memory.full": "{name} has the most memory files allowed ({max}). Delete one first.",
+  "characters.memory.learned": "Saved to memory for next time: {list}",
   "characters.edit": "Edit",
   "characters.delete": "Delete",
   "characters.delete_confirm": "Delete the saved character {name}?",

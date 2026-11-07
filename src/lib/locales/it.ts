@@ -2619,6 +2619,7 @@ const it: Record<string, string> = {
   "characters.memory.nothing": "È già nella memoria di {name}.",
   "characters.memory.invalid": "L'assistente prompt non ha restituito modifiche alla memoria. Riprova.",
   "characters.memory.full": "{name} ha già il numero massimo di file di memoria ({max}). Eliminane uno prima.",
+  "characters.memory.learned": "Salvato in memoria per la prossima volta: {list}",
   "characters.edit": "Modifica",
   "characters.delete": "Elimina",
   "characters.delete_confirm": "Eliminare il personaggio salvato {name}?",

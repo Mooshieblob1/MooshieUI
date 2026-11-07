@@ -33,6 +33,11 @@ export interface NaiParsedResponse {
    * when absent.
    */
   canon: string[];
+  /**
+   * The `MEMORY:` field: facts about saved characters to save to their memory
+   * files, one `name | file.md | fact` line each. Empty when absent.
+   */
+  memory: string[];
 }
 
 /** Em dash and en dash. NovelAI treats both as prompt poison. */
@@ -45,8 +50,9 @@ const LABEL_UC =
 const LABEL_CHAR = /^\s*(?:\*\*)?char(?:acter)?\s*\d*(?:\*\*)?\s*:\s*/i;
 const LABEL_NOTE = /^\s*(?:\*\*)?note(?:\*\*)?\s*:\s*/i;
 const LABEL_CANON = /^\s*(?:\*\*)?canon(?:\s*conflicts?)?(?:\*\*)?\s*:\s*/i;
+const LABEL_MEMORY = /^\s*(?:\*\*)?memory(?:\*\*)?\s*:\s*/i;
 
-type Field = "base" | "uc" | "char" | "note" | "canon" | null;
+type Field = "base" | "uc" | "char" | "note" | "canon" | "memory" | null;
 
 /**
  * Pull the labelled fields out of a raw completion.
@@ -66,6 +72,7 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
   const chars: string[][] = [];
   const note: string[] = [];
   const canon: string[] = [];
+  const memory: string[] = [];
 
   let field: Field = null;
   let sawLabel = false;
@@ -114,6 +121,14 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
       continue;
     }
 
+    if (LABEL_MEMORY.test(line)) {
+      field = "memory";
+      sawLabel = true;
+      const rest = line.replace(LABEL_MEMORY, "");
+      if (rest.trim()) memory.push(rest);
+      continue;
+    }
+
     if (!sawLabel) {
       preamble.push(line);
       continue;
@@ -134,6 +149,9 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
       case "canon":
         canon.push(line);
         break;
+      case "memory":
+        memory.push(line);
+        break;
       default:
         break;
     }
@@ -141,7 +159,7 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
 
   if (!sawLabel) {
     const bare = (raw ?? "").replace(/^\s*```[^\n]*\n?|```\s*$/g, "").trim();
-    return { base: bare, uc: "", characters: [], note: "", canon: [] };
+    return { base: bare, uc: "", characters: [], note: "", canon: [], memory: [] };
   }
 
   const joinedBase = joinField(base);
@@ -153,6 +171,7 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
     characters: chars.map((c) => joinField(c)).filter((c) => !isBlankBox(c)),
     note: joinField(note),
     canon: canonLines(canon),
+    memory: canonLines(memory),
   };
 }
 
@@ -388,6 +407,7 @@ export function normalizeNaiResponse(parsed: NaiParsedResponse): NaiParsedRespon
     characters: parsed.characters.map((box) => normalizeField(normalizeCharIdentity(box))),
     note: parsed.note.trim(),
     canon: parsed.canon,
+    memory: parsed.memory,
   };
 }
 

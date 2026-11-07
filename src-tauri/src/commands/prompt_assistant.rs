@@ -357,7 +357,17 @@ async fn run_generation(
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
     // "blue hair" prompt). No-op for Compose and for prose families.
-    Ok(grounding::finish(input, &raw, mode, style))
+    // With character notes the reply may end in facts to save to memory:
+    // split them off before the prompt is finished, and hand them back after it.
+    let (raw, facts) = if notes.is_empty() {
+        (raw, String::new())
+    } else {
+        grounding::split_memory(&raw)
+    };
+    Ok(grounding::with_memory(
+        grounding::finish(input, &raw, mode, style),
+        &facts,
+    ))
 }
 
 /// One label per image actually sent, padded or cut to match. An image that

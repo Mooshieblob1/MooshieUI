@@ -2644,6 +2644,7 @@ const ja: Record<string, string> = {
   "characters.memory.nothing": "それはすでに {name} のメモリーにあります。",
   "characters.memory.invalid": "プロンプトアシスタントがメモリーの変更を返しませんでした。もう一度お試しください。",
   "characters.memory.full": "{name} のメモリーファイルは上限（{max}）に達しています。先に1つ削除してください。",
+  "characters.memory.learned": "次回のためにメモリーに保存しました：{list}",
   "characters.edit": "編集",
   "characters.delete": "削除",
   "characters.delete_confirm": "保存済みキャラクター {name} を削除しますか？",

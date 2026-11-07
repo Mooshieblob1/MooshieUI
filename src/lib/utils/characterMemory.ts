@@ -329,11 +329,11 @@ export interface MemoryCandidate {
 }
 
 /**
- * The cards a request refers to that have memory: named in `texts` by any
- * word of their name, or with their saved prompt already in `existing`. One
- * card per memory owner (a variant and its parent share notes), a full-name
- * match first, and at most `MEMORY_REQUEST_CHARACTERS` of them. Each comes
- * with its notes, cut to share `MEMORY_REQUEST_LIMIT` between them.
+ * The cards a request refers to: named in `texts` by any word of their name,
+ * or with their saved prompt already in `existing`. One card per memory owner
+ * (a variant and its parent share notes), a full-name match first, and at
+ * most `MEMORY_REQUEST_CHARACTERS` of them. Each comes with its notes, cut to
+ * share `MEMORY_REQUEST_LIMIT` between them, or `MEMORY_NONE`.
  */
 export function memoryForRequest<T extends MemoryCandidate>(
   cards: readonly T[],
@@ -345,7 +345,6 @@ export function memoryForRequest<T extends MemoryCandidate>(
   const lowerExisting = existing.toLowerCase();
   const scored: { card: T; full: boolean }[] = [];
   for (const card of cards) {
-    if (memorySize(card.memory) === 0) continue;
     const full = !!card.name.trim() && lowerSaid.includes(card.name.trim().toLowerCase());
     const inPrompt = !!card.prompt.trim() && lowerExisting.includes(card.prompt.trim().toLowerCase());
     if (full || inPrompt || namesCharacter(card.name, said)) scored.push({ card, full: full || inPrompt });
@@ -357,13 +356,17 @@ export function memoryForRequest<T extends MemoryCandidate>(
   for (const { card } of scored) {
     if (owners.has(card.ownerId) || out.length >= MEMORY_REQUEST_CHARACTERS || left < 200) continue;
     owners.add(card.ownerId);
-    const notes = memoryContext(card.memory, Math.min(MEMORY_CONTEXT_LIMIT, left));
-    if (!notes) continue;
+    // A character with no notes yet still goes out, so the assistant can
+    // save what it works out about them the first time.
+    const notes = memoryContext(card.memory, Math.min(MEMORY_CONTEXT_LIMIT, left)) || MEMORY_NONE;
     left -= notes.length;
     out.push({ ...card, notes });
   }
   return out;
 }
+
+/** What a request shows for a character who has no memory notes yet. */
+export const MEMORY_NONE = "(none yet)";
 
 /**
  * The general Enhance's character notes: each referenced saved character's
@@ -374,4 +377,77 @@ export function characterNotesBlock(entries: readonly { name: string; prompt: st
   return entries
     .map((e) => `Saved character "${e.name.trim()}"\nAppearance: ${e.prompt.trim()}\nMemory notes:\n${e.notes.trim()}`)
     .join("\n\n");
+}
+
+/** A lasting detail the assistant worked out during Enhance, to save for next time. */
+export interface LearnedMemory {
+  /** The saved character's name, as the request showed it. */
+  name: string;
+  file: string;
+  fact: string;
+}
+
+/** The line that starts the facts to save after a general Enhance prompt. */
+export const MEMORY_MARKER = "[[MEMORY]]";
+
+/** Most facts taken from one Enhance answer. */
+const LEARNED_LIMIT = 12;
+const FACT_LIMIT = 500;
+
+/**
+ * When and how Enhance saves what it works out about a saved character, so
+ * the next prompt reads it from the notes instead of working it out again.
+ * `format` says where the facts go in that flow's answer.
+ */
+export function learnMemoryRule(format: string): string {
+  return `- When the prompt needs a lasting detail of a saved character that their memory notes do not have yet, and you work it out from your own knowledge or the user's text (the uniform of the school they attend, an accessory they always wear, their signature weapon), save it, so the next prompt reads it from the notes instead of working it out again. Save only what holds for the character in general, written as what a picture shows, never a one-off of this scene. Save nothing the notes already say, nothing the request marks as just for this image, and nothing at all when the user says not to remember. When the notes already have a detail, use it as written.
+- ${format} One line per fact in the form <saved character's name> | <file>.md | <fact>. Reuse a file from their notes where one fits, otherwise name one in lowercase with hyphens, such as outfits.md. Leave it out when there is nothing to save.`;
+}
+
+/** Fact lines in the form `name | file.md | fact`, bullets and malformed lines dropped. */
+export function parseLearnedLines(lines: readonly string[]): LearnedMemory[] {
+  const out: LearnedMemory[] = [];
+  for (const raw of lines) {
+    const parts = raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").split("|").map((p) => p.trim());
+    if (parts.length < 3) continue;
+    const [name, file, ...rest] = parts;
+    const fact = rest.join(" | ").replace(/^[-*•]\s*/, "").trim().slice(0, FACT_LIMIT);
+    const clean = cleanMemoryFileName(file);
+    if (!name || !clean || !fact) continue;
+    out.push({ name, file: clean, fact });
+    if (out.length >= LEARNED_LIMIT) break;
+  }
+  return out;
+}
+
+/** A general Enhance answer split into the prompt and the facts after `MEMORY_MARKER`. */
+export function splitLearnedMemory(text: string): { prompt: string; learned: LearnedMemory[] } {
+  const lines = (text ?? "").split("\n");
+  const at = lines.findIndex((l) => l.trim() === MEMORY_MARKER);
+  if (at === -1) return { prompt: text ?? "", learned: [] };
+  return { prompt: lines.slice(0, at).join("\n").trimEnd(), learned: parseLearnedLines(lines.slice(at + 1)) };
+}
+
+/**
+ * `files` with `fact` added as a bullet to `file` (created when missing).
+ * Null when the fact is already there, or the file or the list is full.
+ */
+export function addLearnedFact(
+  files: readonly CharacterMemoryFile[],
+  file: string,
+  fact: string,
+): CharacterMemoryFile[] | null {
+  const text = fact.trim().replace(/^[-*•]\s*/, "");
+  if (!text) return null;
+  const said = (f: CharacterMemoryFile) => f.content.toLowerCase().includes(text.toLowerCase());
+  if (files.some(said)) return null;
+  const bullet = `- ${text}`;
+  const match = files.find((f) => f.name.toLowerCase() === file.toLowerCase());
+  if (match) {
+    const content = match.content.trim() ? `${match.content.trimEnd()}\n${bullet}` : bullet;
+    if (content.length > MEMORY_FILE_LIMIT) return null;
+    return files.map((f) => (f.id === match.id ? { ...f, content, updatedAt: Date.now() } : f));
+  }
+  if (files.length >= MEMORY_MAX_FILES) return null;
+  return [...files, newMemoryFile(file, bullet, files.map((f) => f.name))];
 }

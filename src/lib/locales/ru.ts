@@ -2619,6 +2619,7 @@ const ru: Record<string, string> = {
   "characters.memory.nothing": "Это уже есть в памяти {name}.",
   "characters.memory.invalid": "Помощник промптов не вернул изменений памяти. Попробуйте ещё раз.",
   "characters.memory.full": "У {name} уже максимум файлов памяти ({max}). Сначала удалите один.",
+  "characters.memory.learned": "Сохранено в памяти на будущее: {list}",
   "characters.edit": "Изменить",
   "characters.delete": "Удалить",
   "characters.delete_confirm": "Удалить сохранённого персонажа {name}?",

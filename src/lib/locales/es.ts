@@ -2688,6 +2688,7 @@ const es: Record<string, string> = {
   "characters.memory.nothing": "Eso ya está en la memoria de {name}.",
   "characters.memory.invalid": "El asistente de prompts no devolvió cambios de memoria. Inténtalo de nuevo.",
   "characters.memory.full": "{name} ya tiene el máximo de archivos de memoria ({max}). Elimina uno primero.",
+  "characters.memory.learned": "Guardado en la memoria para la próxima vez: {list}",
   "characters.edit": "Editar",
   "characters.delete": "Eliminar",
   "characters.delete_confirm": "¿Eliminar el personaje guardado {name}?",

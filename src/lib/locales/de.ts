@@ -2640,6 +2640,7 @@ const de: Record<string, string> = {
   "characters.memory.nothing": "Das steht schon im Gedächtnis von {name}.",
   "characters.memory.invalid": "Der Prompt-Assistent hat keine Gedächtnisänderungen geliefert. Versuche es erneut.",
   "characters.memory.full": "{name} hat bereits die maximale Anzahl an Gedächtnisdateien ({max}). Lösche zuerst eine.",
+  "characters.memory.learned": "Für das nächste Mal im Gedächtnis gespeichert: {list}",
   "characters.edit": "Bearbeiten",
   "characters.delete": "Löschen",
   "characters.delete_confirm": "Den gespeicherten Charakter {name} löschen?",

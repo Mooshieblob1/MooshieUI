@@ -7265,7 +7265,17 @@ pub async fn run_prompt_assistant_headless(
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose and for prose families. The desktop path
     // runs this too; omitting it here made browser Enhance silently drop user tags.
-    Ok(grounding::finish(input, &raw, mode, style))
+    // With character notes the reply may end in facts to save to memory:
+    // split them off before the prompt is finished, and hand them back after it.
+    let (raw, facts) = if notes.is_empty() {
+        (raw, String::new())
+    } else {
+        grounding::split_memory(&raw)
+    };
+    Ok(grounding::with_memory(
+        grounding::finish(input, &raw, mode, style),
+        &facts,
+    ))
 }
 
 // ---------------------------------------------------------------------------

@@ -2619,6 +2619,7 @@ const zhTw: Record<string, string> = {
   "characters.memory.nothing": "這已經在 {name} 的記憶中了。",
   "characters.memory.invalid": "提示詞助理沒有傳回記憶變更。請再試一次。",
   "characters.memory.full": "{name} 的記憶檔案已達上限（{max}）。請先刪除一個。",
+  "characters.memory.learned": "已存入記憶，下次直接使用：{list}",
   "characters.edit": "編輯",
   "characters.delete": "刪除",
   "characters.delete_confirm": "刪除已儲存的角色 {name}？",

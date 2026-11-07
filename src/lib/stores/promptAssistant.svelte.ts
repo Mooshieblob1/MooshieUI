@@ -127,6 +127,8 @@ import {
   memoryContext,
   parseRemember,
   rememberRequest,
+  splitLearnedMemory,
+  type LearnedMemory,
   type CharacterMemoryFile,
   type MemoryChange,
 } from "../utils/characterMemory.js";
@@ -728,7 +730,7 @@ class PromptAssistantStore {
     images: string[];
     /** Aborting it stops the request on the backend too (see `runPromptAssistant`). */
     signal?: AbortSignal;
-  }): Promise<{ prompt: string; sessionUser: string }> {
+  }): Promise<{ prompt: string; sessionUser: string; learned: LearnedMemory[] }> {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
     const images = req.images;
@@ -739,7 +741,7 @@ class PromptAssistantStore {
         userText: existing ? `${existing}\n${text}` : text,
         maxOutputTokens: 384,
       });
-      const prompt = await this.withStageListener(() =>
+      const answer = await this.withStageListener(() =>
         existing
           ? enhancePrompt(
               existing,
@@ -751,10 +753,13 @@ class PromptAssistantStore {
             )
           : composePrompt(text, req.family, req.opts, history.messages, images, req.signal),
       );
+      // Facts to save to a saved character's memory come after the prompt
+      // when character notes went out (see `character_notes`).
+      const { prompt, learned } = splitLearnedMemory(answer);
       // The pasted current prompt is left out, like the V5 session: the next
       // turn sends whatever the prompt box holds by then.
       const sessionUser = withImageMarker(text || existing || "", images.length, "reference");
-      return { prompt, sessionUser };
+      return { prompt, sessionUser, learned: req.opts.character_notes ? learned : [] };
     } finally {
       this.isGenerating = false;
     }

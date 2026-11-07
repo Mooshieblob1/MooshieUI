@@ -2660,6 +2660,7 @@ const zh: Record<string, string> = {
   "characters.memory.nothing": "这已经在 {name} 的记忆中了。",
   "characters.memory.invalid": "提示词助手没有返回记忆更改。请重试。",
   "characters.memory.full": "{name} 的记忆文件已达上限（{max}）。请先删除一个。",
+  "characters.memory.learned": "已存入记忆，下次直接使用：{list}",
   "characters.edit": "编辑",
   "characters.delete": "删除",
   "characters.delete_confirm": "删除已保存的角色 {name}？",

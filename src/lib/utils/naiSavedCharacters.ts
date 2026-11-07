@@ -11,6 +11,8 @@
  * Leaf util, like `naiPrompt.ts`: it takes plain data and imports no store.
  */
 
+import { learnMemoryRule } from "./characterMemory.js";
+
 /**
  * Which side wins when a saved canon character's card disagrees with canon:
  * the saved details (the default) or the canon look. The user picks after
@@ -86,5 +88,9 @@ ${entries}
 - The user's text wins over both the saved text and canon where it changes something. If they ask for her in a swimsuit, the swimsuit replaces the saved outfit; everything else saved still holds.
 - Add a saved character's avoid list to UC, skipping anything already there and anything that would rule out another character in the image or something the user asked for.
 - A saved character's appearance counts as something the user gave you, so it is not invention.
-- Never bring in a saved character the text does not refer to. This list is reference, not a cast.${memoryRule}`;
+- Never bring in a saved character the text does not refer to. This list is reference, not a cast.${memoryRule}${
+    memoryRule
+      ? `\n${learnMemoryRule("Put facts to save in a MEMORY field after the CHAR blocks and any CANON field, before any NOTE line: the label MEMORY: on its own line, then the facts.")}`
+      : ""
+  }`;
 }

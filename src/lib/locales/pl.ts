@@ -2313,6 +2313,7 @@ const pl: Record<string, string> = {
   "characters.memory.nothing": "To już jest w pamięci postaci {name}.",
   "characters.memory.invalid": "Asystent promptów nie zwrócił zmian w pamięci. Spróbuj ponownie.",
   "characters.memory.full": "{name} ma już maksymalną liczbę plików pamięci ({max}). Najpierw usuń jeden.",
+  "characters.memory.learned": "Zapisano w pamięci na następny raz: {list}",
   "characters.edit": "Edytuj",
   "characters.delete": "Usuń",
   "characters.delete_confirm": "Usunąć zapisaną postać {name}?",

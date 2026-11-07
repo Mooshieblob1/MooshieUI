@@ -37,7 +37,12 @@
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
   import { naiSavedCharacterDirective, NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
-  import { characterNotesBlock, memoryForRequest } from "../../utils/characterMemory.js";
+  import {
+    characterNotesBlock,
+    memoryForRequest,
+    parseLearnedLines,
+    type LearnedMemory,
+  } from "../../utils/characterMemory.js";
   import type { NaiCanonPriority } from "../../utils/naiSavedCharacters.js";
   import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
@@ -204,6 +209,23 @@
     return new Map(picks.map((p) => [p.id, p.notes]));
   }
 
+  /**
+   * Save what the rewrite worked out about the saved characters it was sent
+   * (`sentIds`) into their memory, so the next prompt reads it instead of
+   * working it out again. The toast offers Undo.
+   */
+  function saveLearned(learned: LearnedMemory[], sentIds: Set<string>) {
+    if (learned.length === 0 || sentIds.size === 0) return;
+    const cards = savedCharacters.currentCharacters.filter((c) => sentIds.has(c.id));
+    const result = savedCharacters.learnMemory(learned, cards);
+    if (!result) return;
+    gallery.showToast(locale.t("characters.memory.learned", { list: result.saved.join(", ") }), "success", {
+      actionLabel: locale.t("characters.undo"),
+      onAction: result.undo,
+      durationMs: 8000,
+    });
+  }
+
   async function runGeneral() {
     const text = naiEnhance.input.trim();
     const refs = naiEnhance.references.map((r) => ({ ...r }));
@@ -218,7 +240,7 @@
       const noted = savedCharactersForRequest(
         savedCharacters.currentCharacters
           .filter((c) => notes.has(c.id))
-          .map((c) => ({ name: c.name, prompt: c.prompt, notes: notes.get(c.id) ?? "" })),
+          .map((c) => ({ id: c.id, name: c.name, prompt: c.prompt, notes: notes.get(c.id) ?? "" })),
         rateRequest(texts),
         texts,
       );
@@ -246,6 +268,7 @@
         before: generation.positivePrompt ?? "",
         after: result.prompt,
       });
+      saveLearned(result.learned, new Set(noted.map((n) => n.id)));
     } catch (e) {
       // Cancelled on purpose: nothing went wrong, so nothing to say.
       if (signal.aborted || isLlmCancelled(e)) return;
@@ -420,6 +443,10 @@
       // conversation either way. Not when it failed validation, and not when
       // the modal was cancelled (the early return above).
       recordedLast = result.problems.length === 0;
+      saveLearned(
+        parseLearnedLines(result.parsed.memory),
+        new Set(roster.filter((c) => c.notes).map((c) => c.id)),
+      );
       if (recordedLast) {
         enhancerSessions.record("nai", result.sessionUser, result.raw);
       }

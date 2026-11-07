@@ -2619,6 +2619,7 @@ const ko: Record<string, string> = {
   "characters.memory.nothing": "이미 {name}의 메모리에 있습니다.",
   "characters.memory.invalid": "프롬프트 도우미가 메모리 변경 사항을 반환하지 않았습니다. 다시 시도하세요.",
   "characters.memory.full": "{name}의 메모리 파일이 최대 개수({max})입니다. 먼저 하나를 삭제하세요.",
+  "characters.memory.learned": "다음을 위해 메모리에 저장했습니다: {list}",
   "characters.edit": "편집",
   "characters.delete": "삭제",
   "characters.delete_confirm": "저장된 캐릭터 {name}을(를) 삭제할까요?",

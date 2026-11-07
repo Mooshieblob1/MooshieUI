@@ -4,10 +4,12 @@ import { MODEL_FAMILY_LABELS, type ModelFamily } from "../utils/modelFamily.js";
 import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { CharacterPromptStyle } from "../utils/characterExtract.js";
 import {
+  addLearnedFact,
   cloneMemory,
   mergeMemory,
   sanitizeMemory,
   type CharacterMemoryFile,
+  type LearnedMemory,
 } from "../utils/characterMemory.js";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 
@@ -265,6 +267,51 @@ class SavedCharactersStore {
     const clean = sanitizeMemory(memory);
     this.characters = this.characters.map((c) => (c.id === id ? { ...c, memory: clean } : c));
     this.saveSettings();
+  }
+
+  /**
+   * Save the facts Enhance worked out into the memory of the characters they
+   * name, so the next prompt reads them instead of working them out again.
+   * Only `cards` (the ones the request referred to) can be written. Returns
+   * what was saved, as "Name (file.md)", and an undo; null when nothing was.
+   */
+  learnMemory(
+    learned: readonly LearnedMemory[],
+    cards: readonly SavedCharacter[],
+  ): { saved: string[]; undo: () => void } | null {
+    const bare = (name: string) => name.replace(/\([^)]*\)/g, " ").trim().toLowerCase();
+    const find = (name: string) => {
+      const said = name.trim().toLowerCase();
+      return (
+        cards.find((c) => c.name.trim().toLowerCase() === said) ??
+        cards.find((c) => bare(c.name) === bare(name)) ??
+        cards.find((c) => bare(c.name).includes(bare(name)) || bare(name).includes(bare(c.name)))
+      );
+    };
+    const before = new Map<string, CharacterMemoryFile[]>();
+    const saved = new Set<string>();
+    let next = this.characters;
+    for (const item of learned) {
+      const card = find(item.name);
+      if (!card) continue;
+      const ownerId = this.memoryOwner(card).id;
+      const owner = next.find((c) => c.id === ownerId);
+      const files = owner ? addLearnedFact(owner.memory, item.file, item.fact) : null;
+      if (!owner || !files) continue;
+      if (!before.has(ownerId)) before.set(ownerId, owner.memory);
+      next = next.map((c) => (c.id === ownerId ? { ...c, memory: files } : c));
+      saved.add(`${owner.name} (${item.file})`);
+    }
+    if (saved.size === 0) return null;
+    this.characters = next;
+    this.saveSettings();
+    return {
+      saved: [...saved],
+      undo: () => {
+        this.characters = this.characters.map((c) => (before.has(c.id) ? { ...c, memory: before.get(c.id)! } : c));
+        this.saveSettings();
+      },
+    };
   }
 
   /** Route the generation `promptId` back to card `id` as its picture when it lands. */
