@@ -3,6 +3,12 @@ import { userScopedKey } from "../utils/ipc.js";
 import { MODEL_FAMILY_LABELS, type ModelFamily } from "../utils/modelFamily.js";
 import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { CharacterPromptStyle } from "../utils/characterExtract.js";
+import {
+  cloneMemory,
+  mergeMemory,
+  sanitizeMemory,
+  type CharacterMemoryFile,
+} from "../utils/characterMemory.js";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 
 const STORAGE_KEY = "mooshieui.savedCharacters.v1";
@@ -37,6 +43,12 @@ export interface SavedCharacter {
    * variants do not nest.
    */
   parentId: string | null;
+  /**
+   * Memory files: notes on who the character is beyond their look, read by
+   * the prompt assistant. A variant shares its parent's (see `memoryOf`), so
+   * only top-level cards normally carry any.
+   */
+  memory: CharacterMemoryFile[];
   createdAt: number;
   updatedAt: number;
 }
@@ -90,6 +102,7 @@ function sanitize(raw: unknown): SavedCharacter | null {
     thumbnail: typeof c.thumbnail === "string" && c.thumbnail.startsWith("data:image/") ? c.thumbnail : null,
     reference: typeof c.reference === "string" && c.reference.startsWith("data:image/") ? c.reference : null,
     parentId: typeof c.parentId === "string" && c.parentId ? c.parentId : null,
+    memory: sanitizeMemory(c.memory),
     createdAt: typeof c.createdAt === "number" ? c.createdAt : now,
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : now,
   };
@@ -117,6 +130,7 @@ export interface NewCharacter {
   thumbnail?: string | null;
   reference?: string | null;
   parentId?: string | null;
+  memory?: CharacterMemoryFile[];
 }
 
 class SavedCharactersStore {
@@ -178,6 +192,7 @@ class SavedCharactersStore {
         thumbnail: item.thumbnail ?? null,
         reference: item.reference ?? null,
         parentId: item.parentId ?? null,
+        memory: item.memory ? cloneMemory(item.memory) : [],
         createdAt: now,
         updatedAt: now,
       });
@@ -220,6 +235,38 @@ class SavedCharactersStore {
     this.saveSettings();
   }
 
+  /**
+   * The card whose memory files `card` uses: its parent for a variant (the
+   * same character in another look), otherwise the card itself.
+   */
+  memoryOwner(card: SavedCharacter): SavedCharacter {
+    if (!card.parentId) return card;
+    return this.characters.find((c) => c.id === card.parentId) ?? card;
+  }
+
+  /** The memory files `card` uses. */
+  memoryOf(card: SavedCharacter): CharacterMemoryFile[] {
+    return this.memoryOwner(card).memory;
+  }
+
+  /** `cards` with the memory each one uses and whose it is, for `memoryForRequest`. */
+  withMemory(cards: readonly SavedCharacter[]): (SavedCharacter & { ownerId: string })[] {
+    return cards.map((c) => {
+      const owner = this.memoryOwner(c);
+      return { ...c, ownerId: owner.id, memory: owner.memory };
+    });
+  }
+
+  /**
+   * Replace card `id`'s memory files. Leaves `updatedAt` alone so notes do
+   * not move the card to the front of the list.
+   */
+  setMemory(id: string, memory: CharacterMemoryFile[]): void {
+    const clean = sanitizeMemory(memory);
+    this.characters = this.characters.map((c) => (c.id === id ? { ...c, memory: clean } : c));
+    this.saveSettings();
+  }
+
   /** Route the generation `promptId` back to card `id` as its picture when it lands. */
   claimPortrait(promptId: string, id: string): void {
     this.portraitClaims = { ...this.portraitClaims, [promptId]: id };
@@ -246,11 +293,19 @@ class SavedCharactersStore {
       .map(([promptId]) => promptId);
   }
 
-  /** Delete a card. Its variants stay, as characters of their own. */
+  /**
+   * Delete a card. Its variants stay, as characters of their own, each with a
+   * copy of the memory they were sharing.
+   */
   remove(id: string): void {
+    const memory = this.characters.find((c) => c.id === id)?.memory ?? [];
     this.characters = this.characters
       .filter((c) => c.id !== id)
-      .map((c) => (c.parentId === id ? { ...c, parentId: null } : c));
+      .map((c) =>
+        c.parentId === id
+          ? { ...c, parentId: null, memory: c.memory.length > 0 ? c.memory : cloneMemory(memory) }
+          : c,
+      );
     this.saveSettings();
   }
 
@@ -294,9 +349,17 @@ class SavedCharactersStore {
   setParent(id: string, parentId: string | null): void {
     const parent = parentId ? this.characters.find((c) => c.id === parentId) : null;
     const target = parent?.parentId ?? parent?.id ?? null;
-    if (target === id) return;
+    const card = this.characters.find((c) => c.id === id);
+    if (!card || target === id) return;
+    // Memory follows the character: a card filed under another brings its
+    // notes into the shared ones, and a variant set free keeps a copy.
+    const moved = target && !card.parentId ? card.memory : [];
+    const freed = !target && card.parentId && card.memory.length === 0 ? cloneMemory(this.memoryOf(card)) : null;
     this.characters = this.characters.map((c) => {
-      if (c.id === id) return { ...c, parentId: target };
+      if (c.id === id) {
+        return { ...c, parentId: target, memory: target ? (card.parentId ? c.memory : []) : (freed ?? c.memory) };
+      }
+      if (target && c.id === target && moved.length > 0) return { ...c, memory: mergeMemory(c.memory, moved) };
       if (target && c.parentId === id) return { ...c, parentId: target };
       return c;
     });
@@ -341,12 +404,15 @@ class SavedCharactersStore {
     // whether it was added or was already here.
     const idMap = new Map<string, string>();
     const added: SavedCharacter[] = [];
+    // Memory files on a card that is already saved, to add to the saved one.
+    const memoryFor = new Map<string, SavedCharacter["memory"]>();
     let skipped = 0;
     const now = Date.now();
     for (const c of incoming) {
       const match = existing.get(key(c));
       if (match) {
         idMap.set(c.id, match);
+        if (c.memory.length > 0) memoryFor.set(match, c.memory);
         skipped++;
         continue;
       }
@@ -356,9 +422,13 @@ class SavedCharactersStore {
       existing.set(key(c), id);
       added.push({ ...c, id, updatedAt: now });
     }
-    if (added.length > 0) {
+    if (added.length > 0 || memoryFor.size > 0) {
       const remapped = added.map((c) => ({ ...c, parentId: c.parentId ? (idMap.get(c.parentId) ?? null) : null }));
-      this.characters = sanitizeList([...this.characters, ...remapped]);
+      const current = this.characters.map((c) => {
+        const extra = memoryFor.get(c.id);
+        return extra ? { ...c, memory: mergeMemory(c.memory, extra) } : c;
+      });
+      this.characters = sanitizeList([...current, ...remapped]);
       this.saveSettings();
     }
     return { added: added.length, skipped };

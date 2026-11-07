@@ -37,6 +37,7 @@
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
   import { naiSavedCharacterDirective, NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
+  import { characterNotesBlock, memoryForRequest } from "../../utils/characterMemory.js";
   import type { NaiCanonPriority } from "../../utils/naiSavedCharacters.js";
   import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
@@ -192,20 +193,44 @@
     }
   });
 
+  /**
+   * Memory notes of the saved characters a request refers to, by id, when the
+   * provider gets memory. `texts` is what the request says; `existing` the
+   * prompt it edits, whose saved characters count as referred to.
+   */
+  function memoryNotes(texts: string[], existing: string): Map<string, string> {
+    if (!promptAssistant.canUseMemory) return new Map();
+    const picks = memoryForRequest(savedCharacters.withMemory(savedCharacters.currentCharacters), texts, existing);
+    return new Map(picks.map((p) => [p.id, p.notes]));
+  }
+
   async function runGeneral() {
     const text = naiEnhance.input.trim();
     const refs = naiEnhance.references.map((r) => ({ ...r }));
     if (!canRun || naiEnhance.busy) return;
     const signal = naiEnhance.beginRequest();
     try {
+      const existing = generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null;
+      // Saved characters the request refers to bring their memory notes. The
+      // minor check reads the notes too, as it does for the V5 roster.
+      const texts = [text, existing ?? ""];
+      const notes = memoryNotes(texts, existing ?? "");
+      const noted = savedCharactersForRequest(
+        savedCharacters.currentCharacters
+          .filter((c) => notes.has(c.id))
+          .map((c) => ({ name: c.name, prompt: c.prompt, notes: notes.get(c.id) ?? "" })),
+        rateRequest(texts),
+        texts,
+      );
       const result = await promptAssistant.rewrite({
         text,
-        existing: generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null,
+        existing,
         family: generation.modelFamily,
         opts: {
           length,
           include_artists: includeArtists,
           reference_labels: refs.map((r) => r.label),
+          character_notes: characterNotesBlock(noted) || undefined,
         },
         images: refs.map((r) => r.base64),
         signal,
@@ -357,7 +382,12 @@
       // saved characters themselves: an explicit request leaves out the ones
       // drawn as minors, and refuses when it names one.
       const texts = naiRequestTexts(text, existing, enhancerSessions.turns("nai").map((t) => t.user));
-      const roster = savedCharactersForRequest(savedCharacters.currentCharacters, rateRequest(texts), texts);
+      const notes = memoryNotes(texts, existing ? [existing.base, ...existing.characters].join("\n") : "");
+      const roster = savedCharactersForRequest(
+        savedCharacters.currentCharacters.map((c) => ({ ...c, notes: notes.get(c.id) ?? "" })),
+        rateRequest(texts),
+        texts,
+      );
       const result = await promptAssistant.enhanceForNai(text, {
         variant: v,
         // Curate it applies the Heavy preset, so the rewrite skips what it covers.

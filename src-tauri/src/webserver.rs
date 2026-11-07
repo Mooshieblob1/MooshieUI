@@ -6035,6 +6035,10 @@ async fn dispatch_command(
                         .collect()
                 })
                 .unwrap_or_default();
+            let character_notes = args["opts"]["character_notes"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
             let image_data: Option<Vec<String>> = args["imageData"].as_array().map(|a| {
                 a.iter()
                     .filter_map(|v| v.as_str().map(str::to_string))
@@ -6066,6 +6070,7 @@ async fn dispatch_command(
                                 include_artists,
                                 &instruction,
                                 &labels,
+                                &character_notes,
                                 image_data,
                             ),
                         )
@@ -6105,6 +6110,7 @@ async fn dispatch_command(
                         include_artists,
                         &instruction,
                         &labels,
+                        &character_notes,
                         image_data,
                     )
                     .await?;
@@ -7173,6 +7179,7 @@ pub async fn run_prompt_assistant_headless(
     include_artists: bool,
     instruction: &str,
     reference_labels: &[String],
+    character_notes: &str,
     image_data: Option<Vec<String>>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::grounding;
@@ -7228,8 +7235,15 @@ pub async fn run_prompt_assistant_headless(
         .collect();
     let style = grounding::prompt_style(&purpose, family);
     let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
+    // Same as the desktop path: the notes go to external providers only.
+    let notes = if ext_enabled {
+        grounding::character_notes(character_notes)
+    } else {
+        String::new()
+    };
     let system = grounding::system_prompt(style, mode, &candidates, include_artists)
-        + &grounding::reference_rules(images.len());
+        + &grounding::reference_rules(images.len())
+        + &notes;
     // Mirror the desktop token budget so browser Enhance honors the user's
     // length pick instead of always generating at the medium default.
     let max_tokens = grounding::max_tokens(mode, length);

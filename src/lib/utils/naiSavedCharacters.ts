@@ -24,6 +24,12 @@ export interface NaiSavedCharacter {
   negative: string;
   /** Name of the character this is a variant of (another look), if any. */
   variantOf?: string;
+  /**
+   * The character's memory notes (personality, story, relationships), already
+   * cut to size, for the characters the request refers to. Empty or missing
+   * for the rest.
+   */
+  notes?: string;
 }
 
 /** Most saved characters sent per request. */
@@ -53,11 +59,16 @@ export function naiSavedCharacterDirective(
         `  Appearance: ${clip(c.prompt)}`,
       ];
       if (c.negative.trim()) lines.push(`  Avoid: ${clip(c.negative)}`);
+      const notes = c.notes?.trim();
+      if (notes) lines.push(`  Memory:\n${notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
       return lines.join("\n");
     })
     .join("\n");
+  const memoryRule = roster.some((c) => c.notes?.trim())
+    ? "\n- Memory is the user's notes on who a saved character is: personality, story, relationships, habits. When that character is in the image, let it shape what fits them where the request leaves room, such as their expression, how they hold themselves, or an item they always carry. It never overrides the request or the saved appearance, story facts are not things to draw unless the scene calls for them, and it never brings in someone the text does not refer to."
+    : "";
   return `SAVED CHARACTERS
-The user has saved these characters of their own. Each has a name, the prompt text that draws them, and things to avoid when drawing them.
+The user has saved these characters of their own. Each has a name, the prompt text that draws them, and things to avoid when drawing them${memoryRule ? ", and some have memory notes" : ""}.
 ${entries}
 
 - When the user's text refers to a person by a saved character's full name, by part of it (a first name or a surname alone), or by a close approximation of it (a nickname, a short form, a misspelling), that person is the saved character. Use them; do not ask and do not invent someone new.
@@ -75,5 +86,5 @@ ${entries}
 - The user's text wins over both the saved text and canon where it changes something. If they ask for her in a swimsuit, the swimsuit replaces the saved outfit; everything else saved still holds.
 - Add a saved character's avoid list to UC, skipping anything already there and anything that would rule out another character in the image or something the user asked for.
 - A saved character's appearance counts as something the user gave you, so it is not invention.
-- Never bring in a saved character the text does not refer to. This list is reference, not a cast.`;
+- Never bring in a saved character the text does not refer to. This list is reference, not a cast.${memoryRule}`;
 }
