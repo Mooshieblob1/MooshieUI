@@ -1,3 +1,18 @@
+## What's New in v2.3.36
+
+### LAN access from the desktop window
+- **No more switching to browser mode**: the LAN section in Settings (the toggle, addresses, Windows Firewall, router forwarding and accounts) now shows in the desktop window too. With LAN access on, the app starts its web server on your network at launch and keeps the window open, so other devices can connect while you keep working in the app.
+
+### NovelAI
+- **Queued generations no longer time out**: NovelAI generations now run one at a time per account, in queue order, instead of all at once. A busy answer (429) is retried on its own with a short wait. Two different API keys still run side by side.
+
+### Fixes
+- **Cancelling Prompt Enhance stops it**: Cancel, Escape or clicking outside the Enhance window (general Enhance, Enhance for V5 and the H3 rewrite) now stops the request. The Enhance button no longer stays on its spinner, and a new Enhance no longer waits behind the old one.
+- **One gallery save with several clients connected**: with two clients open in browser or LAN mode (for example a PC tab and a phone), each generation is saved once, with its settings, instead of twice.
+- **Artist creator on phones**: the pick, switch and close buttons in the artist creator's image viewer are always visible on touch screens.
+
+---
+
 ## What's New in v2.3.35
 
 ### Invisible watermark and fingerprint
