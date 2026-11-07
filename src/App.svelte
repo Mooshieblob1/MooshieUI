@@ -107,6 +107,8 @@
     ArtistPreviewVariant,
   } from "./lib/artist-gallery/previewRecipe.js";
   import { artistLocalPreviews } from "./lib/stores/artistLocalPreviews.svelte.js";
+  import { savedCharacters } from "./lib/stores/savedCharacters.svelte.js";
+  import { applyCharacterPortrait } from "./lib/utils/characterPortrait.js";
   import { styleCreator } from "./lib/stores/styleCreator.svelte.js";
   import { animeScene } from "./lib/stores/animeScene.svelte.js";
   import { submitGeneration } from "./lib/utils/generationSubmit.js";
@@ -2228,6 +2230,13 @@
       }
     }
 
+    // A saved character's portrait becomes that card's picture. Before the
+    // artist-preview block, which is followed by an early return.
+    const portraitCard = savedCharacters.resolvePortrait(promptId);
+    if (portraitCard !== null && newImages[0]) {
+      void applyCharacterPortrait(portraitCard, newImages[0]);
+    }
+
     // Route a finished Style Creator card back to its round. Must run before
     // the artist-preview block, which is followed by an early return.
     const creatorCard = styleCreator.resolve(promptId);
@@ -2885,6 +2894,7 @@
         artistLocalPreviews.failAll();
         styleCreator.failAll();
         stylesStore.failThumbnail();
+        savedCharacters.dropPortraitClaims();
         compare.clearGridBatch();
       }),
       ipcListen("novelai:vibes_encoded", (event: any) => {
@@ -3312,6 +3322,7 @@
           // `toastMsg` is the classified message the toast above already showed.
           styleCreator.fail(data.prompt_id, toastMsg);
           stylesStore.failThumbnail(data.prompt_id);
+          savedCharacters.resolvePortrait(data.prompt_id);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
@@ -3322,6 +3333,7 @@
           artistLocalPreviews.failAll();
           styleCreator.failAll();
           stylesStore.failThumbnail();
+          savedCharacters.dropPortraitClaims();
           compare.clearGridBatch();
         }
       }),
@@ -3427,6 +3439,7 @@
                 // card's spinner would run forever.
                 styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
                 stylesStore.failThumbnail(p.promptId);
+                savedCharacters.resolvePortrait(p.promptId);
               }
             } else {
               // `completePrompt` did not recognise this prompt at all. Same
@@ -3434,6 +3447,7 @@
               // must be released the same way.
               styleCreator.fail(p.promptId, locale.t("app.generation_lost"));
               stylesStore.failThumbnail(p.promptId);
+              savedCharacters.resolvePortrait(p.promptId);
             }
           }
         }
@@ -4819,6 +4833,14 @@
       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
     {/if}
     {gallery.toast.message}
+    {#if gallery.toast.actionLabel && gallery.toast.onAction}
+      {@const action = gallery.toast.onAction}
+      <button
+        type="button"
+        class="ml-1 rounded border border-current/40 px-2 py-0.5 text-xs font-medium hover:bg-white/10"
+        onclick={() => { action(); gallery.toast = null; }}
+      >{gallery.toast.actionLabel}</button>
+    {/if}
   </div>
 {/if}
 
