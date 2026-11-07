@@ -121,6 +121,12 @@ export interface NewCharacter {
 
 class SavedCharactersStore {
   characters = $state<SavedCharacter[]>([]);
+  /**
+   * Portraits being generated: prompt id to the card the picture is for.
+   * Kept in memory only, like other generation claims: a queued job does not
+   * outlive the app.
+   */
+  portraitClaims = $state<Record<string, string>>({});
 
   constructor() {
     this.loadSettings();
@@ -212,6 +218,32 @@ class SavedCharactersStore {
       c.id === id ? { ...c, thumbnail, reference: thumbnail ? reference : null } : c,
     );
     this.saveSettings();
+  }
+
+  /** Route the generation `promptId` back to card `id` as its picture when it lands. */
+  claimPortrait(promptId: string, id: string): void {
+    this.portraitClaims = { ...this.portraitClaims, [promptId]: id };
+  }
+
+  /** The card a finished or failed generation was a portrait for, consuming the claim. */
+  resolvePortrait(promptId: string): string | null {
+    const id = this.portraitClaims[promptId];
+    if (id === undefined) return null;
+    const { [promptId]: _, ...rest } = this.portraitClaims;
+    this.portraitClaims = rest;
+    return id;
+  }
+
+  /** Forget every portrait claim (the queue was cleared). */
+  dropPortraitClaims(): void {
+    if (Object.keys(this.portraitClaims).length > 0) this.portraitClaims = {};
+  }
+
+  /** Prompt ids of the portraits being made for card `id`. */
+  portraitPromptIds(id: string): string[] {
+    return Object.entries(this.portraitClaims)
+      .filter(([, card]) => card === id)
+      .map(([promptId]) => promptId);
   }
 
   /** Delete a card. Its variants stay, as characters of their own. */

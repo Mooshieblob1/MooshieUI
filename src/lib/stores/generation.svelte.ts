@@ -279,6 +279,14 @@ export interface GenerationToParamsOptions {
   /** Skip the active Artist Styles fragment (the Style Creator supplies its own). */
   skipActiveStyles?: boolean;
   /**
+   * Prompts for a picture of its own (a saved character's portrait), used
+   * instead of everything the prompt area would send: the prompt boxes, the
+   * extra boxes, the NovelAI character boxes, active chunks and the camera
+   * angle phrase. Inline chunk tokens in them still resolve, and quality tags
+   * and the style preset are still added as for any generation.
+   */
+  prompts?: { positive: string; negative: string };
+  /**
    * Seed to use instead of the store's seed, as the same string form the
    * store holds. Lets a caller pin one seed across several submissions
    * without touching the user's setting.
@@ -3982,12 +3990,17 @@ class GenerationStore {
     // NovelAI reads the prompt line by line (a `Text:` line opens the lettering
     // block), so its layout is preserved instead of folded into commas.
     const sanitizeOptions = { keepNewlines: this.isNovelAi };
+    const ownPrompts = options.prompts ?? null;
     const effectivePositive = sanitizePromptForSend(
-      joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+      ownPrompts
+        ? ownPrompts.positive
+        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
       sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
-      joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+      ownPrompts
+        ? ownPrompts.negative
+        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
       sanitizeOptions
     );
 
@@ -3996,7 +4009,9 @@ class GenerationStore {
     // occurrence rolls independently.
     const inlinePositiveIds = promptPresets.inlinePresetIds(effectivePositive);
     const inlineNegativeIds = promptPresets.inlinePresetIds(effectiveNegative);
-    const novelAiCharacters = this.resolveNovelAiCharacters(options.fixedPresetChoices);
+    const novelAiCharacters = ownPrompts
+      ? { characters: [] as NovelAiCharacter[], inlineIds: new Set<string>() }
+      : this.resolveNovelAiCharacters(options.fixedPresetChoices);
     const inlinePresetIds = new Set([
       ...inlinePositiveIds,
       ...inlineNegativeIds,
@@ -4065,11 +4080,13 @@ class GenerationStore {
     // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
     // pick a random choice per generation — mergeTagPrompts dedupes against
     // whatever the user has already typed.
-    const preset = promptPresets.resolve({
-      fixedChoices: options.fixedPresetChoices,
-      skipIds: inlinePresetIds,
-      advanceFixedOrdered: false,
-    });
+    const preset = ownPrompts
+      ? { prepend: "", append: "" }
+      : promptPresets.resolve({
+          fixedChoices: options.fixedPresetChoices,
+          skipIds: inlinePresetIds,
+          advanceFixedOrdered: false,
+        });
     if (preset.prepend) {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.prepend, "before");
     }
@@ -4080,7 +4097,7 @@ class GenerationStore {
     // The Multiple-Angles LoRA wants its shot phrase first. Prepended as-is
     // rather than through mergeIntoPrompt, which would re-tokenize the edit
     // instruction (usually prose) on commas.
-    if (this.cameraAngleActive) {
+    if (this.cameraAngleActive && !ownPrompts) {
       const phrase = this.cameraAnglePrompt;
       const rest = positivePrompt.trim();
       if (!rest.toLowerCase().includes(phrase.toLowerCase())) {

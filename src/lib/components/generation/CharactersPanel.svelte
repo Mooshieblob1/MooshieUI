@@ -20,6 +20,7 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import type { CharacterMergeResult } from "../../utils/characterMerge.js";
   import CharacterMergeModal from "./CharacterMergeModal.svelte";
+  import CharacterPortraitModal from "./CharacterPortraitModal.svelte";
   import CharacterExtractReviewModal, {
     type DuplicateDecision,
     type DuplicateMatch,
@@ -53,6 +54,8 @@
   /** Card whose thumbnail is being made right now. */
   let thumbBusyId = $state<string | null>(null);
   let thumbPickerOpen = $state(false);
+  /** Card the portrait dialog is open for. */
+  let portraitFor = $state<SavedCharacter | null>(null);
   let thumbFileInput = $state<HTMLInputElement | null>(null);
 
   /** What Extract found, awaiting the user's names and calls before saving. */
@@ -544,6 +547,12 @@
     }
   }
 
+  /** A portrait for this card is queued or rendering. */
+  function portraitBusy(id: string): boolean {
+    const ids = savedCharacters.portraitPromptIds(id);
+    return ids.length > 0 && progress.pendingPrompts.some((p) => ids.includes(p.promptId));
+  }
+
   /** Run one thumbnail source for a card and store what it produced. */
   async function setThumb(id: string, make: () => Promise<CharacterImages | null>, emptyKey: string) {
     thumbBusyId = id;
@@ -661,7 +670,7 @@
         aria-expanded={thumbMenuId === character.id}
         onclick={() => { thumbMenuId = thumbMenuId === character.id ? null : character.id; }}
       >
-        {#if thumbBusyId === character.id}
+        {#if thumbBusyId === character.id || portraitBusy(character.id)}
           <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
         {:else if character.thumbnail}
           <img src={character.thumbnail} alt={character.name} class="w-full h-full object-cover" />
@@ -788,6 +797,12 @@
       {/if}
       {#if thumbMenuId === character.id}
         <div class="flex flex-wrap gap-1">
+          <button
+            type="button"
+            class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+            title={locale.t("characters.thumbnail.portrait_tip")}
+            onclick={() => { thumbMenuId = null; portraitFor = character; }}
+          >{locale.t("characters.thumbnail.portrait")}</button>
           <button
             type="button"
             class="px-2 py-0.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
@@ -922,6 +937,10 @@
     onsave={applyExtractReview}
     onclose={() => { extractReview = null; }}
   />
+{/if}
+
+{#if portraitFor}
+  <CharacterPortraitModal character={portraitFor} onclose={() => { portraitFor = null; }} />
 {/if}
 
 {#if review}
