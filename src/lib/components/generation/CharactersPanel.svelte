@@ -611,7 +611,7 @@
 </script>
 
 {#snippet card(character: SavedCharacter)}
-  <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 flex flex-col gap-1.5 min-w-0">
+  <div class="rounded-lg border border-neutral-800 bg-neutral-900/60 p-1.5 flex flex-col gap-1 min-w-0">
     {#if editingId === character.id}
       <input
         type="text"
@@ -655,7 +655,7 @@
       <div class="flex gap-2 min-w-0">
       <button
         type="button"
-        class="shrink-0 w-14 h-14 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
+        class="shrink-0 w-12 h-12 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
         title={locale.t("characters.thumbnail.change")}
         aria-label={locale.t("characters.thumbnail.change")}
         aria-expanded={thumbMenuId === character.id}
@@ -669,12 +669,20 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         {/if}
       </button>
-      <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+      <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span class="truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
+        <p class="text-[11px] leading-snug text-neutral-400 line-clamp-2 break-words" title={character.prompt}>{character.prompt}</p>
+        {#if character.negative}
+          <p class="text-[11px] leading-snug text-red-300/70 line-clamp-1 break-words" title={character.negative}>
+            <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
+          </p>
+        {/if}
+      </div>
+      </div>
       <div class="flex items-center gap-1 min-w-0">
-        <span class="flex-1 min-w-0 truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
         <button
           type="button"
-          class="shrink-0 px-2 py-0.5 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+          class="shrink-0 h-5 px-2 text-[11px] rounded bg-indigo-600/80 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
           title={locale.t(promptAssistant.isAvailable ? "characters.use_smart_tip" : "characters.use_tip")}
           disabled={mergingId !== null || updatingId !== null}
           onclick={() => use(character)}
@@ -688,7 +696,7 @@
         </button>
         <button
           type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+          class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
           title={locale.t("characters.insert_plain_tip")}
           aria-label={locale.t("characters.insert_plain")}
           onclick={() => insertPlain(character)}
@@ -697,7 +705,7 @@
         </button>
         <button
           type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed"
           title={locale.t("characters.update_tip")}
           aria-label={locale.t("characters.update")}
           disabled={updatingId !== null || mergingId !== null}
@@ -707,7 +715,7 @@
         </button>
         <button
           type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+          class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
           title={locale.t("characters.edit")}
           aria-label={locale.t("characters.edit")}
           onclick={() => startEdit(character)}
@@ -716,7 +724,7 @@
         </button>
         <button
           type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 {moreMenuId === character.id ? 'bg-neutral-800 text-neutral-200' : ''}"
+          class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 {moreMenuId === character.id ? 'bg-neutral-800 text-neutral-200' : ''}"
           title={locale.t("characters.more")}
           aria-label={locale.t("characters.more")}
           aria-expanded={moreMenuId === character.id}
@@ -728,23 +736,16 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
           {/if}
         </button>
+        <span class="flex-1"></span>
         <button
           type="button"
-          class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-red-300 hover:bg-red-600/10"
+          class="shrink-0 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-red-300 hover:bg-red-600/10"
           title={locale.t("characters.delete")}
           aria-label={locale.t("characters.delete")}
           onclick={() => remove(character)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
-      </div>
-      <p class="text-[11px] leading-snug text-neutral-400 line-clamp-3 break-words" title={character.prompt}>{character.prompt}</p>
-      {#if character.negative}
-        <p class="text-[11px] leading-snug text-red-300/70 line-clamp-2 break-words" title={character.negative}>
-          <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
-        </p>
-      {/if}
-      </div>
       </div>
       {#if moreMenuId === character.id}
         <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
