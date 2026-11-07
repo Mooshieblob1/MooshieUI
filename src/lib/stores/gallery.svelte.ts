@@ -393,6 +393,12 @@ class GalleryStore {
    */
   private _persistPromises = new Map<string, Promise<string>>();
 
+  /** Gallery files the server reported saved, by prompt id, from any client.
+   *  Lets a page that only watched a prompt (another client queued it) use
+   *  the submitter's save instead of writing a second copy. */
+  private _savedByPrompt = new Map<string, string[]>();
+  private _savedWaiters = new Map<string, Array<() => void>>();
+
   private _imageKey(img: { prompt_id: string; filename: string }) {
     return `${img.prompt_id}::${img.filename}`;
   }
@@ -1442,6 +1448,65 @@ class GalleryStore {
     if (isBrowserMode) {
       this.refreshStorageInfo();
     }
+  }
+
+  /** Record a server `image_saved` broadcast for a prompt. */
+  noteSaved(promptId: string, galleryFilename: string) {
+    if (!promptId || !galleryFilename) return;
+    const files = this._savedByPrompt.get(promptId) ?? [];
+    if (!files.includes(galleryFilename)) {
+      this._savedByPrompt.set(promptId, [...files, galleryFilename]);
+    }
+    // Bounded: entries for prompts this page never finishes are dropped oldest first.
+    while (this._savedByPrompt.size > 200) {
+      const oldest = this._savedByPrompt.keys().next().value;
+      if (oldest === undefined) break;
+      this._savedByPrompt.delete(oldest);
+    }
+    const waiters = this._savedWaiters.get(promptId);
+    if (waiters) {
+      this._savedWaiters.delete(promptId);
+      for (const wake of waiters) wake();
+    }
+  }
+
+  /**
+   * Gallery files another client already saved for this prompt, waiting up
+   * to `timeoutMs` for its save to land. Returns null when nobody saved it,
+   * so the caller should save it itself.
+   */
+  async waitForSavedElsewhere(promptId: string, timeoutMs: number): Promise<string[] | null> {
+    if (!this._savedByPrompt.has(promptId)) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, timeoutMs);
+        function done() {
+          clearTimeout(timer);
+          resolve();
+        }
+        this._savedWaiters.set(promptId, [...(this._savedWaiters.get(promptId) ?? []), done]);
+      });
+      this._savedWaiters.delete(promptId);
+    }
+    const files = this._savedByPrompt.get(promptId);
+    this._savedByPrompt.delete(promptId);
+    return files && files.length > 0 ? files : null;
+  }
+
+  /** Point session images at gallery files another client saved for them. */
+  async adoptSavedImages(images: OutputImage[], galleryFilenames: string[]) {
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i]!;
+      const galleryFilename = galleryFilenames[i];
+      if (!galleryFilename) continue;
+      const sessionKey = this._assignmentKey(img);
+      img.gallery_filename = galleryFilename;
+      this._moveAssignments(sessionKey, galleryFilename);
+      img.thumbnailUrl = await thumbnailUrl(galleryFilename);
+      img.fullImageUrl = await fullImageUrl(galleryFilename);
+      img.tempFilename = undefined;
+      img.displayTempFilename = undefined;
+    }
+    this.sessionImages = [...this.sessionImages];
   }
 
   /** Serialize directory reads so an older listing cannot overwrite a newer one. */
