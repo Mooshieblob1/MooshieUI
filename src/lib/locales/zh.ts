@@ -2674,6 +2674,7 @@ const zh: Record<string, string> = {
   "characters.memory.write_placeholder": "可选：要写的内容，例如 {name} 的朋友、学校和常穿的服装。留空则根据原作设定编写。",
   "characters.memory.write_button": "编写文件",
   "characters.memory.write_nothing": "提示词助手没有可为 {name} 编写的内容。请说明笔记要涵盖什么。",
+  "characters.memory.other_tip": "写入 {name} 的记忆",
   "characters.edit": "编辑",
   "characters.delete": "删除",
   "characters.delete_confirm": "删除已保存的角色 {name}？",

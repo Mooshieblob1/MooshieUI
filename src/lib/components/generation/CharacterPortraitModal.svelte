@@ -26,8 +26,8 @@
     portraitStyle,
     savePortraitExtras,
   } from "../../utils/characterPortrait.js";
-  import { memoryContext } from "../../utils/characterMemory.js";
-  import { defaultExpression, withExpression } from "../../utils/portraitExpression.js";
+  import { memoryContext, usualExpression } from "../../utils/characterMemory.js";
+  import { defaultExpression, negativeForExpression, withExpression } from "../../utils/portraitExpression.js";
   import { mapLlmError } from "../../utils/llmError.js";
   import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
@@ -47,7 +47,12 @@
   let positive = $state(initial.positive);
   let negative = $state(initial.negative);
   let leftOut = $state<string[]>(initial.dropped);
-  let expression = $state(untrack(() => character.expression ?? "") || initial.expression);
+  // The last portrait's, the card's own expression tags, or the usual one in memory.
+  let expression = $state(
+    untrack(() => character.expression ?? "") ||
+      initial.expression ||
+      untrack(() => usualExpression(savedCharacters.memoryOf(character))),
+  );
   /** Typed by the user, so a late suggestion must not overwrite it. */
   let expressionTyped = $state(false);
   let suggesting = $state(false);
@@ -77,7 +82,11 @@
         notes,
         style,
       );
-      if (!expressionTyped) expression = face;
+      if (!expressionTyped) {
+        expression = face;
+        // Kept straight away, so opening the dialog again doesn't ask again.
+        savedCharacters.setExpression(character.id, face);
+      }
     } catch (e) {
       console.warn("Portrait expression failed:", e);
       if (asked) gallery.showToast(mapLlmError(String(e)), "error");
@@ -139,11 +148,15 @@
     try {
       await generateCharacterPortrait(
         character,
-        { positive: withExpression(positive, expression, style), negative: showNegative ? negative : "" },
+        {
+          positive: withExpression(positive, expression, style),
+          negative: showNegative ? negativeForExpression(negative, expression, style) : "",
+        },
         extras,
       );
       savePortraitExtras(extras);
       savedCharacters.setExpression(character.id, expression);
+      if (promptAssistant.canUseMemory && expression.trim()) savedCharacters.rememberExpression(character, expression);
       gallery.showToast(locale.t("characters.portrait.queued", { name: character.name }), "info");
       onclose();
     } catch (e) {

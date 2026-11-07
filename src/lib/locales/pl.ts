@@ -2327,6 +2327,7 @@ const pl: Record<string, string> = {
   "characters.memory.write_placeholder": "Opcjonalnie: co opisać, np. przyjaciół, szkołę i typowe stroje postaci {name}. Zostaw puste, aby pisać na podstawie kanonu.",
   "characters.memory.write_button": "Napisz pliki",
   "characters.memory.write_nothing": "Asystent promptów nie miał nic do napisania o {name}. Napisz, co mają zawierać notatki.",
+  "characters.memory.other_tip": "Trafi do pamięci postaci {name}",
   "characters.edit": "Edytuj",
   "characters.delete": "Usuń",
   "characters.delete_confirm": "Usunąć zapisaną postać {name}?",

@@ -8,6 +8,8 @@ import {
   cloneMemory,
   mergeMemory,
   sanitizeMemory,
+  usualExpression,
+  withUsualExpression,
   type CharacterMemoryFile,
   type LearnedMemory,
 } from "../utils/characterMemory.js";
@@ -248,6 +250,18 @@ class SavedCharactersStore {
       return next;
     });
     this.saveSettings();
+  }
+
+  /**
+   * Keep a portrait's expression in the character's memory as their usual
+   * expression, so Enhance draws the same face. A variant only fills it in
+   * when its parent has none, since the notes are the parent's.
+   */
+  rememberExpression(card: SavedCharacter, expression: string): void {
+    const owner = this.memoryOwner(card);
+    if (owner.id !== card.id && usualExpression(owner.memory)) return;
+    const next = withUsualExpression(owner.memory, expression);
+    if (next) this.setMemory(owner.id, next);
   }
 
   setThumbnail(id: string, thumbnail: string | null, reference: string | null = null): void {
