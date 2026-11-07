@@ -239,25 +239,37 @@ export function assertAllowedRequest(texts: readonly string[]): ContentRating {
  * and naming one (by any word of their name) refuses the request: the user's
  * text would not say "child", but the saved card does.
  */
-export function savedCharactersForRequest<T extends { name: string; prompt: string }>(
+export function savedCharactersForRequest<T extends { name: string; prompt: string; notes?: string }>(
   characters: readonly T[],
   rating: ContentRating,
   texts: readonly string[],
 ): T[] {
   if (rating !== "explicit") return characters.slice();
-  const said = normalize(texts.join("\n"));
+  const said = texts.join("\n");
   const kept: T[] = [];
   for (const c of characters) {
-    if (!mentionsMinor(`${c.name}\n${c.prompt}`)) {
+    // Memory notes count too: "she is 15" there makes the card a minor.
+    if (!mentionsMinor(`${c.name}\n${c.prompt}\n${c.notes ?? ""}`)) {
       kept.push(c);
       continue;
     }
-    const words = normalize(c.name)
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
-    if (words.some((w) => termPattern([w], "iu").test(said))) throw new Error(BLOCKED_MINOR_CONTENT);
+    if (namesCharacter(c.name, said)) throw new Error(BLOCKED_MINOR_CONTENT);
   }
   return kept;
+}
+
+/**
+ * Whether `text` refers to a saved character by name: any word of it with
+ * three or more letters that is not a common word, so "Julie" finds "Julie
+ * Evergreen". A variant's label in brackets ("Julie (swimsuit)") is not part
+ * of the name.
+ */
+export function namesCharacter(name: string, text: string): boolean {
+  const said = normalize(text);
+  const words = normalize(name.replace(/\([^)]*\)/g, " "))
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+  return words.some((w) => termPattern([w], "iu").test(said));
 }
 
 /**
