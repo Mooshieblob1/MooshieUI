@@ -2524,15 +2524,12 @@
           class="relative flex-1 min-h-0 {mobileFriendly ? 'px-3 pt-1 pb-3 gap-3' : 'px-6 pt-4 pb-6 gap-4'} flex flex-col overflow-hidden"
         >
           <ProgressBar />
-          <!-- The preview is a square (aspect-square), so it must be sized to the
-               SMALLER of the frame's width/height or it overflows. `max-w`/`max-h`
-               can't do this: clamping one axis of an aspect-ratio box doesn't feed
-               back into the other. `container-type: size` exposes the frame height
-               as `cqh`, so min(100%, 100cqh) picks the fitting side. -->
+          <!-- The preview takes the shape of its image and fits itself to this
+               frame. `max-w`/`max-h` can't do that: clamping one axis of an
+               aspect-ratio box doesn't feed back into the other. `container-type:
+               size` exposes the frame as `cqw`/`cqh` for PreviewImage's sizing. -->
           <div class="flex-1 min-h-0 flex items-center justify-center [container-type:size]">
-            <div class="w-[min(100%,100cqh)]">
-              <PreviewImage />
-            </div>
+            <PreviewImage />
           </div>
 
           <!-- The H3 guide covers the preview rather than the screen, on purpose:
