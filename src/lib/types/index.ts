@@ -964,6 +964,11 @@ export interface PromptAssistantOpts {
   instruction?: string;
   /** One optional label per attached reference image, in the same order. */
   reference_labels?: string[];
+  /**
+   * Saved characters the request refers to, with their look and memory notes
+   * (`characterNotesBlock`). Only an external provider is sent it.
+   */
+  character_notes?: string;
 }
 
 /** Ids of the external LLM providers the backend registry knows about. */

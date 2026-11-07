@@ -6035,6 +6035,10 @@ async fn dispatch_command(
                         .collect()
                 })
                 .unwrap_or_default();
+            let character_notes = args["opts"]["character_notes"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
             let image_data: Option<Vec<String>> = args["imageData"].as_array().map(|a| {
                 a.iter()
                     .filter_map(|v| v.as_str().map(str::to_string))
@@ -6066,6 +6070,7 @@ async fn dispatch_command(
                                 include_artists,
                                 &instruction,
                                 &labels,
+                                &character_notes,
                                 image_data,
                             ),
                         )
@@ -6105,6 +6110,7 @@ async fn dispatch_command(
                         include_artists,
                         &instruction,
                         &labels,
+                        &character_notes,
                         image_data,
                     )
                     .await?;
@@ -7173,6 +7179,7 @@ pub async fn run_prompt_assistant_headless(
     include_artists: bool,
     instruction: &str,
     reference_labels: &[String],
+    character_notes: &str,
     image_data: Option<Vec<String>>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::grounding;
@@ -7228,8 +7235,15 @@ pub async fn run_prompt_assistant_headless(
         .collect();
     let style = grounding::prompt_style(&purpose, family);
     let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
+    // Same as the desktop path: the notes go to external providers only.
+    let notes = if ext_enabled {
+        grounding::character_notes(character_notes)
+    } else {
+        String::new()
+    };
     let system = grounding::system_prompt(style, mode, &candidates, include_artists)
-        + &grounding::reference_rules(images.len());
+        + &grounding::reference_rules(images.len())
+        + &notes;
     // Mirror the desktop token budget so browser Enhance honors the user's
     // length pick instead of always generating at the medium default.
     let max_tokens = grounding::max_tokens(mode, length);
@@ -7251,7 +7265,17 @@ pub async fn run_prompt_assistant_headless(
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose and for prose families. The desktop path
     // runs this too; omitting it here made browser Enhance silently drop user tags.
-    Ok(grounding::finish(input, &raw, mode, style))
+    // With character notes the reply may end in facts to save to memory:
+    // split them off before the prompt is finished, and hand them back after it.
+    let (raw, facts) = if notes.is_empty() {
+        (raw, String::new())
+    } else {
+        grounding::split_memory(&raw)
+    };
+    Ok(grounding::with_memory(
+        grounding::finish(input, &raw, mode, style),
+        &facts,
+    ))
 }
 
 // ---------------------------------------------------------------------------
