@@ -15,6 +15,10 @@ export interface QueuedPrompt {
   workerId?: number;
   /** Generation tab that was active when the prompt was queued. */
   tabId?: string;
+  /** Adopted from a server queue update rather than submitted by this page:
+   *  another client (or this page before a reload) queued it, so its params
+   *  are unknown here. */
+  restored?: boolean;
 }
 
 type ModeOutputs = Record<GenerationMode, string | null>;
@@ -674,6 +678,7 @@ class ProgressStore {
             // Stamp enqueuedAt so the reconciler's 30s activity guard has a
             // baseline for prompts restored from an SSE snapshot.
             enqueuedAt: now,
+            restored: true,
           },
         ];
       }

@@ -2112,6 +2112,24 @@
     }
   }
 
+  /**
+   * A prompt this page only adopted from a queue update was queued by another
+   * client (a second admin tab, a phone over LAN) that saves it itself, with
+   * its params. Every admin client gets every completion, so give that save a
+   * moment to land and reuse it. A page that queued the prompt and was then
+   * reloaded finds no other save and still saves its own copy.
+   */
+  async function savedByAnotherClient(
+    item: { restored?: boolean },
+    promptId: string,
+    imageCount: number,
+  ): Promise<string[] | null> {
+    if (!item.restored || imageCount === 0) return null;
+    const files = await gallery.waitForSavedElsewhere(promptId, 8000);
+    if (files) console.log("[gallery] prompt saved by another client, not saving again:", promptId, files);
+    return files;
+  }
+
   function finalizeOutputImages(
     promptId: string,
     mode: GenerationMode,
@@ -2127,6 +2145,7 @@
     }>,
     generationTimeMs?: number,
     tabId?: string,
+    savedElsewhere?: string[] | null,
   ) {
     if (images.length === 0) return;
 
@@ -2187,7 +2206,13 @@
     const blobs = images.map((img) => img.blob);
     const tempFilenames = images.map((img) => img.tempFilename);
     console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
-    gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+    if (savedElsewhere) {
+      // The client that queued this prompt already saved it, with its
+      // metadata. Show that copy rather than writing a second one.
+      void gallery.adoptSavedImages(newImages, savedElsewhere);
+    } else {
+      gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+    }
     showGenerationDoneToast(newImages);
 
     // An enhance, a set of variations or an upscale replaces what the lightbox
@@ -2872,6 +2897,13 @@
       }),
       // An AI assistant generated this through the MCP server; the backend
       // already saved it, so only surface it at the top of the gallery.
+      // Saves from any client; lets a page that only watched a prompt reuse
+      // the submitter's save (see savedByAnotherClient).
+      ipcListen("mooshie:image_saved", (event: any) => {
+        const promptId = event.payload?.prompt_id;
+        const filename = event.payload?.filename;
+        if (typeof promptId === "string" && typeof filename === "string") gallery.noteSaved(promptId, filename);
+      }),
       ipcListen("mcp:image_saved", (event: any) => {
         const filename = event.payload?.filename;
         if (typeof filename === "string" && filename) void gallery.addPersistedImage(filename);
@@ -3227,7 +3259,8 @@
               clearRegionalChainGallerySuppress(promptId);
               console.log("[regional] Skipping gallery save for chain intermediate:", promptId);
             } else {
-              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId);
+              const savedElsewhere = await savedByAnotherClient(item, promptId, images.length);
+              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId, savedElsewhere);
             }
 
             // Track grid batch completion — stitch when all cells are done
@@ -3370,7 +3403,8 @@
                   clearRegionalChainGallerySuppress(p.promptId);
                   console.log("[regional] Skipping gallery save for chain intermediate:", p.promptId);
                 } else {
-                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId);
+                  const savedElsewhere = await savedByAnotherClient(item, p.promptId, images.length);
+                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs, item.tabId, savedElsewhere);
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;
