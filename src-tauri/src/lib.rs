@@ -786,6 +786,7 @@ pub fn run() {
             commands::prompt_assistant::cancel_llm_oauth,
             commands::prompt_assistant::set_llm_xai_client,
             commands::prompt_assistant::call_external_llm,
+            commands::prompt_assistant::cancel_llm_request,
             commands::prompt_assistant::describe_image,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,

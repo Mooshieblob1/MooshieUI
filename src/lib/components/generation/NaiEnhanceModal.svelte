@@ -43,7 +43,7 @@
   import { mapLlmError } from "../../utils/llmError.js";
   import { naiRequestTexts, rateRequest, savedCharactersForRequest } from "../../utils/contentSafety.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
-  import { readClipboardImageSafe } from "../../utils/api.js";
+  import { isLlmCancelled, readClipboardImageSafe } from "../../utils/api.js";
   import { buildH3Context } from "../../utils/h3Prompt.js";
   import { loadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
@@ -196,7 +196,7 @@
     const text = naiEnhance.input.trim();
     const refs = naiEnhance.references.map((r) => ({ ...r }));
     if (!canRun || naiEnhance.busy) return;
-    naiEnhance.busy = true;
+    const signal = naiEnhance.beginRequest();
     try {
       const result = await promptAssistant.rewrite({
         text,
@@ -208,9 +208,10 @@
           reference_labels: refs.map((r) => r.label),
         },
         images: refs.map((r) => r.base64),
+        signal,
       });
       // Cancelled while waiting: drop the late answer, as the V5 flow does.
-      if (naiEnhance.stage !== "input") return;
+      if (signal.aborted || naiEnhance.stage !== "input") return;
       if (!result.prompt.trim()) {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
@@ -221,10 +222,12 @@
         after: result.prompt,
       });
     } catch (e) {
+      // Cancelled on purpose: nothing went wrong, so nothing to say.
+      if (signal.aborted || isLlmCancelled(e)) return;
       console.error("Prompt enhance failed:", e);
       gallery.showToast(mapLlmError(String(e)), "error");
     } finally {
-      naiEnhance.busy = false;
+      naiEnhance.endRequest(signal);
     }
   }
 
@@ -232,7 +235,7 @@
     const text = naiEnhance.input.trim();
     const refs = naiEnhance.references.map((r) => ({ base64: r.base64, label: r.label }));
     if (!canRun || naiEnhance.busy) return;
-    naiEnhance.busy = true;
+    const signal = naiEnhance.beginRequest();
     try {
       const result = await promptAssistant.enhanceForH3(
         text,
@@ -247,9 +250,10 @@
         {
           existing: generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null,
           references: refs,
+          signal,
         },
       );
-      if (naiEnhance.stage !== "input") return;
+      if (signal.aborted || naiEnhance.stage !== "input") return;
       if (!result.text) {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
@@ -273,10 +277,11 @@
             : null,
       });
     } catch (e) {
+      if (signal.aborted || isLlmCancelled(e)) return;
       console.error("H3 prompt rewrite failed:", e);
       gallery.showToast(mapLlmError(String(e)), "error");
     } finally {
-      naiEnhance.busy = false;
+      naiEnhance.endRequest(signal);
     }
   }
 
@@ -335,9 +340,10 @@
     if ((!text && refs.length === 0) || !v || naiEnhance.busy) return;
     const language = resolveNaiLanguage(generation.naiEnhanceLanguage, text);
     const boxes = generation.novelaiSettings.characters;
-    naiEnhance.busy = true;
+    const signal = naiEnhance.beginRequest();
     try {
       const kept = await keptArtists();
+      if (signal.aborted) return;
       // Ticked, what the user typed is applied as an edit to these fields
       // rather than treated as the whole of the idea.
       const existing = generation.naiEnhanceIncludeExisting
@@ -371,10 +377,11 @@
           })),
           naiEnhance.canonPriority,
         ),
-      }, refs.map((r) => r.base64));
-      // Cancelling closes the modal but cannot recall the request, so a late
-      // answer to a dismissed one is dropped rather than popped back up.
-      if (naiEnhance.stage !== "input") return;
+      }, refs.map((r) => r.base64), signal);
+      // Cancelling closes the modal and stops the request on the backend. The
+      // check still guards an answer that was already on its way back, so it is
+      // dropped rather than popped back up.
+      if (signal.aborted || naiEnhance.stage !== "input") return;
       if (!result.parsed.base.trim()) {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
@@ -430,10 +437,11 @@
         ],
       });
     } catch (e) {
+      if (signal.aborted || isLlmCancelled(e)) return;
       console.error("NovelAI V5 prompt rewrite failed:", e);
       gallery.showToast(mapLlmError(String(e)), "error");
     } finally {
-      naiEnhance.busy = false;
+      naiEnhance.endRequest(signal);
     }
   }
 

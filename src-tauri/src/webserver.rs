@@ -6053,19 +6053,24 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) = match run_prompt_assistant_headless(
-                            &state,
-                            &input,
-                            &history,
-                            &family,
-                            mode,
-                            length.as_deref(),
-                            include_artists,
-                            &instruction,
-                            &labels,
-                            image_data,
+                        let (event, payload) = match crate::prompt_assistant::cancel::run(
+                            Some(&request_id),
+                            owner.as_deref(),
+                            run_prompt_assistant_headless(
+                                &state,
+                                &input,
+                                &history,
+                                &family,
+                                mode,
+                                length.as_deref(),
+                                include_artists,
+                                &instruction,
+                                &labels,
+                                image_data,
+                            ),
                         )
                         .await
+                        .unwrap_or_else(|| Err(crate::prompt_assistant::cancel::CANCELLED.into()))
                         {
                             Ok(text) => (
                                 "llm:result",
@@ -6250,6 +6255,14 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(s).map_err(|e| e.to_string())
         }
+        // Stops the caller's own request only: the id is checked against the
+        // account that started it.
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "cancel_llm_request" => {
+            let request_id = args["requestId"].as_str().unwrap_or("");
+            crate::prompt_assistant::cancel::cancel(request_id, username);
+            Ok(serde_json::Value::Null)
+        }
         #[cfg(any(feature = "desktop", feature = "server"))]
         "cancel_llm_oauth" => {
             crate::prompt_assistant::companion::cancel_login();
@@ -6363,16 +6376,21 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) = match chat_any_headless(
-                            &state,
-                            &system,
-                            &history,
-                            &prompt,
-                            max_tokens,
-                            &images,
-                            crate::prompt_assistant::LocalPick::Assistant,
+                        let (event, payload) = match crate::prompt_assistant::cancel::run(
+                            Some(&request_id),
+                            owner.as_deref(),
+                            chat_any_headless(
+                                &state,
+                                &system,
+                                &history,
+                                &prompt,
+                                max_tokens,
+                                &images,
+                                crate::prompt_assistant::LocalPick::Assistant,
+                            ),
                         )
                         .await
+                        .unwrap_or_else(|| Err(crate::prompt_assistant::cancel::CANCELLED.into()))
                         {
                             Ok(text) => (
                                 "llm:result",

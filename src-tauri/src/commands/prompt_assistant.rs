@@ -368,18 +368,22 @@ pub async fn enhance_prompt(
     opts: Option<PromptAssistantOpts>,
     history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
     image_data: Option<Vec<String>>,
+    request_id: Option<String>,
 ) -> Result<String, AppError> {
     let opts = opts.unwrap_or_default();
     let history = history.unwrap_or_default();
-    run_generation(
-        &app,
-        &state,
-        &prompt,
-        &history,
-        &family,
-        GenMode::Enhance,
-        &opts,
-        image_data,
+    cancellable(
+        request_id.as_deref(),
+        run_generation(
+            &app,
+            &state,
+            &prompt,
+            &history,
+            &family,
+            GenMode::Enhance,
+            &opts,
+            image_data,
+        ),
     )
     .await
 }
@@ -394,20 +398,49 @@ pub async fn compose_prompt(
     opts: Option<PromptAssistantOpts>,
     history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
     image_data: Option<Vec<String>>,
+    request_id: Option<String>,
 ) -> Result<String, AppError> {
     let opts = opts.unwrap_or_default();
     let history = history.unwrap_or_default();
-    run_generation(
-        &app,
-        &state,
-        &description,
-        &history,
-        &family,
-        GenMode::Compose,
-        &opts,
-        image_data,
+    cancellable(
+        request_id.as_deref(),
+        run_generation(
+            &app,
+            &state,
+            &description,
+            &history,
+            &family,
+            GenMode::Compose,
+            &opts,
+            image_data,
+        ),
     )
     .await
+}
+
+/// Run a prompt assistant command that the client may cancel by `request_id`.
+async fn cancellable(
+    request_id: Option<&str>,
+    work: impl std::future::Future<Output = Result<String, AppError>>,
+) -> Result<String, AppError> {
+    crate::prompt_assistant::cancel::run(request_id, None, work)
+        .await
+        .unwrap_or_else(|| {
+            Err(AppError::LlmError(
+                crate::prompt_assistant::cancel::CANCELLED.into(),
+            ))
+        })
+}
+
+/// Stop the prompt assistant request the client tagged with `request_id`.
+///
+/// Dropping the request is what frees the backend: the connection to a hosted
+/// provider or the bundled llama-server closes, and a companion's child process
+/// is killed, so the next request does not queue behind this one.
+#[tauri::command]
+pub async fn cancel_llm_request(request_id: String) -> Result<(), AppError> {
+    crate::prompt_assistant::cancel::cancel(&request_id, None);
+    Ok(())
 }
 
 /// Read the current external-provider settings without exposing the key.
@@ -565,23 +598,28 @@ pub async fn call_external_llm(
     image_filename: Option<String>,
     image_data: Option<Vec<String>>,
     history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
+    request_id: Option<String>,
 ) -> Result<String, AppError> {
     // Complete score edits need more room than short prompt rewrites. Existing
     // callers keep their requested budgets; the upper bound remains explicit.
     let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 16384);
-    let images =
-        crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data).await;
     let history = history.unwrap_or_default();
-    chat_any(
-        &app,
-        &state,
-        &system,
-        &history,
-        &prompt,
-        max_tokens,
-        &images,
-        LocalPick::Assistant,
-    )
+    cancellable(request_id.as_deref(), async {
+        let images =
+            crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data)
+                .await;
+        chat_any(
+            &app,
+            &state,
+            &system,
+            &history,
+            &prompt,
+            max_tokens,
+            &images,
+            LocalPick::Assistant,
+        )
+        .await
+    })
     .await
 }
 

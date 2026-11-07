@@ -17,6 +17,7 @@ import {
   connectLlmOauth,
   setLlmXaiClient,
   callExternalLlm,
+  isLlmCancelled,
   describeImage,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
@@ -672,6 +673,8 @@ class PromptAssistantStore {
     family: string;
     opts: PromptAssistantOpts;
     images: string[];
+    /** Aborting it stops the request on the backend too (see `runPromptAssistant`). */
+    signal?: AbortSignal;
   }): Promise<{ prompt: string; sessionUser: string }> {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
@@ -691,8 +694,9 @@ class PromptAssistantStore {
               { ...req.opts, instruction: text || undefined },
               history.messages,
               images,
+              req.signal,
             )
-          : composePrompt(text, req.family, req.opts, history.messages, images),
+          : composePrompt(text, req.family, req.opts, history.messages, images, req.signal),
       );
       // The pasted current prompt is left out, like the V5 session: the next
       // turn sends whatever the prompt box holds by then.
@@ -742,6 +746,7 @@ class PromptAssistantStore {
   private async ensureH3Skill(
     ctx: H3PromptContext,
     hasImage: boolean,
+    signal?: AbortSignal,
   ): Promise<string | null> {
     const key = h3SkillKey(this.llmBackendId, ctx, hasImage);
     const cached = loadH3Skill(key);
@@ -752,6 +757,10 @@ class PromptAssistantStore {
           h3SkillAuthoringSystem(),
           h3SkillAuthoringUser(ctx, hasImage),
           H3_SKILL_MAX_TOKENS,
+          null,
+          null,
+          [],
+          signal,
         ),
       );
       // Cached even when empty: that is a verdict on this model, not a miss.
@@ -759,6 +768,8 @@ class PromptAssistantStore {
       saveH3Skill(key, skill);
       return skill || null;
     } catch (e) {
+      // Cancelled: stop here rather than carry on to the rewrite itself.
+      if (isLlmCancelled(e)) throw e;
       console.warn("[promptAssistant] H3 skill authoring failed", e);
       return null;
     }
@@ -798,6 +809,8 @@ class PromptAssistantStore {
       existing?: string | null;
       /** Extra images from the Enhance modal: base64 plus optional label. */
       references?: { base64: string; label: string }[];
+      /** Aborting it stops the request on the backend too. */
+      signal?: AbortSignal;
     } = {},
   ): Promise<H3RewriteResult & { sessionUser: string }> {
     const usesFirstFrame =
@@ -820,7 +833,7 @@ class PromptAssistantStore {
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const skill = await this.ensureH3Skill(ctx, !!image);
+        const skill = await this.ensureH3Skill(ctx, !!image, extra.signal);
         const baseSystem =
           h3SystemWithSkill(
             idle
@@ -845,7 +858,15 @@ class PromptAssistantStore {
         );
         const imageData = refs.map((r) => r.base64);
         const first = (
-          await callExternalLlm(system, user, H3_MAX_TOKENS, image, imageData, history.messages)
+          await callExternalLlm(
+            system,
+            user,
+            H3_MAX_TOKENS,
+            image,
+            imageData,
+            history.messages,
+            extra.signal,
+          )
         ).trim();
         const check = validate(first, ctx);
         if (check.ok || !check.rule) {
@@ -859,6 +880,7 @@ class PromptAssistantStore {
             image,
             imageData,
             history.messages,
+            extra.signal,
           )
         ).trim();
         const recheck = validate(second, ctx);
@@ -887,7 +909,7 @@ class PromptAssistantStore {
    * alone. A model that answers with something unusable has that recorded too,
    * so it is not asked again before every rewrite.
    */
-  private async ensureNaiSkill(ctx: NaiPromptContext): Promise<string | null> {
+  private async ensureNaiSkill(ctx: NaiPromptContext, signal?: AbortSignal): Promise<string | null> {
     const key = naiSkillKey(this.llmBackendId, ctx.variant);
     const cached = loadNaiSkill(key);
     if (cached !== null) return cached || null;
@@ -897,6 +919,10 @@ class PromptAssistantStore {
           naiSkillAuthoringSystem(),
           naiSkillAuthoringUser(ctx),
           NAI_SKILL_MAX_TOKENS,
+          null,
+          null,
+          [],
+          signal,
         ),
       );
       // Cached even when empty: that is a verdict on this model, not a miss.
@@ -904,6 +930,7 @@ class PromptAssistantStore {
       saveNaiSkill(key, skill);
       return skill || null;
     } catch (e) {
+      if (isLlmCancelled(e)) throw e;
       console.warn("[promptAssistant] NAI skill authoring failed", e);
       return null;
     }
@@ -930,6 +957,7 @@ class PromptAssistantStore {
     prompt: string,
     ctx: NaiPromptContext,
     referenceData: string[] = [],
+    signal?: AbortSignal,
   ): Promise<NaiRewriteResult & { raw: string; sessionUser: string }> {
     // Before anything is sent, the skill authoring call included. The rating
     // also picks the vocabulary block, so an SFW request never carries the
@@ -943,7 +971,7 @@ class PromptAssistantStore {
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const skill = await this.ensureNaiSkill(ctx);
+        const skill = await this.ensureNaiSkill(ctx, signal);
         // Budgeted against every recorded turn, the most the session can send.
         const sessionCtx = {
           ...ctx,
@@ -991,6 +1019,7 @@ class PromptAssistantStore {
           null,
           referenceData,
           history.messages,
+          signal,
         );
         const first = normalizeNaiResponse(parseNaiResponse(firstRaw));
         const problems = validateNaiResponse(first);
@@ -1007,6 +1036,7 @@ ${naiRetryInstruction(problems)}`,
           null,
           referenceData,
           history.messages,
+          signal,
         );
         const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
         const recheck = validateNaiResponse(second);

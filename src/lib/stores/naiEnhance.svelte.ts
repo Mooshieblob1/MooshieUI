@@ -183,6 +183,39 @@ class NaiEnhanceStore {
 
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The rewrite in flight, if any. Closing the modal aborts it, which stops the
+   * request on the backend as well, so the next Enhance starts at once instead
+   * of waiting for an answer nobody will see.
+   */
+  private request: AbortController | null = null;
+
+  /**
+   * Mark a rewrite as started and hand back the signal its calls should carry.
+   * Any rewrite still running is cancelled first: only one answer can land.
+   */
+  beginRequest(): AbortSignal {
+    this.cancelRequest();
+    this.request = new AbortController();
+    this.busy = true;
+    return this.request.signal;
+  }
+
+  /**
+   * Mark the rewrite that owns `signal` as done. A cancelled one is ignored:
+   * cancelling already cleared `busy`, and a newer rewrite may own it by now.
+   */
+  endRequest(signal: AbortSignal): void {
+    if (this.request?.signal !== signal) return;
+    this.request = null;
+    this.busy = false;
+  }
+
+  private cancelRequest(): void {
+    this.request?.abort();
+    this.request = null;
+    this.busy = false;
+  }
 
   get isOpen(): boolean {
     return this.stage !== null;
@@ -263,6 +296,7 @@ class NaiEnhanceStore {
    * The copy button underneath covers the other case in one click.
    */
   openInput(flow: EnhanceFlow = "nai"): void {
+    this.cancelRequest();
     this.flow = flow;
     this.stage = "input";
     this.input = "";
@@ -291,7 +325,9 @@ class NaiEnhanceStore {
     this.stage = "review";
   }
 
+  /** Close, cancelling the rewrite if one is still running. */
   dismiss(): void {
+    this.cancelRequest();
     this.stage = null;
     this.pending = null;
     this.generalPending = null;
