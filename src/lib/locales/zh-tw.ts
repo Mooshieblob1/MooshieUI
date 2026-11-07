@@ -2633,6 +2633,7 @@ const zhTw: Record<string, string> = {
   "characters.memory.write_placeholder": "選填：要寫的內容，例如 {name} 的朋友、學校和常穿的服裝。留空則根據原作設定撰寫。",
   "characters.memory.write_button": "撰寫檔案",
   "characters.memory.write_nothing": "提示詞助手沒有可為 {name} 撰寫的內容。請說明筆記要涵蓋什麼。",
+  "characters.memory.other_tip": "寫入 {name} 的記憶",
   "characters.edit": "編輯",
   "characters.delete": "刪除",
   "characters.delete_confirm": "刪除已儲存的角色 {name}？",

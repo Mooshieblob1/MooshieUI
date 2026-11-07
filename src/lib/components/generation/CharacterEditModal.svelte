@@ -11,7 +11,7 @@
   import { portal } from "../../utils/portal.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { promptAssistant, type MemorySuggestions } from "../../stores/promptAssistant.svelte.js";
   import {
     architectureLabel,
     savedCharacters,
@@ -22,6 +22,7 @@
     MEMORY_FILE_LIMIT,
     MEMORY_MAX_FILES,
     MEMORY_STARTER_FILES,
+    addLearnedFact,
     applyMemoryChanges,
     cleanMemoryFileName,
     memoryContext,
@@ -30,6 +31,7 @@
     newMemoryFile,
     sameMemory,
     type CharacterMemoryFile,
+    type LearnedMemory,
     type LinkedCharacter,
     type MemoryChange,
   } from "../../utils/characterMemory.js";
@@ -64,7 +66,13 @@
   interface ReviewRow extends MemoryChange {
     key: number;
     keep: boolean;
+    /** Another character's memory owner this change is for (the matching side of a relationship), or null. */
+    ownerId: string | null;
+    ownerName: string;
   }
+
+  /** Another saved character a request read, with the card whose memory it is. */
+  type Linked = LinkedCharacter & { ownerId: string };
 
   let name = $state(initial.name);
   let prompt = $state(initial.prompt);
@@ -78,8 +86,14 @@
   let composing = $state(false);
   let brief = $state("");
   let review = $state<ReviewRow[] | null>(
-    untrack(() => (suggestions.length > 0 ? suggestions.map((c, i) => ({ ...c, key: i, keep: true })) : null)),
+    untrack(() =>
+      suggestions.length > 0
+        ? suggestions.map((c, i) => ({ ...c, key: i, keep: true, ownerId: null, ownerName: owner.name }))
+        : null,
+    ),
   );
+  /** Kept changes to other characters' memory, by memory owner, written on Save. */
+  let otherDrafts = $state<Record<string, CharacterMemoryFile[]>>({});
   /** File name being typed, committed (cleaned and made unique) on blur. */
   let nameDraft = $state("");
   let importInput = $state<HTMLInputElement | null>(null);
@@ -89,7 +103,7 @@
     name !== initial.name || prompt !== initial.prompt || negative !== initial.negative,
   );
   const memoryDirty = $derived(!sameMemory(files, initialFiles));
-  const dirty = $derived(detailsDirty || memoryDirty);
+  const dirty = $derived(detailsDirty || memoryDirty || Object.keys(otherDrafts).length > 0);
   const canSave = $derived(dirty && !!name.trim() && !!prompt.trim() && review === null && !remembering);
   const showMemory = $derived(promptAssistant.canUseMemory || initialFiles.length > 0 || review !== null);
   const used = $derived(memorySize(files));
@@ -114,6 +128,7 @@
     if (!canSave) return;
     if (detailsDirty) savedCharacters.update(character.id, { name, prompt, negative });
     if (memoryDirty) savedCharacters.setMemory(owner.id, files);
+    for (const [id, memory] of Object.entries(otherDrafts)) savedCharacters.setMemory(id, memory);
     onclose();
   }
 
@@ -194,23 +209,82 @@
    * Other saved characters (same architecture, other memory) that `texts`
    * name, with their notes, so Remember and Write can connect to them.
    */
-  function linkedCharacters(texts: string[]): LinkedCharacter[] {
+  function linkedCharacters(texts: string[]): Linked[] {
     const others = savedCharacters
       .withMemory(savedCharacters.characters.filter((c) => c.architecture === character.architecture))
       .filter((c) => c.ownerId !== owner.id);
-    return memoryForRequest(others, texts).map((c) => ({ name: c.name, prompt: c.prompt, notes: c.notes }));
+    return memoryForRequest(others, texts).map((c) => ({
+      name: c.name,
+      prompt: c.prompt,
+      notes: c.notes,
+      ownerId: c.ownerId,
+    }));
+  }
+
+  /** Another character's memory as this editor has it: with changes kept earlier, or as saved. */
+  function filesOf(ownerId: string): CharacterMemoryFile[] {
+    return otherDrafts[ownerId] ?? savedCharacters.characters.find((c) => c.id === ownerId)?.memory ?? [];
+  }
+
+  /** The linked character a reply means by `name`: exact, without a variant label, then contained. */
+  function matchLinked(name: string, linked: readonly Linked[]): Linked | null {
+    const want = name.trim().toLowerCase();
+    const bare = (n: string) => n.replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+    return (
+      linked.find((c) => c.name.trim().toLowerCase() === want) ??
+      linked.find((c) => bare(c.name) === bare(want)) ??
+      linked.find((c) => want.includes(bare(c.name)) || bare(c.name).includes(want)) ??
+      null
+    );
+  }
+
+  /** The other characters' matching facts as review rows, one per file they change. */
+  function otherRows(others: readonly LearnedMemory[], linked: readonly Linked[]): Omit<ReviewRow, "key" | "keep">[] {
+    const pending = new Map<string, CharacterMemoryFile[]>();
+    for (const other of others) {
+      const target = matchLinked(other.name, linked);
+      if (!target) continue;
+      const next = addLearnedFact(pending.get(target.ownerId) ?? filesOf(target.ownerId), other.file, other.fact);
+      if (next) pending.set(target.ownerId, next);
+    }
+    const rows: Omit<ReviewRow, "key" | "keep">[] = [];
+    for (const [ownerId, next] of pending) {
+      const before = filesOf(ownerId);
+      const ownerName = savedCharacters.characters.find((c) => c.id === ownerId)?.name ?? "";
+      for (const file of next) {
+        const was = before.find((f) => f.id === file.id);
+        if (was && was.content === file.content) continue;
+        rows.push({
+          fileId: was ? was.id : null,
+          name: file.name,
+          before: was?.content ?? "",
+          after: file.content,
+          ownerId,
+          ownerName,
+        });
+      }
+    }
+    return rows;
   }
 
   /** Run a memory request and open its suggestions for review. */
-  async function suggest(run: () => Promise<MemoryChange[]>, nothingKey: string): Promise<boolean> {
+  async function suggest(
+    linked: Linked[],
+    run: (linked: Linked[]) => Promise<MemorySuggestions>,
+    nothingKey: string,
+  ): Promise<boolean> {
     remembering = true;
     try {
-      const changes = await run();
-      if (changes.length === 0) {
+      const { changes, others } = await run(linked);
+      const rows = [
+        ...changes.map((c) => ({ ...c, ownerId: null, ownerName: owner.name })),
+        ...otherRows(others, linked),
+      ];
+      if (rows.length === 0) {
         gallery.showToast(locale.t(nothingKey, { name: owner.name }), "info");
         return true;
       }
-      review = changes.map((c, i) => ({ ...c, key: i, keep: true }));
+      review = rows.map((r, i) => ({ ...r, key: i, keep: true }));
       return true;
     } catch (err) {
       console.error("Character memory failed:", err);
@@ -230,7 +304,8 @@
     if (!canRemember || !text) return;
     const draft = { name: name.trim() || initial.name, prompt, negative };
     const done = await suggest(
-      () => promptAssistant.rememberForCharacter(draft, files, text, linkedCharacters([text])),
+      linkedCharacters([text]),
+      (linked) => promptAssistant.rememberForCharacter(draft, files, text, linked),
       "characters.memory.nothing",
     );
     if (done) fact = "";
@@ -241,8 +316,8 @@
     const draft = { name: name.trim() || initial.name, prompt, negative };
     const ask = brief.trim();
     const done = await suggest(
-      () =>
-        promptAssistant.writeCharacterMemory(draft, files, ask, linkedCharacters([ask, memoryContext(files, 0)])),
+      linkedCharacters([ask, memoryContext(files, 0)]),
+      (linked) => promptAssistant.writeCharacterMemory(draft, files, ask, linked),
       "characters.memory.write_nothing",
     );
     if (done) {
@@ -255,8 +330,14 @@
     const rows = review;
     if (!rows) return;
     const kept = rows.filter((r) => r.keep && r.after.trim());
-    files = applyMemoryChanges(files, kept);
-    const first = kept[0];
+    const mine = kept.filter((r) => r.ownerId === null);
+    files = applyMemoryChanges(files, mine);
+    const drafts = { ...otherDrafts };
+    for (const id of new Set(kept.map((r) => r.ownerId).filter((id): id is string => id !== null))) {
+      drafts[id] = applyMemoryChanges(filesOf(id), kept.filter((r) => r.ownerId === id));
+    }
+    otherDrafts = drafts;
+    const first = mine[0];
     if (first) {
       selectedId =
         files.find((f) => f.id === first.fileId)?.id ??
@@ -363,6 +444,12 @@
             <div class="rounded-lg border p-2.5 flex flex-col gap-2 {row.keep ? 'border-neutral-700 bg-neutral-800/40' : 'border-neutral-800 opacity-60'}">
               <label class="flex items-center gap-2 text-xs text-neutral-200">
                 <input type="checkbox" bind:checked={row.keep} class="accent-indigo-500" />
+                {#if row.ownerId}
+                  <span
+                    class="rounded px-1.5 py-px text-[10px] bg-sky-500/15 text-sky-300"
+                    title={locale.t("characters.memory.other_tip", { name: row.ownerName })}
+                  >{row.ownerName}</span>
+                {/if}
                 <span class="font-mono">{row.name}</span>
                 <span class="rounded px-1.5 py-px text-[10px] {row.fileId ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/15 text-emerald-300'}">
                   {locale.t(row.fileId ? "characters.memory.changed_badge" : "characters.memory.new_badge")}

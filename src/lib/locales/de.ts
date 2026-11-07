@@ -2654,6 +2654,7 @@ const de: Record<string, string> = {
   "characters.memory.write_placeholder": "Optional: was abgedeckt werden soll, z. B. Freunde, Schule und typische Outfits von {name}. Leer lassen, um aus dem Kanon zu schreiben.",
   "characters.memory.write_button": "Dateien schreiben",
   "characters.memory.write_nothing": "Der Prompt-Assistent hatte zu {name} nichts zu schreiben. Sag ihm, worum es in den Notizen gehen soll.",
+  "characters.memory.other_tip": "Kommt ins Gedächtnis von {name}",
   "characters.edit": "Bearbeiten",
   "characters.delete": "Löschen",
   "characters.delete_confirm": "Den gespeicherten Charakter {name} löschen?",

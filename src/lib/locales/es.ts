@@ -2702,6 +2702,7 @@ const es: Record<string, string> = {
   "characters.memory.write_placeholder": "Opcional: qué cubrir, como los amigos, la escuela y la ropa habitual de {name}. Déjalo vacío para escribir a partir del canon.",
   "characters.memory.write_button": "Escribir archivos",
   "characters.memory.write_nothing": "El asistente de prompts no tenía nada que escribir sobre {name}. Indica qué deben cubrir las notas.",
+  "characters.memory.other_tip": "Va a la memoria de {name}",
   "characters.edit": "Editar",
   "characters.delete": "Eliminar",
   "characters.delete_confirm": "¿Eliminar el personaje guardado {name}?",

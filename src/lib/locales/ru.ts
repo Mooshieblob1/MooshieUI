@@ -2633,6 +2633,7 @@ const ru: Record<string, string> = {
   "characters.memory.write_placeholder": "Необязательно: что описать, например друзей, школу и обычную одежду {name}. Оставьте пустым, чтобы писать по канону.",
   "characters.memory.write_button": "Написать файлы",
   "characters.memory.write_nothing": "Помощнику промптов нечего написать о {name}. Укажите, что должно быть в заметках.",
+  "characters.memory.other_tip": "Попадёт в память {name}",
   "characters.edit": "Изменить",
   "characters.delete": "Удалить",
   "characters.delete_confirm": "Удалить сохранённого персонажа {name}?",

@@ -2658,6 +2658,7 @@ const ja: Record<string, string> = {
   "characters.memory.write_placeholder": "任意：{name} の友人、学校、いつもの服装など、書いてほしい内容。空欄なら原作設定から書きます。",
   "characters.memory.write_button": "ファイルを書く",
   "characters.memory.write_nothing": "プロンプトアシスタントは {name} について書けることがありませんでした。メモに書く内容を指定してください。",
+  "characters.memory.other_tip": "{name} のメモリーに入ります",
   "characters.edit": "編集",
   "characters.delete": "削除",
   "characters.delete_confirm": "保存済みキャラクター {name} を削除しますか？",

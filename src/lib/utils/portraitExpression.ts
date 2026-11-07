@@ -7,6 +7,7 @@
  *
  * Leaf util: no store, IPC or Svelte imports.
  */
+import { VARIANT_RULE } from "./characterMemory.js";
 import { mentionsBelowNeck, neckUpProse, neckUpTags, splitTopLevel } from "./portraitFilter.js";
 
 export type PortraitPromptStyle = "tags" | "natural";
@@ -62,6 +63,40 @@ export function splitExpressionTags(prompt: string): { rest: string; expression:
   return { rest: rest.join(", "), expression: expression.join(", ") };
 }
 
+/** What the portrait UC adds so the face doesn't fall back to a blank stare. */
+export const BLANK_FACE_GUARD: Record<PortraitPromptStyle, string> = {
+  tags: "expressionless",
+  natural: "a blank, expressionless face",
+};
+
+/** Expressions that are meant to be a still face, in the languages NovelAI V5 reads. */
+const STILL_FACE = [
+  "expressionless", "serious", "stoic", "blank", "deadpan", "neutral", "emotionless", "bored", "unamused",
+  "ausdruckslos", "ernst", "inexpresivo", "inexpresiva", "serio", "seria", "inexpressivo", "inexpressiva",
+  "sério", "séria", "無表情", "真顔", "无表情", "面无表情", "面無表情", "冷淡",
+];
+
+/** Is the chosen expression a still face, which the blank-face guard would fight? */
+export function isStillFace(expression: string): boolean {
+  const text = expression.toLowerCase();
+  return STILL_FACE.some((w) => (/^[a-zà-ÿ]+$/.test(w) ? new RegExp(`(^|[^\\p{L}])${w}($|[^\\p{L}])`, "u").test(text) : text.includes(w)));
+}
+
+/** The portrait UC as sent: the blank-face guard taken back out when the expression is meant to be still. */
+export function negativeForExpression(negative: string, expression: string, style: PortraitPromptStyle): string {
+  if (!isStillFace(expression)) return negative.trim();
+  const guard = BLANK_FACE_GUARD[style];
+  if (style === "natural") {
+    return negative
+      .replace(guard, "")
+      .replace(/,\s*,/g, ",")
+      .replace(/^[,\s]+|[,\s]+$/g, "");
+  }
+  return splitTopLevel(negative)
+    .filter((tag) => tag.toLowerCase() !== guard)
+    .join(", ");
+}
+
 /** What a portrait gets when nothing else says how the character looks. */
 export function defaultExpression(style: PortraitPromptStyle): string {
   return style === "tags" ? "smile" : "a warm, friendly smile";
@@ -79,6 +114,7 @@ export function withExpression(positive: string, expression: string, style: Port
 const EXPRESSION_SYSTEM = `You choose the facial expression for a portrait of one saved character in an image generation app: a front-on, neck-up picture used as the character's card. Pick the expression that best shows who the character is.
 - If their memory notes say how they usually look or act (cheerful, shy, smug, stoic), follow the notes.
 - Otherwise, if the character is from a known work (anime, manga, game, film, book) or is a real public figure, use the expression they are known for in that canon.
+- ${VARIANT_RULE}
 - Otherwise, for an original character, pick one that suits their look, warm and friendly by default.
 - Never pick a blank, bored, tired or downcast face unless the notes or the canon say the character is like that.
 - Describe only the face: mouth, eyes, eyebrows, blush. Nothing about the body, hands, pose, clothes or background.

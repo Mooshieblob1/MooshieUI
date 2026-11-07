@@ -2373,6 +2373,7 @@ const en: Record<string, string> = {
   "characters.memory.write_placeholder": "Optional: what to cover, such as {name}'s friends, school and usual outfits. Leave it empty to write from canon.",
   "characters.memory.write_button": "Write files",
   "characters.memory.write_nothing": "The prompt assistant had nothing to write for {name}. Say what the notes should cover.",
+  "characters.memory.other_tip": "Goes in {name}'s memory",
   "characters.edit": "Edit",
   "characters.delete": "Delete",
   "characters.delete_confirm": "Delete the saved character {name}?",

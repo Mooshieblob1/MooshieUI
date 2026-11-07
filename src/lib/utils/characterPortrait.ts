@@ -16,7 +16,7 @@
 import { generation } from "../stores/generation.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
-import { inlineChunkToken, promptPresets } from "../stores/promptPresets.svelte.js";
+import { promptPresets } from "../stores/promptPresets.svelte.js";
 import {
   architecturePromptStyle,
   savedCharacters,
@@ -29,14 +29,13 @@ import { currentImageToCharacterThumbnail } from "./characterThumbnail.js";
 import { classifyGenerationError } from "./generationErrors.js";
 import { submitGeneration } from "./generationSubmit.js";
 import { neckUpProse, neckUpTags } from "./portraitFilter.js";
-import { splitExpressionTags } from "./portraitExpression.js";
+import { BLANK_FACE_GUARD, splitExpressionTags } from "./portraitExpression.js";
 
 /** Framing tags for tag-prompted models: one person, head and shoulders, facing the viewer. */
 export const PORTRAIT_FRAMING_TAGS =
   "portrait, close-up, straight-on, facing viewer, looking at viewer, simple background";
-/** Framings and angles a neck-up, front-on portrait must not drift into. */
-export const PORTRAIT_AVOID_TAGS =
-  "upper body, cowboy shot, full body, from side, from behind, profile, multiple views";
+/** Framings and angles a neck-up, front-on portrait must not drift into, and the blank stare models default to. */
+export const PORTRAIT_AVOID_TAGS = `upper body, cowboy shot, full body, from side, from behind, profile, multiple views, ${BLANK_FACE_GUARD.tags}`;
 
 /** Trim a prompt and the stray commas or full stop it may end with. */
 function tidy(text: string): string {
@@ -74,7 +73,7 @@ export function portraitPrompts(
     positive:
       `A head-and-shoulders portrait of ${tidy(look.kept) || "the character"}, seen straight from the front ` +
       "and framed from the neck up, looking directly at the viewer against a plain background.",
-    negative: avoid,
+    negative: joinParts([avoid, BLANK_FACE_GUARD.natural]),
     dropped: look.dropped,
     expression: "",
   };
@@ -121,6 +120,22 @@ export function portraitArtistTags(text: string): string[] {
     .map((t) => t.trim())
     .filter(Boolean)
     .map((t) => (/^artist:/i.test(t) ? t : generation.formatArtistTag(t)));
+}
+
+/**
+ * A picked chunk as the portrait uses it: one line of a multi-line chunk,
+ * picked at random as an inline chunk would be, with what a neck-up picture
+ * cannot show left out. Lines the filter empties are never picked.
+ */
+export function portraitChunkText(content: string, style: "tags" | "natural"): string {
+  const choices = content
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^,+|,+$/g, "").trim())
+    .filter(Boolean)
+    .map((line) => (style === "tags" ? neckUpTags(line) : neckUpProse(line)).kept)
+    .filter(Boolean);
+  if (choices.length === 0) return "";
+  return choices[Math.floor(Math.random() * choices.length)];
 }
 
 /** What the user picked to go on top of the portrait prompt. */
@@ -172,11 +187,12 @@ export async function generateCharacterPortrait(
   if (generation.mode === "video") throw new Error(locale.t("characters.portrait.no_video"));
   if (!generation.checkpoint) throw new Error(locale.t("generation.error_no_checkpoint"));
 
-  const chunkTokens = extras.chunkIds
+  const style = portraitStyle(character);
+  const chunkTexts = extras.chunkIds
     .map((id) => promptPresets.getById(id))
     .filter((p): p is NonNullable<typeof p> => p !== null)
-    .map((p) => inlineChunkToken(p.name));
-  const positive = joinParts([prompts.positive, ...portraitArtistTags(extras.artists), ...chunkTokens]);
+    .map((p) => portraitChunkText(p.content, style));
+  const positive = joinParts([prompts.positive, ...portraitArtistTags(extras.artists), ...chunkTexts]);
   if (!positive) throw new Error(locale.t("characters.portrait.empty_prompt"));
   const chosenStyles = styles.styles.filter((s) => extras.styleIds.includes(s.id));
   const styleFragment = fragmentForStyles(chosenStyles, generation.isNovelAi);

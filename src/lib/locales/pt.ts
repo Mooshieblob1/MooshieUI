@@ -2633,6 +2633,7 @@ const pt: Record<string, string> = {
   "characters.memory.write_placeholder": "Opcional: o que abordar, como os amigos, a escola e as roupas habituais de {name}. Deixe vazio para escrever a partir do cânone.",
   "characters.memory.write_button": "Escrever ficheiros",
   "characters.memory.write_nothing": "O assistente de prompts não tinha nada para escrever sobre {name}. Diga o que as notas devem abordar.",
+  "characters.memory.other_tip": "Vai para a memória de {name}",
   "characters.edit": "Editar",
   "characters.delete": "Excluir",
   "characters.delete_confirm": "Excluir o personagem salvo {name}?",

@@ -2658,6 +2658,7 @@ const fr: Record<string, string> = {
   "characters.memory.write_placeholder": "Facultatif : ce qu'il faut couvrir, comme les amis, l'école et les tenues habituelles de {name}. Laissez vide pour écrire à partir du canon.",
   "characters.memory.write_button": "Écrire les fichiers",
   "characters.memory.write_nothing": "L'assistant de prompt n'avait rien à écrire sur {name}. Indiquez ce que les notes doivent couvrir.",
+  "characters.memory.other_tip": "Va dans la mémoire de {name}",
   "characters.edit": "Modifier",
   "characters.delete": "Supprimer",
   "characters.delete_confirm": "Supprimer le personnage enregistré {name} ?",

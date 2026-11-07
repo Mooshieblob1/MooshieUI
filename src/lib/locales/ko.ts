@@ -2633,6 +2633,7 @@ const ko: Record<string, string> = {
   "characters.memory.write_placeholder": "선택 사항: {name}의 친구, 학교, 평소 옷차림 등 다룰 내용. 비워 두면 원작 설정을 바탕으로 작성합니다.",
   "characters.memory.write_button": "파일 작성",
   "characters.memory.write_nothing": "프롬프트 도우미가 {name}에 대해 작성할 내용이 없었습니다. 메모에 담을 내용을 알려 주세요.",
+  "characters.memory.other_tip": "{name}의 메모리에 들어갑니다",
   "characters.edit": "편집",
   "characters.delete": "삭제",
   "characters.delete_confirm": "저장된 캐릭터 {name}을(를) 삭제할까요?",

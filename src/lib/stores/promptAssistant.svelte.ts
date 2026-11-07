@@ -125,6 +125,7 @@ import {
 import {
   MEMORY_REMEMBER_RETRY,
   memoryContext,
+  parseOtherFacts,
   parseRemember,
   rememberRequest,
   splitLearnedMemory,
@@ -135,6 +136,12 @@ import {
   type MemoryChange,
 } from "../utils/characterMemory.js";
 import { expressionRequest, parseExpression, type PortraitPromptStyle } from "../utils/portraitExpression.js";
+
+/** A memory request's suggestions: changes to this character's files, and facts for the other characters it read. */
+export interface MemorySuggestions {
+  changes: MemoryChange[];
+  others: LearnedMemory[];
+}
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -694,7 +701,7 @@ class PromptAssistantStore {
     files: readonly CharacterMemoryFile[],
     fact: string,
     linked: readonly LinkedCharacter[] = [],
-  ): Promise<MemoryChange[]> {
+  ): Promise<MemorySuggestions> {
     if (!fact.trim()) throw new Error("invalid_character_memory");
     return this.memoryChanges(
       [character.prompt, memoryContext(files, 0), fact, ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
@@ -713,7 +720,7 @@ class PromptAssistantStore {
     files: readonly CharacterMemoryFile[],
     brief: string,
     linked: readonly LinkedCharacter[] = [],
-  ): Promise<MemoryChange[]> {
+  ): Promise<MemorySuggestions> {
     return this.memoryChanges(
       [character.prompt, memoryContext(files, 0), brief, ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
       writeMemoryRequest(character, files, brief, linked),
@@ -744,12 +751,15 @@ class PromptAssistantStore {
     }
   }
 
-  /** Send a memory request (checked against `texts`) and parse its suggested changes, retrying once. */
+  /**
+   * Send a memory request (checked against `texts`) and parse its suggested
+   * changes, and the matching facts for other characters, retrying once.
+   */
   private async memoryChanges(
     texts: string[],
     request: { system: string; prompt: string; maxTokens: number },
     files: readonly CharacterMemoryFile[],
-  ): Promise<MemoryChange[]> {
+  ): Promise<MemorySuggestions> {
     if (this.isGenerating) throw new Error("busy_generation");
     if (!this.canUseMemory) throw new Error("memory_needs_external");
     assertAllowedRequest(texts);
@@ -758,8 +768,9 @@ class PromptAssistantStore {
       return await this.withStageListener(async () => {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
-          const parsed = parseRemember(await callExternalLlm(request.system, user, request.maxTokens), files);
-          if (parsed) return parsed;
+          const reply = await callExternalLlm(request.system, user, request.maxTokens);
+          const changes = parseRemember(reply, files);
+          if (changes) return { changes, others: parseOtherFacts(reply) };
           user = `${request.prompt}\n\n${MEMORY_REMEMBER_RETRY}`;
         }
         throw new Error("invalid_character_memory");
