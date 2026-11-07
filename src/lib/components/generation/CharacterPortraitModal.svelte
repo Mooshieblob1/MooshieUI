@@ -1,8 +1,12 @@
 <script lang="ts">
   /**
    * Generate a front-on, neck-up portrait of a saved character as its card's
-   * picture. The prompt starts from the card and can be edited; chunks, Artist
-   * Styles and artist tags go on top and are remembered for the next portrait.
+   * picture. The prompt starts from the card, without what a neck-up picture
+   * cannot show (listed under it to put back), and can be edited. The
+   * expression has its own box: the card's own expression tags, the one used
+   * last time, or one the prompt assistant picks from memory or canon. Chunks,
+   * Artist Styles and artist tags go on top and are remembered for the next
+   * portrait.
    */
   import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
@@ -10,16 +14,21 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
+  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { styles } from "../../stores/styles.svelte.js";
-  import type { SavedCharacter } from "../../stores/savedCharacters.svelte.js";
+  import { savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import {
     currentPortraitSize,
     generateCharacterPortrait,
     loadPortraitExtras,
     portraitPrompts,
+    portraitStyle,
     savePortraitExtras,
   } from "../../utils/characterPortrait.js";
+  import { memoryContext } from "../../utils/characterMemory.js";
+  import { defaultExpression, withExpression } from "../../utils/portraitExpression.js";
+  import { mapLlmError } from "../../utils/llmError.js";
   import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
 
@@ -32,10 +41,16 @@
 
   // Mounted once per portrait, so the card is read once on purpose.
   const initial = untrack(() => portraitPrompts(character));
+  const style = untrack(() => portraitStyle(character));
   const remembered = loadPortraitExtras();
 
   let positive = $state(initial.positive);
   let negative = $state(initial.negative);
+  let leftOut = $state<string[]>(initial.dropped);
+  let expression = $state(untrack(() => character.expression ?? "") || initial.expression);
+  /** Typed by the user, so a late suggestion must not overwrite it. */
+  let expressionTyped = $state(false);
+  let suggesting = $state(false);
   let artists = $state(remembered.artists);
   let chunkIds = $state<string[]>(remembered.chunkIds);
   let styleIds = $state<string[]>(remembered.styleIds);
@@ -43,7 +58,52 @@
 
   const size = $derived(currentPortraitSize());
   const showNegative = $derived(!generation.disablesNegativePrompt);
-  const canGenerate = $derived(!submitting && positive.trim().length > 0 && generation.mode !== "video");
+  const canGenerate = $derived(
+    !submitting && positive.trim().length > 0 && generation.mode !== "video" && (!suggesting || expressionTyped),
+  );
+
+  /**
+   * Ask the prompt assistant for an expression that fits the character. On
+   * opening, a failure quietly falls back to a smile; asked for, it says why.
+   */
+  async function suggestExpression(asked: boolean) {
+    if (suggesting) return;
+    expressionTyped = false;
+    suggesting = true;
+    try {
+      const notes = memoryContext(savedCharacters.memoryOf(character));
+      const face = await promptAssistant.portraitExpression(
+        { name: character.name, prompt: character.prompt },
+        notes,
+        style,
+      );
+      if (!expressionTyped) expression = face;
+    } catch (e) {
+      console.warn("Portrait expression failed:", e);
+      if (asked) gallery.showToast(mapLlmError(String(e)), "error");
+      if (!expressionTyped && !expression.trim()) expression = defaultExpression(style);
+    } finally {
+      suggesting = false;
+    }
+  }
+
+  // No expression from the card or the last portrait: pick one now.
+  untrack(() => {
+    if (expression.trim()) return;
+    if (promptAssistant.canUseMemory && !promptAssistant.isGenerating) void suggestExpression(false);
+    else expression = defaultExpression(style);
+  });
+
+  /** Put a left-out part of the card's prompt back at the end of the prompt. */
+  function addBack(index: number) {
+    const item = leftOut[index];
+    if (item === undefined) return;
+    positive =
+      style === "tags"
+        ? `${positive.trim().replace(/[,\s]+$/, "")}, ${item}`
+        : `${positive.trim().replace(/[.\s]*$/, "")}, ${item}.`;
+    leftOut = leftOut.filter((_, i) => i !== index);
+  }
 
   /** Anlas for the portrait on NovelAI, or null elsewhere. */
   const anlas = $derived.by(() => {
@@ -69,6 +129,7 @@
   function resetPrompts() {
     positive = initial.positive;
     negative = initial.negative;
+    leftOut = initial.dropped;
   }
 
   async function generate() {
@@ -76,8 +137,13 @@
     submitting = true;
     const extras = { artists: artists.trim(), chunkIds, styleIds };
     try {
-      await generateCharacterPortrait(character, { positive, negative: showNegative ? negative : "" }, extras);
+      await generateCharacterPortrait(
+        character,
+        { positive: withExpression(positive, expression, style), negative: showNegative ? negative : "" },
+        extras,
+      );
       savePortraitExtras(extras);
+      savedCharacters.setExpression(character.id, expression);
       gallery.showToast(locale.t("characters.portrait.queued", { name: character.name }), "info");
       onclose();
     } catch (e) {
@@ -154,6 +220,55 @@
           spellcheck="false"
           class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
         ></textarea>
+        {#if leftOut.length > 0}
+          <div class="flex flex-wrap items-center gap-1" title={locale.t("characters.portrait.left_out_tip")}>
+            <span class="text-[10px] text-neutral-500">{locale.t("characters.portrait.left_out")}</span>
+            {#each leftOut as item, i (`${i}:${item}`)}
+              <button
+                type="button"
+                class="max-w-[14rem] truncate rounded-full border border-dashed border-neutral-700 px-2 py-px text-[10px] text-neutral-500 line-through hover:border-neutral-500 hover:text-neutral-200 hover:no-underline"
+                title={locale.t("characters.portrait.add_back", { tag: item })}
+                aria-label={locale.t("characters.portrait.add_back", { tag: item })}
+                onclick={() => addBack(i)}
+              >{item}</button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center justify-between gap-2">
+          <label for="character-portrait-expression" class="text-xs font-medium text-neutral-300">
+            {locale.t("characters.portrait.expression")}
+          </label>
+          {#if promptAssistant.canUseMemory}
+            <button
+              type="button"
+              class="w-5 h-5 flex items-center justify-center rounded text-[11px] hover:bg-neutral-800 disabled:opacity-40"
+              title={locale.t("characters.portrait.expression_suggest", { name: character.name })}
+              aria-label={locale.t("characters.portrait.expression_suggest", { name: character.name })}
+              disabled={suggesting || promptAssistant.isGenerating}
+              onclick={() => suggestExpression(true)}
+            >
+              {#if suggesting}
+                <span class="inline-block animate-spin text-neutral-400">⟳</span>
+              {:else}
+                ✨
+              {/if}
+            </button>
+          {/if}
+        </div>
+        <input
+          id="character-portrait-expression"
+          type="text"
+          bind:value={expression}
+          oninput={() => { expressionTyped = true; }}
+          spellcheck="false"
+          placeholder={suggesting
+            ? locale.t("characters.portrait.expression_picking", { name: character.name })
+            : locale.t("characters.portrait.expression_placeholder")}
+          class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+        />
       </div>
 
       {#if showNegative}

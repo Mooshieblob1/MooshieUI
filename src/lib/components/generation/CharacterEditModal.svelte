@@ -2,9 +2,10 @@
   /**
    * Full-app editor for a saved character: its name, prompt and UC, and its
    * memory files, the notes on who the character is that the prompt assistant
-   * reads. Everything is a draft until Save. Remember, and an Update that
-   * found something lasting, come back as suggested memory changes the user
-   * ticks, edits and keeps.
+   * reads. Everything is a draft until Save. Remember (a note the assistant
+   * writes up properly), Write with AI (files drafted from canon, the prompt
+   * and what the user asks for), and an Update that found something lasting
+   * come back as suggested memory changes the user ticks, edits and keeps.
    */
   import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
@@ -23,10 +24,13 @@
     MEMORY_STARTER_FILES,
     applyMemoryChanges,
     cleanMemoryFileName,
+    memoryContext,
+    memoryForRequest,
     memorySize,
     newMemoryFile,
     sameMemory,
     type CharacterMemoryFile,
+    type LinkedCharacter,
     type MemoryChange,
   } from "../../utils/characterMemory.js";
   import { saveTextFile } from "../../utils/api.js";
@@ -70,6 +74,9 @@
   let tab = $state<Tab>(untrack(() => startTab));
   let fact = $state("");
   let remembering = $state(false);
+  /** The Write with AI panel is open in place of the file editor. */
+  let composing = $state(false);
+  let brief = $state("");
   let review = $state<ReviewRow[] | null>(
     untrack(() => (suggestions.length > 0 ? suggestions.map((c, i) => ({ ...c, key: i, keep: true })) : null)),
   );
@@ -88,6 +95,9 @@
   const used = $derived(memorySize(files));
   const canRemember = $derived(
     promptAssistant.canUseMemory && !remembering && !promptAssistant.isGenerating && !!fact.trim() && review === null,
+  );
+  const canWrite = $derived(
+    promptAssistant.canUseMemory && !remembering && !promptAssistant.isGenerating && review === null,
   );
 
   const selectedName = $derived(selected?.name ?? "");
@@ -180,22 +190,28 @@
     }
   }
 
-  async function remember() {
-    const text = fact.trim();
-    if (!canRemember || !text) return;
+  /**
+   * Other saved characters (same architecture, other memory) that `texts`
+   * name, with their notes, so Remember and Write can connect to them.
+   */
+  function linkedCharacters(texts: string[]): LinkedCharacter[] {
+    const others = savedCharacters
+      .withMemory(savedCharacters.characters.filter((c) => c.architecture === character.architecture))
+      .filter((c) => c.ownerId !== owner.id);
+    return memoryForRequest(others, texts).map((c) => ({ name: c.name, prompt: c.prompt, notes: c.notes }));
+  }
+
+  /** Run a memory request and open its suggestions for review. */
+  async function suggest(run: () => Promise<MemoryChange[]>, nothingKey: string): Promise<boolean> {
     remembering = true;
     try {
-      const changes = await promptAssistant.rememberForCharacter(
-        { name: name.trim() || initial.name, prompt, negative },
-        files,
-        text,
-      );
-      fact = "";
+      const changes = await run();
       if (changes.length === 0) {
-        gallery.showToast(locale.t("characters.memory.nothing", { name: owner.name }), "info");
-        return;
+        gallery.showToast(locale.t(nothingKey, { name: owner.name }), "info");
+        return true;
       }
       review = changes.map((c, i) => ({ ...c, key: i, keep: true }));
+      return true;
     } catch (err) {
       console.error("Character memory failed:", err);
       const msg = String(err);
@@ -203,8 +219,35 @@
         msg.includes("invalid_character_memory") ? locale.t("characters.memory.invalid") : mapLlmError(msg),
         "error",
       );
+      return false;
     } finally {
       remembering = false;
+    }
+  }
+
+  async function remember() {
+    const text = fact.trim();
+    if (!canRemember || !text) return;
+    const draft = { name: name.trim() || initial.name, prompt, negative };
+    const done = await suggest(
+      () => promptAssistant.rememberForCharacter(draft, files, text, linkedCharacters([text])),
+      "characters.memory.nothing",
+    );
+    if (done) fact = "";
+  }
+
+  async function writeMemory() {
+    if (!canWrite) return;
+    const draft = { name: name.trim() || initial.name, prompt, negative };
+    const ask = brief.trim();
+    const done = await suggest(
+      () =>
+        promptAssistant.writeCharacterMemory(draft, files, ask, linkedCharacters([ask, memoryContext(files, 0)])),
+      "characters.memory.write_nothing",
+    );
+    if (done) {
+      composing = false;
+      brief = "";
     }
   }
 
@@ -376,6 +419,17 @@
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 {locale.t("characters.memory.new_file")}
               </button>
+              {#if promptAssistant.canUseMemory}
+                <button
+                  type="button"
+                  class="{iconButton} text-[12px] {composing ? 'bg-neutral-800' : ''}"
+                  title={locale.t("characters.memory.write_tip", { name: owner.name })}
+                  aria-label={locale.t("characters.memory.write")}
+                  aria-pressed={composing}
+                  disabled={!canWrite && !composing}
+                  onclick={() => { composing = !composing; }}
+                >✨</button>
+              {/if}
               <button
                 type="button"
                 class={iconButton}
@@ -391,9 +445,9 @@
               {#each files as file (file.id)}
                 <button
                   type="button"
-                  class="truncate rounded px-2 py-1 text-left font-mono text-[11px] transition-colors {file.id === selectedId ? 'bg-neutral-700 text-neutral-50' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+                  class="truncate rounded px-2 py-1 text-left font-mono text-[11px] transition-colors {file.id === selectedId && !composing ? 'bg-neutral-700 text-neutral-50' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
                   title={file.name}
-                  onclick={() => { selectedId = file.id; }}
+                  onclick={() => { selectedId = file.id; composing = false; }}
                 >{file.name}</button>
               {/each}
             </div>
@@ -406,7 +460,48 @@
           </div>
 
           <div class="min-h-0 min-w-0 flex-1 flex flex-col gap-1.5">
-            {#if selected}
+            {#if composing}
+              <form
+                class="flex flex-1 flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-800/30 p-3"
+                onsubmit={(e) => { e.preventDefault(); void writeMemory(); }}
+              >
+                <label for="character-memory-brief" class="text-xs font-medium text-neutral-200">
+                  {locale.t("characters.memory.write_title", { name: owner.name })}
+                </label>
+                <textarea
+                  id="character-memory-brief"
+                  bind:value={brief}
+                  rows="5"
+                  disabled={remembering}
+                  placeholder={locale.t("characters.memory.write_placeholder", { name: owner.name })}
+                  class="{field} min-h-24 flex-1 resize-none leading-relaxed placeholder-neutral-500 disabled:opacity-50"
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      void writeMemory();
+                    }
+                  }}
+                ></textarea>
+                <div class="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 text-xs rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+                    disabled={remembering}
+                    onclick={() => { composing = false; }}
+                  >{locale.t("common.cancel")}</button>
+                  <button
+                    type="submit"
+                    class="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    disabled={!canWrite}
+                  >
+                    {#if remembering}
+                      <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
+                    {/if}
+                    {locale.t("characters.memory.write_button")}
+                  </button>
+                </div>
+              </form>
+            {:else if selected}
               <div class="flex items-center gap-1">
                 <input
                   type="text"
@@ -458,6 +553,15 @@
                     >+ {starter}</button>
                   {/each}
                 </div>
+                {#if promptAssistant.canUseMemory}
+                  <button
+                    type="button"
+                    class="mt-1 flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-40"
+                    title={locale.t("characters.memory.write_tip", { name: owner.name })}
+                    disabled={!canWrite}
+                    onclick={() => { composing = true; }}
+                  >✨ {locale.t("characters.memory.write")}</button>
+                {/if}
               </div>
             {/if}
           </div>
