@@ -28,6 +28,8 @@ import { userScopedKey } from "./ipc.js";
 import { currentImageToCharacterThumbnail } from "./characterThumbnail.js";
 import { classifyGenerationError } from "./generationErrors.js";
 import { submitGeneration } from "./generationSubmit.js";
+import { neckUpProse, neckUpTags } from "./portraitFilter.js";
+import { splitExpressionTags } from "./portraitExpression.js";
 
 /** Framing tags for tag-prompted models: one person, head and shoulders, facing the viewer. */
 export const PORTRAIT_FRAMING_TAGS =
@@ -48,25 +50,39 @@ function joinParts(parts: string[]): string {
 
 /**
  * The prompt and negative prompt a portrait starts from, written the way the
- * character's architecture is prompted: Danbooru tags, or a sentence.
+ * character's architecture is prompted: Danbooru tags, or a sentence. What a
+ * neck-up portrait cannot show (legwear, shoes, poses, what they hold) is
+ * left out of the card's prompt and listed in `dropped`. Expression tags the
+ * card's prompt has come back as `expression`, for the dialog's own box.
  */
 export function portraitPrompts(
   character: Pick<SavedCharacter, "prompt" | "negative" | "architecture">,
-): { positive: string; negative: string } {
-  const look = tidy(character.prompt);
+): { positive: string; negative: string; dropped: string[]; expression: string } {
   const avoid = tidy(character.negative);
   if (architecturePromptStyle(character.architecture) === "tags") {
+    const look = neckUpTags(tidy(character.prompt));
+    const face = splitExpressionTags(look.kept);
     return {
-      positive: joinParts(["solo", look, PORTRAIT_FRAMING_TAGS]),
+      positive: joinParts(["solo", face.rest, PORTRAIT_FRAMING_TAGS]),
       negative: joinParts([avoid, PORTRAIT_AVOID_TAGS]),
+      dropped: look.dropped,
+      expression: face.expression,
     };
   }
+  const look = neckUpProse(tidy(character.prompt));
   return {
     positive:
-      `A head-and-shoulders portrait of ${look || "the character"}, seen straight from the front ` +
+      `A head-and-shoulders portrait of ${tidy(look.kept) || "the character"}, seen straight from the front ` +
       "and framed from the neck up, looking directly at the viewer against a plain background.",
     negative: avoid,
+    dropped: look.dropped,
+    expression: "",
   };
+}
+
+/** How a portrait prompt for this card is written. */
+export function portraitStyle(character: Pick<SavedCharacter, "architecture">): "tags" | "natural" {
+  return architecturePromptStyle(character.architecture) === "tags" ? "tags" : "natural";
 }
 
 /**

@@ -128,10 +128,13 @@ import {
   parseRemember,
   rememberRequest,
   splitLearnedMemory,
+  writeMemoryRequest,
   type LearnedMemory,
+  type LinkedCharacter,
   type CharacterMemoryFile,
   type MemoryChange,
 } from "../utils/characterMemory.js";
+import { expressionRequest, parseExpression, type PortraitPromptStyle } from "../utils/portraitExpression.js";
 import type {
   LlmDeviceCode,
   LlmHardware,
@@ -690,11 +693,66 @@ class PromptAssistantStore {
     character: { name: string; prompt: string; negative: string },
     files: readonly CharacterMemoryFile[],
     fact: string,
+    linked: readonly LinkedCharacter[] = [],
+  ): Promise<MemoryChange[]> {
+    if (!fact.trim()) throw new Error("invalid_character_memory");
+    return this.memoryChanges(
+      [character.prompt, memoryContext(files, 0), fact, ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
+      rememberRequest(character, files, fact, linked),
+      files,
+    );
+  }
+
+  /**
+   * Memory files written by the external provider from canon, the card's
+   * prompt and `brief` (what the user wants covered, may be empty), as
+   * changes to review.
+   */
+  async writeCharacterMemory(
+    character: { name: string; prompt: string; negative: string },
+    files: readonly CharacterMemoryFile[],
+    brief: string,
+    linked: readonly LinkedCharacter[] = [],
+  ): Promise<MemoryChange[]> {
+    return this.memoryChanges(
+      [character.prompt, memoryContext(files, 0), brief, ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
+      writeMemoryRequest(character, files, brief, linked),
+      files,
+    );
+  }
+
+  /**
+   * The facial expression for a portrait of a saved character, picked by the
+   * external provider from their memory notes or canon.
+   */
+  async portraitExpression(
+    character: { name: string; prompt: string },
+    notes: string,
+    style: PortraitPromptStyle,
+  ): Promise<string> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    if (!this.canUseMemory) throw new Error("memory_needs_external");
+    assertAllowedRequest([character.prompt, notes]);
+    const request = expressionRequest(character, notes, style);
+    this.isGenerating = true;
+    try {
+      const face = parseExpression(await callExternalLlm(request.system, request.prompt, request.maxTokens), style);
+      if (!face) throw new Error("invalid_expression");
+      return face;
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /** Send a memory request (checked against `texts`) and parse its suggested changes, retrying once. */
+  private async memoryChanges(
+    texts: string[],
+    request: { system: string; prompt: string; maxTokens: number },
+    files: readonly CharacterMemoryFile[],
   ): Promise<MemoryChange[]> {
     if (this.isGenerating) throw new Error("busy_generation");
     if (!this.canUseMemory) throw new Error("memory_needs_external");
-    assertAllowedRequest([character.prompt, memoryContext(files, 0), fact]);
-    const request = rememberRequest(character, files, fact);
+    assertAllowedRequest(texts);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {

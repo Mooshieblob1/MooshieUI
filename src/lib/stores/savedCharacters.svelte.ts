@@ -51,6 +51,11 @@ export interface SavedCharacter {
    * only top-level cards normally carry any.
    */
   memory: CharacterMemoryFile[];
+  /**
+   * The facial expression the last portrait was drawn with, so the next one
+   * starts from it instead of asking the prompt assistant again.
+   */
+  expression?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -105,6 +110,7 @@ function sanitize(raw: unknown): SavedCharacter | null {
     reference: typeof c.reference === "string" && c.reference.startsWith("data:image/") ? c.reference : null,
     parentId: typeof c.parentId === "string" && c.parentId ? c.parentId : null,
     memory: sanitizeMemory(c.memory),
+    ...(typeof c.expression === "string" && c.expression.trim() ? { expression: c.expression.trim().slice(0, 200) } : {}),
     createdAt: typeof c.createdAt === "number" ? c.createdAt : now,
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : now,
   };
@@ -230,6 +236,20 @@ class SavedCharactersStore {
    * Set a card's thumbnail and its reference-sized copy, or clear both (null).
    * Changes nothing else about it.
    */
+  /** Remember the expression a portrait of card `id` was drawn with ("" forgets it). */
+  setExpression(id: string, expression: string): void {
+    const clean = expression.trim().slice(0, 200);
+    const card = this.characters.find((c) => c.id === id);
+    if (!card || (card.expression ?? "") === clean) return;
+    this.characters = this.characters.map((c) => {
+      if (c.id !== id) return c;
+      const next: SavedCharacter = { ...c, expression: clean };
+      if (!clean) delete next.expression;
+      return next;
+    });
+    this.saveSettings();
+  }
+
   setThumbnail(id: string, thumbnail: string | null, reference: string | null = null): void {
     this.characters = this.characters.map((c) =>
       c.id === id ? { ...c, thumbnail, reference: thumbnail ? reference : null } : c,
