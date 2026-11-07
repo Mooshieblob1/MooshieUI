@@ -33,14 +33,6 @@ use crate::state::AppState;
 /// to sprint.
 const FACE_GAP: Duration = Duration::from_millis(400);
 
-/// How long to wait before the single retry after a 429.
-///
-/// A fixed value rather than the response's `Retry-After`: `client::check_status`
-/// turns the response into an `AppError` without reading its headers, and
-/// threading the header through would touch every `ApiError` construction site
-/// in the crate for one call path.
-const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(6);
-
 /// Tell the frontend that the face pass did not do what the panel promised.
 ///
 /// Everything this feature can get wrong is deliberately non-fatal: the base
@@ -190,11 +182,11 @@ pub async fn run_face_pass(
         if state.prompt_queue.is_cancelled(prompt_id) {
             break;
         }
-        let images = match generate_with_retry(
-            client,
-            &body,
-            || state.prompt_queue.is_cancelled(prompt_id),
-            |event| {
+        // Streaming rather than the plain endpoint: it costs the same and it
+        // is the only way the crop shows up in the lightbox while it renders.
+        // A 429 is retried with backoff inside the client.
+        let images = match client
+            .generate_stream(&body, |event| {
                 if state.prompt_queue.is_cancelled(prompt_id) {
                     return;
                 }
@@ -216,9 +208,8 @@ pub async fn run_face_pass(
                         "max": max_progress, "node": node,
                     }),
                 );
-            },
-        )
-        .await
+            })
+            .await
         {
             Ok(images) => images,
             Err(err) => {
@@ -358,32 +349,6 @@ fn crop_steps(detail: &NovelAiFaceDetail) -> u32 {
         detail.steps.min(face_pass::FREE_STEPS).max(1)
     } else {
         detail.steps.max(1)
-    }
-}
-
-/// One retry, once, on a rate limit.
-///
-/// Streaming rather than the plain endpoint: it costs the same and it is the
-/// only way the crop shows up in the lightbox while it renders.
-async fn generate_with_retry<F>(
-    client: &NovelAiClient<'_>,
-    body: &serde_json::Value,
-    cancelled: impl Fn() -> bool,
-    mut on_event: F,
-) -> Result<Vec<Vec<u8>>, AppError>
-where
-    F: FnMut(StreamEvent),
-{
-    match client.generate_stream(body, &mut on_event).await {
-        Err(AppError::ApiError { status: 429, .. }) => {
-            log::warn!("NovelAI face pass rate limited; retrying once");
-            tokio::time::sleep(RATE_LIMIT_BACKOFF).await;
-            if cancelled() {
-                return Err(AppError::Other("NovelAI face pass cancelled".into()));
-            }
-            client.generate_stream(body, &mut on_event).await
-        }
-        other => other,
     }
 }
 

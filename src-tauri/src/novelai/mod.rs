@@ -11,6 +11,7 @@ pub mod client;
 pub mod detect;
 pub mod face_detail;
 pub mod face_pass;
+pub mod gate;
 mod local_refine;
 pub mod metadata;
 pub mod models;
@@ -208,6 +209,15 @@ fn local_pass_failure_reason(err: &AppError) -> &'static str {
     } else {
         "run_failed"
     }
+}
+
+/// True when the NovelAI face pass is on, which repaints faces with more
+/// NovelAI requests after the base image (and after any local pass).
+fn novelai_face_pass_requested(params: &GenerationParams) -> bool {
+    params
+        .novelai
+        .as_ref()
+        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine())
 }
 
 /// Pick the model a request runs against.
@@ -766,6 +776,14 @@ pub async fn run(
 ) -> Result<RunOutcome, AppError> {
     match run_inner(&state, &sink, &prompt_id, &params, &credential).await {
         Ok(outcome) => Ok(outcome),
+        // Cancelled while it waited for the account, or mid-request. The
+        // frontend already dropped the prompt, so an error event would only
+        // put a failure toast on something the user stopped on purpose.
+        Err(err) if state.prompt_queue.is_cancelled(&prompt_id) => {
+            log::info!("NovelAI {prompt_id} cancelled ({err})");
+            state.prompt_queue.cleanup_alias(&prompt_id);
+            Ok(RunOutcome::Completed)
+        }
         Err(err) => {
             sink.emit(
                 "comfyui:execution_error",
@@ -788,7 +806,10 @@ async fn run_inner(
     params: &GenerationParams,
     credential: &NaiCredential,
 ) -> Result<RunOutcome, AppError> {
-    let client = NovelAiClient::new(&state.http_client, credential.as_str())?;
+    // Queued behind any other generation on this account, and dropped from the
+    // line if the user cancels while it waits.
+    let client = NovelAiClient::new(&state.http_client, credential.as_str())?
+        .cancel_when(|| state.prompt_queue.is_cancelled(prompt_id));
 
     // Checked before anything else touches the payload. An upscale has no
     // prompt to encode, no vibes to pay for and no steps to report against, so
@@ -862,6 +883,15 @@ async fn run_inner(
         })
         .await?;
 
+    // A NovelAI face pass sends more requests after the local pass, so the
+    // account stays with this job until then. Otherwise NovelAI is done with
+    // it, and the next queued generation can start while this one finishes
+    // locally.
+    let face_pass = novelai_face_pass_requested(params);
+    if !face_pass {
+        client.release();
+    }
+
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);
         return Ok(RunOutcome::Completed);
@@ -911,11 +941,7 @@ async fn run_inner(
     }
 
     // Detail the final local result, so refinement cannot repaint the finished faces.
-    if params
-        .novelai
-        .as_ref()
-        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine())
-    {
+    if face_pass {
         if transparency_requested(params) {
             // The crop path decodes to RGBA and re-encodes the composite, and
             // the seam feather would blend the repainted face against black
@@ -945,6 +971,7 @@ async fn run_inner(
             );
             face_detail::notify(sink, prompt_id, "skipped", "batch");
         }
+        client.release();
     }
 
     if state.prompt_queue.is_cancelled(prompt_id) {
@@ -989,6 +1016,7 @@ async fn run_upscale(
     );
 
     let images = client.upscale(&input.image).await?;
+    client.release();
 
     if state.prompt_queue.is_cancelled(prompt_id) {
         state.prompt_queue.cleanup_alias(prompt_id);
@@ -1139,10 +1167,7 @@ async fn run_local_post_process(
         derived.facefix_steps,
         derived.facefix_denoise,
     );
-    let collect = params
-        .novelai
-        .as_ref()
-        .is_some_and(|nai| nai.face_detail.enabled && nai.face_detail.uses_novelai_engine());
+    let collect = novelai_face_pass_requested(params);
     if collect {
         // NAI accepts PNG. Keep the intermediate lossless and avoid JXL/WebP
         // conversion followed immediately by another decode for face crops.
