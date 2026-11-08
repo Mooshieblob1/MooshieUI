@@ -420,6 +420,7 @@
         language,
         references: refs.map((r) => r.label),
         keptArtists: kept,
+        minorRule: generation.naiEnhanceMinorRule,
         // NovelAI mode, so these are the characters saved under NovelAI.
         savedCharacters: naiSavedCharacterDirective(
           roster.map((c) => ({
@@ -901,6 +902,22 @@
               }}
             />
             {locale.t("prompt_assistant.nai_keep_artists")}
+          </label>
+          <label
+            class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
+            title={locale.t("prompt_assistant.nai_minor_rule_tooltip")}
+          >
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              disabled={naiEnhance.busy}
+              checked={generation.naiEnhanceMinorRule}
+              onchange={(e) => {
+                generation.naiEnhanceMinorRule = (e.currentTarget as HTMLInputElement).checked;
+                generation.saveSettings();
+              }}
+            />
+            {locale.t("prompt_assistant.nai_minor_rule")}
           </label>
           {/if}
         </div>

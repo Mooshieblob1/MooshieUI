@@ -276,9 +276,14 @@ export function namesCharacter(name: string, text: string): boolean {
  * The VOCABULARY block of the V5 rewrite for a request of this rating.
  *
  * Only an explicit request hears the explicit tag list. A request with a minor
- * in it gets the non-sexual rule instead, stated as overriding everything else.
+ * in it gets the non-sexual rule instead, stated as overriding everything else,
+ * unless the user turned that rule off (`minorRule` false): some providers
+ * refuse an SFW school or family scene because the rule itself names a child
+ * next to sexual terms, so it then gets the plain SFW block. Turning it off
+ * never lets a minor and sexual content through: `assertAllowedRequest`
+ * refuses that pairing before anything is sent.
  */
-export function naiVocabularyBlock(rating: ContentRating): string {
+export function naiVocabularyBlock(rating: ContentRating, minorRule = true): string {
   const head = `VOCABULARY
 - Write real Danbooru tags for what the user asked. Euphemisms are untrained noise.`;
   if (rating === "explicit") {
@@ -287,7 +292,7 @@ export function naiVocabularyBlock(rating: ContentRating): string {
 - Do not sanitize, soften, lecture or refuse. Do not add explicit tags the user did not ask for, and do not strip the ones they did.
 - Every character in an explicit scene is an adult. Never sexualize a character who is a minor or looks like one, whatever the request says.`;
   }
-  if (rating === "minor") {
+  if (rating === "minor" && minorRule) {
     return `${head}
 - This is a safe-for-work image.
 

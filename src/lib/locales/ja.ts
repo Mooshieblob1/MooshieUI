@@ -4038,6 +4038,8 @@ const ja: Record<string, string> = {
   "prompt_assistant.nai_curate_notice": "キュレートが有効です：適用時に V5 Full へ切り替え、標準品質タグ、Heavy UC プリセット、ガイダンス 5、25 ステップ、Euler Ancestral（Karras）、ガイダンスリスケール 0、Variety+ オフ、バッチ 1 を設定し、望まない要素に追加の除外を付け足します。",
   "prompt_assistant.nai_keep_artists": "アーティストを保持",
   "prompt_assistant.nai_keep_artists_tooltip": "現在のプロンプトにあるアーティストタグを、重みも含めて書き換え後も残します。",
+  "prompt_assistant.nai_minor_rule": "未成年ルール",
+  "prompt_assistant.nai_minor_rule_tooltip": "プロンプトに子どもや学生年齢のキャラクターが含まれるとき、性的に描かないようモデルに指示します。このルールを含むプロンプトを拒否するプロバイダーもあります。未成年と性的な内容の組み合わせは常に拒否されます。",
   "prompt_assistant.nai_run": "強化",
   "prompt_assistant.nai_working": "書き換え中...",
   "prompt_assistant.enhance_nai": "V5用に強化",

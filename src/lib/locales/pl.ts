@@ -4062,6 +4062,8 @@ const pl: Record<string, string> = {
   "prompt_assistant.nai_curate_notice": "Kuratoruj jest włączone: zastosowanie przełącza też na V5 Full, ustawia standardowe tagi jakości, preset UC Heavy, guidance 5, 25 kroków, Euler Ancestral z Karras, guidance rescale 0, Variety+ wyłączone i partię 1 oraz dopisuje dodatkowe wykluczenia do niepożądanej treści.",
   "prompt_assistant.nai_keep_artists": "Zachowaj artystów",
   "prompt_assistant.nai_keep_artists_tooltip": "Zachowuje w przepisanym prompcie tagi artystów z obecnego promptu, razem z wagami.",
+  "prompt_assistant.nai_minor_rule": "Zasada dla nieletnich",
+  "prompt_assistant.nai_minor_rule_tooltip": "Gdy prompt wspomina dziecko lub postać w wieku szkolnym, każe modelowi nie przedstawiać jej seksualnie. Niektórzy dostawcy odrzucają prompty z tą zasadą. Nieletni w połączeniu z treściami seksualnymi są zawsze odrzucani.",
   "prompt_assistant.nai_run": "Ulepsz",
   "prompt_assistant.nai_working": "Przepisywanie...",
   "prompt_assistant.enhance_nai": "Ulepsz dla V5",

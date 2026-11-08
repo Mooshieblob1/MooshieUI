@@ -4016,6 +4016,8 @@ const de: Record<string, string> = {
   "prompt_assistant.nai_curate_notice": "Kuratieren ist aktiv: Beim Übernehmen wird zusätzlich auf V5 Full gewechselt, Standard-Qualitätstags, das Heavy-UC-Preset, Guidance 5, 25 Schritte, Euler Ancestral mit Karras, Guidance Rescale 0, Variety+ aus und Batch 1 gesetzt und zusätzliche Ausschlüsse an den unerwünschten Inhalt angehängt.",
   "prompt_assistant.nai_keep_artists": "Künstler behalten",
   "prompt_assistant.nai_keep_artists_tooltip": "Übernimmt die Künstler-Tags aus deinem aktuellen Prompt in die Umschreibung, samt Gewichtung.",
+  "prompt_assistant.nai_minor_rule": "Minderjährigen-Regel",
+  "prompt_assistant.nai_minor_rule_tooltip": "Erwähnt ein Prompt ein Kind oder eine Figur im Schulalter, wird das Modell angewiesen, sie nicht sexuell darzustellen. Manche Anbieter lehnen Prompts mit dieser Regel ab. Minderjährige zusammen mit sexuellen Inhalten werden immer abgelehnt.",
   "prompt_assistant.nai_run": "Verbessern",
   "prompt_assistant.nai_working": "Wird umgeschrieben...",
   "prompt_assistant.enhance_nai": "Für V5 verbessern",

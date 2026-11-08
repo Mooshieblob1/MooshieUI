@@ -118,6 +118,15 @@ test("the minor block keeps the character non-sexual and puts nsfw in UC", () =>
   assert.match(block, /overrides every other rule/);
 });
 
+test("with the minors rule off, a minor request gets the plain SFW block", () => {
+  const block = naiVocabularyBlock("minor", false);
+  assert.equal(block, naiVocabularyBlock("sfw"));
+  assert.doesNotMatch(block, /MINORS|child/);
+  // The rule only changes the wording: the pairing is still refused.
+  assert.throws(() => assertAllowedRequest(["schoolgirl, nude"]), new Error(BLOCKED_MINOR_CONTENT));
+  assert.match(naiVocabularyBlock("explicit", false), /Never sexualize a character who is a minor/);
+});
+
 const SAVED = [
   { name: "Julie Evergreen", prompt: "girl, adult, long green hair, office suit" },
   { name: "Mina Hart", prompt: "girl, child, short pink hair, yellow raincoat" },

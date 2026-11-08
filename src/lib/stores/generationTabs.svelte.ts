@@ -13,6 +13,7 @@ const SHARED_KEYS = new Set([
   "naiEnhanceLanguage",
   "naiEnhanceIncludeExisting",
   "naiEnhanceKeepArtists",
+  "naiEnhanceMinorRule",
   "naiEnhanceScaleChoice",
   "naiEnhanceMagnitude",
   "outputBitDepth",

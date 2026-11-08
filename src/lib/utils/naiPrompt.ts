@@ -106,6 +106,11 @@ export interface NaiPromptContext {
    * A `blocked` request never gets this far.
    */
   rating?: ContentRating;
+  /**
+   * Whether a `minor` request carries the rule that keeps a child non-sexual.
+   * The user's NAI Enhance toggle; absent is on.
+   */
+  minorRule?: boolean;
 }
 
 /**
@@ -479,7 +484,7 @@ ${current}
 export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
   return [
     SHARED_RULES,
-    naiVocabularyBlock(ctx.rating ?? "sfw"),
+    naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
     SHARED_RULES_TAIL,
     VARIANT_BLOCKS[ctx.variant],
     QUALITY_TAGS,
