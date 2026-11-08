@@ -77,6 +77,9 @@ export interface NaiEnhanceCharacterRow extends NaiEnhanceRow {
    * hold work the user tuned by hand.
    */
   removes: boolean;
+  /** The box's own undesired content now, and what applying the row writes there. */
+  ucBefore: string;
+  ucAfter: string;
 }
 
 export interface NaiEnhancePending {
@@ -399,9 +402,13 @@ class NaiEnhanceStore {
       if (row.removes) {
         if (row.targetIndex !== null) dropped.add(row.targetIndex);
       } else if (row.targetIndex !== null && row.targetIndex < chars.length) {
-        chars[row.targetIndex] = { ...chars[row.targetIndex], prompt: row.after };
+        chars[row.targetIndex] = {
+          ...chars[row.targetIndex],
+          prompt: row.after,
+          negative_prompt: row.ucAfter,
+        };
       } else if (chars.length < novelAiMaxCharacters(generation.checkpoint)) {
-        chars.push({ ...createNovelAiCharacter(), prompt: row.after });
+        chars.push({ ...createNovelAiCharacter(), prompt: row.after, negative_prompt: row.ucAfter });
       }
     }
     generation.updateNovelAiSettings({
