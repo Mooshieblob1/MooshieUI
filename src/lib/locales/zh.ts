@@ -4014,6 +4014,8 @@ const zh: Record<string, string> = {
   "prompt_assistant.nai_curate_notice": "精选化已开启：应用时同时切换到 V5 Full，设置标准质量标签、Heavy UC 预设、引导 5、25 步、Euler Ancestral（Karras）、引导重缩放 0、关闭 Variety+、批次 1，并在不需要的内容中追加额外排除项。",
   "prompt_assistant.nai_keep_artists": "保留画师",
   "prompt_assistant.nai_keep_artists_tooltip": "在改写结果中保留当前提示词里的画师标签，包括权重。",
+  "prompt_assistant.nai_minor_rule": "未成年人规则",
+  "prompt_assistant.nai_minor_rule_tooltip": "提示词提到儿童或学龄角色时，要求模型不以性化方式描绘。部分服务商会拒绝带有此规则的提示词。未成年人与色情内容的组合始终会被拒绝。",
   "prompt_assistant.nai_run": "增强",
   "prompt_assistant.nai_working": "改写中...",
   "prompt_assistant.enhance_nai": "为 V5 增强",

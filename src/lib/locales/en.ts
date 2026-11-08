@@ -4121,6 +4121,8 @@ const en: Record<string, string> = {
   "prompt_assistant.nai_curate_notice": "Curate it is on: applying also switches to V5 Full, sets Standard quality tags, the Heavy UC preset, guidance 5, 25 steps, Euler Ancestral with Karras, guidance rescale 0, Variety+ off and batch 1, and appends extra avoids to the undesired content.",
   "prompt_assistant.nai_keep_artists": "Keep artists",
   "prompt_assistant.nai_keep_artists_tooltip": "Keep the artist tags from your current prompt in the rewrite, weights included.",
+  "prompt_assistant.nai_minor_rule": "Minors rule",
+  "prompt_assistant.nai_minor_rule_tooltip": "When a prompt mentions a child or a school-age character, tell the model to keep them non-sexual. Some providers refuse prompts that carry this rule. A minor paired with sexual content is always refused.",
   "prompt_assistant.nai_run": "Enhance",
   "prompt_assistant.nai_working": "Rewriting...",
   "prompt_assistant.enhance_nai": "Enhance for V5",

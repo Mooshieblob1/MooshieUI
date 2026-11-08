@@ -746,6 +746,12 @@ class GenerationStore {
    */
   naiEnhanceKeepArtists = $state(false);
   /**
+   * Send the keep-minors-non-sexual rule with a V5 enhance whose prompt
+   * mentions a child. On by default; some providers refuse SFW school and
+   * family scenes with it in. The minor + sexual refusal stays either way.
+   */
+  naiEnhanceMinorRule = $state(true);
+  /**
    * What the last NovelAI image Enhance was run with. The Enhance modal opens
    * on these, so someone who always enhances at 1.5x / magnitude 4 is not
    * reset to the defaults every launch. Written only when an enhance is
@@ -3221,6 +3227,8 @@ class GenerationStore {
       this.naiEnhanceIncludeExisting = saved.naiEnhanceIncludeExisting;
     if (saved.naiEnhanceKeepArtists !== undefined)
       this.naiEnhanceKeepArtists = saved.naiEnhanceKeepArtists;
+    if (saved.naiEnhanceMinorRule !== undefined)
+      this.naiEnhanceMinorRule = saved.naiEnhanceMinorRule;
     if (isEnhanceScaleChoice(saved.naiEnhanceScaleChoice))
       this.naiEnhanceScaleChoice = saved.naiEnhanceScaleChoice;
     if (typeof saved.naiEnhanceMagnitude === "number")
@@ -3492,6 +3500,7 @@ class GenerationStore {
         naiEnhanceLanguage: this.naiEnhanceLanguage,
         naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
         naiEnhanceKeepArtists: this.naiEnhanceKeepArtists,
+        naiEnhanceMinorRule: this.naiEnhanceMinorRule,
         naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
         naiEnhanceMagnitude: this.naiEnhanceMagnitude,
       });
@@ -3668,6 +3677,7 @@ class GenerationStore {
       naiEnhanceLanguage: this.naiEnhanceLanguage,
       naiEnhanceIncludeExisting: this.naiEnhanceIncludeExisting,
       naiEnhanceKeepArtists: this.naiEnhanceKeepArtists,
+      naiEnhanceMinorRule: this.naiEnhanceMinorRule,
       naiEnhanceScaleChoice: this.naiEnhanceScaleChoice,
       naiEnhanceMagnitude: this.naiEnhanceMagnitude,
     };

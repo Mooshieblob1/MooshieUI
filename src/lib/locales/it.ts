@@ -4013,6 +4013,8 @@ const it: Record<string, string> = {
   "prompt_assistant.nai_curate_notice": "Cura è attivo: applicando passa anche a V5 Full, imposta tag di qualità Standard, il preset UC Heavy, guida 5, 25 passi, Euler Ancestral con Karras, riscalatura guida 0, Variety+ disattivato e batch 1, e aggiunge esclusioni extra al contenuto indesiderato.",
   "prompt_assistant.nai_keep_artists": "Mantieni artisti",
   "prompt_assistant.nai_keep_artists_tooltip": "Mantiene nella riscrittura i tag artista del prompt attuale, pesi compresi.",
+  "prompt_assistant.nai_minor_rule": "Regola minori",
+  "prompt_assistant.nai_minor_rule_tooltip": "Se un prompt cita un bambino o un personaggio in età scolare, chiede al modello di non sessualizzarlo. Alcuni provider rifiutano i prompt che contengono questa regola. Un minore abbinato a contenuti sessuali viene sempre rifiutato.",
   "prompt_assistant.nai_run": "Migliora",
   "prompt_assistant.nai_working": "Riscrittura in corso...",
   "prompt_assistant.enhance_nai": "Migliora per V5",
