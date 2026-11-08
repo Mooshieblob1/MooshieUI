@@ -2473,6 +2473,8 @@ const zh: Record<string, string> = {
   "settings.about.troubleshooting": "故障排除",
   "settings.about.saved": "已保存！",
   "settings.about.try_again": "重试",
+  "settings.about.update_server_unreachable": "无法连接到 GitHub 检查更新。请稍等一分钟再试，或从发布页面下载最新版本。",
+  "settings.about.open_releases_page": "打开发布页面",
   "settings.about.export_logs_desc": "将 ComfyUI 日志、系统信息和配置保存到文件中，以便与支持团队共享。",
   "settings.about.data_dir_hint": "要安装到其他驱动器，请在启动前将 MOOSHIEUI_DATA_DIR 环境变量设置为您首选的路径。",
   "settings.about.save_dialog_title": "保存诊断日志",

@@ -2432,6 +2432,8 @@ const zhTw: Record<string, string> = {
   "settings.about.troubleshooting": "疑難排解",
   "settings.about.saved": "已儲存！",
   "settings.about.try_again": "重試",
+  "settings.about.update_server_unreachable": "無法連線到 GitHub 檢查更新。請稍等一分鐘再試，或從發行頁面下載最新版本。",
+  "settings.about.open_releases_page": "開啟發行頁面",
   "settings.about.export_logs_desc": "將 ComfyUI 日誌、系統資訊和設定儲存到檔案中，以便與支援團隊分享。",
   "settings.about.data_dir_hint": "要安裝到其他磁碟，請在啟動前將 MOOSHIEUI_DATA_DIR 環境變數設定為您首選的路徑。",
   "settings.about.save_dialog_title": "儲存診斷日誌",

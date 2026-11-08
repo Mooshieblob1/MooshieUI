@@ -26,6 +26,7 @@
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
+  import { checkForAppUpdate, isUpdateServerUnreachable, RELEASES_PAGE_URL } from "../../utils/updater.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
@@ -1158,8 +1159,7 @@
         return;
       }
       if (!isTauri) { updateState = "up-to-date"; return; }
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
+      const update = await checkForAppUpdate();
       if (update) {
         updateObj = update;
         updateVersion = update.version;
@@ -1169,7 +1169,9 @@
       }
     } catch (e) {
       updateState = "error";
-      updateError = String(e);
+      updateError = isUpdateServerUnreachable(e)
+        ? locale.t('settings.about.update_server_unreachable')
+        : String(e);
     }
   }
 
@@ -4842,12 +4844,20 @@
                 <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg">
                   <p class="text-xs text-red-200">{updateError}</p>
                 </div>
-                <button
-                  onclick={checkForUpdates}
-                  class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
-                >
-                  {locale.t('settings.about.try_again')}
-                </button>
+                <div class="flex items-center gap-3">
+                  <button
+                    onclick={checkForUpdates}
+                    class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                  >
+                    {locale.t('settings.about.try_again')}
+                  </button>
+                  <button
+                    onclick={() => openExternalUrl(RELEASES_PAGE_URL)}
+                    class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                  >
+                    {locale.t('settings.about.open_releases_page')}
+                  </button>
+                </div>
               {/if}
             </div>
 

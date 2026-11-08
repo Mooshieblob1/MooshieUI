@@ -2432,6 +2432,8 @@ const ko: Record<string, string> = {
   "settings.about.troubleshooting": "문제 해결",
   "settings.about.saved": "저장됨!",
   "settings.about.try_again": "다시 시도",
+  "settings.about.update_server_unreachable": "업데이트를 확인하려고 GitHub에 연결하지 못했습니다. 1분 후 다시 시도하거나 릴리스 페이지에서 최신 버전을 다운로드하세요.",
+  "settings.about.open_releases_page": "릴리스 페이지 열기",
   "settings.about.export_logs_desc": "ComfyUI 로그, 시스템 정보 및 설정을 파일로 저장하여 지원팀과 공유합니다.",
   "settings.about.data_dir_hint": "다른 드라이브에 설치하려면 실행 전에 MOOSHIEUI_DATA_DIR 환경 변수를 원하는 경로로 설정하세요.",
   "settings.about.save_dialog_title": "진단 로그 저장",

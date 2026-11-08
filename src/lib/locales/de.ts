@@ -2453,6 +2453,8 @@ const de: Record<string, string> = {
   "settings.about.troubleshooting": "Fehlerbehebung",
   "settings.about.saved": "Gespeichert!",
   "settings.about.try_again": "Erneut versuchen",
+  "settings.about.update_server_unreachable": "GitHub war für die Update-Prüfung nicht erreichbar. Versuche es in einer Minute erneut oder lade die neueste Version von der Release-Seite herunter.",
+  "settings.about.open_releases_page": "Release-Seite öffnen",
   "settings.about.export_logs_desc": "Speichern Sie ComfyUI-Protokolle, Systeminformationen und Konfiguration in einer Datei zum Teilen mit dem Support.",
   "settings.about.data_dir_hint": "Um auf einem anderen Laufwerk zu installieren, setzen Sie die Umgebungsvariable MOOSHIEUI_DATA_DIR vor dem Start auf den gewünschten Pfad.",
   "settings.about.save_dialog_title": "Diagnoseprotokolle speichern",

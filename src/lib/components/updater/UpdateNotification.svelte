@@ -4,6 +4,7 @@
   import { isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
   import { stopComfyui } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { checkForAppUpdate } from "../../utils/updater.js";
 
   // @ts-ignore — injected by Vite at build time
   const currentVersion: string = __APP_VERSION__ ?? "dev";
@@ -100,8 +101,7 @@
       // Desktop: use Tauri updater plugin
       try {
         console.log(`[Updater] Checking for updates (current: v${currentVersion})...`);
-        const { check } = await import("@tauri-apps/plugin-updater");
-        const update = await check();
+        const update = await checkForAppUpdate();
         if (update) {
           updateObj = update;
           version = update.version;
