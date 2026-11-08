@@ -478,7 +478,9 @@ the saved appearance, the notes or the request make one of them a variant or ano
 known character (a gender-swapped version, an alternate universe, an original design based on \
 them, such as Malfoid, a female Draco Malfoy from Harry Potter), what the user gives wins: take \
 from canon only what still fits, and never what the user changed, such as their sex, look, age or \
-setting.\n- To \
+setting.\n- State a character's age only as what it is (an adult, 24 years old). Never \
+write what age they are not, and never use a word for a younger age to deny it: write \"an adult\", \
+never \"not a child\".\n- To \
 save, end your reply after the prompt with a line that is exactly {MEMORY_MARKER}, then one line \
 per fact in the form <saved character's name> | <file>.md | <fact>. Reuse a file from their notes \
 where one fits, otherwise name one in lowercase with hyphens, such as outfits.md. Leave the \

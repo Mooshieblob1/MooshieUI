@@ -243,3 +243,19 @@ test("a saved minor named in a merely suggestive request is left out, not refuse
   assert.equal(rateRequest(texts), "explicit");
   assert.deepEqual(savedCharactersForRequest(SAVED, rateRequest(texts), texts), [SAVED[0]]);
 });
+
+test("a note that says what age a character is not does not make them a minor", () => {
+  for (const note of [
+    "Yuu is an adult, not a child",
+    "Yuu isn't a child",
+    "Yuu is an adult and not a child or a teenager",
+    "Yuu is not actually a child",
+    "Yuu is no longer a child",
+    "Yuu is 24, not a kid",
+  ]) {
+    assert.equal(mentionsMinor(note), false, note);
+    assert.equal(assertAllowedRequest(["Yuu, nude, bedroom"], [note]), "explicit", note);
+  }
+  // A list after a negation only carries it across "or" / "and", not a comma.
+  assert.equal(mentionsMinor("not a teenager, child"), true);
+});

@@ -252,11 +252,19 @@ function jsonObject(text: string): Record<string, unknown> | null {
 export const MEMORY_PURPOSE =
   "Memory files exist for one job: writing better image generation prompts for this character. They are not a story, a profile or a chat log. Everything in them is there to help decide what a picture of the character shows: how they look, dress, pose and emote, what they carry, who they are with and where they are found.";
 
+/**
+ * Ages are stated as what they are. "Not a child" puts the word "child" in the
+ * notes, which reads as a minor to the safety check and to models alike.
+ */
+export const AGE_RULE =
+  "State a character's age only as what it is (an adult, 24 years old, a university student). Never write what age they are not, and never use a word for a younger age to deny it: write \"an adult\", never \"not a child\" or \"not a teenager\". Where an existing line says what age the character is not, rewrite it as what they are.";
+
 /** How memory files are laid out, shared by every request that writes them. */
 const FILE_RULES = `- Memory files are short Markdown notes, mostly bullet points, written in the language the user writes in.
 - Write each fact so it helps a prompt: where it changes what a picture shows, say how (shy: often looks away and blushes; left-handed: holds her sword in her left hand).
 - Return each file you change with its whole new content: everything already in it, with the new facts worked in. Where a new fact contradicts an old line, the new fact wins and the old line goes. Never drop anything else.
-- Put a fact in the existing file it fits best. Start a new file only when none fits, named in lowercase with hyphens and ending in .md, such as personality.md, backstory.md, relationships.md or habits.md.`;
+- Put a fact in the existing file it fits best. Start a new file only when none fits, named in lowercase with hyphens and ending in .md, such as personality.md, backstory.md, relationships.md or habits.md.
+- ${AGE_RULE}`;
 
 /** `FILE_RULES` for requests that only file what they are given. */
 const WRITING_RULES = `${FILE_RULES}
@@ -504,6 +512,7 @@ const FACT_LIMIT = 500;
 export function learnMemoryRule(format: string): string {
   return `- When the prompt needs a lasting detail of a saved character that their memory notes do not have yet, and you work it out from your own knowledge or the user's text (the uniform of the school they attend, an accessory they always wear, their signature weapon), save it, so the next prompt reads it from the notes instead of working it out again. Save only what holds for the character in general, written as what a picture shows, never a one-off of this scene. Save nothing the notes already say, nothing the request marks as just for this image, and nothing at all when the user says not to remember. When the notes already have a detail, use it as written.
 - ${VARIANT_RULE}
+- ${AGE_RULE}
 - ${format} One line per fact in the form <saved character's name> | <file>.md | <fact>. Reuse a file from their notes where one fits, otherwise name one in lowercase with hyphens, such as outfits.md. Leave it out when there is nothing to save.`;
 }
 
