@@ -1,3 +1,14 @@
+## What's New in v2.3.40
+
+### Prompt assistant
+- **Fewer false minor refusals**: the check that refuses a minor paired with sexual content now reads only what you asked for, not your saved memory notes, and only refuses a clear minor word (child, kid, schoolgirl, an age under 18, a character saved as a minor) together with an explicit word. Suggestive words alone, or phrases like "minor changes" and "remove all sexual content", no longer trip it. When it does refuse, the message names the words that tripped it.
+- **Minors rule toggle**: the V5 options row of NAI Enhance has a **Minors rule** checkbox (on by default). Turn it off if your provider refuses ordinary SFW school or family prompts because of the rule's wording; a minor with explicit content is still never sent.
+
+### Fixes and maintenance
+- **Update check**: the update check retries before giving up, and when GitHub can't be reached Settings says so plainly with an **Open releases page** button instead of showing the raw updater error.
+
+---
+
 ## What's New in v2.3.39
 
 ### Fixes and maintenance
