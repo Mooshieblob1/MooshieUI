@@ -36,6 +36,7 @@
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
+  import { withOppositeOutfitUc } from "../../utils/naiOutfits.js";
   import { naiSavedCharacterDirective, NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
   import {
     characterNotesBlock,
@@ -399,6 +400,7 @@
             base: generation.positivePrompt ?? "",
             uc: generation.negativePrompt ?? "",
             characters: boxes.map((c) => c.prompt ?? ""),
+            characterUcs: boxes.map((c) => c.negative_prompt ?? ""),
           }
         : null;
       // Rated here as well as in the store, because only this side has the
@@ -451,6 +453,16 @@
       if (recordedLast) {
         enhancerSessions.record("nai", result.sessionUser, result.raw);
       }
+      // Each box's own UC: the rewrite's CHAR n UC line, or the box's current
+      // one when it wrote none. Then the other characters' distinctive garments
+      // go in automatically, so clothes cannot jump between similar characters
+      // even when the rewrite forgot to keep them apart.
+      const charUcs = withOppositeOutfitUc(
+        result.parsed.characters,
+        result.parsed.characters.map(
+          (_, i) => result.parsed.characterUcs[i] ?? boxes[i]?.negative_prompt ?? "",
+        ),
+      );
       naiEnhance.showReview({
         variant: v,
         language,
@@ -474,6 +486,8 @@
             selected: true,
             targetIndex: i < boxes.length ? i : null,
             removes: false,
+            ucBefore: boxes[i]?.negative_prompt ?? "",
+            ucAfter: charUcs[i] ?? "",
           })),
           // Boxes the rewrite came back short of. The base prompt it wrote
           // describes the cast it returned, so a box left standing puts a
@@ -491,6 +505,8 @@
               selected: true,
               targetIndex: i,
               removes: true,
+              ucBefore: box.negative_prompt ?? "",
+              ucAfter: "",
             })),
         ],
       });
@@ -551,6 +567,8 @@
   budget: number,
   toggle: () => void,
   hint: string,
+  ucBefore: string = "",
+  ucAfter: string = "",
 )}
   <div
     class="rounded-lg border p-3 transition-colors {selected
@@ -587,6 +605,23 @@
         {@render tokenBar(after, budget)}
       </div>
     </div>
+    {#if ucBefore.trim() || ucAfter.trim()}
+      <!-- The box's own undesired content, written with its prompt. -->
+      <div class="mt-2 grid gap-2 sm:grid-cols-2">
+        {#each [[ucBefore, "text-neutral-500"], [ucAfter, "text-neutral-200"]] as [text, tone], k (k)}
+          <div>
+            <div class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
+              {locale.t("prompt_assistant.nai_field_uc")}
+            </div>
+            <div
+              class="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded border border-neutral-800 bg-neutral-950 p-2 text-[11px] {tone}"
+            >
+              {text.trim() || locale.t("prompt_assistant.nai_empty")}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 {/snippet}
 
@@ -1112,6 +1147,8 @@
                 : char.targetIndex === null
                   ? locale.t("prompt_assistant.nai_new_character")
                   : "",
+              char.ucBefore,
+              char.removes ? "" : char.ucAfter,
             )}
           {/each}
         </div>

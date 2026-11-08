@@ -42,6 +42,8 @@ export interface NaiExistingPrompt {
   uc: string;
   /** One entry per open character box, in slot order. */
   characters: string[];
+  /** Each box's own undesired content, aligned with `characters`. */
+  characterUcs?: string[];
 }
 
 export interface NaiPromptContext {
@@ -243,7 +245,8 @@ DATASET PREFIXES
 
 INTERACTION TAGS
 - For an action between two characters, tag the actor source#action in their box and the recipient target#action in theirs, or give both mutual#action when it is shared. So source#hug and target#hug, one in each box.
-- The same pattern covers kiss, pointing, holding hands and the rest.
+- The same pattern covers kiss, pointing, holding hands, headpat, carrying, feeding and the rest.
+- When the idea has a clear interaction between characters, these tags are required. Describing the action only in prose is a failed rewrite, because prose alone does not tell V5 which box does it and which box receives it.
 - Always back the pair up in the natural language body. The tags settle who is doing what to whom; the prose settles where they are standing.
 
 TEXT AND COMIC TAGS
@@ -267,6 +270,46 @@ const TECHNIQUE = `CAST HANDLING
 - Prevent bleed by giving each character a distinct hair colour, a distinct dominant colour and a distinct silhouette.
 - Snipe strays with per character undesired content, or with -1::trait:: in the box itself.
 - Order character boxes left to right as they appear in the scene.
+
+OUTFIT ISOLATION
+These rules apply whenever there are two or more CHAR blocks. Clothes jumping from one character to another is the commonest multi-character failure, and these rules exist to stop it.
+- BASE never restates a character's clothing, hair, eyes or body. Its tag line holds only the count, series and character ids, complexity, framing, setting and tags that belong to the whole scene. Its prose holds the shared action, the camera, the lighting and the mood, plus one short sentence that places each character, such as "the girl in the white hoodie stands on the left". That sentence may name one garment to tell the characters apart. It never lists an outfit.
+- Every concrete outfit tag belongs in exactly one CHAR block: the one for the character wearing it. Never write the same garment in two boxes unless the user asked for matching clothes.
+- Give every character a position twice: in the placing sentence in BASE, and as placement tags in their own CHAR block, such as on the left, on the right or in the center. Use the same side in both. With more than three characters, number them from the left instead: first from left, second from left.
+- When the characters wear different clothes, write a CHAR n UC: line after each CHAR block, listing the other characters' distinctive garments, such as white hoodie, pleated skirt. Leave out any garment this character also wears. This opposite-outfit UC is what stops a box borrowing its neighbour's clothes. Leave the line out when everyone is dressed the same.
+- Body tags the characters share are fine in each box. When their bodies are alike, their outfits and the opposite-outfit UC are all that keeps them apart, so make each outfit distinct and complete.
+
+MULTI-CHARACTER EXAMPLE
+The idea "my two OCs at a bus stop in the rain, the tall one in a white hoodie and jeans patting the head of the short one in a navy school uniform" comes out like this:
+
+BASE:
+2girls, high complexity, medium shot, bus stop, rain, overcast
+
+Two girls wait out the rain under a rural bus stop shelter, with rain streaking past the open front. The tall girl in the white hoodie stands on the left and pats the head of the short girl in the school uniform, who stands on the right and looks up at her with a shy smile. Soft grey daylight, wet asphalt reflecting the shelter.
+
+UC:
+
+CHAR 1:
+girl, short brown hair, green eyes,
+tall,
+smile, looking at another,
+white hoodie, blue jeans, white sneakers,
+source#headpat, standing, on the left
+
+CHAR 1 UC:
+school uniform, sailor collar, red neckerchief, pleated skirt, loafers
+
+CHAR 2:
+girl, long black hair, blue eyes,
+petite,
+shy, blush, looking up,
+navy school uniform, sailor collar, red neckerchief, navy pleated skirt, black loafers,
+target#headpat, standing, on the right
+
+CHAR 2 UC:
+hoodie, jeans, sneakers
+
+BASE carries no hair, no eyes and no garment tags. Each placing sentence names one garment only to tell the two apart, and every outfit tag lives in one box, with the other girl's clothes in that box's UC.
 
 ITERATION
 - When revising an existing prompt, change only what the instruction names. Keep every prior lock unless it was revised.
@@ -309,7 +352,9 @@ function sourceFidelity(
 - When the instruction cuts the cast down, return only the characters that remain, renumbered from CHAR 1. Their boxes are resized to match, so returning fewer blocks is how a character is removed. Never keep a dropped character alive by repeating another one to fill the slot, and never return an empty CHAR block as a placeholder.
 - Apply the instruction completely, and nothing beyond it. Do not take the chance to add a location, a time of day, weather, a wardrobe, a mood or a camera angle they did not ask for.
 - If the current prompt is not in V5 shape, put it in V5 shape as you go. That is repair, and it is expected of you; it is not licence to invent.
-- A named character keeps their name, their tags and their canon through the revision. Never generalize one away while editing.`;
+- A named character keeps their name, their tags and their canon through the revision. Never generalize one away while editing.
+- The clothing already in the user's character boxes is authoritative. Keep every outfit tag in its own box, word for word, unless the instruction changes that character's clothes. Do not improve an outfit by re-describing it, and never copy it up into BASE.
+- Keep each box's CHAR n UC line too. Add the other characters' distinctive garments to it when their outfits differ, and drop a garment from it only when that character now wears it.`;
   }
   if (inSession) return SESSION_REVISION_FIDELITY;
   const input = hasReferences
@@ -444,10 +489,16 @@ girl, <name>, <hair>, <eyes>, <features>,
 <outfit head to toe>,
 <pose>, <placement in frame>
 
+CHAR 1 UC:
+<the other characters' distinctive garments, or leave this line out>
+
 CHAR 2:
 boy, <the same five sections>
 
-Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. BASE is required. Everything else is optional.`;
+CHAR 2 UC:
+<the same, for this box>
+
+Write one CHAR block per distinct character that needs its own box, numbered in order. Write no CHAR blocks at all if the image has no distinct characters to separate. A CHAR n UC line goes straight after its own CHAR block and holds that character's own undesired content. UC is the whole image's undesired content and never holds one character's garments. BASE is required. Everything else is optional.`;
 
 /**
  * Source fidelity for a session turn with no pasted prompt.
@@ -465,6 +516,7 @@ const SESSION_REVISION_FIDELITY = `SOURCE FIDELITY
 - A later instruction overrides an earlier detail only where the two actually conflict, and then only that detail. Asking for a smile replaces a frown; asking for rain does not remove a furrowed brow.
 - Carry the untouched parts over word for word wherever the wording still works. The user built them up turn by turn, and quietly rewording or trimming them is the failure this mode exists to avoid.
 - Keep the same characters in the same CHAR order unless the instruction adds, removes or swaps one.
+- Outfits stay in the CHAR blocks they were written in. Never move one up into BASE while revising, and keep each CHAR n UC line unless the outfits it keeps apart changed.
 - Do not invent a location, a time of day, weather, a wardrobe, a mood or a camera angle that neither this message nor an earlier turn asked for.
 - A named character keeps their name, their tags and their canon through every revision.`;
 
@@ -596,7 +648,10 @@ function naiEditUserPrompt(
 ): string {
   const mark = (text: string) => text.trim() || "(empty)";
   const boxes = existing.characters
-    .map((box, i) => `CHAR ${i + 1}:\n${mark(box)}`)
+    .map((box, i) => {
+      const uc = existing.characterUcs?.[i]?.trim();
+      return `CHAR ${i + 1}:\n${mark(box)}${uc ? `\n\nCHAR ${i + 1} UC:\n${uc}` : ""}`;
+    })
     .join("\n\n");
 
   return `This is the user's prompt as it stands now.
@@ -607,7 +662,7 @@ ${mark(existing.base)}
 UC:
 ${mark(existing.uc)}${boxes ? `\n\n${boxes}` : ""}
 
-Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
+Apply this instruction to it, and return the whole prompt again in the output format: BASE and UC always, changed or not, then one CHAR block for each character still in the scene, each followed by its CHAR n UC line when it has one. A character the instruction takes out is removed by leaving its block out, not by blanking it. Hybrid tags plus natural language. Custom undesired content only. No quality or aesthetic filler.
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
 }

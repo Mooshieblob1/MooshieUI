@@ -12,6 +12,7 @@
  */
 
 import { NAI_PRESET_UC_JUNK, NAI_QUALITY_FILLER } from "./naiPrompt.js";
+import { fieldTags, isProseLine, tagKind } from "./naiOutfits.js";
 
 /** What one full rewrite turn (attempt plus optional retry) produced. */
 export interface NaiRewriteResult {
@@ -25,6 +26,11 @@ export interface NaiParsedResponse {
   uc: string;
   /** One entry per `CHAR n:` block, in the order the model returned them. */
   characters: string[];
+  /**
+   * The `CHAR n UC:` line of each box, aligned with `characters`: that box's
+   * own undesired content, or null when the rewrite wrote none for it.
+   */
+  characterUcs: (string | null)[];
   /** A trailing `NOTE:` line, shown in the modal banner. Empty when absent. */
   note: string;
   /**
@@ -48,11 +54,14 @@ const LABEL_BASE = /^\s*(?:\*\*)?base(?:\s*prompt)?(?:\*\*)?\s*:\s*/i;
 const LABEL_UC =
   /^\s*(?:\*\*)?(?:uc|undesired(?:\s*content)?|negative(?:\s*prompt)?)(?:\*\*)?\s*:\s*/i;
 const LABEL_CHAR = /^\s*(?:\*\*)?char(?:acter)?\s*\d*(?:\*\*)?\s*:\s*/i;
+/** A box's own undesired content: `CHAR 2 UC:`. Checked before `LABEL_CHAR`. */
+const LABEL_CHAR_UC =
+  /^\s*(?:\*\*)?char(?:acter)?\s*(\d*)\s*(?:uc|undesired(?:\s*content)?|negative(?:\s*prompt)?)(?:\*\*)?\s*:\s*/i;
 const LABEL_NOTE = /^\s*(?:\*\*)?note(?:\*\*)?\s*:\s*/i;
 const LABEL_CANON = /^\s*(?:\*\*)?canon(?:\s*conflicts?)?(?:\*\*)?\s*:\s*/i;
 const LABEL_MEMORY = /^\s*(?:\*\*)?memory(?:\*\*)?\s*:\s*/i;
 
-type Field = "base" | "uc" | "char" | "note" | "canon" | "memory" | null;
+type Field = "base" | "uc" | "char" | "charUc" | "note" | "canon" | "memory" | null;
 
 /**
  * Pull the labelled fields out of a raw completion.
@@ -70,6 +79,10 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
   const base: string[] = [];
   const uc: string[] = [];
   const chars: string[][] = [];
+  // Keyed by the box it belongs to, so a UC line written after the wrong box
+  // or numbered out of order still lands on its own character.
+  const charUcs = new Map<number, string[]>();
+  let ucTarget = -1;
   const note: string[] = [];
   const canon: string[] = [];
   const memory: string[] = [];
@@ -95,6 +108,17 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
       sawLabel = true;
       const rest = line.replace(LABEL_UC, "");
       if (rest.trim()) uc.push(rest);
+      continue;
+    }
+    const charUc = line.match(LABEL_CHAR_UC);
+    if (charUc) {
+      field = "charUc";
+      sawLabel = true;
+      const n = Number.parseInt(charUc[1], 10);
+      ucTarget = Number.isFinite(n) && n > 0 ? n - 1 : chars.length - 1;
+      if (!charUcs.has(ucTarget)) charUcs.set(ucTarget, []);
+      const rest = line.replace(LABEL_CHAR_UC, "");
+      if (rest.trim()) charUcs.get(ucTarget)!.push(rest);
       continue;
     }
     if (LABEL_CHAR.test(line)) {
@@ -143,6 +167,9 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
       case "char":
         if (chars.length > 0) chars[chars.length - 1].push(line);
         break;
+      case "charUc":
+        charUcs.get(ucTarget)?.push(line);
+        break;
       case "note":
         note.push(line);
         break;
@@ -159,16 +186,23 @@ export function parseNaiResponse(raw: string): NaiParsedResponse {
 
   if (!sawLabel) {
     const bare = (raw ?? "").replace(/^\s*```[^\n]*\n?|```\s*$/g, "").trim();
-    return { base: bare, uc: "", characters: [], note: "", canon: [], memory: [] };
+    return { base: bare, uc: "", characters: [], characterUcs: [], note: "", canon: [], memory: [] };
   }
 
   const joinedBase = joinField(base);
+  const boxes = chars
+    .map((c, i) => {
+      const uc = charUcs.get(i);
+      return { prompt: joinField(c), uc: uc ? blankToEmpty(joinField(uc)) : null };
+    })
+    .filter((c) => !isBlankBox(c.prompt));
   return {
     // The preamble is the base prompt whenever the model never labelled one:
     // it wrote the scene body first and started labelling at CHAR 1.
     base: joinedBase || (sawBaseLabel ? "" : joinField(stripLeadIn(preamble))),
     uc: joinField(uc),
-    characters: chars.map((c) => joinField(c)).filter((c) => !isBlankBox(c)),
+    characters: boxes.map((c) => c.prompt),
+    characterUcs: boxes.map((c) => c.uc),
     note: joinField(note),
     canon: canonLines(canon),
     memory: canonLines(memory),
@@ -198,6 +232,11 @@ const BLANK_BOX = /^[\s.\-*_]*(?:\(?\s*(?:empty|none|n\/a|blank|removed|deleted)
 
 function isBlankBox(box: string): boolean {
   return BLANK_BOX.test(box);
+}
+
+/** A box UC the model marked as empty is an empty UC, not the word "none". */
+function blankToEmpty(uc: string): string {
+  return isBlankBox(uc) ? "" : uc;
 }
 
 /**
@@ -405,6 +444,9 @@ export function normalizeNaiResponse(parsed: NaiParsedResponse): NaiParsedRespon
     base: normalizeField(parsed.base),
     uc: normalizeField(parsed.uc, NAI_PRESET_UC_JUNK),
     characters: parsed.characters.map((box) => normalizeField(normalizeCharIdentity(box))),
+    characterUcs: parsed.characterUcs.map((uc) =>
+      uc === null ? null : normalizeField(uc, NAI_PRESET_UC_JUNK),
+    ),
     note: parsed.note.trim(),
     canon: parsed.canon,
     memory: parsed.memory,
@@ -496,10 +538,80 @@ export function validateNaiResponse(parsed: NaiParsedResponse): string[] {
     }
   }
 
+  problems.push(...outfitIsolationProblems(parsed));
+
   if (!balanced(parsed.base, "{", "}") || !balanced(parsed.base, "[", "]")) {
     problems.push("BASE had unbalanced { } or [ ] emphasis brackets. Close every one you open.");
   }
 
+  return problems;
+}
+
+/**
+ * Interactions the base prose can describe that V5 binds with `source#` /
+ * `target#` / `mutual#` tags. Kept to clear, physical ones: a validator problem
+ * costs a retry, so a vague verb is not worth one.
+ */
+const INTERACTION_WORDS =
+  /\b(?:hug(?:s|ging|ged)?|embrac(?:e|es|ing)|kiss(?:es|ing|ed)?|hold(?:s|ing)? hands|holding (?:her|his|their) hand|headpat|pat(?:s|ting)? (?:her|his|their|the other'?s?) head|carr(?:y|ies|ying) (?:her|him|them)|piggyback|princess carry|feed(?:s|ing) (?:her|him|them)|high five|point(?:s|ing) at (?:her|him|them)|pok(?:e|es|ing) (?:her|his|their) cheek|lap pillow|slap(?:s|ping)? (?:her|him|them)|punch(?:es|ing)? (?:her|him|them))\b/i;
+
+/**
+ * The outfit isolation rules that can be checked without a judgement call.
+ *
+ * - The BASE tag line restating a garment or hair tag that a CHAR box holds.
+ *   The base belongs to nobody in particular, so an outfit there is free for
+ *   any character to wear. The prose is not checked: one placing sentence per
+ *   character may name a garment to tell them apart.
+ * - A clear interaction in the prose with no interaction tags in any box.
+ * - A `source#` with no `target#` partner, or the other way round.
+ */
+function outfitIsolationProblems(parsed: NaiParsedResponse): string[] {
+  const problems: string[] = [];
+  if (parsed.characters.length < 2) return problems;
+
+  const boxTags = parsed.characters.map((box) => new Set(fieldTags(box).map((t) => t.norm)));
+  const restated: string[] = [];
+  for (const tag of fieldTags(parsed.base)) {
+    const kind = tagKind(tag.norm);
+    if (kind !== "clothing" && kind !== "hair") continue;
+    if (restated.includes(tag.norm)) continue;
+    if (boxTags.some((set) => set.has(tag.norm))) restated.push(tag.norm);
+  }
+  if (restated.length > 0) {
+    problems.push(
+      `BASE restated character details that belong in a CHAR block (${restated.join(", ")}). Take them out of the BASE tag line and keep them only in the box of the character they describe.`,
+    );
+  }
+
+  const prose = parsed.base
+    .split(/(?:^|\n)\s*Text\s*:/i)[0]
+    .split("\n")
+    .filter(isProseLine)
+    .join(" ");
+  const tagged = parsed.characters.some((box) => /\b(?:source|target|mutual)#/i.test(box));
+  const action = prose.match(INTERACTION_WORDS);
+  if (action && !tagged) {
+    problems.push(
+      `BASE describes an interaction (${action[0]}) but no CHAR block has interaction tags. Put source#action in the actor's box and target#action in the recipient's, or mutual#action in both.`,
+    );
+  }
+
+  const sources = new Set<string>();
+  const targets = new Set<string>();
+  for (const box of parsed.characters) {
+    for (const m of box.matchAll(/\b(source|target)#([^,\n:{}[\]]+)/gi)) {
+      (m[1].toLowerCase() === "source" ? sources : targets).add(m[2].trim().toLowerCase());
+    }
+  }
+  const unpaired = [
+    ...[...sources].filter((a) => !targets.has(a)).map((a) => `source#${a}`),
+    ...[...targets].filter((a) => !sources.has(a)).map((a) => `target#${a}`),
+  ];
+  if (unpaired.length > 0) {
+    problems.push(
+      `${unpaired.join(", ")} had no partner tag. Every source#action needs target#action in the other character's box.`,
+    );
+  }
   return problems;
 }
 

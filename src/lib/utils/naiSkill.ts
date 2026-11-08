@@ -23,7 +23,7 @@ import type { NaiPromptContext } from "./naiPrompt.js";
  * Bump to invalidate every cached skill at once, after changing the authoring
  * prompt or the V5 specification it is written against.
  */
-const SKILL_VERSION = 6;
+const SKILL_VERSION = 7;
 
 const CACHE_PREFIX = "mooshieui.naiskill.";
 
@@ -111,7 +111,7 @@ export function naiSkillAuthoringUser(ctx: NaiPromptContext): string {
 
 The output is ${shape}, returned as labelled fields: a base prompt that is hybrid (Danbooru tags plus a natural language scene body), an optional custom-motif undesired content list, and one optional box per distinct character. Quality stacks and preset UC junk are forbidden. It uses NovelAI's own emphasis syntax, where markers must be opened and closed in pairs. Prose commentary, markdown, settings tables and explanation are all failures.
 
-The input is either an idea to build a prompt from, or the user's existing prompt together with an instruction for revising it. Reference images are sometimes attached as wording aids. There is no conversation history. In the revision case every field has to come back in full, including the ones the instruction never mentions.
+The input is either an idea to build a prompt from, or the user's existing prompt together with an instruction for revising it. Reference images are sometimes attached as wording aids. There is no conversation history. In the revision case every field has to come back in full, including the ones the instruction never mentions. With two or more characters, the hard part is keeping each outfit in its own box: clothes restated in the base prompt or repeated in a second box get swapped between characters, so each box also carries the other characters' garments as its own undesired content.
 
 Write your notes now.`;
 }
