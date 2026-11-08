@@ -138,7 +138,10 @@ const NEGATIONS = new Set([
 /** Skipped when looking back for a negation: "not a child", "no visible nudity". */
 const FILLER = new Set([
   "a", "an", "any", "the", "visible", "of", "all", "every", "more", "it", "make", "too", "so", "very",
+  "actually", "really", "even", "longer", "considered",
 ]);
+/** Words that carry a negation on to the next term: "not a child or a teenager". */
+const LIST_JOINERS = new Set(["or", "nor", "and", "a", "an"]);
 
 /** Name words too common to tie a request to one saved character. */
 const NAME_STOPWORDS = new Set([
@@ -198,8 +201,22 @@ function negated(text: string, index: number): boolean {
 
 /** The first match of `re` in `text` that is not negated (and passes `keep`), or null. */
 function firstAffirmed(re: RegExp, text: string, keep: (word: string) => boolean = () => true): string | null {
+  let lastNegatedEnd = -1;
   for (const m of text.matchAll(re)) {
-    if (keep(m[0]) && !negated(text, m.index ?? 0)) return m[0];
+    const start = m.index ?? 0;
+    const listed =
+      lastNegatedEnd >= 0 &&
+      text
+        .slice(lastNegatedEnd, start)
+        .split(/[^\p{L}\p{N}]+/u)
+        .every((w) => !w || LIST_JOINERS.has(w)) &&
+      !/[,.;\n]/.test(text.slice(lastNegatedEnd, start));
+    if (listed || negated(text, start)) {
+      lastNegatedEnd = start + m[0].length;
+      continue;
+    }
+    lastNegatedEnd = -1;
+    if (keep(m[0])) return m[0];
   }
   return null;
 }
