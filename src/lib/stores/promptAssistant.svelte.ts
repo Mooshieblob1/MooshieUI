@@ -605,7 +605,7 @@ class PromptAssistantStore {
   ): Promise<CharacterUpdate | "missing"> {
     if (this.isGenerating) throw new Error("busy_generation");
     const files = memory && this.canUseMemory ? memory : null;
-    assertAllowedRequest([character.prompt, prompt, files ? memoryContext(files, 0) : ""]);
+    assertAllowedRequest([character.prompt, prompt], [files ? memoryContext(files, 0) : ""]);
     const request = characterUpdateRequest(character, prompt, negative, files);
     this.isGenerating = true;
     try {
@@ -668,7 +668,7 @@ class PromptAssistantStore {
   async mergeCharacter(input: CharacterMergeInput): Promise<CharacterMergeResult> {
     if (this.isGenerating) throw new Error("busy_generation");
     if (!this.canUseMemory) input = { ...input, memory: "" };
-    assertAllowedRequest([input.prompt, input.character.prompt, input.memory ?? "", ...(input.box?.boxes ?? [])]);
+    assertAllowedRequest([input.prompt, input.character.prompt, ...(input.box?.boxes ?? [])], [input.memory ?? ""]);
     const request = characterMergeRequest(input);
     this.isGenerating = true;
     try {
@@ -704,7 +704,8 @@ class PromptAssistantStore {
   ): Promise<MemorySuggestions> {
     if (!fact.trim()) throw new Error("invalid_character_memory");
     return this.memoryChanges(
-      [character.prompt, memoryContext(files, 0), fact, ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
+      [fact],
+      [character.prompt, memoryContext(files, 0), ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
       rememberRequest(character, files, fact, linked),
       files,
     );
@@ -722,7 +723,8 @@ class PromptAssistantStore {
     linked: readonly LinkedCharacter[] = [],
   ): Promise<MemorySuggestions> {
     return this.memoryChanges(
-      [character.prompt, memoryContext(files, 0), brief, ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
+      [brief],
+      [character.prompt, memoryContext(files, 0), ...linked.map((c) => `${c.prompt}\n${c.notes}`)],
       writeMemoryRequest(character, files, brief, linked),
       files,
     );
@@ -739,7 +741,9 @@ class PromptAssistantStore {
   ): Promise<string> {
     if (this.isGenerating) throw new Error("busy_generation");
     if (!this.canUseMemory) throw new Error("memory_needs_external");
-    assertAllowedRequest([character.prompt, notes]);
+    // Only a face is asked for, so the card is background: it can make the
+    // request a minor one, never a sexual one.
+    assertAllowedRequest([], [character.prompt, notes]);
     const request = expressionRequest(character, notes, style);
     this.isGenerating = true;
     try {
@@ -752,17 +756,21 @@ class PromptAssistantStore {
   }
 
   /**
-   * Send a memory request (checked against `texts`) and parse its suggested
-   * changes, and the matching facts for other characters, retrying once.
+   * Send a memory request and parse its suggested changes, and the matching
+   * facts for other characters, retrying once. `texts` is what the user typed
+   * for it; `background` is the card, its files and linked characters, which
+   * can make the request a minor one but never a sexual one (see
+   * `assertAllowedRequest`).
    */
   private async memoryChanges(
     texts: string[],
+    background: string[],
     request: { system: string; prompt: string; maxTokens: number },
     files: readonly CharacterMemoryFile[],
   ): Promise<MemorySuggestions> {
     if (this.isGenerating) throw new Error("busy_generation");
     if (!this.canUseMemory) throw new Error("memory_needs_external");
-    assertAllowedRequest(texts);
+    assertAllowedRequest(texts, background);
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {

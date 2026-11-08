@@ -4085,7 +4085,9 @@ const de: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "Das unter Einstellungen > Prompt-Assistent eingerichtete Modell kann keine Bilder sehen. Wähle dort ein Modell mit Bildverständnis.",
   "prompt_assistant.describe_expired": "Dieses Bild ist nicht mehr verfügbar. Analysiere es erneut.",
   "prompt_assistant.error_generic": "Fehler beim Prompt-Assistenten, erneut versuchen.",
-  "prompt_assistant.blocked_minor_content": "Nicht gesendet. Diese Anfrage verlangt sexuelle oder anzügliche Inhalte mit Minderjährigen, die MooshieUI niemals schreibt.",
+  "prompt_assistant.blocked_minor_content": "Nicht gesendet. Diese Anfrage verlangt explizite sexuelle Inhalte mit Minderjährigen, die MooshieUI niemals schreibt.",
+  "prompt_assistant.blocked_minor_terms": "Nicht gesendet: „{minor}“ zusammen mit „{sexual}“ liest sich als sexueller Inhalt mit Minderjährigen, den MooshieUI niemals schreibt.",
+  "prompt_assistant.blocked_minor_character": "Nicht gesendet: {name} ist als minderjährig gespeichert („{minor}“) und diese Anfrage ist explizit, was MooshieUI niemals schreibt.",
   "prompt_assistant.provider_refused": "Der eigene Inhaltsfilter des KI-Anbieters hat diese Anfrage abgelehnt. MooshieUI hat sie nicht blockiert.",
   "artist_gallery.variant_label": "Variante",
 

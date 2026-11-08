@@ -4083,7 +4083,9 @@ const zh: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "设置 > 提示词助手中的模型看不懂图片，请在那里选择支持图片的模型。",
   "prompt_assistant.describe_expired": "这张图片已不可用，请重新解析。",
   "prompt_assistant.error_generic": "提示词助手错误，请重试。",
-  "prompt_assistant.blocked_minor_content": "未发送。此请求涉及未成年人的色情或性暗示内容，MooshieUI 绝不会编写此类内容。",
+  "prompt_assistant.blocked_minor_content": "未发送。此请求涉及未成年人的露骨色情内容，MooshieUI 绝不会编写此类内容。",
+  "prompt_assistant.blocked_minor_terms": "未发送：\"{minor}\" 与 \"{sexual}\" 组合起来被视为涉及未成年人的色情内容，MooshieUI 绝不会编写此类内容。",
+  "prompt_assistant.blocked_minor_character": "未发送：{name} 被保存为未成年人（\"{minor}\"），而此请求是露骨内容，MooshieUI 绝不会编写此类内容。",
   "prompt_assistant.provider_refused": "AI 服务商自身的内容过滤器拒绝了此请求，并非 MooshieUI 拦截。",
   "artist_gallery.variant_label": "变体",
 

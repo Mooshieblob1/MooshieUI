@@ -4111,7 +4111,9 @@ const es: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "El modelo configurado en Ajustes > Asistente de prompt no puede ver imágenes. Elige allí un modelo con visión.",
   "prompt_assistant.describe_expired": "Esta imagen ya no está disponible. Vuelve a interrogarla.",
   "prompt_assistant.error_generic": "Error del asistente de prompt, inténtalo de nuevo.",
-  "prompt_assistant.blocked_minor_content": "No enviado. Esto pide contenido sexual o sugerente con un menor, algo que MooshieUI nunca escribe.",
+  "prompt_assistant.blocked_minor_content": "No enviado. Esto pide contenido sexual explícito con un menor, algo que MooshieUI nunca escribe.",
+  "prompt_assistant.blocked_minor_terms": "No enviado: «{minor}» junto con «{sexual}» se lee como contenido sexual con un menor, algo que MooshieUI nunca escribe.",
+  "prompt_assistant.blocked_minor_character": "No enviado: {name} está guardado como menor («{minor}») y esta petición es explícita, algo que MooshieUI nunca escribe.",
   "prompt_assistant.provider_refused": "El filtro de contenido del propio proveedor de IA rechazó esta solicitud. MooshieUI no la bloqueó.",
   "artist_gallery.variant_label": "Variante",
 

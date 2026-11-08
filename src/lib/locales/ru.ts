@@ -4082,7 +4082,9 @@ const ru: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "Модель, выбранная в Настройки > Ассистент промптов, не видит изображения. Выберите там модель с поддержкой изображений.",
   "prompt_assistant.describe_expired": "Это изображение больше недоступно. Проанализируйте его снова.",
   "prompt_assistant.error_generic": "Ошибка ассистента промптов, попробуйте ещё раз.",
-  "prompt_assistant.blocked_minor_content": "Не отправлено. Запрос касается сексуального или откровенного контента с участием несовершеннолетнего, а MooshieUI такое никогда не пишет.",
+  "prompt_assistant.blocked_minor_content": "Не отправлено. Запрос касается откровенно сексуального контента с участием несовершеннолетнего, а MooshieUI такое никогда не пишет.",
+  "prompt_assistant.blocked_minor_terms": "Не отправлено: «{minor}» вместе с «{sexual}» читается как сексуальный контент с участием несовершеннолетнего, а MooshieUI такое никогда не пишет.",
+  "prompt_assistant.blocked_minor_character": "Не отправлено: {name} сохранён как несовершеннолетний («{minor}»), а запрос откровенный, а MooshieUI такое никогда не пишет.",
   "prompt_assistant.provider_refused": "Собственный фильтр контента ИИ-провайдера отклонил этот запрос. MooshieUI его не блокировал.",
   "artist_gallery.variant_label": "Вариант",
 

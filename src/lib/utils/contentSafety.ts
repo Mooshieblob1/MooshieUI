@@ -5,27 +5,28 @@
  * does it ask for sexual or suggestive content. Never the negative prompt,
  * where "nsfw" or "nude" is the thing being kept out of the image.
  *
- * - Both at once is refused here, before anything is sent. That line is fixed
- *   and nothing the user writes moves it.
+ * - A clear minor word with a clearly explicit word (nudity, sex acts,
+ *   genitals, porn) is refused here, before anything is sent. That line is
+ *   fixed and nothing the user writes moves it. It is kept that narrow on
+ *   purpose: everything short of it goes out and the model handles it.
+ * - A minor with only suggestive or body words (cleavage on the mother in a
+ *   family scene, "sexy", "lingerie", "don't make it sexual"), or an
+ *   ambiguous minor word ("baby") with explicit ones, is sent as
+ *   `suggestive_minor`: no explicit vocabulary, and the non-sexual minors
+ *   rule always on, so the model drops whatever does not belong.
  * - A minor alone is an ordinary safe-for-work request (a family at the beach,
- *   a kid with a kite). It goes out with a rule that keeps every such
- *   character non-sexual, and without the explicit vocabulary the V5
- *   specification carries for adult scenes. Sending that vocabulary, plus "do
- *   not refuse", beside a child tag is what made hosted providers decline
- *   requests that were completely SFW.
+ *   a kid with a kite). It goes out with the minors rule (which the user may
+ *   turn off) and without the explicit vocabulary the V5 specification carries
+ *   for adult scenes.
  * - Sexual content alone keeps the explicit vocabulary, as before.
- *
- * Deliberately broad on both lists: a false "minor" only adds a safety rule to
- * an SFW request, and a false "sexual" next to a real minor refuses something
- * that was borderline anyway. Narrow lists are where the hard line would leak.
  *
  * Leaf util with no imports, so `scripts/tests/contentSafety.test.ts` can load
  * it directly.
  */
 
-export type ContentRating = "sfw" | "minor" | "explicit" | "blocked";
+export type ContentRating = "sfw" | "minor" | "suggestive_minor" | "explicit" | "blocked";
 
-/** Thrown, as the message, when a request pairs a minor with sexual content. */
+/** Thrown, as the message, when a request pairs a clear minor with explicit content. */
 export const BLOCKED_MINOR_CONTENT = "blocked_minor_content";
 
 /** Words or tags that put a minor in the scene. */
@@ -46,6 +47,12 @@ const MINOR_TERMS = [
 ];
 
 /**
+ * Minor words with an everyday adult sense ("hey baby"). They still make a
+ * request a minor one, but never refuse it.
+ */
+const WEAK_MINOR_TERMS = new Set(["baby", "babies"]);
+
+/**
  * Minor terms in scripts that do not put spaces between words, matched as
  * substrings. 少女 and 少年 are left out: they are as much genre words
  * (magical girl, shounen) as ages.
@@ -61,30 +68,45 @@ const MINOR_FALSE_FRIENDS = [
   /\bbaby[\s_-]*(?:blue|pink|doll|dolls|powder|breath|carrot|carrots|grand|bump)\b/giu,
   /\bbabydoll\b/giu,
   /\bkid[\s_-]*gloves?\b/giu,
+  /\bminor[\s_-]*(?:changes?|tweaks?|edits?|details?|adjustments?|fix(?:es)?|issues?|problems?|injur(?:y|ies)|cuts?|bruises?|scratch(?:es)?|keys?|chords?|scales?|characters?|roles?|npcs?|deit(?:y|ies)|gods?|league|arcana|planets?|differences?|flaws?|errors?|mistakes?|things?|parts?|spoilers?|variations?|improvements?|updates?)\b/giu,
   /ロリータ/gu,
 ];
 
-/** Sexual or suggestive words and tags, cancelled by a negation in front. */
-const SEXUAL_TERMS = [
+/**
+ * Clearly explicit words and tags: nudity, sex acts, genitals, porn. Only
+ * these, beside a clear minor word, refuse a request. Cancelled by a negation
+ * in front.
+ */
+const EXPLICIT_TERMS = [
   "nsfw", "nude", "nudes", "nudity", "naked", "topless", "bottomless", "nipple",
   "nipples", "areola", "areolae", "areolas", "pussy", "vagina", "vaginal", "vulva",
-  "labia", "clitoris", "penis", "penises", "erection", "testicles", "scrotum", "anus", "anal", "sex", "sexual", "sexually",
-  "sexualized", "sexualised", "sexy", "seductive", "seduce", "seducing",
-  "seduction", "erotic", "erotica", "eroticism", "lewd", "hentai", "porn", "porno",
-  "pornography", "pornographic", "ecchi", "smut", "smutty", "explicit", "xxx",
+  "labia", "clitoris", "penis", "penises", "erection", "testicles", "scrotum", "anus",
+  "anal", "sex", "sexually", "erotic", "erotica", "eroticism", "lewd", "hentai",
+  "porn", "porno", "pornography", "pornographic", "ecchi", "smut", "smutty", "xxx",
   "x rated", "r18", "r 18", "18+", "cum", "cumshot", "creampie", "semen",
   "fellatio", "blowjob", "handjob", "footjob", "titjob", "paizuri", "cunnilingus",
-  "masturbation", "masturbating", "masturbate", "fingering", "orgasm", "ahegao",
-  "bukkake", "intercourse", "cowgirl position", "doggystyle", "doggy style",
+  "masturbation", "masturbating", "masturbate", "orgasm", "ahegao", "bukkake",
+  "intercourse", "cowgirl position", "doggystyle", "doggy style",
   "missionary position", "rape", "raped", "molest", "molested", "molestation",
-  "grope", "groped", "groping", "fondle", "fondling", "lingerie", "panties",
-  "pantsu", "pantyshot", "panty shot", "upskirt", "downblouse", "cameltoe",
-  "underwear only", "micro bikini", "bdsm", "bondage", "sex toy", "vibrator",
-  "dildo", "condom", "aroused", "arousal", "horny", "spread legs", "spread pussy",
-  "breast", "breasts", "boobs", "tits", "cleavage", "busty", "voluptuous", "thicc",
-  "ass", "crotch", "groin", "undress", "undressing", "undressed", "unclothed",
-  "striptease", "stripping", "suggestive", "provocative", "fanservice",
-  "fan service", "rating:explicit", "rating:questionable", "rating:sensitive",
+  "grope", "groped", "groping", "fondle", "fondling", "pantyshot", "panty shot",
+  "upskirt", "downblouse", "cameltoe", "spread pussy", "bdsm", "sex toy",
+  "vibrator", "dildo", "aroused", "arousal", "horny", "undressed", "unclothed",
+  "striptease", "rating:explicit", "rating:questionable",
+];
+
+/**
+ * Suggestive, body and clothing words: an explicit rating for an adult
+ * request, but beside a minor they only force the minors rule on. They are
+ * the words that show up innocently (the mother's cleavage in a family scene,
+ * "don't make it sexual"), so they never refuse anything.
+ */
+const SUGGESTIVE_TERMS = [
+  "sexual", "sexualized", "sexualised", "sexy", "seductive", "seduce", "seducing",
+  "seduction", "explicit", "fingering", "lingerie", "panties", "pantsu",
+  "underwear only", "micro bikini", "bondage", "condom", "spread legs", "breast",
+  "breasts", "boobs", "tits", "cleavage", "busty", "voluptuous", "thicc", "ass",
+  "crotch", "groin", "undress", "undressing", "stripping", "suggestive",
+  "provocative", "fanservice", "fan service", "rating:sensitive",
 ];
 
 /**
@@ -111,9 +133,12 @@ const SEXUAL_TERMS_CJK = [
 /** A word in front of a term that turns it into something to avoid. */
 const NEGATIONS = new Set([
   "no", "not", "without", "avoid", "avoiding", "never", "non", "zero", "nothing", "nor",
+  "remove", "removed", "removing", "delete", "deleting", "drop", "stop", "less", "fewer",
 ]);
 /** Skipped when looking back for a negation: "not a child", "no visible nudity". */
-const FILLER = new Set(["a", "an", "any", "the", "visible", "of"]);
+const FILLER = new Set([
+  "a", "an", "any", "the", "visible", "of", "all", "every", "more", "it", "make", "too", "so", "very",
+]);
 
 /** Name words too common to tie a request to one saved character. */
 const NAME_STOPWORDS = new Set([
@@ -135,7 +160,8 @@ function termPattern(terms: string[], flags = "giu"): RegExp {
 }
 
 const MINOR_RE = termPattern(MINOR_TERMS);
-const SEXUAL_RE = termPattern(SEXUAL_TERMS);
+const EXPLICIT_RE = termPattern(EXPLICIT_TERMS);
+const SEXUAL_RE = termPattern([...EXPLICIT_TERMS, ...SUGGESTIVE_TERMS]);
 const EXPOSURE_RE = termPattern(EXPOSURE_PHRASES, "iu");
 
 /** "12 years old", "12-year-old", "12yo", "aged 12", "age: 9". */
@@ -148,7 +174,11 @@ const AGE_RE =
  * kept out.
  */
 function normalize(text: string): string {
-  return text.normalize("NFKC").toLowerCase().replace(/-\d*(?:\.\d+)?::[\s\S]*?::/g, " ");
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/-\d*(?:\.\d+)?::[\s\S]*?::/g, " ")
+    .replace(/n['\u2019]t(?![\p{L}\p{N}])/gu, " not");
 }
 
 /**
@@ -166,49 +196,138 @@ function negated(text: string, index: number): boolean {
   return false;
 }
 
-/** Whether any match of `re` in `text` is not negated. */
-function anyAffirmed(re: RegExp, text: string): boolean {
+/** The first match of `re` in `text` that is not negated (and passes `keep`), or null. */
+function firstAffirmed(re: RegExp, text: string, keep: (word: string) => boolean = () => true): string | null {
   for (const m of text.matchAll(re)) {
-    if (!negated(text, m.index ?? 0)) return true;
+    if (keep(m[0]) && !negated(text, m.index ?? 0)) return m[0];
   }
-  return false;
+  return null;
+}
+
+/** The first word or phrase that puts a minor in the scene, or null. */
+export function minorTerm(text: string): string | null {
+  return findMinor(text, false);
+}
+
+/**
+ * Like `minorTerm`, but only the words that cannot mean anything else: never
+ * "baby". Only these refuse a request.
+ */
+export function clearMinorTerm(text: string): string | null {
+  return findMinor(text, true);
+}
+
+function findMinor(text: string, clearOnly: boolean): string | null {
+  let t = normalize(text);
+  for (const re of MINOR_FALSE_FRIENDS) t = t.replace(re, " ");
+  const word = firstAffirmed(MINOR_RE, t, (w) => !clearOnly || !WEAK_MINOR_TERMS.has(w));
+  if (word) return word;
+  const cjk = MINOR_TERMS_CJK.find((w) => t.includes(w));
+  if (cjk) return cjk;
+  for (const m of t.matchAll(AGE_RE)) {
+    const age = Number(m[1] ?? m[2] ?? m[3]);
+    if (age < 18 && !negated(t, m.index ?? 0)) return m[0];
+  }
+  return null;
+}
+
+/** The first word or phrase that asks for sexual or suggestive content, or null. */
+export function sexualTerm(text: string): string | null {
+  return findSexual(text, SEXUAL_RE);
+}
+
+/** The first clearly explicit word or phrase (no merely suggestive ones), or null. */
+export function explicitTerm(text: string): string | null {
+  return findSexual(text, EXPLICIT_RE);
+}
+
+function findSexual(text: string, re: RegExp): string | null {
+  let t = normalize(text);
+  for (const ff of SEXUAL_FALSE_FRIENDS) t = t.replace(ff, " ");
+  const exposure = t.match(EXPOSURE_RE);
+  if (exposure) return exposure[0];
+  const word = firstAffirmed(re, t);
+  if (word) return word;
+  return SEXUAL_TERMS_CJK.find((w) => t.includes(w)) ?? null;
 }
 
 /** Whether the positive text puts a minor in the scene. */
 export function mentionsMinor(text: string): boolean {
-  let t = normalize(text);
-  for (const re of MINOR_FALSE_FRIENDS) t = t.replace(re, " ");
-  if (anyAffirmed(MINOR_RE, t)) return true;
-  if (MINOR_TERMS_CJK.some((w) => t.includes(w))) return true;
-  for (const m of t.matchAll(AGE_RE)) {
-    const age = Number(m[1] ?? m[2] ?? m[3]);
-    if (age < 18 && !negated(t, m.index ?? 0)) return true;
-  }
-  return false;
+  return minorTerm(text) !== null;
 }
 
 /** Whether the positive text asks for sexual or suggestive content. */
 export function mentionsSexualContent(text: string): boolean {
-  let t = normalize(text);
-  for (const re of SEXUAL_FALSE_FRIENDS) t = t.replace(re, " ");
-  if (EXPOSURE_RE.test(t)) return true;
-  if (anyAffirmed(SEXUAL_RE, t)) return true;
-  return SEXUAL_TERMS_CJK.some((w) => t.includes(w));
+  return sexualTerm(text) !== null;
+}
+
+/** What made a request blocked, for the message that refuses it. */
+export interface BlockedReason {
+  /** The words that put a minor in it. */
+  minor?: string;
+  /** The words that made it sexual. */
+  sexual?: string;
+  /** The saved character drawn as a minor that an explicit request named. */
+  character?: string;
+}
+
+/** The refusal, with what triggered it riding in the message after `|`. */
+export function blockedError(reason: BlockedReason): Error {
+  const parts = [BLOCKED_MINOR_CONTENT];
+  if (reason.character) parts.push(`character=${reason.character}`);
+  if (reason.minor) parts.push(`minor=${reason.minor}`);
+  if (reason.sexual) parts.push(`sexual=${reason.sexual}`);
+  return new Error(parts.join("|"));
+}
+
+/** The reason a `blockedError` message carries, or null for any other message. */
+export function parseBlocked(message: string): BlockedReason | null {
+  const at = message.indexOf(BLOCKED_MINOR_CONTENT);
+  if (at === -1) return null;
+  const reason: BlockedReason = {};
+  for (const part of message.slice(at).split("|").slice(1)) {
+    const eq = part.indexOf("=");
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1).trim();
+    if (value && (key === "minor" || key === "sexual" || key === "character")) reason[key] = value;
+  }
+  return reason;
+}
+
+function join(texts: readonly string[]): string {
+  return texts.filter((t) => t && t.trim()).join("\n");
+}
+
+/** The rating, and for a refusal the words that caused it. */
+function rate(
+  texts: readonly string[],
+  background: readonly string[],
+): { rating: ContentRating; reason?: BlockedReason } {
+  const said = join(texts);
+  const all = join([...texts, ...background]);
+  const minor = minorTerm(all);
+  if (!sexualTerm(said)) return { rating: minor ? "minor" : "sfw" };
+  if (!minor) return { rating: "explicit" };
+  const clear = clearMinorTerm(all);
+  const explicit = explicitTerm(said);
+  if (clear && explicit) return { rating: "blocked", reason: { minor: clear, sexual: explicit } };
+  return { rating: "suggestive_minor" };
 }
 
 /**
  * Rate a request from every positive text it carries: the instruction, the
  * earlier user turns of its session, and any current prompt it edits. Rated
- * together, so a minor in one turn and sexual content in a later one is still
- * the combination that is refused.
+ * together, so a minor in one turn and explicit content in a later one is
+ * still the combination that is refused.
+ *
+ * `background` is what the request reads about its characters without asking
+ * for it in the picture: memory notes, linked characters. It can make a
+ * request a minor one ("she is 15" in her notes) but never a sexual one, so a
+ * canon backstory that mentions an adult game does not sexualize every image
+ * of that character.
  */
-export function rateRequest(texts: readonly string[]): ContentRating {
-  const joined = texts.filter((t) => t && t.trim()).join("\n");
-  const minor = mentionsMinor(joined);
-  const sexual = mentionsSexualContent(joined);
-  if (minor && sexual) return "blocked";
-  if (sexual) return "explicit";
-  return minor ? "minor" : "sfw";
+export function rateRequest(texts: readonly string[], background: readonly string[] = []): ContentRating {
+  return rate(texts, background).rating;
 }
 
 /**
@@ -224,10 +343,13 @@ export function naiRequestTexts(
   return [prompt, ...sessionUserTurns, ...(existing ? [existing.base, ...existing.characters] : [])];
 }
 
-/** Throw before sending a request that pairs a minor with sexual content. */
-export function assertAllowedRequest(texts: readonly string[]): ContentRating {
-  const rating = rateRequest(texts);
-  if (rating === "blocked") throw new Error(BLOCKED_MINOR_CONTENT);
+/**
+ * Throw before sending a request that pairs a clear minor with explicit
+ * content, naming the words that did. `background` as in `rateRequest`.
+ */
+export function assertAllowedRequest(texts: readonly string[], background: readonly string[] = []): ContentRating {
+  const { rating, reason } = rate(texts, background);
+  if (rating === "blocked") throw blockedError(reason ?? {});
   return rating;
 }
 
@@ -235,9 +357,15 @@ export function assertAllowedRequest(texts: readonly string[]): ContentRating {
  * The saved characters a request may send, given its rating.
  *
  * Saved characters ride along in the system turn whether or not the user names
- * them. In an explicit request a saved character drawn as a minor is left out,
- * and naming one (by any word of their name) refuses the request: the user's
- * text would not say "child", but the saved card does.
+ * them. In an explicit request a saved character drawn as a minor is left out.
+ * Naming one (by any word of their name) in a request with clearly explicit
+ * words refuses it, since the user's text would not say "child" but the saved
+ * card does; with only suggestive words the card is just left out.
+ *
+ * A name word that an adult card the text also names shares (a surname, as in
+ * "Miki Hiiragi" and her daughter "Tsukasa Hiiragi") is explained by that adult
+ * and does not name the minor. Said on its own ("the Hiiragi sisters"), it
+ * still does.
  */
 export function savedCharactersForRequest<T extends { name: string; prompt: string; notes?: string }>(
   characters: readonly T[],
@@ -246,16 +374,39 @@ export function savedCharactersForRequest<T extends { name: string; prompt: stri
 ): T[] {
   if (rating !== "explicit") return characters.slice();
   const said = texts.join("\n");
+  const explicit = explicitTerm(said) !== null;
+  // Memory notes count too: "she is 15" there makes the card a minor.
+  const minorOf = characters.map((c) => clearMinorTerm(`${c.name}\n${c.prompt}\n${c.notes ?? ""}`));
+  const words = characters.map((c) => nameWords(c.name));
+  const explained = new Set<string>();
+  characters.forEach((c, i) => {
+    if (minorOf[i]) return;
+    const own = words[i].filter((w) => !words.some((other, j) => j !== i && other.includes(w)));
+    if (own.some((w) => saysWord(w, said))) for (const w of words[i]) explained.add(w);
+  });
   const kept: T[] = [];
-  for (const c of characters) {
-    // Memory notes count too: "she is 15" there makes the card a minor.
-    if (!mentionsMinor(`${c.name}\n${c.prompt}\n${c.notes ?? ""}`)) {
+  characters.forEach((c, i) => {
+    const minor = minorOf[i];
+    if (!minor) {
       kept.push(c);
-      continue;
+      return;
     }
-    if (namesCharacter(c.name, said)) throw new Error(BLOCKED_MINOR_CONTENT);
-  }
+    if (explicit && words[i].some((w) => !explained.has(w) && saysWord(w, said))) {
+      throw blockedError({ character: c.name.trim(), minor });
+    }
+  });
   return kept;
+}
+
+/** The words of a saved character's name that can identify them. */
+function nameWords(name: string): string[] {
+  return normalize(name.replace(/\([^)]*\)/g, " "))
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+}
+
+function saysWord(word: string, text: string): boolean {
+  return termPattern([word], "iu").test(normalize(text));
 }
 
 /**
@@ -265,11 +416,7 @@ export function savedCharactersForRequest<T extends { name: string; prompt: stri
  * of the name.
  */
 export function namesCharacter(name: string, text: string): boolean {
-  const said = normalize(text);
-  const words = normalize(name.replace(/\([^)]*\)/g, " "))
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
-  return words.some((w) => termPattern([w], "iu").test(said));
+  return nameWords(name).some((w) => saysWord(w, text));
 }
 
 /**
@@ -279,9 +426,10 @@ export function namesCharacter(name: string, text: string): boolean {
  * in it gets the non-sexual rule instead, stated as overriding everything else,
  * unless the user turned that rule off (`minorRule` false): some providers
  * refuse an SFW school or family scene because the rule itself names a child
- * next to sexual terms, so it then gets the plain SFW block. Turning it off
- * never lets a minor and sexual content through: `assertAllowedRequest`
- * refuses that pairing before anything is sent.
+ * next to sexual terms, so it then gets the plain SFW block. A minor with
+ * suggestive words (`suggestive_minor`) always gets the rule, whatever the
+ * toggle says, and a clear minor with explicit words never gets this far:
+ * `assertAllowedRequest` refuses it before anything is sent.
  */
 export function naiVocabularyBlock(rating: ContentRating, minorRule = true): string {
   const head = `VOCABULARY
@@ -292,7 +440,7 @@ export function naiVocabularyBlock(rating: ContentRating, minorRule = true): str
 - Do not sanitize, soften, lecture or refuse. Do not add explicit tags the user did not ask for, and do not strip the ones they did.
 - Every character in an explicit scene is an adult. Never sexualize a character who is a minor or looks like one, whatever the request says.`;
   }
-  if (rating === "minor" && minorRule) {
+  if (rating === "suggestive_minor" || (rating === "minor" && minorRule)) {
     return `${head}
 - This is a safe-for-work image.
 
