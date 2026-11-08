@@ -1,3 +1,10 @@
+## What's New in v2.3.39
+
+### Fixes and maintenance
+- **NovelAI braces**: `{}` and `[]` emphasis now reaches NovelAI as braces instead of being rewritten to a numeric weight, so prompts round-trip as typed. A weighted span whose text ends in a number (like `{{{year 2025}}}`) no longer makes NovelAI read the number as a new weight for the rest of the prompt.
+
+---
+
 ## What's New in v2.3.38
 
 ### Character portraits
