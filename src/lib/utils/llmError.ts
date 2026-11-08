@@ -1,4 +1,5 @@
 import { locale } from "../stores/locale.svelte.js";
+import { parseBlocked } from "./contentSafety.js";
 
 /**
  * Turn a thrown prompt-assistant error into a toast the user can act on.
@@ -17,7 +18,15 @@ export function mapLlmError(msg: string): string {
   if (msg.includes("provider_no_vision")) return locale.t("prompt_assistant.provider_no_vision");
   if (msg.includes("describe_expired")) return locale.t("prompt_assistant.describe_expired");
   if (msg.includes("no_model")) return locale.t("prompt_assistant.no_model");
-  if (msg.includes("blocked_minor_content")) return locale.t("prompt_assistant.blocked_minor_content");
+  const blocked = parseBlocked(msg);
+  if (blocked) {
+    // Name what tripped it, so a false positive is plain to see.
+    if (blocked.character && blocked.minor)
+      return locale.t("prompt_assistant.blocked_minor_character", { name: blocked.character, minor: blocked.minor });
+    if (blocked.minor && blocked.sexual)
+      return locale.t("prompt_assistant.blocked_minor_terms", { minor: blocked.minor, sexual: blocked.sexual });
+    return locale.t("prompt_assistant.blocked_minor_content");
+  }
   if (isProviderRefusal(msg)) return locale.t("prompt_assistant.provider_refused");
   const detail = msg.replace(/^Error:\s*/, "").trim();
   return detail

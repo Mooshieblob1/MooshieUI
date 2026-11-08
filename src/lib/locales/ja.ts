@@ -4108,6 +4108,8 @@ const ja: Record<string, string> = {
   "prompt_assistant.describe_expired": "この画像はもう使えません。もう一度解析してください。",
   "prompt_assistant.error_generic": "プロンプトアシスタントエラー、もう一度お試しください。",
   "prompt_assistant.blocked_minor_content": "送信していません。未成年者が関わる性的または示唆的な内容の依頼であり、MooshieUIは決して書きません。",
+  "prompt_assistant.blocked_minor_terms": "送信していません：「{minor}」と「{sexual}」の組み合わせは未成年者が関わる性的な内容と判断され、MooshieUIは決して書きません。",
+  "prompt_assistant.blocked_minor_character": "送信していません：{name} は未成年として保存されており（「{minor}」）、この依頼は露骨な内容です。MooshieUIは決して書きません。",
   "prompt_assistant.provider_refused": "AIプロバイダー自身のコンテンツフィルターがこのリクエストを拒否しました。MooshieUIがブロックしたものではありません。",
   "artist_gallery.variant_label": "バリエーション",
 

@@ -4084,6 +4084,8 @@ const pt: Record<string, string> = {
   "prompt_assistant.describe_expired": "Esta imagem não está mais disponível. Interrogue-a de novo.",
   "prompt_assistant.error_generic": "Erro do assistente de prompt, tente novamente.",
   "prompt_assistant.blocked_minor_content": "Não enviado. Isto pede conteúdo sexual ou sugestivo envolvendo um menor, algo que o MooshieUI nunca escreve.",
+  "prompt_assistant.blocked_minor_terms": "Não enviado: \"{minor}\" junto com \"{sexual}\" lê-se como conteúdo sexual envolvendo um menor, algo que o MooshieUI nunca escreve.",
+  "prompt_assistant.blocked_minor_character": "Não enviado: {name} está salvo como menor (\"{minor}\") e este pedido é explícito, algo que o MooshieUI nunca escreve.",
   "prompt_assistant.provider_refused": "O próprio filtro de conteúdo do provedor de IA recusou esta solicitação. O MooshieUI não a bloqueou.",
   "artist_gallery.variant_label": "Variante",
 

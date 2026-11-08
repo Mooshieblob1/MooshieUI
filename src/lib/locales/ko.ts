@@ -4083,6 +4083,8 @@ const ko: Record<string, string> = {
   "prompt_assistant.describe_expired": "이 이미지는 더 이상 사용할 수 없습니다. 다시 분석하세요.",
   "prompt_assistant.error_generic": "프롬프트 어시스턴트 오류, 다시 시도하세요.",
   "prompt_assistant.blocked_minor_content": "전송하지 않았습니다. 미성년자가 관련된 성적이거나 선정적인 내용을 요청하며, MooshieUI는 이를 절대 작성하지 않습니다.",
+  "prompt_assistant.blocked_minor_terms": "전송하지 않았습니다: \"{minor}\"와(과) \"{sexual}\"의 조합은 미성년자가 관련된 성적인 내용으로 읽히며, MooshieUI는 이를 절대 작성하지 않습니다.",
+  "prompt_assistant.blocked_minor_character": "전송하지 않았습니다: {name}은(는) 미성년자로 저장되어 있고(\"{minor}\") 이 요청은 노골적이며, MooshieUI는 이를 절대 작성하지 않습니다.",
   "prompt_assistant.provider_refused": "AI 제공업체의 자체 콘텐츠 필터가 이 요청을 거부했습니다. MooshieUI가 차단한 것이 아닙니다.",
   "artist_gallery.variant_label": "변형",
 

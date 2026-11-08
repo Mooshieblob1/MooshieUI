@@ -7,9 +7,13 @@ import {
   mentionsSexualContent,
   naiRequestTexts,
   naiVocabularyBlock,
+  parseBlocked,
   rateRequest,
   savedCharactersForRequest,
 } from "../../src/lib/utils/contentSafety.ts";
+
+/** A refusal, whatever words it names. */
+const isBlocked = (e: unknown) => e instanceof Error && e.message.startsWith(BLOCKED_MINOR_CONTENT);
 
 // SFW requests that mention minors. These used to go out with the explicit
 // tag list in the system turn, and hosted providers declined them.
@@ -60,7 +64,7 @@ for (const text of SFW_WITH_MINORS) {
 for (const text of BLOCKED) {
   test(`a minor with sexual content is blocked: ${text}`, () => {
     assert.equal(rateRequest([text]), "blocked");
-    assert.throws(() => assertAllowedRequest([text]), new Error(BLOCKED_MINOR_CONTENT));
+    assert.throws(() => assertAllowedRequest([text]), isBlocked);
   });
 }
 
@@ -123,7 +127,7 @@ test("with the minors rule off, a minor request gets the plain SFW block", () =>
   assert.equal(block, naiVocabularyBlock("sfw"));
   assert.doesNotMatch(block, /MINORS|child/);
   // The rule only changes the wording: the pairing is still refused.
-  assert.throws(() => assertAllowedRequest(["schoolgirl, nude"]), new Error(BLOCKED_MINOR_CONTENT));
+  assert.throws(() => assertAllowedRequest(["schoolgirl, nude"]), isBlocked);
   assert.match(naiVocabularyBlock("explicit", false), /Never sexualize a character who is a minor/);
 });
 
@@ -146,6 +150,53 @@ test("an explicit request that names a saved minor is blocked", () => {
   const texts = ["Mina, nude, bedroom"];
   assert.throws(
     () => savedCharactersForRequest(SAVED, rateRequest(texts), texts),
-    new Error(BLOCKED_MINOR_CONTENT),
+    isBlocked,
   );
+});
+
+test("a refusal names the words that tripped it", () => {
+  try {
+    assertAllowedRequest(["schoolgirl, nude"]);
+    assert.fail("not blocked");
+  } catch (e) {
+    assert.deepEqual(parseBlocked((e as Error).message), { minor: "schoolgirl", sexual: "nude" });
+  }
+  assert.equal(parseBlocked("some other error"), null);
+  assert.deepEqual(parseBlocked("Error: blocked_minor_content"), {});
+});
+
+test("background can make a request a minor one but never a sexual one", () => {
+  // Remember: the user's words are the request; the card and its notes are background.
+  const card = ["girl, izumi konata, long blue hair, medium breasts", "- 17 years old, plays eroge and hentai games"];
+  assert.equal(assertAllowedRequest(["remove all mentions of the character being a minor"], card), "minor");
+  assert.equal(assertAllowedRequest(["she is Kagami's best friend"], card), "minor");
+  assert.equal(rateRequest(["Konata at the beach"], ["- plays hentai games"]), "sfw");
+  // The pairing is still refused when the user's own words are sexual.
+  assert.throws(() => assertAllowedRequest(["she likes to pose nude"], card), isBlocked);
+  try {
+    assertAllowedRequest(["nude, bed"], ["she is 15 years old"]);
+    assert.fail("not blocked");
+  } catch (e) {
+    assert.deepEqual(parseBlocked((e as Error).message), { minor: "15 years old", sexual: "nude" });
+  }
+});
+
+test("a surname shared with a named adult does not name the minor", () => {
+  const family = [
+    { name: "Miki Hiiragi", prompt: "woman, mature female, purple hair" },
+    { name: "Tsukasa Hiiragi", prompt: "girl, child, purple hair" },
+  ];
+  const named = ["Miki Hiiragi, nude, bedroom"];
+  assert.deepEqual(savedCharactersForRequest(family, rateRequest(named), named), [family[0]]);
+  // Said on its own, the shared surname still names the minor.
+  const alone = ["the Hiiragi sisters, nude"];
+  try {
+    savedCharactersForRequest(family, rateRequest(alone), alone);
+    assert.fail("not blocked");
+  } catch (e) {
+    assert.deepEqual(parseBlocked((e as Error).message), { character: "Tsukasa Hiiragi", minor: "child" });
+  }
+  // The minor's own name word always names her.
+  const own = ["Miki and Tsukasa, nude"];
+  assert.throws(() => savedCharactersForRequest(family, rateRequest(own), own), isBlocked);
 });

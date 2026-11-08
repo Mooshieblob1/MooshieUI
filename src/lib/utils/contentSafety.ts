@@ -166,34 +166,85 @@ function negated(text: string, index: number): boolean {
   return false;
 }
 
-/** Whether any match of `re` in `text` is not negated. */
-function anyAffirmed(re: RegExp, text: string): boolean {
+/** The first match of `re` in `text` that is not negated, or null. */
+function firstAffirmed(re: RegExp, text: string): string | null {
   for (const m of text.matchAll(re)) {
-    if (!negated(text, m.index ?? 0)) return true;
+    if (!negated(text, m.index ?? 0)) return m[0];
   }
-  return false;
+  return null;
+}
+
+/** The first word or phrase that puts a minor in the scene, or null. */
+export function minorTerm(text: string): string | null {
+  let t = normalize(text);
+  for (const re of MINOR_FALSE_FRIENDS) t = t.replace(re, " ");
+  const word = firstAffirmed(MINOR_RE, t);
+  if (word) return word;
+  const cjk = MINOR_TERMS_CJK.find((w) => t.includes(w));
+  if (cjk) return cjk;
+  for (const m of t.matchAll(AGE_RE)) {
+    const age = Number(m[1] ?? m[2] ?? m[3]);
+    if (age < 18 && !negated(t, m.index ?? 0)) return m[0];
+  }
+  return null;
+}
+
+/** The first word or phrase that asks for sexual or suggestive content, or null. */
+export function sexualTerm(text: string): string | null {
+  let t = normalize(text);
+  for (const re of SEXUAL_FALSE_FRIENDS) t = t.replace(re, " ");
+  const exposure = t.match(EXPOSURE_RE);
+  if (exposure) return exposure[0];
+  const word = firstAffirmed(SEXUAL_RE, t);
+  if (word) return word;
+  return SEXUAL_TERMS_CJK.find((w) => t.includes(w)) ?? null;
 }
 
 /** Whether the positive text puts a minor in the scene. */
 export function mentionsMinor(text: string): boolean {
-  let t = normalize(text);
-  for (const re of MINOR_FALSE_FRIENDS) t = t.replace(re, " ");
-  if (anyAffirmed(MINOR_RE, t)) return true;
-  if (MINOR_TERMS_CJK.some((w) => t.includes(w))) return true;
-  for (const m of t.matchAll(AGE_RE)) {
-    const age = Number(m[1] ?? m[2] ?? m[3]);
-    if (age < 18 && !negated(t, m.index ?? 0)) return true;
-  }
-  return false;
+  return minorTerm(text) !== null;
 }
 
 /** Whether the positive text asks for sexual or suggestive content. */
 export function mentionsSexualContent(text: string): boolean {
-  let t = normalize(text);
-  for (const re of SEXUAL_FALSE_FRIENDS) t = t.replace(re, " ");
-  if (EXPOSURE_RE.test(t)) return true;
-  if (anyAffirmed(SEXUAL_RE, t)) return true;
-  return SEXUAL_TERMS_CJK.some((w) => t.includes(w));
+  return sexualTerm(text) !== null;
+}
+
+/** What made a request blocked, for the message that refuses it. */
+export interface BlockedReason {
+  /** The words that put a minor in it. */
+  minor?: string;
+  /** The words that made it sexual. */
+  sexual?: string;
+  /** The saved character drawn as a minor that an explicit request named. */
+  character?: string;
+}
+
+/** The refusal, with what triggered it riding in the message after `|`. */
+export function blockedError(reason: BlockedReason): Error {
+  const parts = [BLOCKED_MINOR_CONTENT];
+  if (reason.character) parts.push(`character=${reason.character}`);
+  if (reason.minor) parts.push(`minor=${reason.minor}`);
+  if (reason.sexual) parts.push(`sexual=${reason.sexual}`);
+  return new Error(parts.join("|"));
+}
+
+/** The reason a `blockedError` message carries, or null for any other message. */
+export function parseBlocked(message: string): BlockedReason | null {
+  const at = message.indexOf(BLOCKED_MINOR_CONTENT);
+  if (at === -1) return null;
+  const reason: BlockedReason = {};
+  for (const part of message.slice(at).split("|").slice(1)) {
+    const eq = part.indexOf("=");
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1).trim();
+    if (value && (key === "minor" || key === "sexual" || key === "character")) reason[key] = value;
+  }
+  return reason;
+}
+
+function join(texts: readonly string[]): string {
+  return texts.filter((t) => t && t.trim()).join("\n");
 }
 
 /**
@@ -201,11 +252,16 @@ export function mentionsSexualContent(text: string): boolean {
  * earlier user turns of its session, and any current prompt it edits. Rated
  * together, so a minor in one turn and sexual content in a later one is still
  * the combination that is refused.
+ *
+ * `background` is what the request reads about its characters without asking
+ * for it in the picture: memory notes, linked characters. It can make a
+ * request a minor one ("she is 15" in her notes) but never a sexual one, so a
+ * canon backstory that mentions an adult game does not sexualize every image
+ * of that character.
  */
-export function rateRequest(texts: readonly string[]): ContentRating {
-  const joined = texts.filter((t) => t && t.trim()).join("\n");
-  const minor = mentionsMinor(joined);
-  const sexual = mentionsSexualContent(joined);
+export function rateRequest(texts: readonly string[], background: readonly string[] = []): ContentRating {
+  const minor = minorTerm(join([...texts, ...background]));
+  const sexual = sexualTerm(join(texts));
   if (minor && sexual) return "blocked";
   if (sexual) return "explicit";
   return minor ? "minor" : "sfw";
@@ -224,11 +280,16 @@ export function naiRequestTexts(
   return [prompt, ...sessionUserTurns, ...(existing ? [existing.base, ...existing.characters] : [])];
 }
 
-/** Throw before sending a request that pairs a minor with sexual content. */
-export function assertAllowedRequest(texts: readonly string[]): ContentRating {
-  const rating = rateRequest(texts);
-  if (rating === "blocked") throw new Error(BLOCKED_MINOR_CONTENT);
-  return rating;
+/**
+ * Throw before sending a request that pairs a minor with sexual content,
+ * naming the words that did. `background` as in `rateRequest`.
+ */
+export function assertAllowedRequest(texts: readonly string[], background: readonly string[] = []): ContentRating {
+  const minor = minorTerm(join([...texts, ...background]));
+  const sexual = sexualTerm(join(texts));
+  if (minor && sexual) throw blockedError({ minor, sexual });
+  if (sexual) return "explicit";
+  return minor ? "minor" : "sfw";
 }
 
 /**
@@ -238,6 +299,11 @@ export function assertAllowedRequest(texts: readonly string[]): ContentRating {
  * them. In an explicit request a saved character drawn as a minor is left out,
  * and naming one (by any word of their name) refuses the request: the user's
  * text would not say "child", but the saved card does.
+ *
+ * A name word that an adult card the text also names shares (a surname, as in
+ * "Miki Hiiragi" and her daughter "Tsukasa Hiiragi") is explained by that adult
+ * and does not name the minor. Said on its own ("the Hiiragi sisters"), it
+ * still does.
  */
 export function savedCharactersForRequest<T extends { name: string; prompt: string; notes?: string }>(
   characters: readonly T[],
@@ -246,16 +312,38 @@ export function savedCharactersForRequest<T extends { name: string; prompt: stri
 ): T[] {
   if (rating !== "explicit") return characters.slice();
   const said = texts.join("\n");
+  // Memory notes count too: "she is 15" there makes the card a minor.
+  const minorOf = characters.map((c) => minorTerm(`${c.name}\n${c.prompt}\n${c.notes ?? ""}`));
+  const words = characters.map((c) => nameWords(c.name));
+  const explained = new Set<string>();
+  characters.forEach((c, i) => {
+    if (minorOf[i]) return;
+    const own = words[i].filter((w) => !words.some((other, j) => j !== i && other.includes(w)));
+    if (own.some((w) => saysWord(w, said))) for (const w of words[i]) explained.add(w);
+  });
   const kept: T[] = [];
-  for (const c of characters) {
-    // Memory notes count too: "she is 15" there makes the card a minor.
-    if (!mentionsMinor(`${c.name}\n${c.prompt}\n${c.notes ?? ""}`)) {
+  characters.forEach((c, i) => {
+    const minor = minorOf[i];
+    if (!minor) {
       kept.push(c);
-      continue;
+      return;
     }
-    if (namesCharacter(c.name, said)) throw new Error(BLOCKED_MINOR_CONTENT);
-  }
+    if (words[i].some((w) => !explained.has(w) && saysWord(w, said))) {
+      throw blockedError({ character: c.name.trim(), minor });
+    }
+  });
   return kept;
+}
+
+/** The words of a saved character's name that can identify them. */
+function nameWords(name: string): string[] {
+  return normalize(name.replace(/\([^)]*\)/g, " "))
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+}
+
+function saysWord(word: string, text: string): boolean {
+  return termPattern([word], "iu").test(normalize(text));
 }
 
 /**
@@ -265,11 +353,7 @@ export function savedCharactersForRequest<T extends { name: string; prompt: stri
  * of the name.
  */
 export function namesCharacter(name: string, text: string): boolean {
-  const said = normalize(text);
-  const words = normalize(name.replace(/\([^)]*\)/g, " "))
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
-  return words.some((w) => termPattern([w], "iu").test(said));
+  return nameWords(name).some((w) => saysWord(w, text));
 }
 
 /**
