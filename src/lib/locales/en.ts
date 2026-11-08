@@ -3045,6 +3045,8 @@ const en: Record<string, string> = {
   "settings.about.troubleshooting": "Troubleshooting",
   "settings.about.saved": "Saved!",
   "settings.about.try_again": "Try again",
+  "settings.about.update_server_unreachable": "Couldn't reach GitHub to check for updates. Try again in a minute, or download the latest version from the releases page.",
+  "settings.about.open_releases_page": "Open releases page",
   "settings.about.export_logs_desc": "Save ComfyUI logs, system info, and config to a file for sharing with support.",
   "settings.about.data_dir_hint": "To install on a different drive, set the MOOSHIEUI_DATA_DIR environment variable to your preferred path before launching.",
 

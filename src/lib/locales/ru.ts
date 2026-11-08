@@ -2432,6 +2432,8 @@ const ru: Record<string, string> = {
   "settings.about.troubleshooting": "Устранение неполадок",
   "settings.about.saved": "Сохранено!",
   "settings.about.try_again": "Попробовать снова",
+  "settings.about.update_server_unreachable": "Не удалось связаться с GitHub для проверки обновлений. Повторите попытку через минуту или скачайте последнюю версию со страницы релизов.",
+  "settings.about.open_releases_page": "Открыть страницу релизов",
   "settings.about.export_logs_desc": "Сохранить логи ComfyUI, информацию о системе и конфигурацию в файл для отправки в поддержку.",
   "settings.about.data_dir_hint": "Для установки на другой диск установите переменную окружения MOOSHIEUI_DATA_DIR на желаемый путь перед запуском.",
   "settings.about.save_dialog_title": "Сохранить диагностические логи",

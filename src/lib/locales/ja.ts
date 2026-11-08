@@ -2457,6 +2457,8 @@ const ja: Record<string, string> = {
   "settings.about.troubleshooting": "トラブルシューティング",
   "settings.about.saved": "保存しました！",
   "settings.about.try_again": "再試行",
+  "settings.about.update_server_unreachable": "アップデートの確認でGitHubに接続できませんでした。1分ほどしてから再試行するか、リリースページから最新版をダウンロードしてください。",
+  "settings.about.open_releases_page": "リリースページを開く",
   "settings.about.export_logs_desc": "ComfyUIのログ、システム情報、設定をファイルに保存してサポートと共有します。",
   "settings.about.data_dir_hint": "別のドライブにインストールするには、起動前にMOOSHIEUI_DATA_DIR環境変数を希望のパスに設定してください。",
   "settings.about.save_dialog_title": "診断ログを保存",

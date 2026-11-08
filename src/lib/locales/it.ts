@@ -2432,6 +2432,8 @@ const it: Record<string, string> = {
   "settings.about.troubleshooting": "Risoluzione dei problemi",
   "settings.about.saved": "Salvato!",
   "settings.about.try_again": "Riprova",
+  "settings.about.update_server_unreachable": "Impossibile raggiungere GitHub per controllare gli aggiornamenti. Riprova tra un minuto oppure scarica l'ultima versione dalla pagina delle release.",
+  "settings.about.open_releases_page": "Apri la pagina delle release",
   "settings.about.export_logs_desc": "Salva i log di ComfyUI, le informazioni di sistema e la configurazione in un file da condividere con il supporto.",
   "settings.about.data_dir_hint": "Per installare su un'altra unità, impostare la variabile di ambiente MOOSHIEUI_DATA_DIR sul percorso preferito prima dell'avvio.",
   "settings.about.save_dialog_title": "Salva log diagnostici",

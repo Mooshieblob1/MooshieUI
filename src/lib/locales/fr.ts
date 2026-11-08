@@ -2457,6 +2457,8 @@ const fr: Record<string, string> = {
   "settings.about.troubleshooting": "Dépannage",
   "settings.about.saved": "Enregistré !",
   "settings.about.try_again": "Réessayer",
+  "settings.about.update_server_unreachable": "Impossible de joindre GitHub pour rechercher des mises à jour. Réessayez dans une minute ou téléchargez la dernière version depuis la page des versions.",
+  "settings.about.open_releases_page": "Ouvrir la page des versions",
   "settings.about.export_logs_desc": "Enregistrer les journaux ComfyUI, les informations système et la configuration dans un fichier à partager avec le support.",
   "settings.about.data_dir_hint": "Pour installer sur un autre lecteur, définissez la variable d'environnement MOOSHIEUI_DATA_DIR sur le chemin souhaité avant le lancement.",
   "settings.about.save_dialog_title": "Enregistrer les journaux de diagnostic",
