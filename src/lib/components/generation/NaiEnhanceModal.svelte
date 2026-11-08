@@ -36,7 +36,13 @@
   import { naiLanguageInfo, NAI_LANGUAGES, resolveNaiLanguage } from "../../utils/naiLanguage.js";
   import type { NaiLanguageChoice } from "../../utils/naiLanguage.js";
   import { NAI_VARIANT_BUDGET } from "../../utils/naiPrompt.js";
-  import { withOppositeOutfitUc } from "../../utils/naiOutfits.js";
+  import {
+    findOutfitOverlaps,
+    hasOppositeOutfitUc,
+    similarBodyPairs,
+    withOppositeOutfitUc,
+    type OutfitOverlap,
+  } from "../../utils/naiOutfits.js";
   import { naiSavedCharacterDirective, NAI_SAVED_CHARACTER_LIMIT } from "../../utils/naiSavedCharacters.js";
   import {
     characterNotesBlock,
@@ -185,6 +191,79 @@
    * the request and not of any one field.
    */
   const selectedTokens = $derived(estimatePromptTokens(naiEnhance.selectedText));
+
+  /** Character rows that will still be boxes after apply, by row index. */
+  const liveRows = $derived(
+    pending ? pending.characters.flatMap((c, i) => (c.removes ? [] : [i])) : [],
+  );
+  const liveBoxes = $derived(pending ? liveRows.map((i) => pending.characters[i].after) : []);
+  const liveUcs = $derived(pending ? liveRows.map((i) => pending.characters[i].ucAfter) : []);
+  /** Clothing and hair tags written in more than one place, the outfit leak risk. */
+  const overlaps = $derived(pending ? findOutfitOverlaps(pending.base.after, liveBoxes) : []);
+  /** Alike bodies in different clothes: where opposite-outfit UC matters most. */
+  const similarBodies = $derived(similarBodyPairs(liveBoxes).length > 0);
+  const oppositeUcDone = $derived(hasOppositeOutfitUc(liveBoxes, liveUcs));
+
+  /** Where else an overlapping tag is written, for its chip's tooltip. */
+  function overlapPlaces(o: OutfitOverlap, except: number | null): string {
+    const places = [
+      ...(o.inBase && except !== null ? [locale.t("prompt_assistant.nai_field_base")] : []),
+      ...o.boxes
+        .filter((k) => k !== except)
+        .map((k) => {
+          const row = pending?.characters[liveRows[k]];
+          return locale.t("prompt_assistant.nai_field_character", {
+            index: String((row?.targetIndex ?? liveRows[k]) + 1),
+          });
+        }),
+    ];
+    return places.join(", ");
+  }
+
+  type Chip = { tag: string; title: string; onclick: () => void };
+
+  /** Chips for the base row: tags it restates from a box. */
+  const baseChips = $derived<Chip[]>(
+    overlaps
+      .filter((o) => o.inBase)
+      .map((o) => ({
+        tag: o.tag,
+        title: locale.t("prompt_assistant.nai_overlap_base_tip", { places: overlapPlaces(o, null) }),
+        onclick: () => naiEnhance.resolveOverlap(o.tag, null),
+      })),
+  );
+
+  /** Chips for one character row: its tags that are also written elsewhere. */
+  function rowChips(row: number): Chip[] {
+    const k = liveRows.indexOf(row);
+    if (k === -1) return [];
+    return overlaps
+      .filter((o) => o.boxes.includes(k) && (o.inBase || o.boxes.length > 1))
+      .map((o) => ({
+        tag: o.tag,
+        title: locale.t("prompt_assistant.nai_overlap_box_tip", { places: overlapPlaces(o, k) }),
+        onclick: () => naiEnhance.resolveOverlap(o.tag, row),
+      }));
+  }
+
+  function isolate() {
+    if (!naiEnhance.isolatePending()) {
+      gallery.showToast(locale.t("prompt_assistant.nai_isolate_nothing"), "info");
+    }
+  }
+
+  /** Isolate outfits on the current prompt, straight into the review. */
+  function isolateCurrent() {
+    if (!naiEnhance.openIsolateReview()) {
+      gallery.showToast(locale.t("prompt_assistant.nai_isolate_nothing"), "info");
+    }
+  }
+
+  /** At least two filled boxes on a V5 model, which is when isolating means anything. */
+  const canIsolateCurrent = $derived(
+    !!naiV5Variant(generation.checkpoint) &&
+      generation.novelaiSettings.characters.filter((c) => c.prompt.trim()).length >= 2,
+  );
 
   // The rewrite is written for one variant's budget and syntax, so a model
   // switch while a result is on screen invalidates it. The input stage survives:
@@ -569,6 +648,7 @@
   hint: string,
   ucBefore: string = "",
   ucAfter: string = "",
+  chips: { tag: string; title: string; onclick: () => void }[] = [],
 )}
   <div
     class="rounded-lg border p-3 transition-colors {selected
@@ -603,6 +683,21 @@
           {after.trim() || locale.t("prompt_assistant.nai_empty")}
         </div>
         {@render tokenBar(after, budget)}
+        {#if chips.length > 0}
+          <div class="mt-1.5 flex flex-wrap items-center gap-1">
+            <span class="text-[10px] text-amber-300/80">{locale.t("prompt_assistant.nai_overlap")}</span>
+            {#each chips as chip (chip.tag)}
+              <button
+                class="rounded-full border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200 hover:bg-amber-500/25"
+                title={chip.title}
+                aria-label={`${chip.tag}: ${chip.title}`}
+                onclick={chip.onclick}
+              >
+                {chip.tag}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
     {#if ucBefore.trim() || ucAfter.trim()}
@@ -865,6 +960,16 @@
           >
             {locale.t("prompt_assistant.nai_copy_existing")}
           </button>
+          {#if !isSingleRow && canIsolateCurrent}
+            <button
+              class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+              title={locale.t("prompt_assistant.nai_isolate_outfits_tip")}
+              disabled={naiEnhance.busy}
+              onclick={isolateCurrent}
+            >
+              {locale.t("prompt_assistant.nai_isolate_outfits")}
+            </button>
+          {/if}
           {#if isGeneral}
             <div class="flex items-center gap-1 text-[10px] text-neutral-400">
               <span>{locale.t("prompt_assistant.length")}:</span>
@@ -1109,7 +1214,34 @@
           >
             {locale.t("prompt_assistant.nai_select_none")}
           </button>
+          {#if liveRows.length >= 2}
+            <button
+              class="ml-auto rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800"
+              title={locale.t("prompt_assistant.nai_isolate_outfits_tip")}
+              onclick={isolate}
+            >
+              {locale.t("prompt_assistant.nai_isolate_outfits")}
+            </button>
+          {/if}
         </div>
+
+        {#if similarBodies}
+          <div class="mb-3 flex items-center gap-2 text-[11px] text-sky-200">
+            <span>{locale.t("prompt_assistant.nai_similar_bodies")}</span>
+            {#if oppositeUcDone}
+              <span class="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-100">
+                {locale.t("prompt_assistant.nai_similar_bodies_added")}
+              </span>
+            {:else}
+              <button
+                class="rounded-lg border border-sky-500/50 px-2 py-0.5 text-[10px] text-sky-100 hover:bg-sky-500/20"
+                onclick={() => naiEnhance.fillOppositeUc()}
+              >
+                {locale.t("prompt_assistant.nai_similar_bodies_add")}
+              </button>
+            {/if}
+          </div>
+        {/if}
 
         <div class="space-y-2">
           {@render row(
@@ -1120,6 +1252,9 @@
             pending.budget,
             () => naiEnhance.toggleBase(),
             "",
+            "",
+            "",
+            baseChips,
           )}
           {@render row(
             locale.t("prompt_assistant.nai_field_uc"),
@@ -1149,6 +1284,7 @@
                   : "",
               char.ucBefore,
               char.removes ? "" : char.ucAfter,
+              rowChips(i),
             )}
           {/each}
         </div>

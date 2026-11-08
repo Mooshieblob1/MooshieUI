@@ -1,6 +1,16 @@
 import { generation } from "./generation.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
-import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
+import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
+import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
+import { resolveNaiLanguage } from "../utils/naiLanguage.js";
+import {
+  findOutfitOverlaps,
+  isolateOutfits,
+  keepTagIn,
+  withOppositeOutfitUc,
+  positionFromX,
+  type OutfitFields,
+} from "../utils/naiOutfits.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import type { NovelAiSettings } from "./generation.svelte.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
@@ -100,6 +110,47 @@ export interface NaiEnhancePending {
   base: NaiEnhanceRow;
   uc: NaiEnhanceRow;
   characters: NaiEnhanceCharacterRow[];
+}
+
+/** Rows whose text the outfit tools read and write: every box not being removed. */
+function liveRows(p: NaiEnhancePending): number[] {
+  return p.characters.flatMap((c, i) => (c.removes ? [] : [i]));
+}
+
+/** The pending rewrite's base, boxes and box UCs, in `liveRows` order. */
+function outfitFields(p: NaiEnhancePending): OutfitFields {
+  const rows = liveRows(p).map((i) => p.characters[i]);
+  return { base: p.base.after, boxes: rows.map((r) => r.after), ucs: rows.map((r) => r.ucAfter) };
+}
+
+/**
+ * Write outfit tool output back into the pending rows. A row whose text changed
+ * is ticked, since the change is what the user just asked for.
+ */
+function withOutfitFields(p: NaiEnhancePending, f: OutfitFields): NaiEnhancePending {
+  const rows = liveRows(p);
+  const characters = p.characters.map((c, i) => {
+    const k = rows.indexOf(i);
+    if (k === -1) return c;
+    const after = f.boxes[k];
+    const ucAfter = f.ucs[k];
+    if (after === c.after && ucAfter === c.ucAfter) return c;
+    return { ...c, after, ucAfter, selected: true };
+  });
+  const base =
+    f.base === p.base.after ? p.base : { ...p.base, after: f.base, selected: true };
+  return { ...p, base, characters };
+}
+
+/** Placement words for each live row's box, from its grid position when positions are on. */
+function rowPositions(p: NaiEnhancePending): (string | null)[] {
+  const settings = generation.novelaiSettings;
+  return liveRows(p).map((i) => {
+    const target = p.characters[i].targetIndex;
+    if (!settings.use_coords || target === null) return null;
+    const box = settings.characters[target];
+    return box ? positionFromX(box.center.x) : null;
+  });
 }
 
 interface UndoSnapshot {
@@ -314,6 +365,91 @@ class NaiEnhanceStore {
   /** Paste the prompt box into the input, for the "tidy up what I have" case. */
   copyExistingPrompt(): void {
     this.input = generation.positivePrompt ?? "";
+  }
+
+  /**
+   * Isolate outfits on the rewrite under review: restated outfit and hair tags
+   * leave the base prompt, unplaced boxes get their grid side, and every box
+   * gets the opposite-outfit UC. False when there was nothing to change.
+   */
+  isolatePending(): boolean {
+    const p = this.pending;
+    if (!p) return false;
+    const before = outfitFields(p);
+    const after = isolateOutfits(before, rowPositions(p));
+    if (JSON.stringify(after) === JSON.stringify(before)) return false;
+    this.pending = withOutfitFields(p, after);
+    return true;
+  }
+
+  /** Add the opposite-outfit UC alone, for the similar-bodies tip. */
+  fillOppositeUc(): void {
+    const p = this.pending;
+    if (!p) return;
+    const f = outfitFields(p);
+    this.pending = withOutfitFields(p, { ...f, ucs: withOppositeOutfitUc(f.boxes, f.ucs) });
+  }
+
+  /**
+   * Settle one overlap chip. `row` is the character row the tag belongs to, or
+   * null for a chip on the base prompt (the tag stays in whichever boxes have it).
+   */
+  resolveOverlap(tag: string, row: number | null): void {
+    const p = this.pending;
+    if (!p) return;
+    const keep = row === null ? null : liveRows(p).indexOf(row);
+    this.pending = withOutfitFields(p, keepTagIn(outfitFields(p), tag, keep === -1 ? null : keep));
+  }
+
+  /**
+   * Isolate outfits on the current prompt, with no rewrite: the result opens in
+   * the review as if a rewrite had proposed it. False when there is nothing to
+   * fix, or the model is not V5.
+   */
+  openIsolateReview(): boolean {
+    const variant = naiV5Variant(generation.checkpoint);
+    const boxes = generation.novelaiSettings.characters;
+    if (!variant || boxes.filter((b) => b.prompt.trim()).length < 2) return false;
+    const base = generation.positivePrompt ?? "";
+    const uc = generation.negativePrompt ?? "";
+    const pending: NaiEnhancePending = {
+      variant,
+      language: resolveNaiLanguage(generation.naiEnhanceLanguage, base),
+      budget: NAI_VARIANT_BUDGET[variant],
+      note: "",
+      problems: [],
+      canon: [],
+      base: { before: base, after: base, selected: false },
+      uc: { before: uc, after: uc, selected: false },
+      characters: boxes.map((b, i) => ({
+        before: b.prompt,
+        after: b.prompt,
+        selected: false,
+        targetIndex: i,
+        removes: false,
+        ucBefore: b.negative_prompt,
+        ucAfter: b.negative_prompt,
+      })),
+    };
+    const fields = outfitFields(pending);
+    const fixed = isolateOutfits(fields, rowPositions(pending));
+    // Overlaps between boxes are not auto-fixed (matching clothes can be on
+    // purpose), so they still open the review, where their chips settle them.
+    if (
+      JSON.stringify(fixed) === JSON.stringify(fields) &&
+      findOutfitOverlaps(fixed.base, fixed.boxes).length === 0
+    ) {
+      return false;
+    }
+    this.cancelRequest();
+    this.flow = "nai";
+    this.input = "";
+    this.references = [];
+    this.curate = false;
+    this.generalPending = null;
+    this.pending = withOutfitFields(pending, fixed);
+    this.stage = "review";
+    return true;
   }
 
   showReview(pending: NaiEnhancePending): void {
