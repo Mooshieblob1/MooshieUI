@@ -19,6 +19,15 @@
 //! - A group weight distributes over the comma-separated tags inside it:
 //!   `(a, b:1.2)` becomes `1.2::a::, 1.2::b::`
 //! - A weight of 1.0 is dropped rather than written out
+//! - A weight of exactly 1.05 or 0.95 goes back to `{tag}` or `[tag]`. That is
+//!   what the frontend writes for NovelAI's own braces, so `{{{year 2025}}}`
+//!   reaches NovelAI as typed instead of as `1.16::year 2025::`. Nesting
+//!   composes, since the inner group is already `{...}` when the outer one is
+//!   rewritten.
+//! - A numeric span whose text ends in a digit gets a comma before the closing
+//!   `::`. NovelAI reads `2025::` as the opener of a weight of 2025, so
+//!   `1.3::year 2025::, tag` would weight everything after it by 2025;
+//!   `1.3::year 2025,::, tag` does not.
 //!
 //! # What is deliberately left alone
 //!
@@ -38,7 +47,11 @@ pub fn to_novelai(prompt: &str) -> String {
         let Some(group) = find_innermost_weighted(&out) else {
             return out;
         };
-        let replacement = distribute(&out[group.content.clone()], group.weight);
+        let content = &out[group.content.clone()];
+        let replacement = match emphasis_brackets(content, group.weight) {
+            Some((open, close)) => format!("{open}{}{close}", content.trim()),
+            None => distribute(content, group.weight),
+        };
         out.replace_range(group.span, &replacement);
     }
 }
@@ -102,6 +115,27 @@ fn is_escaped(bytes: &[u8], i: usize) -> bool {
     slashes % 2 == 1
 }
 
+/// The NovelAI bracket a `(content:weight)` group came from, if any.
+///
+/// The frontend translates `{tag}` to `(tag:1.05)` and `[tag]` to
+/// `(tag:0.95)`, one layer at a time. Writing those back as brackets keeps the
+/// prompt the way the user typed it, and avoids the numeric form entirely for
+/// the common case. Content that already holds a `::` span is left to
+/// [`distribute`], which folds the weights together, because a bracket around a
+/// numeric span is not something NovelAI documents.
+fn emphasis_brackets(content: &str, weight: f64) -> Option<(char, char)> {
+    if content.trim().is_empty() || content.contains("::") {
+        return None;
+    }
+    if (weight - 1.05).abs() < 1e-9 {
+        Some(('{', '}'))
+    } else if (weight - 0.95).abs() < 1e-9 {
+        Some(('[', ']'))
+    } else {
+        None
+    }
+}
+
 /// Apply `weight` to every comma-separated tag in `content`.
 ///
 /// NovelAI weights a single run of text, so a group covering several tags has
@@ -110,9 +144,13 @@ fn is_escaped(bytes: &[u8], i: usize) -> bool {
 fn distribute(content: &str, weight: f64) -> String {
     // Trimmed first: padding the user left inside the parentheses would
     // otherwise survive as a doubled space next to the surrounding comma.
-    // Spacing *between* the segments is left alone.
+    // Spacing *between* the segments is left alone. A trailing comma is the
+    // guard `apply_weight` writes after a tag ending in a digit; it comes back
+    // in on a reimported prompt and would otherwise grow by one comma a trip.
     content
         .trim()
+        .trim_end_matches(',')
+        .trim_end()
         .split(',')
         .map(|segment| apply_weight(segment, weight))
         .collect::<Vec<_>>()
@@ -145,7 +183,14 @@ fn apply_weight(segment: &str, weight: f64) -> String {
     if (weight - 1.0).abs() < f64::EPSILON {
         return format!("{lead}{trimmed}{trail}");
     }
-    format!("{lead}{}::{trimmed}::{trail}", format_weight(weight))
+    // NovelAI takes digits right before `::` as a new weight, so the span for
+    // `year 2025` would never close. A comma between them ends the tag first.
+    let guard = if trimmed.ends_with(|c: char| c.is_ascii_digit()) {
+        ","
+    } else {
+        ""
+    };
+    format!("{lead}{}::{trimmed}{guard}::{trail}", format_weight(weight))
 }
 
 /// Rewrite a prompt from NovelAI weight syntax back into ComfyUI syntax.
@@ -347,8 +392,87 @@ mod tests {
 
     #[test]
     fn nested_weights_are_flattened_by_multiplication() {
-        // NovelAI has no defined nesting of `::`, so 1.05 * 1.05 is written out.
-        assert_eq!(to_novelai("((tag:1.05):1.05)"), "1.1::tag::");
+        // NovelAI has no defined nesting of `::`, so 1.2 * 1.1 is written out.
+        assert_eq!(to_novelai("((tag:1.2):1.1)"), "1.32::tag::");
+    }
+
+    #[test]
+    fn brace_emphasis_from_the_frontend_goes_back_to_braces() {
+        // `{{tag}}` arrives as `((tag:1.05):1.05)`. Flattening it would turn
+        // the braces the user typed into `1.1::tag::`.
+        assert_eq!(to_novelai("(tag:1.05)"), "{tag}");
+        assert_eq!(to_novelai("((tag:1.05):1.05)"), "{{tag}}");
+        assert_eq!(to_novelai("(tag:0.95)"), "[tag]");
+        assert_eq!(to_novelai("((tag:0.95):0.95)"), "[[tag]]");
+    }
+
+    #[test]
+    fn braces_around_a_tag_with_a_number_are_kept() {
+        // The reported case: `{{{year 2025}}}, tag` became
+        // `1.16::year 2025::, tag`, and NovelAI read `2025::` as a weight of
+        // 2025 for everything after it.
+        assert_eq!(
+            to_novelai("(((year 2025:1.05):1.05):1.05), tag"),
+            "{{{year 2025}}}, tag"
+        );
+    }
+
+    #[test]
+    fn braces_around_a_group_keep_the_group_whole() {
+        assert_eq!(to_novelai("(a, b:1.05), c"), "{a, b}, c");
+    }
+
+    #[test]
+    fn mixed_braces_and_brackets_nest_as_typed() {
+        // `{[tag]}` and `[{tag}]` are both 0.9975 in NovelAI; keep the shape.
+        assert_eq!(to_novelai("((tag:0.95):1.05)"), "{[tag]}");
+        assert_eq!(to_novelai("((tag:1.05):0.95)"), "[{tag}]");
+    }
+
+    #[test]
+    fn a_numeric_weight_around_braces_wraps_them() {
+        assert_eq!(to_novelai("((tag:1.05):1.2)"), "1.2::{tag}::");
+    }
+
+    #[test]
+    fn braces_around_a_numeric_span_fold_into_it() {
+        // A bracket around a `::` span is not documented NovelAI syntax.
+        assert_eq!(to_novelai("((tag:1.2):1.05)"), "1.26::tag::");
+    }
+
+    #[test]
+    fn a_span_ending_in_a_digit_is_closed_safely() {
+        // `1.16::year 2025::` reads as `1.16::year` followed by an unclosed
+        // weight of 2025. The comma ends the tag before the closing `::`.
+        assert_eq!(
+            to_novelai("(year 2025:1.16), tag"),
+            "1.16::year 2025,::, tag"
+        );
+        assert_eq!(to_novelai("(as109:-1)"), "-1::as109,::");
+    }
+
+    #[test]
+    fn a_guarded_span_survives_a_trip_through_novelai_metadata() {
+        // NovelAI writes the guarded prompt into the PNG; restoring and
+        // regenerating must not add a comma each time.
+        let sent = "1.16::year 2025,::, tag";
+        assert_eq!(to_novelai(&from_novelai(sent)), sent);
+        let braces = "{{{year 2025}}}, tag";
+        assert_eq!(to_novelai(&from_novelai(braces)), braces);
+    }
+
+    #[test]
+    fn a_span_with_a_number_inside_is_unchanged() {
+        assert_eq!(
+            to_novelai("(2girls, solo:1.2)"),
+            "1.2::2girls::, 1.2::solo::"
+        );
+    }
+
+    #[test]
+    fn a_guarded_span_is_left_alone_on_a_second_pass() {
+        let once = to_novelai("(year 2025:1.16), tag");
+        assert_eq!(to_novelai(&once), once);
     }
 
     #[test]
