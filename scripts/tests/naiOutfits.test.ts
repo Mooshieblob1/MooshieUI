@@ -6,7 +6,17 @@ import {
   validateNaiResponse,
 } from "../../src/lib/utils/naiParse.ts";
 import { naiRewriteSystemPrompt } from "../../src/lib/utils/naiPrompt.ts";
-import { outfitTags, tagKind, withOppositeOutfitUc } from "../../src/lib/utils/naiOutfits.ts";
+import {
+  findOutfitOverlaps,
+  hasOppositeOutfitUc,
+  isolateOutfits,
+  keepTagIn,
+  outfitTags,
+  removeTag,
+  similarBodyPairs,
+  tagKind,
+  withOppositeOutfitUc,
+} from "../../src/lib/utils/naiOutfits.ts";
 
 const parse = (raw: string) => normalizeNaiResponse(parseNaiResponse(raw));
 
@@ -152,4 +162,67 @@ test("the spec's own multi-character example passes the validator", () => {
   assert.equal(p.characters.length, 2);
   assert.deepEqual(validateNaiResponse(p), []);
   assert.ok(p.characterUcs.every((uc) => uc && uc.length > 0));
+});
+
+test("removeTag keeps spans and prose intact", () => {
+  assert.equal(removeTag("girl, white hoodie, jeans", "white hoodie"), "girl, jeans");
+  assert.equal(removeTag("girl, {white hoodie}, jeans", "white hoodie"), "girl, jeans");
+  assert.equal(removeTag("girl, 1.2::white hoodie, jeans::, smile", "white hoodie"), "girl, 1.2::jeans::, smile");
+  assert.equal(removeTag("girl, 1.2::jeans, white hoodie::, smile", "white hoodie"), "girl, 1.2::jeans::, smile");
+  assert.equal(removeTag("girl, -1::white hoodie::, jeans", "white hoodie"), "girl, -1::white hoodie::, jeans");
+  assert.equal(removeTag("girl,\nwhite hoodie, jeans,\nsmile", "white hoodie"), "girl,\njeans,\nsmile");
+  assert.equal(
+    removeTag("2girls, park, white hoodie\n\nThe girl in the white hoodie waves.", "white hoodie"),
+    "2girls, park\n\nThe girl in the white hoodie waves.",
+  );
+});
+
+test("findOutfitOverlaps finds base restatements and shared garments, not shared hair", () => {
+  const overlaps = findOutfitOverlaps("2girls, park, white hoodie", [
+    "girl, long hair, white hoodie, red scarf",
+    "girl, long hair, red scarf, jeans",
+  ]);
+  assert.deepEqual(
+    overlaps.map((o) => [o.tag, o.inBase, o.boxes]),
+    [
+      ["white hoodie", true, [0]],
+      ["red scarf", false, [0, 1]],
+    ],
+  );
+});
+
+test("keepTagIn moves a tag into one box and the others' UC", () => {
+  const out = keepTagIn(
+    { base: "2girls, red scarf", boxes: ["girl, red scarf", "girl, red scarf, jeans"], ucs: ["", ""] },
+    "red scarf",
+    0,
+  );
+  assert.deepEqual(out, { base: "2girls", boxes: ["girl, red scarf", "girl, jeans"], ucs: ["", "red scarf"] });
+});
+
+test("isolateOutfits cleans the base, places boxes and adds opposite UC", () => {
+  const out = isolateOutfits(
+    {
+      base: "2girls, park, white hoodie, silver hair\n\nTwo girls talk.",
+      boxes: ["girl, silver hair, white hoodie", "girl, black hair, school uniform, on the right"],
+      ucs: ["", ""],
+    },
+    ["on the left", "on the left"],
+  );
+  assert.deepEqual(out, {
+    base: "2girls, park\n\nTwo girls talk.",
+    boxes: ["girl, silver hair, white hoodie, on the left", "girl, black hair, school uniform, on the right"],
+    ucs: ["school uniform", "white hoodie"],
+  });
+});
+
+test("similarBodyPairs needs alike bodies and different clothes", () => {
+  assert.deepEqual(
+    similarBodyPairs(["girl, silver hair, white hoodie", "girl, silver hair, school uniform"]),
+    [[0, 1]],
+  );
+  assert.deepEqual(similarBodyPairs(["girl, silver hair, maid", "girl, silver hair, maid"]), []);
+  assert.deepEqual(similarBodyPairs(["girl, silver hair, hoodie", "girl, black hair, dress"]), []);
+  assert.equal(hasOppositeOutfitUc(["girl, hoodie", "girl, dress"], ["dress", "hoodie"]), true);
+  assert.equal(hasOppositeOutfitUc(["girl, hoodie", "girl, dress"], ["", "hoodie"]), false);
 });

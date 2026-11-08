@@ -234,3 +234,198 @@ export function withOppositeOutfitUc(boxes: string[], ucs: string[]): string[] {
   const extra = oppositeOutfitTags(boxes, ucs);
   return boxes.map((_, i) => appendTags(ucs[i] ?? "", extra[i]));
 }
+
+/** The base prompt, each box's prompt and each box's own undesired content. */
+export interface OutfitFields {
+  base: string;
+  boxes: string[];
+  ucs: string[];
+}
+
+/** A clothing or hair tag written in more than one place. */
+export interface OutfitOverlap {
+  /** Bare form, as `fieldTags` gives it. */
+  tag: string;
+  kind: "clothing" | "hair";
+  /** Whether the base prompt's tag line has it. */
+  inBase: boolean;
+  /** Indexes of the boxes that have it. */
+  boxes: number[];
+}
+
+/**
+ * Clothing and hair tags that sit in the base tag line and a box, and
+ * clothing written in two boxes.
+ */
+export function findOutfitOverlaps(base: string, boxes: string[]): OutfitOverlap[] {
+  if (boxes.length < 2) return [];
+  const baseTags = new Set(fieldTags(base).map((t) => t.norm));
+  const boxTags = boxes.map((b) => new Set(fieldTags(b).map((t) => t.norm)));
+  const seen = new Set<string>();
+  const out: OutfitOverlap[] = [];
+  for (const set of boxTags) {
+    for (const tag of set) {
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      const kind = tagKind(tag);
+      if (kind !== "clothing" && kind !== "hair") continue;
+      const holders = boxTags.flatMap((s, i) => (s.has(tag) ? [i] : []));
+      const inBase = baseTags.has(tag);
+      // Between boxes only clothing counts: alike hair is a similar body (twins,
+      // sisters), which the opposite-outfit UC handles, not a leak to undo.
+      const sharedByBoxes = holders.length > 1 && kind === "clothing";
+      if (inBase || sharedByBoxes) out.push({ tag, kind, inBase, boxes: holders });
+    }
+  }
+  return out;
+}
+
+const WEIGHT_OPEN = /^-?\d+(?:\.\d+)?::/;
+
+/**
+ * Remove one tag (by its bare form) from a field's tag lines, keeping any
+ * emphasis or weight span it opened or closed for its neighbours.
+ *
+ * Prose lines and a `Text:` block are left alone.
+ */
+export function removeTag(text: string, norm: string): string {
+  if (!text) return text;
+  const textAt = text.search(/(?:^|\n)\s*Text\s*:/i);
+  const head = textAt === -1 ? text : text.slice(0, textAt);
+  const tail = textAt === -1 ? "" : text.slice(textAt);
+  const lines = head.split("\n").flatMap((line) => {
+    if (isProseLine(line)) return [line];
+    const parts = line.split(",");
+    if (!parts.some((p) => bareTag(p) === norm)) return [line];
+    const trailingComma = /,\s*$/.test(line);
+    const kept: string[] = [];
+    let carry = "";
+    // Inside a negative span (`-1::hat::`) the tag is already a negative and stays.
+    let negative = false;
+    for (const part of parts) {
+      const trimmed = part.trim();
+      const negOpener = trimmed.match(/^-\d+(?:\.\d+)?::/)?.[0] ?? "";
+      const inNegative = negative || negOpener !== "";
+      if (inNegative) negative = !trimmed.slice(negOpener.length).endsWith("::");
+      if (inNegative || bareTag(part) !== norm) {
+        if (trimmed || carry) kept.push(carry + trimmed);
+        carry = "";
+        continue;
+      }
+      // Markers the removed tag carried for a span wider than itself go to its
+      // neighbours: an opener to the next tag, a closer to the previous one.
+      let core = trimmed;
+      const weight = core.match(WEIGHT_OPEN)?.[0] ?? "";
+      core = core.slice(weight.length);
+      const closesWeight = core.endsWith("::");
+      if (closesWeight) core = core.slice(0, -2);
+      const opens = core.match(/^[{[]*/)?.[0] ?? "";
+      const closeBraces = core.match(/[}\]]*$/)?.[0] ?? "";
+      const net = opens.length - closeBraces.length;
+      const open = (weight && !closesWeight ? weight : "") + (net > 0 ? opens.slice(0, net) : "");
+      const close = (net < 0 ? closeBraces.slice(0, -net) : "") + (closesWeight && !weight ? "::" : "");
+      if (close && kept.length > 0) kept[kept.length - 1] += close;
+      carry += open;
+    }
+    if (carry && kept.length > 0) kept[kept.length - 1] += carry;
+    const joined = kept.filter((p) => p !== "").join(", ");
+    if (!joined) return [];
+    return [trailingComma ? `${joined},` : joined];
+  });
+  const out = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return tail ? `${out}${out ? "\n\n" : ""}${tail.replace(/^\n+/, "")}` : out;
+}
+
+/** Bare tags of one kind a field holds. */
+function tagsOfKind(text: string, kind: TagKind): string[] {
+  return fieldTags(text)
+    .map((t) => t.norm)
+    .filter((t) => tagKind(t) === kind);
+}
+
+/** Add `tag` to a box's UC unless the box wears it or the UC already covers it. */
+function avoidIn(uc: string, box: string, tag: string): string {
+  const kind = tagKind(tag);
+  const own = kind === "other" ? [] : tagsOfKind(box, kind);
+  if (clashesWithOwn(tag, own)) return uc;
+  const tw = words(tag);
+  if (fieldTags(uc).some((t) => isSubset(words(t.norm), tw))) return uc;
+  return appendTags(uc, [tag]);
+}
+
+/**
+ * Resolve one overlap: the tag stays in box `keep` (or in whichever boxes have
+ * it, when `keep` is null), leaves the base tag line and every other box, and
+ * goes into the undesired content of every box that does not wear it.
+ */
+export function keepTagIn(fields: OutfitFields, tag: string, keep: number | null): OutfitFields {
+  const boxes = fields.boxes.map((box, i) => (keep === null || i === keep ? box : removeTag(box, tag)));
+  const ucs = boxes.map((box, i) => {
+    const uc = fields.ucs[i] ?? "";
+    if (fieldTags(box).some((t) => t.norm === tag)) return uc;
+    return avoidIn(uc, box, tag);
+  });
+  return { base: removeTag(fields.base, tag), boxes, ucs };
+}
+
+/** Placement words for a box from its position on NovelAI's 0..1 grid. */
+export function positionFromX(x: number): string {
+  if (x < 0.4) return "on the left";
+  if (x > 0.6) return "on the right";
+  return "in the center";
+}
+
+/**
+ * Everything that can be fixed without a rewrite:
+ * - clothing and hair tags the base tag line shares with a box leave the base;
+ * - a box with no placement words gets `positions[i]`, when given;
+ * - every box gets the opposite-outfit UC.
+ *
+ * Garments two boxes share are left in place: matching clothes can be on
+ * purpose, so those stay flagged for the user to settle.
+ */
+export function isolateOutfits(fields: OutfitFields, positions: (string | null)[] = []): OutfitFields {
+  if (fields.boxes.length < 2) return fields;
+  const boxTags = new Set(fields.boxes.flatMap((b) => fieldTags(b).map((t) => t.norm)));
+  let base = fields.base;
+  for (const tag of new Set(fieldTags(base).map((t) => t.norm))) {
+    const kind = tagKind(tag);
+    if ((kind === "clothing" || kind === "hair") && boxTags.has(tag)) base = removeTag(base, tag);
+  }
+  const boxes = fields.boxes.map((box, i) => {
+    const place = positions[i];
+    if (!place || POSITION_WORDS.test(box)) return box;
+    return appendTags(box, [place]);
+  });
+  return { base, boxes, ucs: withOppositeOutfitUc(boxes, fields.ucs) };
+}
+
+/**
+ * Pairs of boxes with alike bodies (the same hair colour, or two or more shared
+ * hair, eye or body tags) whose outfits differ. That is the pair most likely to
+ * trade clothes, and the one opposite-outfit UC exists for.
+ */
+export function similarBodyPairs(boxes: string[]): [number, number][] {
+  const traits = boxes.map((b) =>
+    fieldTags(b)
+      .map((t) => t.norm)
+      .filter((t) => (tagKind(t) === "hair" || tagKind(t) === "body") && !COMMON_HAIR.has(t)),
+  );
+  const outfits = boxes.map(outfitTags);
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const shared = traits[i].filter((t) => traits[j].includes(t));
+      const sameHairColour = shared.some((t) => /\bhair\b/.test(t));
+      const alike = sameHairColour || shared.length >= 2;
+      const differ = outfits[i].join("|") !== outfits[j].join("|") && outfits[i].length + outfits[j].length > 0;
+      if (alike && differ) pairs.push([i, j]);
+    }
+  }
+  return pairs;
+}
+
+/** True when every box's UC already holds the other boxes' distinctive garments. */
+export function hasOppositeOutfitUc(boxes: string[], ucs: string[]): boolean {
+  return oppositeOutfitTags(boxes, ucs).every((tags) => tags.length === 0);
+}
