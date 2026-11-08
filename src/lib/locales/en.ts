@@ -4190,7 +4190,7 @@ const en: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "The model set up in Settings > Prompt Assistant can't see images. Pick a vision-capable model there.",
   "prompt_assistant.describe_expired": "This image is no longer available. Interrogate it again.",
   "prompt_assistant.error_generic": "Prompt assistant error, try again.",
-  "prompt_assistant.blocked_minor_content": "Not sent. This asks for sexual or suggestive content involving a minor, which MooshieUI never writes.",
+  "prompt_assistant.blocked_minor_content": "Not sent. This asks for explicit sexual content involving a minor, which MooshieUI never writes.",
   "prompt_assistant.blocked_minor_terms": "Not sent: \"{minor}\" with \"{sexual}\" reads as sexual content involving a minor, which MooshieUI never writes.",
   "prompt_assistant.blocked_minor_character": "Not sent: {name} is saved as a minor (\"{minor}\") and this request is explicit, which MooshieUI never writes.",
   "prompt_assistant.provider_refused": "The AI provider's own content filter declined this request. MooshieUI did not block it.",

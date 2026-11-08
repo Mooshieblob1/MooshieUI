@@ -4131,7 +4131,7 @@ const pl: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "Model ustawiony w Ustawienia > Asystent promptów nie widzi obrazów. Wybierz tam model z obsługą obrazów.",
   "prompt_assistant.describe_expired": "Ten obraz nie jest już dostępny. Przeanalizuj go ponownie.",
   "prompt_assistant.error_generic": "Błąd asystenta Prompt, spróbuj ponownie.",
-  "prompt_assistant.blocked_minor_content": "Nie wysłano. To prośba o treści seksualne lub sugestywne z udziałem nieletniego, których MooshieUI nigdy nie pisze.",
+  "prompt_assistant.blocked_minor_content": "Nie wysłano. To prośba o jednoznacznie seksualne treści z udziałem nieletniego, których MooshieUI nigdy nie pisze.",
   "prompt_assistant.blocked_minor_terms": "Nie wysłano: „{minor}” razem z „{sexual}” wygląda na treści seksualne z udziałem nieletniego, których MooshieUI nigdy nie pisze.",
   "prompt_assistant.blocked_minor_character": "Nie wysłano: {name} jest zapisany jako nieletni („{minor}”), a ta prośba jest dosadna, czego MooshieUI nigdy nie pisze.",
   "prompt_assistant.provider_refused": "Własny filtr treści dostawcy AI odrzucił to żądanie. Nie zablokował go MooshieUI.",

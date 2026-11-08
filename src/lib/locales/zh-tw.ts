@@ -4082,7 +4082,7 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.provider_no_vision": "設定 > 提示詞助手中的模型看不懂圖片，請在那裡選擇支援圖片的模型。",
   "prompt_assistant.describe_expired": "這張圖片已無法使用，請重新解析。",
   "prompt_assistant.error_generic": "提示詞助手錯誤，請重試。",
-  "prompt_assistant.blocked_minor_content": "未傳送。此請求涉及未成年人的色情或性暗示內容，MooshieUI 絕不會撰寫此類內容。",
+  "prompt_assistant.blocked_minor_content": "未傳送。此請求涉及未成年人的露骨色情內容，MooshieUI 絕不會撰寫此類內容。",
   "prompt_assistant.blocked_minor_terms": "未傳送：「{minor}」與「{sexual}」組合起來被視為涉及未成年人的色情內容，MooshieUI 絕不會撰寫此類內容。",
   "prompt_assistant.blocked_minor_character": "未傳送：{name} 被儲存為未成年人（「{minor}」），而此請求是露骨內容，MooshieUI 絕不會撰寫此類內容。",
   "prompt_assistant.provider_refused": "AI 服務商自身的內容過濾器拒絕了此請求，並非 MooshieUI 攔截。",
