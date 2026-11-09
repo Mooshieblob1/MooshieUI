@@ -10,6 +10,10 @@
 //! Only the venv launcher has to be assigned. It runs the real ComfyUI python
 //! inside its own kill-on-close job, so taking the launcher down takes ComfyUI
 //! with it, even if the launcher spawned that child before being assigned here.
+//!
+//! Setup's long-running children (uv downloading torch, archive extraction)
+//! join the same job, so a setup interrupted by closing MooshieUI doesn't leave
+//! a hidden uv holding the package cache lock that the next attempt waits on.
 
 use std::os::windows::io::RawHandle;
 use std::sync::OnceLock;
@@ -63,7 +67,8 @@ fn job() -> Option<usize> {
     })
 }
 
-/// Put a freshly spawned managed process in the kill-on-exit job.
+/// Put a freshly spawned managed process (ComfyUI, or a setup child) in the
+/// kill-on-exit job.
 /// Best effort: a failure is logged and the process keeps running untied.
 pub fn assign(process: RawHandle) {
     let Some(job) = job() else {
@@ -74,7 +79,7 @@ pub fn assign(process: RawHandle) {
     // for as long as the caller holds the child.
     if unsafe { AssignProcessToJobObject(job as _, process as _) } == 0 {
         log::warn!(
-            "Could not tie ComfyUI to MooshieUI's lifetime; it may outlive a crash: {}",
+            "Could not tie a child process to MooshieUI's lifetime; it may outlive a crash: {}",
             std::io::Error::last_os_error()
         );
     }

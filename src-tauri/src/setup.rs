@@ -247,14 +247,16 @@ fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Comman
     cmd // no-op on macOS
 }
 
-/// Run a command with hidden window, capturing stdout/stderr and streaming
-/// each line to the frontend via `setup:log`.
-async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, stream: R) {
+/// Stream each line of a child's output to the frontend via `setup:log`.
+/// Returns true when one of the lines was uv giving up on a cache lock, so the
+/// caller can explain what to do about it.
+async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, stream: R) -> bool {
     use tokio::io::AsyncReadExt;
     let mut reader = stream;
     let mut buf = [0u8; 1024];
     let mut line_buf = Vec::new();
     let mut last_was_cr = false;
+    let mut saw_lock_timeout = false;
 
     loop {
         match reader.read(&mut buf).await {
@@ -262,6 +264,7 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
                 if !line_buf.is_empty() {
                     let s = String::from_utf8_lossy(&line_buf);
                     let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                    saw_lock_timeout |= is_uv_lock_timeout(trimmed);
                     if !trimmed.is_empty() {
                         if last_was_cr {
                             emit_log_update(&app, trimmed);
@@ -279,6 +282,7 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
                         if !(last_was_cr && line_buf.is_empty()) {
                             let s = String::from_utf8_lossy(&line_buf);
                             let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                            saw_lock_timeout |= is_uv_lock_timeout(trimmed);
                             if last_was_cr {
                                 emit_log_update(&app, trimmed);
                             } else {
@@ -290,6 +294,7 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
                     } else if b == b'\r' {
                         let s = String::from_utf8_lossy(&line_buf);
                         let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                        saw_lock_timeout |= is_uv_lock_timeout(trimmed);
                         if !trimmed.is_empty() {
                             if last_was_cr {
                                 emit_log_update(&app, trimmed);
@@ -310,26 +315,66 @@ async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, str
             }
         }
     }
+    saw_lock_timeout
 }
 
-/// Run a command with hidden window, capturing stdout/stderr and streaming
-/// each line to the frontend via `setup:log`.
-async fn run_logged(
+/// How long setup's uv waits for a cache lock, in seconds. uv's own default
+/// is 300, which is shorter than the multi-GB CUDA torch wheel takes to
+/// download on a slow link. Whoever holds the lock meanwhile (another task in
+/// the same uv run, a setup left running by a window closed mid-install, or
+/// another app installing torch) is making progress, and uv's own HTTP timeouts
+/// catch a stalled transfer, so a long wait costs nothing and lets this run
+/// reuse the wheel once it is cached. A `UV_LOCK_TIMEOUT` the user set
+/// themselves wins.
+const UV_LOCK_TIMEOUT_SECS: &str = "14400";
+
+/// Shown under uv's own error when it gave up waiting for a cache lock.
+const UV_LOCK_TIMEOUT_HINT: &str = "uv timed out waiting for a lock on its package cache. Another \
+     process was still using it: an earlier MooshieUI setup still running in the background, or another app \
+     (ComfyUI Desktop, Stability Matrix, Pinokio, ...) installing packages at the same time. Close those, or \
+     end any leftover uv process (uv.exe in Task Manager on Windows) or restart the computer, then run setup \
+     again. If it keeps happening, set the UV_LOCK_TIMEOUT environment variable to a larger number of seconds.";
+
+/// True when `line` is uv reporting that it gave up waiting for a cache lock.
+fn is_uv_lock_timeout(line: &str) -> bool {
+    line.contains("Failed to acquire lock")
+        || (line.contains("Timeout") && line.contains("when waiting for lock"))
+}
+
+/// True when `program` is a uv executable (`uv`, `uv.exe`, or a path to one).
+fn is_uv_program(program: &std::ffi::OsStr) -> bool {
+    Path::new(program)
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("uv"))
+}
+
+/// Run a setup child with a hidden window, streaming stdout/stderr line by line
+/// to the frontend via `setup:log`.
+///
+/// The child dies with MooshieUI: `kill_on_drop` covers a normal exit, and on
+/// Windows the kill-on-exit job covers a crash or "End task". An orphaned uv
+/// keeps downloading torch invisibly and holds the cache lock on its wheel, so
+/// the next setup attempt would time out waiting for it.
+async fn run_command_logged(
     app: &AppHandle,
-    program: &str,
-    args: &[&str],
-    envs: &[(&str, &str)],
+    mut cmd: tokio::process::Command,
 ) -> Result<(), String> {
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    for (k, v) in envs {
-        cmd.env(k, v);
+    let program = cmd.as_std().get_program().to_string_lossy().to_string();
+    if is_uv_program(cmd.as_std().get_program()) && std::env::var_os("UV_LOCK_TIMEOUT").is_none() {
+        cmd.env("UV_LOCK_TIMEOUT", UV_LOCK_TIMEOUT_SECS);
     }
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     hide_window(&mut cmd);
 
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn {}: {}", program, e))?;
+    #[cfg(windows)]
+    if let Some(handle) = child.raw_handle() {
+        crate::comfyui::kill_on_exit::assign(handle);
+    }
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -337,14 +382,16 @@ async fn run_logged(
     let app_err = app.clone();
 
     let out_task = tokio::spawn(async move {
-        if let Some(out) = stdout {
-            read_stream_logged(app_out, out).await;
+        match stdout {
+            Some(out) => read_stream_logged(app_out, out).await,
+            None => false,
         }
     });
 
     let err_task = tokio::spawn(async move {
-        if let Some(err) = stderr {
-            read_stream_logged(app_err, err).await;
+        match stderr {
+            Some(err) => read_stream_logged(app_err, err).await,
+            None => false,
         }
     });
 
@@ -353,55 +400,30 @@ async fn run_logged(
         .await
         .map_err(|e| format!("{} wait failed: {}", program, e))?;
 
-    out_task.await.ok();
-    err_task.await.ok();
+    let lock_timeout = out_task.await.unwrap_or(false) | err_task.await.unwrap_or(false);
 
     if !status.success() {
+        if lock_timeout {
+            emit_log(app, UV_LOCK_TIMEOUT_HINT);
+        }
         return Err(format!("{} exited with status {}", program, status));
     }
     Ok(())
 }
 
-async fn run_command_logged(
+/// [`run_command_logged`] for a program, its arguments and extra env vars.
+async fn run_logged(
     app: &AppHandle,
-    mut cmd: tokio::process::Command,
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    hide_window(&mut cmd);
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn command: {}", e))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let app_out = app.clone();
-    let app_err = app.clone();
-
-    let out_task = tokio::spawn(async move {
-        if let Some(out) = stdout {
-            read_stream_logged(app_out, out).await;
-        }
-    });
-
-    let err_task = tokio::spawn(async move {
-        if let Some(err) = stderr {
-            read_stream_logged(app_err, err).await;
-        }
-    });
-
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("Command wait failed: {}", e))?;
-
-    out_task.await.ok();
-    err_task.await.ok();
-
-    if !status.success() {
-        return Err(format!("Command exited with status {}", status));
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args);
+    for (k, v) in envs {
+        cmd.env(k, v);
     }
-    Ok(())
+    run_command_logged(app, cmd).await
 }
 
 /// Longest wait for response headers, and for each body chunk, before a
@@ -3088,11 +3110,40 @@ pub async fn update_comfyui(
 mod tests {
     use super::{
         amd_windows_rocm_model_supported, check_resume, content_range_start, device_vram_bytes,
-        find_file_named, parse_uv_version, parse_vram_from_drm_root, place_uv_binaries,
-        remove_dir_contents_except, uv_asset_name, uv_download, venv_certifi_version,
-        venv_python_version, ResumeCheck, CERTIFI_MIN, CERTIFI_REQUIREMENT, UV_ASSETS, UV_VERSION,
+        find_file_named, is_uv_lock_timeout, is_uv_program, parse_uv_version,
+        parse_vram_from_drm_root, place_uv_binaries, remove_dir_contents_except, uv_asset_name,
+        uv_download, venv_certifi_version, venv_python_version, ResumeCheck, CERTIFI_MIN,
+        CERTIFI_REQUIREMENT, UV_ASSETS, UV_VERSION,
     };
     use std::fs;
+
+    #[test]
+    fn uv_lock_timeouts_are_recognised() {
+        // uv 0.13's own wording, as a Windows user hit it installing CUDA torch.
+        assert!(is_uv_lock_timeout(
+            "error: Failed to acquire lock on the client cache"
+        ));
+        assert!(is_uv_lock_timeout(
+            "  Caused by: Timeout (300s) when waiting for lock on `C:\\Users\\u\\AppData\\Local\\uv\\cache\\wheels-v7\\index\\09e0bc338403d139\\torch\\2.14.1+cu130-cp311-cp311-win_amd64.lock` at `C:\\Users\\u\\AppData\\Local\\uv\\cache\\wheels-v7\\index\\09e0bc338403d139\\torch\\2.14.1+cu130-cp311-cp311-win_amd64.lock`, is another uv process running? You can set `UV_LOCK_TIMEOUT` to increase the timeout."
+        ));
+        assert!(!is_uv_lock_timeout("Resolved 42 packages in 1.2s"));
+        assert!(!is_uv_lock_timeout(
+            "error: Request failed after 3 retries: Timeout"
+        ));
+    }
+
+    #[test]
+    fn only_uv_gets_the_uv_lock_timeout() {
+        assert!(is_uv_program("uv".as_ref()));
+        assert!(is_uv_program("uv.exe".as_ref()));
+        assert!(is_uv_program("C:/MooshieUI/bin/UV.EXE".as_ref()));
+        assert!(is_uv_program(
+            "/home/u/.local/share/mooshieui/bin/uv".as_ref()
+        ));
+        assert!(!is_uv_program("powershell".as_ref()));
+        assert!(!is_uv_program("unzip".as_ref()));
+        assert!(!is_uv_program("/opt/uvx".as_ref()));
+    }
 
     #[test]
     fn moving_an_install_keeps_the_in_place_gallery_and_pointer() {
