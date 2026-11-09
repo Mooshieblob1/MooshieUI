@@ -47,6 +47,36 @@ export interface NaiParsedResponse {
   memory: string[];
 }
 
+/**
+ * Write prompt fields back out in the labelled shape a rewrite answers in.
+ *
+ * The session records this instead of the model's raw answer, so that a later
+ * turn revises the prompt the user actually applied: the raw text still holds
+ * whatever the cleanup after parsing took out, and its MEMORY, CANON and NOTE
+ * lines are one-off remarks that should not be replayed as history. Empty
+ * boxes are left out, which is how the format says a character is absent.
+ */
+export function serializeNaiFields(fields: {
+  base: string;
+  uc: string;
+  characters: readonly string[];
+  characterUcs?: readonly (string | null | undefined)[];
+}): string {
+  const base = fields.base.trim();
+  if (!base) return "";
+  const parts = [`BASE:\n${base}`, `UC:\n${fields.uc.trim()}`.trimEnd()];
+  let n = 0;
+  fields.characters.forEach((box, i) => {
+    const text = box.trim();
+    if (!text) return;
+    n += 1;
+    parts.push(`CHAR ${n}:\n${text}`);
+    const uc = fields.characterUcs?.[i]?.trim();
+    if (uc) parts.push(`CHAR ${n} UC:\n${uc}`);
+  });
+  return parts.join("\n\n");
+}
+
 /** Em dash and en dash. NovelAI treats both as prompt poison. */
 const LONG_DASHES = /[–—]/;
 

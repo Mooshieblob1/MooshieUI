@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeNaiResponse, parseNaiResponse, validateNaiResponse } from "../../src/lib/utils/naiParse.ts";
+import { normalizeNaiResponse, parseNaiResponse, serializeNaiFields, validateNaiResponse } from "../../src/lib/utils/naiParse.ts";
 import { naiRewriteSystemPrompt } from "../../src/lib/utils/naiPrompt.ts";
 import { layoutObject, layoutProseProblems, tidyNaiLayout } from "../../src/lib/utils/naiLayout.ts";
 
@@ -117,4 +117,34 @@ test("the spec carries the layout rules", () => {
   assert.match(spec, /LAYOUT AND OCCLUSION/);
   assert.match(spec, /A CHAR block never names a scene object/);
   assert.match(spec, /Moving something is not retiring it/);
+});
+
+test("serialised fields read back as the same prompt, without the one-off lines", () => {
+  const fields = {
+    base: "2girls, cafe, table in foreground\n\nTwo friends share a table by the window.",
+    uc: "crowd",
+    characters: ["girl, red hair, blue dress", "", "girl, black hair, white shirt"],
+    characterUcs: ["white shirt", null, null],
+  };
+  const text = serializeNaiFields(fields);
+  assert.equal(
+    text,
+    "BASE:\n2girls, cafe, table in foreground\n\nTwo friends share a table by the window.\n\nUC:\ncrowd\n\nCHAR 1:\ngirl, red hair, blue dress\n\nCHAR 1 UC:\nwhite shirt\n\nCHAR 2:\ngirl, black hair, white shirt",
+  );
+  const back = parseNaiResponse(text);
+  assert.equal(back.base, fields.base);
+  assert.equal(back.uc, "crowd");
+  assert.deepEqual(back.characters, ["girl, red hair, blue dress", "girl, black hair, white shirt"]);
+  assert.deepEqual(back.characterUcs, ["white shirt", null]);
+  assert.deepEqual(back.memory, []);
+  assert.equal(back.note, "");
+});
+
+test("serialising needs a base and tolerates an empty UC", () => {
+  assert.equal(serializeNaiFields({ base: "  ", uc: "x", characters: ["girl"] }), "");
+  const text = serializeNaiFields({ base: "1girl, beach", uc: "", characters: [] });
+  assert.equal(text, "BASE:\n1girl, beach\n\nUC:");
+  const back = parseNaiResponse(text);
+  assert.equal(back.base, "1girl, beach");
+  assert.equal(back.uc, "");
 });
