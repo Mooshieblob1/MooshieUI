@@ -1,3 +1,20 @@
+## What's New in v2.3.41
+
+### NovelAI Enhance
+- **Outfits stay in their own character boxes**: with two or more characters, an Enhance for V5 rewrite keeps every garment in one character box and leaves the base prompt to the scene, framing and a short placing sentence per character. It retries once if the base tag line repeats a box's clothing or hair. Each box also gets the other characters' distinctive garments added to its own undesired content (skipping anything that character wears), shown before and after in the review.
+- **Placement and interactions**: rewrites name each character's side in both the base and the box, and add interaction tags (`source#`, `target#`, `mutual#`) when the prompt describes a hug, headpat or other interaction. Edit and session modes keep existing box outfits word for word unless you ask to change them.
+- **Possible overlap chips**: the V5 review flags a clothing or hair tag the base shares with a box, or a garment two boxes share. Click a chip to keep the tag in that box only and add it to the other boxes' undesired content.
+- **Isolate outfits**: a button in the review toolbar, the Enhance input stage and the Characters panel header (V5 models with two or more filled boxes). It cleans outfit and hair tags out of the base, adds each character's side from the position grid and fills the opposite-outfit undesired content, with no LLM call. Nothing changes until you Apply.
+- **Similar bodies tip**: when two characters share a hair colour or body tags but wear different clothes, the review recommends opposite-outfit undesired content, with an Add button.
+
+### Prompt assistant
+- **Memory notes and ages**: memory writers now state a character's age as what it is ("an adult", "24 years old") instead of what it is not, so notes stop tripping the minors check. Notes already worded like "not a child or a teenager" or "no longer a child" no longer count as a minor.
+
+### Fixes and maintenance
+- **Setup torch install**: setup no longer fails with "Failed to acquire lock on the client cache" after 5 minutes while the CUDA torch wheel downloads over a slow connection. Setup's downloads also stop when MooshieUI closes, so a hidden download can't hold the lock for the next attempt, and a lock timeout in the setup log explains what to do.
+
+---
+
 ## What's New in v2.3.40
 
 ### Prompt assistant
