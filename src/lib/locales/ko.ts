@@ -4015,6 +4015,8 @@ const ko: Record<string, string> = {
   "prompt_assistant.nai_keep_artists_tooltip": "현재 프롬프트의 아티스트 태그를 가중치까지 그대로 재작성 결과에 유지합니다.",
   "prompt_assistant.nai_minor_rule": "미성년자 규칙",
   "prompt_assistant.nai_minor_rule_tooltip": "프롬프트에 아이나 학생 나이의 캐릭터가 나오면 성적으로 묘사하지 않도록 모델에 지시합니다. 이 규칙이 들어간 프롬프트를 거부하는 제공자도 있습니다. 미성년자와 성적인 내용의 조합은 항상 거부됩니다.",
+  "prompt_assistant.nai_use_memory": "메모리 노트 사용",
+  "prompt_assistant.nai_use_memory_tooltip": "저장된 캐릭터의 메모리 노트를 이번 재작성에 함께 보냅니다. 구도가 계속 실패할 때 끄면 입력한 텍스트와 저장된 외형만으로 재작성합니다. 다음에 Enhance를 열면 다시 켜집니다.",
   "prompt_assistant.nai_run": "향상",
   "prompt_assistant.nai_working": "다시 쓰는 중...",
   "prompt_assistant.enhance_nai": "V5용으로 향상",

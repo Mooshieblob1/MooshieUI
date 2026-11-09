@@ -4041,6 +4041,8 @@ const fr: Record<string, string> = {
   "prompt_assistant.nai_keep_artists_tooltip": "Conserve dans la réécriture les tags d'artiste de ton prompt actuel, pondérations comprises.",
   "prompt_assistant.nai_minor_rule": "Règle mineurs",
   "prompt_assistant.nai_minor_rule_tooltip": "Quand un prompt mentionne un enfant ou un personnage d'âge scolaire, demande au modèle de ne pas le sexualiser. Certains fournisseurs refusent les prompts qui contiennent cette règle. Un mineur associé à du contenu sexuel est toujours refusé.",
+  "prompt_assistant.nai_use_memory": "Utiliser les notes de mémoire",
+  "prompt_assistant.nai_use_memory_tooltip": "Envoie les notes de mémoire des personnages enregistrés avec cette réécriture. Décoche-la quand une composition échoue sans cesse et que tu veux que la réécriture parte seulement de ton texte et des apparences enregistrées. Réactivée à la prochaine ouverture d'Enhance.",
   "prompt_assistant.nai_run": "Améliorer",
   "prompt_assistant.nai_working": "Réécriture en cours...",
   "prompt_assistant.enhance_nai": "Améliorer pour V5",

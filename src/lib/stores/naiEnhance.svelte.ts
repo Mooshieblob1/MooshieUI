@@ -1,4 +1,5 @@
 import { generation } from "./generation.svelte.js";
+import { enhancerSessions } from "./enhancerSessions.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
 import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
@@ -110,6 +111,14 @@ export interface NaiEnhancePending {
   base: NaiEnhanceRow;
   uc: NaiEnhanceRow;
   characters: NaiEnhanceCharacterRow[];
+  /**
+   * The exchange this rewrite adds to the Enhance session, recorded only when
+   * the user applies it. A rewrite they close without applying never becomes
+   * history, so wording that failed them is not carried into the next turn.
+   * Absent for an answer that failed validation and for review screens that
+   * did not come from a rewrite.
+   */
+  sessionTurn?: { user: string; assistant: string };
 }
 
 /** Rows whose text the outfit tools read and write: every box not being removed. */
@@ -234,6 +243,12 @@ class NaiEnhanceStore {
    * once the rewrite has listed differences.
    */
   canonPriority = $state<NaiCanonPriority>("saved");
+  /**
+   * Whether saved characters' memory notes go out with the rewrite. On every
+   * opening; unticked, one rewrite works from the text and saved looks alone,
+   * the clean start for a composition that keeps failing.
+   */
+  useMemory = $state(true);
 
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
@@ -360,6 +375,7 @@ class NaiEnhanceStore {
     this.references = [];
     this.curate = false;
     this.canonPriority = "saved";
+    this.useMemory = true;
   }
 
   /** Paste the prompt box into the input, for the "tidy up what I have" case. */
@@ -555,6 +571,7 @@ class NaiEnhanceStore {
     if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
 
+    if (p.sessionTurn) enhancerSessions.record("nai", p.sessionTurn.user, p.sessionTurn.assistant);
     this.finishApply("nai");
   }
 

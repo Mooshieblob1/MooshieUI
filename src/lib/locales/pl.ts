@@ -4064,6 +4064,8 @@ const pl: Record<string, string> = {
   "prompt_assistant.nai_keep_artists_tooltip": "Zachowuje w przepisanym prompcie tagi artystów z obecnego promptu, razem z wagami.",
   "prompt_assistant.nai_minor_rule": "Zasada dla nieletnich",
   "prompt_assistant.nai_minor_rule_tooltip": "Gdy prompt wspomina dziecko lub postać w wieku szkolnym, każe modelowi nie przedstawiać jej seksualnie. Niektórzy dostawcy odrzucają prompty z tą zasadą. Nieletni w połączeniu z treściami seksualnymi są zawsze odrzucani.",
+  "prompt_assistant.nai_use_memory": "Użyj notatek pamięci",
+  "prompt_assistant.nai_use_memory_tooltip": "Wysyła notatki pamięci zapisanych postaci razem z tym przepisaniem. Odznacz, gdy kompozycja ciągle się nie udaje i chcesz, by przepisanie opierało się tylko na twoim tekście i zapisanym wyglądzie. Przy następnym otwarciu Enhance znów włączone.",
   "prompt_assistant.nai_run": "Ulepsz",
   "prompt_assistant.nai_working": "Przepisywanie...",
   "prompt_assistant.enhance_nai": "Ulepsz dla V5",
