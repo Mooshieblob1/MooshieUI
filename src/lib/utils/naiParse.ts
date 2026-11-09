@@ -13,6 +13,7 @@
 
 import { NAI_PRESET_UC_JUNK, NAI_QUALITY_FILLER } from "./naiPrompt.js";
 import { fieldTags, isProseLine, tagKind } from "./naiOutfits.js";
+import { layoutProseProblems, tidyNaiLayout } from "./naiLayout.js";
 
 /** What one full rewrite turn (attempt plus optional retry) produced. */
 export interface NaiRewriteResult {
@@ -438,15 +439,24 @@ function normalizeField(text: string, extraTags: readonly string[] = []): string
   );
 }
 
-/** Run the normalizer over every field of a parsed response. */
+/**
+ * Run the normalizer over every field of a parsed response, then the layout
+ * cleanup across fields (`tidyNaiLayout`): object-relative tags out of the
+ * boxes, assertions such as `opaque` out of every field, and no UC that
+ * negates an object the scene contains.
+ */
 export function normalizeNaiResponse(parsed: NaiParsedResponse): NaiParsedResponse {
-  return {
+  const layout = tidyNaiLayout({
     base: normalizeField(parsed.base),
     uc: normalizeField(parsed.uc, NAI_PRESET_UC_JUNK),
-    characters: parsed.characters.map((box) => normalizeField(normalizeCharIdentity(box))),
-    characterUcs: parsed.characterUcs.map((uc) =>
-      uc === null ? null : normalizeField(uc, NAI_PRESET_UC_JUNK),
-    ),
+    boxes: parsed.characters.map((box) => normalizeField(normalizeCharIdentity(box))),
+    ucs: parsed.characterUcs.map((uc) => (uc === null ? null : normalizeField(uc, NAI_PRESET_UC_JUNK))),
+  });
+  return {
+    base: layout.base,
+    uc: layout.uc,
+    characters: layout.boxes,
+    characterUcs: layout.ucs,
     note: parsed.note.trim(),
     canon: parsed.canon,
     memory: parsed.memory,
@@ -539,6 +549,13 @@ export function validateNaiResponse(parsed: NaiParsedResponse): string[] {
   }
 
   problems.push(...outfitIsolationProblems(parsed));
+
+  const negations = layoutProseProblems(parsed.base);
+  if (negations.length > 0) {
+    problems.push(
+      `BASE prose says what the layout is not (${negations.map((n) => `"${n}"`).join(", ")}). Naming a failure such as transparency or sitting on the table invites it. Delete that wording and state only the layout you want, in one short present-tense sentence.`,
+    );
+  }
 
   if (!balanced(parsed.base, "{", "}") || !balanced(parsed.base, "[", "]")) {
     problems.push("BASE had unbalanced { } or [ ] emphasis brackets. Close every one you open.");

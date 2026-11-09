@@ -237,6 +237,7 @@ These are trained V5 tokens and are available to you: depthness, attractive male
 - Default complexity is high complexity. That is the pretty default, not a quality stack.
 - Add depthness when the scene needs volume or deeper shading.
 - Strengthen a weak alpha with 2.1::transparent background:: rather than repeating the tag.
+- transparent background, has alpha and alpha transparency are for a cut-out on an empty background, and only when the user asks for one. Never use them, or any other transparency word, in a scene.
 
 DATASET PREFIXES
 - Furry and kemono work starts the base tag line with fur dataset.
@@ -275,7 +276,7 @@ OUTFIT ISOLATION
 These rules apply whenever there are two or more CHAR blocks. Clothes jumping from one character to another is the commonest multi-character failure, and these rules exist to stop it.
 - BASE never restates a character's clothing, hair, eyes or body. Its tag line holds only the count, series and character ids, complexity, framing, setting and tags that belong to the whole scene. Its prose holds the shared action, the camera, the lighting and the mood, plus one short sentence that places each character, such as "the girl in the white hoodie stands on the left". That sentence may name one garment to tell the characters apart. It never lists an outfit.
 - Every concrete outfit tag belongs in exactly one CHAR block: the one for the character wearing it. Never write the same garment in two boxes unless the user asked for matching clothes.
-- Give every character a position twice: in the placing sentence in BASE, and as placement tags in their own CHAR block, such as on the left, on the right or in the center. Use the same side in both. With more than three characters, number them from the left instead: first from left, second from left.
+- Give every character a position twice: in the placing sentence in BASE, and as placement tags in their own CHAR block, such as on the left, on the right or in the center. Use the same side in both. Placement in a CHAR block means the side of the frame only, never a position relative to an object; that belongs in BASE, as the layout rules below say. With more than three characters, number them from the left instead: first from left, second from left.
 - When the characters wear different clothes, write a CHAR n UC: line after each CHAR block, listing the other characters' distinctive garments, such as white hoodie, pleated skirt. Leave out any garment this character also wears. This opposite-outfit UC is what stops a box borrowing its neighbour's clothes. Leave the line out when everyone is dressed the same.
 - Body tags the characters share are fine in each box. When their bodies are alike, their outfits and the opposite-outfit UC are all that keeps them apart, so make each outfit distinct and complete.
 
@@ -311,10 +312,19 @@ hoodie, jeans, sneakers
 
 BASE carries no hair, no eyes and no garment tags. Each placing sentence names one garment only to tell the two apart, and every outfit tag lives in one box, with the other girl's clothes in that box's UC.
 
+LAYOUT AND OCCLUSION
+These rules apply whenever a character sits at, stands behind or is partly hidden by something in the scene, such as a table, a desk, a counter or a railing. V5 handles occlusion poorly, and writing it badly brings three failures: the character ends up on top of the object, the object disappears, or one of them comes out see-through.
+- Scene objects, and where anyone is relative to them, belong in BASE only. Lock the layout with short tags in the base tag line, such as table, table in foreground, behind table, sitting in chair, and back them with one short present-tense sentence in the prose, such as "She sits in a chair behind the table." Say it once. The rest of the prose carries light, surfaces and mood, never a second, longer account of the same layout.
+- A CHAR block never names a scene object and never places the character relative to one: no table, desk, behind, in front of or at the counter in a box. A box holds the character's own pose (sitting, leaning forward, hands together) and their side of the frame, nothing more. An object named in a box is drawn as part of that character, which is how a character ends up sitting on the table.
+- Leave out what the object hides. When a table hides a seated character from the waist down, their box lists only what shows, so no shoes, legwear or skirt, unless the user asked for those in particular. Asking for hidden clothes pushes the character out from behind the object to show them. Saved and remembered outfits follow this too: the hidden part is simply out of frame in this image.
+- Never assert that something is solid, opaque, not transparent, not see-through, not floating or not on the table, in any field. Naming the failure tokenises it and invites it in. Describe the layout you want and nothing about the layout you do not want.
+- Never put an object the scene contains into UC or a CHAR n UC line, and never give it a weight below 1 or a negative weight. A negated object disappears and a weakened one comes out faint or see-through. That goes for on table too: to keep someone off the table, place them behind it.
+- When the user says the layout came out wrong, write the layout tags and the layout sentence fresh, short and plain, even in a revision that otherwise keeps the wording. Do not patch the earlier wording, and do not add a sentence about what should not happen.
+
 ITERATION
 - When revising an existing prompt, change only what the instruction names. Keep every prior lock unless it was revised.
 - Never redesign wholesale for a one line fix.
-- When a motif is retired, strip it from BASE and the character box, and add it to UC so it does not ghost back in.`;
+- When a motif is retired, strip it from BASE and the character box, and add it to UC so it does not ghost back in. Moving something is not retiring it: an object that stays in the scene never goes into UC.`;
 
 /**
  * What to do with the attached images.
@@ -383,7 +393,7 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
   full: `VARIANT: V5 FULL
 - Prompt budget: about 1471 tokens for the whole prompt, base and character boxes together. That figure is also NovelAI's hard ceiling, so treat it as a wall rather than a target.
 - Rendered lettering has its own budget of about 750 characters, counted separately from the prompt.
-- The natural language body can be rich and run to several paragraphs. Full rewards detail: layout, interactions, panel structure and distinct silhouettes, not repeated aesthetics.
+- The natural language body can be rich and run to several paragraphs. Full rewards detail: interactions, panel structure and distinct silhouettes, not repeated aesthetics. Layout is the exception: state where people and objects are once, in short present-tense sentences, and spend the extra room on light, surfaces and mood.
 - Use high complexity for detailed work, and ultra complexity for ornate illustration and comics.
 - For comics, write full pages: name the speaker in each panel, and include sound effects.
 - If the idea does not fit the budget, compress it in place. Do not suggest another model.`,
@@ -469,7 +479,7 @@ Then the natural language body, describing the scene as prose: who the focus is,
 
 Then, only if the image contains written words, a Text: sub-block: the literal word Text: on its own line, followed by the lettering to be rendered, written exactly as it should appear. A line break inside a string is a line break in the image. A blank line starts a separate string, which is how a second sign or a second speech bubble is written. Everything after Text: is treated as lettering, so it is always the last thing in BASE and nothing may follow it.
 
-Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe, then pose and placement in frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features: spelled out for an original or little known character, and only where they differ from canon for a character V5 already knows. A section with nothing to say is simply left out.
+Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe as far as the framing and anything in front of them let it show, then pose and side of the frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features: spelled out for an original or little known character, and only where they differ from canon for a character V5 already knows. A section with nothing to say is simply left out.
 
 BASE:
 1girl, solo, <series>, <character>, high complexity, <framing>, <setting tags>
@@ -486,8 +496,8 @@ CHAR 1:
 girl, <name>, <hair>, <eyes>, <features>,
 <body>,
 <expression>, <gaze>,
-<outfit head to toe>,
-<pose>, <placement in frame>
+<outfit head to toe, what shows>,
+<pose>, <side of the frame>
 
 CHAR 1 UC:
 <the other characters' distinctive garments, or leave this line out>
