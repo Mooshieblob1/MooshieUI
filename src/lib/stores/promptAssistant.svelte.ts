@@ -849,7 +849,21 @@ class PromptAssistantStore {
 
   /** Context the history has to share: the local model's `-c`, or the API allowance. */
   private get historyContextTokens(): number {
-    return this.provider?.enabled ? REMOTE_CONTEXT_TOKENS : LOCAL_CONTEXT_TOKENS;
+    if (!this.usesExternal) return LOCAL_CONTEXT_TOKENS;
+    // With "fall back to a local model" on, the same request can land on the
+    // bundled server when the provider is down, so it has to fit there too.
+    return this.provider?.fallback_local && this.hasInstalledModel
+      ? LOCAL_CONTEXT_TOKENS
+      : REMOTE_CONTEXT_TOKENS;
+  }
+
+  /**
+   * Whether requests go to an external provider. A plain user of a shared
+   * server cannot read the provider settings, so `provider` stays null for
+   * them; the status, which everyone can read, answers then.
+   */
+  private get usesExternal(): boolean {
+    return this.provider ? this.provider.enabled : !!this.status?.external_enabled;
   }
 
   /** The flow's saved session, trimmed to fit, with the drop count published for the UI. */
@@ -870,6 +884,8 @@ class PromptAssistantStore {
   private get llmBackendId(): string {
     const p = this.provider;
     if (p?.enabled) return `${p.provider}/${p.model || "default"}`;
+    // Provider settings unreadable (see `usesExternal`): still not the local model.
+    if (this.usesExternal) return "external/default";
     return `local/${this.status?.active_model ?? this.status?.installed_models[0] ?? "default"}`;
   }
 
@@ -959,7 +975,7 @@ class PromptAssistantStore {
     // Only an external provider sees images, so the bundled model is not told
     // about any. The cap mirrors `MAX_VISION_IMAGES` in Rust: the first frame
     // takes a slot first, so the manifest names only images that arrive.
-    const refs = this.provider?.enabled
+    const refs = this.usesExternal
       ? (extra.references ?? []).slice(0, image ? 3 : 4)
       : [];
     const text = prompt.trim();
@@ -1171,15 +1187,22 @@ class PromptAssistantStore {
           return { parsed: first, problems: [], raw: firstRaw, sessionUser };
         }
 
+        // The first answer goes back as a turn of its own, so the correction
+        // is an edit of that text and not a second attempt from nothing, which
+        // tends to fix the named problem and break something that was fine.
         const secondRaw = await callExternalLlm(
           system,
-          `${user}
-
-${naiRetryInstruction(problems)}`,
+          naiRetryInstruction(problems),
           NAI_MAX_TOKENS,
           null,
           referenceData,
-          history.messages,
+          [
+            // The local context has no room for the session and the first
+            // answer both, and the first answer already reflects the session.
+            ...(this.historyContextTokens === LOCAL_CONTEXT_TOKENS ? [] : history.messages),
+            { role: "user", content: user },
+            { role: "assistant", content: firstRaw },
+          ],
           signal,
         );
         const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
@@ -1187,9 +1210,9 @@ ${naiRetryInstruction(problems)}`,
         if (recheck.length === 0) {
           return { parsed: second, problems: [], raw: secondRaw, sessionUser };
         }
-        // Prefer whichever attempt produced a base prompt; the second can come
-        // back empty when the model gives up on the correction.
-        return second.base.trim()
+        // Neither passed: keep the one with fewer problems, the correction on a
+        // tie. The second can also come back empty when the model gives up.
+        return second.base.trim() && recheck.length <= problems.length
           ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser }
           : { parsed: first, problems, raw: firstRaw, sessionUser };
       });

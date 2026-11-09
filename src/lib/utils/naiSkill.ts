@@ -1,4 +1,5 @@
 import type { NaiPromptContext } from "./naiPrompt.js";
+import { cachedSkillValue, readCachedSkill } from "./skillCache.js";
 
 /**
  * Model-authored operating notes for the NovelAI V5 rewrite.
@@ -23,7 +24,7 @@ import type { NaiPromptContext } from "./naiPrompt.js";
  * Bump to invalidate every cached skill at once, after changing the authoring
  * prompt or the V5 specification it is written against.
  */
-const SKILL_VERSION = 8;
+const SKILL_VERSION = 9;
 
 const CACHE_PREFIX = "mooshieui.naiskill.";
 
@@ -35,7 +36,12 @@ const MAX_SKILL_CHARS = 4000;
  * Letting those through would put a stray second field label, or a stray weight
  * span, into the system turn of every rewrite.
  */
-const OUTPUT_FIELD_TELLS = ["base:", "uc:", "char 1:", "char 2:", "1girl", "1boy"];
+const OUTPUT_FIELD_TELLS = [
+  // A field label opening a line, with or without a bullet in front. Matched
+  // there and not anywhere in the text: "database:" and "produce:" are words.
+  /^\s*(?:[-*]\s*)?(?:\*\*)?(?:base|uc|char(?:acter)?\s*\d+(?:\s*uc)?)(?:\*\*)?\s*:/im,
+  /\b1(?:girl|boy)\b/i,
+];
 
 /**
  * Cache key for one backend and one variant.
@@ -55,18 +61,19 @@ export function naiSkillKey(backend: string, variant: string): string {
  * Cached notes, `""` if this backend already tried and produced nothing usable,
  * or `null` if it has never been asked.
  */
-export function loadNaiSkill(key: string): string | null {
+export function loadNaiSkill(key: string, now = Date.now()): string | null {
   try {
-    return localStorage.getItem(key);
+    return readCachedSkill(localStorage.getItem(key), now);
   } catch {
     return null;
   }
 }
 
+
 /** Persist notes, or `""` to record that this backend was asked and came back empty. */
-export function saveNaiSkill(key: string, skill: string): void {
+export function saveNaiSkill(key: string, skill: string, now = Date.now()): void {
   try {
-    localStorage.setItem(key, skill);
+    localStorage.setItem(key, cachedSkillValue(skill, now));
   } catch (e) {
     console.warn("[naiSkill] could not cache the authored skill", e);
   }
@@ -111,7 +118,7 @@ export function naiSkillAuthoringUser(ctx: NaiPromptContext): string {
 
 The output is ${shape}, returned as labelled fields: a base prompt that is hybrid (Danbooru tags plus a natural language scene body), an optional custom-motif undesired content list, and one optional box per distinct character. Quality stacks and preset UC junk are forbidden. It uses NovelAI's own emphasis syntax, where markers must be opened and closed in pairs. Prose commentary, markdown, settings tables and explanation are all failures.
 
-The input is either an idea to build a prompt from, or the user's existing prompt together with an instruction for revising it. Reference images are sometimes attached as wording aids. There is no conversation history. In the revision case every field has to come back in full, including the ones the instruction never mentions. With two or more characters, the hard part is keeping each outfit in its own box: clothes restated in the base prompt or repeated in a second box get swapped between characters, so each box also carries the other characters' garments as its own undesired content. When someone sits behind a table or is partly hidden by an object, the object and the layout stay in the base prompt as short tags plus one plain sentence, the boxes never mention it, and nothing says what the layout is not.
+The input is either an idea to build a prompt from, or the user's existing prompt together with an instruction for revising it. Reference images are sometimes attached as wording aids. Earlier requests in the same session, with your answers to them, may come first; the newest message is then a revision of your newest answer, and details it does not change are kept. In the revision case every field has to come back in full, including the ones the instruction never mentions. With two or more characters, the hard part is keeping each outfit in its own box: clothes restated in the base prompt or repeated in a second box get swapped between characters, so each box also carries the other characters' garments as its own undesired content. When someone sits behind a table or is partly hidden by an object, the object and the layout stay in the base prompt as short tags plus one plain sentence, the boxes never mention it, and nothing says what the layout is not.
 
 Write your notes now.`;
 }
@@ -132,8 +139,7 @@ export function sanitizeNaiSkill(raw: string): string {
   if (fenced) text = fenced[1].trim();
   if (text.includes("```")) return "";
 
-  const lower = text.toLowerCase();
-  if (OUTPUT_FIELD_TELLS.some((tell) => lower.includes(tell))) return "";
+  if (OUTPUT_FIELD_TELLS.some((tell) => tell.test(text))) return "";
   if (!/^\s*[-*]\s+\S/m.test(text)) return "";
 
   if (text.length > MAX_SKILL_CHARS) {

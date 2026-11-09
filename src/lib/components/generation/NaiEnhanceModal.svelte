@@ -716,7 +716,9 @@
     data-modal-open
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-8"
     onclick={(e) => {
-      if (e.currentTarget === e.target) close();
+      // A finished rewrite cost a request, so a stray click beside the review
+      // does not throw it away. Cancel and Escape still close it.
+      if (e.currentTarget === e.target && naiEnhance.stage !== "review") close();
     }}
     role="presentation"
   >
@@ -1049,7 +1051,9 @@
             />
             {locale.t("prompt_assistant.nai_minor_rule")}
           </label>
-          {#if promptAssistant.canUseMemory}
+          {/if}
+          <!-- General Enhance sends memory notes too, so it gets the same switch. -->
+          {#if !isH3 && promptAssistant.canUseMemory}
             <label
               class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
               title={locale.t("prompt_assistant.nai_use_memory_tooltip")}
@@ -1062,7 +1066,6 @@
               />
               {locale.t("prompt_assistant.nai_use_memory")}
             </label>
-          {/if}
           {/if}
         </div>
 
