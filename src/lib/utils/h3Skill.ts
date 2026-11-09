@@ -1,4 +1,5 @@
 import type { H3PromptContext } from "./h3Prompt.js";
+import { cachedSkillValue, readCachedSkill } from "./skillCache.js";
 import { h3FormatOf } from "./h3Prompt.js";
 
 /**
@@ -76,18 +77,19 @@ export function h3SkillKey(
  * The empty string is a real answer, not a miss: without it, a model that cannot
  * write usable notes would be asked again before every single rewrite.
  */
-export function loadH3Skill(key: string): string | null {
+export function loadH3Skill(key: string, now = Date.now()): string | null {
   try {
-    return localStorage.getItem(key);
+    return readCachedSkill(localStorage.getItem(key), now);
   } catch {
     return null;
   }
 }
 
+
 /** Persist notes, or `""` to record that this backend was asked and came back empty. */
-export function saveH3Skill(key: string, skill: string): void {
+export function saveH3Skill(key: string, skill: string, now = Date.now()): void {
   try {
-    localStorage.setItem(key, skill);
+    localStorage.setItem(key, cachedSkillValue(skill, now));
   } catch (e) {
     console.warn("[h3Skill] could not cache the authored skill", e);
   }

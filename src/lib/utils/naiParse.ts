@@ -678,5 +678,5 @@ export function naiRetryInstruction(problems: string[]): string {
 
 ${problems.map((p) => `- ${p}`).join("\n")}
 
-Rewrite the prompt again, fixing every one of them. Answer with the labelled fields only.`;
+Correct that answer: fix every one of these and change nothing else. Return the whole prompt again, every field, with the labelled fields only.`;
 }

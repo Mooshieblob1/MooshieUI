@@ -492,7 +492,7 @@ impl LlamaServer {
             "max_tokens": max_tokens,
             "stream": false
         });
-        let resp = match client
+        let mut resp = match client
             .post(&url)
             .bearer_auth(&api_key)
             .json(&body)
@@ -524,9 +524,18 @@ impl LlamaServer {
             }
         };
         if !resp.status().is_success() {
-            return Err(AppError::LlmError(format!(
-                "llama-server returned {}",
-                resp.status()
+            // Our own child on loopback, so its body is always safe to quote,
+            // and it is the only place the reason is given: "the request
+            // exceeds the available context size" reads very differently
+            // from a bare 400.
+            let status = resp.status();
+            let body = read_limited(&mut resp, ERROR_BODY_LIMIT)
+                .await
+                .map(|(bytes, _)| bytes)
+                .unwrap_or_default();
+            return Err(AppError::LlmError(local_status_error(
+                status.as_u16(),
+                &String::from_utf8_lossy(&body),
             )));
         }
         let v = bounded_json(resp, RESPONSE_LIMIT, "llama-server response").await?;
@@ -616,6 +625,14 @@ fn chat_timeout(has_images: bool, reasons: bool) -> Duration {
     } else {
         Duration::from_secs(120)
     }
+}
+
+/// The message for a non-success answer from the bundled llama-server.
+fn local_status_error(status: u16, body: &str) -> String {
+    format!(
+        "llama-server returned {status}{}",
+        crate::http_error::detail_suffix(status, body)
+    )
 }
 
 /// The whole cause chain of an error, outermost first.
@@ -818,6 +835,14 @@ pub async fn tuning_for(
                 }
             }
             _ => Tuning::default(),
+        },
+        // The user's own endpoint is usually a local server (Ollama, LM
+        // Studio, llama.cpp), where a large or reasoning model on modest
+        // hardware needs well over two minutes for a long rewrite. Only the
+        // timeout changes: the request body stays exactly as it was.
+        "custom" => Tuning {
+            reasons: true,
+            ..Tuning::default()
         },
         _ => Tuning::default(),
     }
@@ -1630,6 +1655,20 @@ mod tests {
     }
 
     #[test]
+    fn a_local_error_quotes_the_servers_reason() {
+        let err = super::local_status_error(
+            400,
+            r#"{"error":{"message":"the request exceeds the available context size"}}"#,
+        );
+        assert!(err.starts_with("llama-server returned 400"), "{err}");
+        assert!(err.contains("exceeds the available context size"), "{err}");
+        assert_eq!(
+            super::local_status_error(500, ""),
+            "llama-server returned 500"
+        );
+    }
+
+    #[test]
     fn vision_requests_get_a_longer_budget() {
         assert!(chat_timeout(true, false) > chat_timeout(false, false));
         assert_eq!(chat_timeout(false, false), Duration::from_secs(120));
@@ -2021,10 +2060,19 @@ mod reasoning_body_tests {
 
     #[test]
     fn custom_servers_are_untouched() {
+        // The long timeout, and nothing in the request itself.
+        let custom = tuning("custom", "qwen3:8b", Setting::High);
         assert_eq!(
-            tuning("custom", "qwen3:8b", Setting::High),
-            Tuning::default()
+            custom,
+            Tuning {
+                reasons: true,
+                ..Tuning::default()
+            }
         );
+        let body = openai_body("qwen3:8b", json!([]), 96, &custom);
+        assert_eq!(body["max_tokens"], 96);
+        assert_eq!(body["temperature"], 0.7);
+        assert!(body.get("reasoning_effort").is_none() && body.get("reasoning").is_none());
         assert_eq!(
             tuning("nous", "hermes-4-405b", Setting::Low),
             Tuning::default()

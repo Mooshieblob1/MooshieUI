@@ -52,6 +52,11 @@ jobs:
           npx esbuild scripts/tests/naiLayout.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiLayout.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/naiLayout.test.mjs"
 
+      - name: Skill notes cache tests
+        run: |
+          npx esbuild scripts/tests/skillNotes.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/skillNotes.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/skillNotes.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 
