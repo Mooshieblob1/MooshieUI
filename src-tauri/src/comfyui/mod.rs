@@ -4,7 +4,7 @@ pub mod gpu_manager;
 pub mod h3_vdn;
 pub mod idle_unload;
 #[cfg(windows)]
-mod kill_on_exit;
+pub(crate) mod kill_on_exit;
 mod managed_process;
 pub(crate) use managed_process::ManagedProcess;
 pub mod nodes;
