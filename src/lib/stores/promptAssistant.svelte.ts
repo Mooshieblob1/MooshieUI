@@ -65,7 +65,7 @@ import {
 } from "../utils/naiPrompt.js";
 import type { NaiPromptContext } from "../utils/naiPrompt.js";
 import { naiRecipeDirective } from "../utils/naiRecipes.js";
-import { assertAllowedRequest, naiRequestTexts } from "../utils/contentSafety.js";
+import { assertAllowedRequest, naiRequestTexts, promptRequestTexts } from "../utils/contentSafety.js";
 import {
   naiRetryInstruction,
   normalizeNaiResponse,
@@ -811,6 +811,11 @@ class PromptAssistantStore {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
     const images = req.images;
+    // The same refusal the V5 rewrite makes, before anything is sent. Earlier
+    // turns count because they go out as history with this one.
+    assertAllowedRequest(
+      promptRequestTexts(text, existing, enhancerSessions.turns("enhance").map((turn) => turn.user)),
+    );
     this.isGenerating = true;
     try {
       const history = this.sessionHistory("enhance", {
@@ -964,6 +969,10 @@ class PromptAssistantStore {
     const idea = text || existing;
     const idle = detectH3IdleIntent(idea);
     const validate = idle ? validateH3IdleResponse : validateH3Response;
+    // Before the skill authoring call too, as in the V5 rewrite.
+    assertAllowedRequest(
+      promptRequestTexts(text, existing, enhancerSessions.turns("h3").map((turn) => turn.user)),
+    );
 
     this.isGenerating = true;
     try {

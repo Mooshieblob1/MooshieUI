@@ -3,6 +3,8 @@ import { enhancerSessions } from "./enhancerSessions.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
 import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
+import { serializeNaiFields } from "../utils/naiParse.js";
+import type { EnhancerFlow } from "../utils/enhancerSession.js";
 import { resolveNaiLanguage } from "../utils/naiLanguage.js";
 import {
   findOutfitOverlaps,
@@ -62,6 +64,14 @@ export interface GeneralEnhancePending {
   after: string;
   /** Shown above the diff: an H3 format miss, or the idle-mode note. */
   notice?: { kind: "warning" | "info"; text: string } | null;
+  /**
+   * The exchange this rewrite adds to the Enhance session, recorded only when
+   * the user applies it, as the V5 review does. Absent for an H3 answer that
+   * missed the format.
+   */
+  sessionTurn?: { user: string; assistant: string };
+  /** Run once when the rewrite is applied: saves what it learned to memory. */
+  onApplied?: () => void;
 }
 
 /** One reviewable field: what is there now, what the rewrite proposes. */
@@ -117,8 +127,14 @@ export interface NaiEnhancePending {
    * history, so wording that failed them is not carried into the next turn.
    * Absent for an answer that failed validation and for review screens that
    * did not come from a rewrite.
+   *
+   * `assistant` is the model's answer as it arrived. What is recorded is the
+   * review's fields as they stand when applied (see `apply`), so the next turn
+   * builds on the cleaned prompt and not on the mistakes the cleanup removed.
    */
   sessionTurn?: { user: string; assistant: string };
+  /** Run once when the rewrite is applied: saves what it learned to memory. */
+  onApplied?: () => void;
 }
 
 /** Rows whose text the outfit tools read and write: every box not being removed. */
@@ -166,6 +182,8 @@ interface UndoSnapshot {
   positivePrompt: string;
   negativePrompt: string;
   characters: NovelAiCharacter[];
+  /** The session the apply added a turn to, so undoing takes the turn back too. */
+  sessionFlow?: EnhancerFlow;
   /** Present only when "Curate it" changed the generation settings too. */
   curate?: {
     checkpoint: string;
@@ -571,7 +589,20 @@ class NaiEnhanceStore {
     if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
 
-    if (p.sessionTurn) enhancerSessions.record("nai", p.sessionTurn.user, p.sessionTurn.assistant);
+    if (p.sessionTurn) {
+      // The cleaned fields, not the raw answer: the review already moved layout
+      // tags, split outfits and dropped filler, and a session that replays the
+      // uncleaned text teaches the next turn to repeat what was removed.
+      const fields = outfitFields(p);
+      const assistant = serializeNaiFields({
+        base: fields.base,
+        uc: p.uc.after,
+        characters: fields.boxes,
+        characterUcs: fields.ucs,
+      });
+      this.recordTurn("nai", p.sessionTurn.user, assistant || p.sessionTurn.assistant);
+    }
+    p.onApplied?.();
     this.finishApply("nai");
   }
 
@@ -587,7 +618,19 @@ class NaiEnhanceStore {
     generation.positivePrompt =
       how === "append" && current ? `${current}, ${p.after}` : p.after;
     generation.saveSettings();
+    if (p.sessionTurn) {
+      this.recordTurn(this.flow === "h3" ? "h3" : "enhance", p.sessionTurn.user, p.sessionTurn.assistant);
+    }
+    p.onApplied?.();
     this.finishApply(this.flow);
+  }
+
+  /** Add the applied exchange to its session and remember it for `undo`. */
+  private recordTurn(flow: EnhancerFlow, user: string, assistant: string): void {
+    // `record` skips an exchange with an empty side, and then there is nothing to take back.
+    if (!user.trim() || !assistant.trim()) return;
+    enhancerSessions.record(flow, user, assistant);
+    if (this.snapshot) this.snapshot.sessionFlow = flow;
   }
 
   private takeSnapshot(withSettings = false): void {
@@ -642,6 +685,9 @@ class NaiEnhanceStore {
       generation.negativePrompt = snap.negativePrompt;
       generation.updateNovelAiSettings({ characters: snap.characters });
       generation.saveSettings();
+      // The prompt is back to what it was, so the session must not go on
+      // treating the undone answer as the newest one to revise.
+      if (snap.sessionFlow) enhancerSessions.dropLast(snap.sessionFlow);
       this.snapshot = null;
     }
     this.showUndo = false;

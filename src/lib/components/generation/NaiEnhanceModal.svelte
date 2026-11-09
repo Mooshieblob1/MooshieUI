@@ -54,7 +54,7 @@
   import { NAI_UC_HEAVY, naiV5Variant } from "../../utils/novelaiModels.js";
   import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import { mapLlmError } from "../../utils/llmError.js";
-  import { naiRequestTexts, rateRequest, savedCharactersForRequest } from "../../utils/contentSafety.js";
+  import { naiRequestTexts, promptRequestTexts, rateRequest, savedCharactersForRequest } from "../../utils/contentSafety.js";
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { isLlmCancelled, readClipboardImageSafe } from "../../utils/api.js";
   import { buildH3Context } from "../../utils/h3Prompt.js";
@@ -315,7 +315,8 @@
       const existing = generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null;
       // Saved characters the request refers to bring their memory notes. The
       // minor check reads the notes too, as it does for the V5 roster.
-      const texts = [text, existing ?? ""];
+      // Earlier turns of the session are sent along, so they are rated too.
+      const texts = promptRequestTexts(text, existing, enhancerSessions.turns("enhance").map((t) => t.user));
       const notes = memoryNotes(texts, existing ?? "");
       const noted = savedCharactersForRequest(
         savedCharacters.currentCharacters
@@ -343,12 +344,15 @@
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
       }
-      enhancerSessions.record("enhance", result.sessionUser, result.prompt);
+      const sentIds = new Set(noted.map((n) => n.id));
       naiEnhance.showGeneralReview({
         before: generation.positivePrompt ?? "",
         after: result.prompt,
+        // Both wait for Apply: a rewrite closed without applying is not
+        // history to build on, and what it learned is not worth keeping.
+        sessionTurn: { user: result.sessionUser, assistant: result.prompt },
+        onApplied: () => saveLearned(result.learned, sentIds),
       });
-      saveLearned(result.learned, new Set(noted.map((n) => n.id)));
     } catch (e) {
       // Cancelled on purpose: nothing went wrong, so nothing to say.
       if (signal.aborted || isLlmCancelled(e)) return;
@@ -386,12 +390,12 @@
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
       }
-      // A near-miss is offered but not remembered: the session keeps only
-      // answers that passed the format check.
-      if (result.ok) enhancerSessions.record("h3", result.sessionUser, result.text);
       naiEnhance.showGeneralReview({
         before: generation.positivePrompt ?? "",
         after: result.text,
+        // Joins the session when applied. A near-miss is offered but never
+        // remembered: the session keeps only answers that passed the format check.
+        sessionTurn: result.ok ? { user: result.sessionUser, assistant: result.text } : undefined,
         // A near-miss is still a better start than the prose it replaces, so it
         // is offered with the broken rule named. Idle mode is invisible until it
         // fires, so it is named too, or "the pose never changes" reads as a bug.
@@ -507,10 +511,8 @@
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
       }
-      saveLearned(
-        parseLearnedLines(result.parsed.memory),
-        new Set(roster.filter((c) => c.notes).map((c) => c.id)),
-      );
+      const learned = parseLearnedLines(result.parsed.memory);
+      const sentIds = new Set(roster.filter((c) => c.notes).map((c) => c.id));
       // Each box's own UC: the rewrite's CHAR n UC line, or the box's current
       // one when it wrote none. Then the other characters' distinctive garments
       // go in automatically, so clothes cannot jump between similar characters
@@ -532,6 +534,9 @@
         // validation: a rejected layout is not history to build on.
         sessionTurn:
           result.problems.length === 0 ? { user: result.sessionUser, assistant: result.raw } : undefined,
+        // Memory is permanent where the session is not, so it waits for Apply
+        // and is skipped for an answer that failed validation.
+        onApplied: result.problems.length === 0 ? () => saveLearned(learned, sentIds) : undefined,
         // Every row starts ticked: the rewrite is one coherent answer, and
         // half-applying it leaves a base prompt describing characters that the
         // character boxes no longer match.
@@ -587,7 +592,9 @@
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
-      close();
+      // The gallery picker sits on top and closes itself on Escape. Its own
+      // window listener cannot stop this one, so this one stands down.
+      if (!pickerOpen) close();
       return;
     }
     // Ctrl+Enter confirms, wherever focus sits inside the modal -- so it works

@@ -361,6 +361,18 @@ export function naiRequestTexts(
 }
 
 /**
+ * The texts a general or video rewrite carries: the instruction, the current
+ * prompt when it is being edited, and the earlier user turns of its session.
+ */
+export function promptRequestTexts(
+  prompt: string,
+  existing: string | null,
+  sessionUserTurns: readonly string[],
+): string[] {
+  return [prompt, ...(existing ? [existing] : []), ...sessionUserTurns];
+}
+
+/**
  * Throw before sending a request that pairs a clear minor with explicit
  * content, naming the words that did. `background` as in `rateRequest`.
  */

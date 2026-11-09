@@ -8,6 +8,7 @@ import {
   naiRequestTexts,
   naiVocabularyBlock,
   parseBlocked,
+  promptRequestTexts,
   rateRequest,
   savedCharactersForRequest,
 } from "../../src/lib/utils/contentSafety.ts";
@@ -258,4 +259,14 @@ test("a note that says what age a character is not does not make them a minor", 
   }
   // A list after a negation only carries it across "or" / "and", not a comma.
   assert.equal(mentionsMinor("not a teenager, child"), true);
+});
+
+test("a general or video rewrite is rated on its prompt, the edited prompt and its session", () => {
+  assert.deepEqual(promptRequestTexts("add rain", "1girl, umbrella", ["a street"]), ["add rain", "1girl, umbrella", "a street"]);
+  assert.deepEqual(promptRequestTexts("a street", null, []), ["a street"]);
+  // Split across the instruction and the prompt being edited.
+  assert.throws(() => assertAllowedRequest(promptRequestTexts("make her nude", "schoolgirl, classroom", [])), isBlocked);
+  // Split across this turn and an earlier one, which is resent as history.
+  assert.throws(() => assertAllowedRequest(promptRequestTexts("now nude", null, ["a schoolgirl in a classroom"])), isBlocked);
+  assert.equal(assertAllowedRequest(promptRequestTexts("add rain", "1girl, umbrella", ["a street"])), "sfw");
 });
