@@ -4123,6 +4123,8 @@ const en: Record<string, string> = {
   "prompt_assistant.nai_keep_artists_tooltip": "Keep the artist tags from your current prompt in the rewrite, weights included.",
   "prompt_assistant.nai_minor_rule": "Minors rule",
   "prompt_assistant.nai_minor_rule_tooltip": "When a prompt mentions a child or a school-age character, tell the model to keep them non-sexual. Some providers refuse prompts that carry this rule. A minor paired with sexual content is always refused.",
+  "prompt_assistant.nai_use_memory": "Use memory notes",
+  "prompt_assistant.nai_use_memory_tooltip": "Send saved characters' memory notes with this rewrite. Untick it when a composition keeps failing and you want the rewrite to work from your text and the saved looks alone. On again the next time Enhance opens.",
   "prompt_assistant.nai_run": "Enhance",
   "prompt_assistant.nai_working": "Rewriting...",
   "prompt_assistant.enhance_nai": "Enhance for V5",

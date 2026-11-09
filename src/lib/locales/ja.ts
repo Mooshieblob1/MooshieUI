@@ -4040,6 +4040,8 @@ const ja: Record<string, string> = {
   "prompt_assistant.nai_keep_artists_tooltip": "現在のプロンプトにあるアーティストタグを、重みも含めて書き換え後も残します。",
   "prompt_assistant.nai_minor_rule": "未成年ルール",
   "prompt_assistant.nai_minor_rule_tooltip": "プロンプトに子どもや学生年齢のキャラクターが含まれるとき、性的に描かないようモデルに指示します。このルールを含むプロンプトを拒否するプロバイダーもあります。未成年と性的な内容の組み合わせは常に拒否されます。",
+  "prompt_assistant.nai_use_memory": "メモリーノートを使う",
+  "prompt_assistant.nai_use_memory_tooltip": "保存したキャラクターのメモリーノートをこの書き換えに送ります。構図が何度も失敗するときはオフにすると、入力したテキストと保存した外見だけで書き換えます。次に Enhance を開くとオンに戻ります。",
   "prompt_assistant.nai_run": "強化",
   "prompt_assistant.nai_working": "書き換え中...",
   "prompt_assistant.enhance_nai": "V5用に強化",

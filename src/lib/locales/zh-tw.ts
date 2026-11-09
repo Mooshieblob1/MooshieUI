@@ -4015,6 +4015,8 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.nai_keep_artists_tooltip": "在改寫結果中保留目前提示詞裡的藝術家標籤，包括權重。",
   "prompt_assistant.nai_minor_rule": "未成年人規則",
   "prompt_assistant.nai_minor_rule_tooltip": "提示詞提到兒童或學齡角色時，要求模型不以性化方式描繪。部分服務商會拒絕帶有此規則的提示詞。未成年人與色情內容的組合一律會被拒絕。",
+  "prompt_assistant.nai_use_memory": "使用記憶筆記",
+  "prompt_assistant.nai_use_memory_tooltip": "在這次改寫中一併送出已儲存角色的記憶筆記。構圖一再失敗時取消勾選，改寫就只依據你的文字和已儲存的外觀。下次開啟 Enhance 時會重新勾選。",
   "prompt_assistant.nai_run": "增強",
   "prompt_assistant.nai_working": "改寫中...",
   "prompt_assistant.enhance_nai": "為 V5 增強",

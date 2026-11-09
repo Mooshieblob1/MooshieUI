@@ -284,7 +284,7 @@
    * prompt it edits, whose saved characters count as referred to.
    */
   function memoryNotes(texts: string[], existing: string): Map<string, string> {
-    if (!promptAssistant.canUseMemory) return new Map();
+    if (!promptAssistant.canUseMemory || !naiEnhance.useMemory) return new Map();
     const picks = memoryForRequest(savedCharacters.withMemory(savedCharacters.currentCharacters), texts, existing);
     return new Map(picks.map((p) => [p.id, p.notes]));
   }
@@ -413,30 +413,16 @@
     }
   }
 
-  // Whether the rewrite on review was recorded into the session, so redoing it
-  // replaces that turn instead of stacking a second copy of the same message.
-  let recordedLast = false;
-
   /**
    * Redo the rewrite with the other side winning where a saved canon
-   * character's card disagrees with canon. The turn being redone is taken out
-   * of the session first, so the redo sees the same history the first answer
-   * did, and put back if the redo fails.
+   * character's card disagrees with canon. Nothing to take back from the
+   * session first: a rewrite is only recorded once it is applied.
    */
   async function rerunWithCanon(priority: NaiCanonPriority) {
     if (naiEnhance.busy || naiEnhance.canonPriority === priority) return;
-    const turns = enhancerSessions.turns("nai");
-    const taken = recordedLast ? turns[turns.length - 1] : undefined;
-    if (taken) enhancerSessions.dropLast("nai");
-    recordedLast = false;
     naiEnhance.canonPriority = priority;
     naiEnhance.stage = "input";
     await run();
-    // Widened: TypeScript keeps the "input" assigned above across the await.
-    const stage: string | null = naiEnhance.stage;
-    if (taken && stage !== "review") {
-      enhancerSessions.record("nai", taken.user, taken.assistant);
-    }
   }
 
   /**
@@ -521,17 +507,10 @@
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
         return;
       }
-      // Recorded once on screen, applied or not: the answer is part of the
-      // conversation either way. Not when it failed validation, and not when
-      // the modal was cancelled (the early return above).
-      recordedLast = result.problems.length === 0;
       saveLearned(
         parseLearnedLines(result.parsed.memory),
         new Set(roster.filter((c) => c.notes).map((c) => c.id)),
       );
-      if (recordedLast) {
-        enhancerSessions.record("nai", result.sessionUser, result.raw);
-      }
       // Each box's own UC: the rewrite's CHAR n UC line, or the box's current
       // one when it wrote none. Then the other characters' distinctive garments
       // go in automatically, so clothes cannot jump between similar characters
@@ -549,6 +528,10 @@
         note: result.parsed.note,
         problems: result.problems,
         canon: result.parsed.canon,
+        // Joins the session only when applied, and never when it failed
+        // validation: a rejected layout is not history to build on.
+        sessionTurn:
+          result.problems.length === 0 ? { user: result.sessionUser, assistant: result.raw } : undefined,
         // Every row starts ticked: the rewrite is one coherent answer, and
         // half-applying it leaves a base prompt describing characters that the
         // character boxes no longer match.
@@ -1059,6 +1042,20 @@
             />
             {locale.t("prompt_assistant.nai_minor_rule")}
           </label>
+          {#if promptAssistant.canUseMemory}
+            <label
+              class="flex cursor-pointer items-center gap-1.5 text-[10px] text-neutral-300"
+              title={locale.t("prompt_assistant.nai_use_memory_tooltip")}
+            >
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                disabled={naiEnhance.busy}
+                bind:checked={naiEnhance.useMemory}
+              />
+              {locale.t("prompt_assistant.nai_use_memory")}
+            </label>
+          {/if}
           {/if}
         </div>
 
