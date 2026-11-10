@@ -6,9 +6,9 @@ open an issue with the feature template and ask.
 
 ## What MooshieUI is
 
-- A desktop (Tauri) and browser front-end for image, video and music generation
-  through local or remote ComfyUI, with optional NovelAI image generation, and
-  optional cloud voice and video generation (for example ElevenLabs and
+- A desktop (Tauri) and browser front-end for image, video, music and
+  experimental image-to-3D generation through local or remote ComfyUI, with
+  optional NovelAI image generation, and optional cloud voice and video generation (for example ElevenLabs and
   Seedance), each using the user's own API key and billed by that provider.
 - A polished UI over generation workflows: prompt building, generation
   settings, gallery management, model hub, and related in-app tooling.
@@ -20,9 +20,11 @@ open an issue with the feature template and ask.
 - Self-hosting with LAN accounts, roles, per-user galleries and configured GPU
   workers. Regular users and moderators manage their own NovelAI and cloud
   provider credentials.
-- Windows/Linux releases and experimental Apple Silicon macOS candidates,
-  with native desktop and embedded browser-server modes sharing one codebase.
-  See [Mac support status](MACOS.md).
+- Windows, Linux and Apple Silicon macOS releases (Mac builds are
+  user-tested), with native desktop and embedded browser-server modes sharing
+  one codebase. See [Mac support status](MACOS.md).
+- An opt-in, local, token-protected MCP server so AI assistants can drive the
+  owner's existing generation setups, queue and gallery. See [MCP.md](MCP.md).
 - Localized (i18n across all supported locales) and accessible (a11y).
 
 ## What MooshieUI is not
