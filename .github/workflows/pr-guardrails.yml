@@ -57,6 +57,11 @@ jobs:
           npx esbuild scripts/tests/skillNotes.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/skillNotes.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/skillNotes.test.mjs"
 
+      - name: Prompt clickable range tests
+        run: |
+          npx esbuild scripts/tests/promptClickableRanges.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptClickableRanges.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/promptClickableRanges.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 

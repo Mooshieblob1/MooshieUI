@@ -24,7 +24,7 @@
   const providers: { id: CloudProviderId; name: string; host: string; purposeKey: string }[] = [
     { id: "elevenlabs", name: "ElevenLabs", host: "api.elevenlabs.io", purposeKey: "settings.cloud.purpose_voice" },
     { id: "fal", name: "fal.ai", host: "fal.run", purposeKey: "settings.cloud.purpose_video" },
-    { id: "segmind", name: "Segmind", host: "api.segmind.com", purposeKey: "settings.cloud.purpose_video_alt" },
+    { id: "segmind", name: "Segmind", host: "api.segmind.com", purposeKey: "settings.cloud.purpose_unused" },
   ];
 
   let status = $state<CloudKeyStatus>({ elevenlabs: false, fal: false, segmind: false });
@@ -34,6 +34,13 @@
   let saving = $state<CloudProviderId | null>(null);
   let errors = $state<Partial<Record<CloudProviderId, string>>>({});
   let loadError = $state<string | null>(null);
+
+  // No video route uses Segmind yet (only fal.ai is wired), so its field is
+  // not offered. It still shows while a key saved by an earlier build is
+  // stored, so that key can be cleared.
+  const visibleProviders = $derived(
+    providers.filter((p) => p.id !== "segmind" || status.segmind || !!keyEnv.ref("segmind")),
+  );
 
   async function refresh() {
     try {
@@ -82,7 +89,7 @@
       <p class="text-[10px] text-red-400">{loadError}</p>
     {/if}
 
-    {#each providers as provider (provider.id)}
+    {#each visibleProviders as provider (provider.id)}
       {@const inputId = `cloud-key-${provider.id}`}
       <div class="border-t border-neutral-800 pt-3 first:border-t-0 first:pt-0">
         <label class="text-xs text-neutral-300 block" for={inputId}>{provider.name}</label>
