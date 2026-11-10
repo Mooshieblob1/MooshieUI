@@ -892,6 +892,13 @@ class GenerationStore {
    * Not persisted: re-derived from the files on every pick.
    */
   mainModelWrongKind = $state<ModelKind | null>(null);
+  /**
+   * True when the selected model's tensor keys carry a baked text encoder and
+   * VAE (an all-in-one checkpoint). Families that normally ship split, such as
+   * Anima fine-tunes on CivitAI, are sometimes packed this way and load fine
+   * through CheckpointLoaderSimple. Not persisted: re-derived on every pick.
+   */
+  mainModelIsFullCheckpoint = $state(false);
   vaeWrongKind = $state<ModelKind | null>(null);
   clipWrongKind = $state<ModelKind | null>(null);
   private componentKindCache = new Map<string, ModelKind | null>();
@@ -1762,6 +1769,7 @@ class GenerationStore {
     this.modelSpecUnavailable = false;
     this.modelSourceCategory = null;
     this.mainModelWrongKind = null;
+    this.mainModelIsFullCheckpoint = false;
     this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
   }
 
@@ -1775,6 +1783,7 @@ class GenerationStore {
     this.isModelMetadataLoading = false;
     this.modelSpec = null;
     this.modelSpecUnavailable = false;
+    this.mainModelIsFullCheckpoint = false;
   }
 
   /** Drop the cached key so the next fetch re-runs backend detection. */
@@ -1818,6 +1827,7 @@ class GenerationStore {
     const requestId = ++this._latestModelMetadataRequestId;
     this.isModelMetadataLoading = true;
     this.mainModelWrongKind = null;
+    this.mainModelIsFullCheckpoint = false;
     try {
       const spec = await readModelSpec(category, filename);
       if (requestId !== this._latestModelMetadataRequestId) return;
@@ -1872,6 +1882,7 @@ class GenerationStore {
     filename: string,
     modelKind: string | null,
   ): void {
+    this.mainModelIsFullCheckpoint = modelKind === "checkpoint";
     // A text encoder or VAE picked as the model cannot load as one; the model
     // panel and toParams() say so instead of letting ComfyUI fail on it.
     this.mainModelWrongKind = modelKind === "text_encoder" || modelKind === "vae" ? modelKind : null;
@@ -3977,11 +3988,18 @@ class GenerationStore {
       }
     }
 
-    // Diffusion-only families (Flux, Anima, Wan, Qwen, Chroma, ...) carry no
-    // text encoder in a single checkpoint. If one was placed in `checkpoints/`
-    // and loaded via CheckpointLoaderSimple, ComfyUI returns a None CLIP and
-    // fails with "clip input is invalid: None". Surface an actionable error.
-    if (!isVideo && !this.useSplitModel && familyRequiresSeparateClip(this.modelFamily)) {
+    // Diffusion-only families (Flux, Anima, Wan, Qwen, Chroma, ...) usually
+    // carry no text encoder in a single file. If one was placed in
+    // `checkpoints/` and loaded via CheckpointLoaderSimple, ComfyUI returns a
+    // None CLIP and fails with "clip input is invalid: None". Surface an
+    // actionable error, unless the file's own tensor keys show a baked text
+    // encoder and VAE (all-in-one fine-tunes such as ColdMilk Anima).
+    if (
+      !isVideo &&
+      !this.useSplitModel &&
+      !this.mainModelIsFullCheckpoint &&
+      familyRequiresSeparateClip(this.modelFamily)
+    ) {
       throw new Error(
         `"${this.checkpoint}" is a ${this.modelFamily} diffusion model with no built-in text encoder. ` +
           `Move it to ComfyUI's diffusion_models/ folder and select it as a diffusion model, ` +
