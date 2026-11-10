@@ -33,7 +33,7 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 
 **Two Rust builds, one crate.** `default = ["desktop"]` links `tauri`; the server binary (`--no-default-features --features server`, built by CI's `build-server` job) does not. A `tauri` reference outside a `#[cfg(feature = "desktop")]` gate compiles locally and breaks the release build. Modules gated whole in `commands/mod.rs` can use `tauri` freely; modules present in both builds (`api.rs`, `video_export.rs`, `video_interpolate.rs`, `webserver.rs`) need per-item gates, including on function parameters and the matching call-site arguments.
 
-**No frontend test framework.** No vitest/jest. Rust does have tests: ~920 tests (`#[test]` + `#[tokio::test]`) in `#[cfg(test)]` modules over pure logic. Run `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; treat any failure as a real regression.
+**No frontend test framework.** The frontend has no vitest/jest; a few pure-logic `node:test` files live in `scripts/tests/` and the Guardrails workflow bundles them with esbuild and runs them. Rust does have tests: about 1,300 tests (`#[test]` + `#[tokio::test]`) in `#[cfg(test)]` modules over pure logic. Run `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; treat any failure as a real regression.
 
 ## Non-Negotiable Behavioral Rules
 
@@ -44,9 +44,9 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 ## Architecture (Non-Obvious)
 
 - **Dual-mode**: Tauri webview OR browser via axum. The flag `window.__MOOSHIE_BROWSER_MODE__` determines mode. IPC routes through custom [`src/lib/utils/ipc.ts`](src/lib/utils/ipc.ts) — `ipcInvoke()`/`ipcListen()` — NEVER use `invoke()`/`listen()` directly from `@tauri-apps/api`.
-- **JXL storage**: Gallery images stored as JPEG XL format. Display via `loadGalleryImageDisplay()` (JXL→WebP), export via `loadGalleryImagePng()` (JXL→PNG). Never read gallery files directly.
+- **Gallery storage**: Gallery images are stored as PNG (the default), JPEG XL or WebP, per the output format setting. Display reads use `loadGalleryImageDisplay()` (transcodes to WebP), PNG export uses `loadGalleryImagePng()`. Never read gallery files directly.
 - **Custom URI schemes**: `thumbnail://` and `gallery://` protocols registered in Tauri for gallery image loading.
-- **CSP is null** in `tauri.conf.json` — no Content Security Policy restrictions.
+- **CSP**: A Content Security Policy is set in `src-tauri/tauri.conf.json` and enforced in production builds only (there is no `devCsp`, so `npm run tauri dev` never exercises it). Any new remote `<img>`/`fetch` origin or custom URI scheme must be added to it.
 - **Ring buffer log capture**: Both Rust and frontend maintain bounded ring buffers for `exportLogs()` diagnostics.
 - **`keep_alive` config**: When true, ComfyUI process survives app close. Otherwise the app kills ComfyUI on exit.
 

@@ -255,8 +255,8 @@ jobs:
             '### Downloads' \
             '| Platform | File |' \
             '|----------|------|' \
-            '| **Windows** | `.msi` or `.exe` |' \
-            '| **Linux** | `.deb` or `.AppImage` |' \
+            '| **Windows** | `_x64-setup.exe` |' \
+            '| **Linux** | `.AppImage`, `.deb` or `.rpm` |' \
             '' \
             '---' \
             '' \
