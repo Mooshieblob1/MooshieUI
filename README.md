@@ -1,8 +1,8 @@
 # MooshieUI
 
-MooshieUI is a beginner-friendly interface for image, video and music generation through [ComfyUI](https://github.com/comfyanonymous/ComfyUI), with optional image generation through the **NovelAI API** using your own key. It runs in two modes:
+MooshieUI is a beginner-friendly interface for image, video, music and 3D generation through [ComfyUI](https://github.com/comfyanonymous/ComfyUI), with optional image generation through the **NovelAI API** using your own key. It runs in two modes:
 
-- **Desktop app** via Tauri (Windows/Linux; [native Apple Silicon macOS candidates](docs/MACOS.md))
+- **Desktop app** via Tauri (Windows, Linux and [Apple Silicon macOS](docs/MACOS.md); Mac builds are user-tested)
 - **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile UI)
 
 Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity behind a clean, guided workflow so you can generate without hand-editing graphs.
@@ -39,12 +39,14 @@ Full guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/Moosh
 
 | Guide | Covers |
 |-------|--------|
-| [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) | Desktop, Docker, remote/cloud ComfyUI, Apple Silicon candidates |
-| [Generation Basics](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics) | Image modes, pause/continue, queue, dimensions and guidance |
+| [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) | Desktop, Docker, remote/cloud ComfyUI, Apple Silicon macOS |
+| [Generation Basics](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics) | Image modes, tabs and Profiles, pause/continue, queue, dimensions, guidance and the Characters tab |
 | [NovelAI Backend](https://github.com/Mooshieblob1/MooshieUI/wiki/NovelAI-Backend) | Personal API keys, characters, references, costs, face detailing and Director Tools |
 | [Video Generation](https://github.com/Mooshieblob1/MooshieUI/wiki/Video-Generation) | MiniMax H3, model stacks, timeline, interpolation, playback and export |
 | [Music Generation](https://github.com/Mooshieblob1/MooshieUI/wiki/Music-Generation) | YuE2 songs, lyric writing, playlists, shared playback and manual lyric timing |
-| [Image Edit Mode](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Edit-Mode) | Qwen Image Edit, Flux Kontext and Anima ReStyler |
+| [Anime Scenes](https://github.com/Mooshieblob1/MooshieUI/wiki/Anime-Scenes) | Voiced, lip-synced character clips through ElevenLabs and fal.ai with your own keys |
+| [Image to 3D](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-to-3D) | Experimental textured meshes (Pixal3D) and Gaussian splats (Idol) from one image |
+| [Image Edit Mode](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Edit-Mode) | Qwen Image Edit, Flux Kontext, FLUX 3 Klein and Anima ReStyler |
 | [Prompting Guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide) | Prompt Chunks, random syntax, Artist Styles, Style Creator and interrogation |
 | [Prompt Assistant](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompt-Assistant) | Local or external LLM-assisted prompt building |
 | [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub) | Supported architectures, auto-detection, downloads |
@@ -53,10 +55,13 @@ Full guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/Moosh
 | [Inpainting & the Canvas Editor](https://github.com/Mooshieblob1/MooshieUI/wiki/Inpainting-and-the-Canvas-Editor) | Mask painting and selective edits |
 | [Compare Grid](https://github.com/Mooshieblob1/MooshieUI/wiki/Compare-Grid) | XYZ parameter sweeps |
 | [Image Comparison](https://github.com/Mooshieblob1/MooshieUI/wiki/Image-Comparison) | Slider, fade, difference and side-by-side comparison |
-| [Gallery & Metadata](https://github.com/Mooshieblob1/MooshieUI/wiki/Gallery-and-Metadata) | Persistent gallery, metadata import/remix |
+| [Gallery & Metadata](https://github.com/Mooshieblob1/MooshieUI/wiki/Gallery-and-Metadata) | Persistent gallery, search, ratings, boards, linked folders, metadata import/remix |
 | [Server, LAN & Multi-User](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User) | Self-hosting, roles, auth, mobile |
-| [Settings & Accessibility](https://github.com/Mooshieblob1/MooshieUI/wiki/Settings-and-Accessibility) | Persistence, i18n, accessibility |
+| [Settings & Accessibility](https://github.com/Mooshieblob1/MooshieUI/wiki/Settings-and-Accessibility) | Persistence, themes, i18n, accessibility |
+| [AI Assistants & MCP](https://github.com/Mooshieblob1/MooshieUI/wiki/AI-Assistants-and-MCP) | Let Claude, Cursor and other assistants generate through the opt-in MCP server |
 | [FAQ](https://github.com/Mooshieblob1/MooshieUI/wiki/FAQ) | Common questions |
+| [Contributing](https://github.com/Mooshieblob1/MooshieUI/wiki/Contributing) | Setup, checks and the PR workflow |
+| [Project Scope](https://github.com/Mooshieblob1/MooshieUI/wiki/Project-Scope) | What MooshieUI is and is not |
 
 Technical references and project planning documents are indexed in [docs/README.md](docs/README.md).
 
@@ -64,34 +69,38 @@ Technical references and project planning documents are indexed in [docs/README.
 
 ## ✨ Highlights
 
-> **v2.3.6:** Build music styles from reference songs or audio, sign in to supported Prompt Assistant accounts, and use new H3 Turbo presets. See [the release notes](docs/RELEASE_NOTES.md).
+> New features land in most releases. See [the release notes](docs/RELEASE_NOTES.md) for what changed in the latest version.
 
-- **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext and Anima ReStyler.
+- **Image generation and editing** - text to image, image to image, inpainting with a built-in canvas/mask editor, and Image Edit for Qwen Image Edit/Edit Plus, Flux.1 Kontext, FLUX 3 Klein and Anima ReStyler. Work in several generation tabs at once and save a tab's settings as a Profile.
 - **NovelAI backend** - V5 Full/Curated, V4.5 Full and V4 Full, with character prompts and positioning, supported reference modes, Anlas estimates, Enhance/Upscale/Variations, Director Tools and a dedicated face detailer. Hosted users and moderators can save their own encrypted API key.
 - **Video generation** - MiniMax H3 text-to-video, first/last frames and reference images; preset or custom model stacks, a shot timeline, [Standard and Larryvrh/LightX2V/PDD Turbo methods](docs/VIDEO.md), retained drafts with experimental 2× refinement, TeaCache, animated live previews, RIFE/GMFSS interpolation, a gallery player and MP4/animated-image export.
 - **Music studio** - YuE2 songs, native SheetSage2 covers and score-aware assistance through your configured Prompt Assistant. [Review and edit scores](docs/MUSIC.md), preview melodies, export MIDI, generate sequential candidates, compare saved versions and export projects with original FLAC and settings. Review recognized lyrics and approximate cover timing using xAI transcription and your assistant, with playable evidence. Includes playlists, shared playback, manual lyric timing, reference-song lookup, temporary song-link imports, style analysis from selected audio sections, reusable style profiles, volume-matched A/B listening, scoped edits with before/after previews, and an arrangement-planning prototype.
 - **Image to 3D (experimental, off by default)** - turn one picture of a character or object into a textured mesh (`.glb`) with [Pixal3D](https://github.com/TencentARC/Pixal3D), or a 3D Gaussian splat with [Idol](https://huggingface.co/speridlabs/idol) (about 7 GB of VRAM), both on ComfyUI's own nodes. Spin it in the built-in viewer, keep it in a device-local library and export `.glb`, `.ply` or `.splat`. Start from a file, a paste or any gallery image. [Details](docs/IMAGE_TO_3D.md).
+- **Anime Scenes (optional, cloud)** - turn a character into a short voiced, lip-synced clip with your own ElevenLabs (voice) and fal.ai Seedance 2.5 (video) keys, with optional NovelAI keyframes. Every paid step shows a cost confirmation first, and nothing in it runs on ComfyUI.
+- **AI assistants (MCP, off by default)** - a local, token-protected [MCP server](docs/MCP.md) lets Claude Code, Claude Desktop, Cursor and similar assistants generate images and music, check the queue and search the gallery. Cloud assistants connect through an opt-in Cloudflare tunnel or your own address.
 - **Pause and continue** - pause ComfyUI text-to-image sampling, inspect a preview, change prompts or sampling settings, or paint a masked correction before continuing. Keep a pause to try different endings.
 - **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
-- **Smart model detection** - 20+ architectures identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
-- **Prompt and style tools** - autocomplete, Prompt Chunks and wildcards, seeded random prompt syntax, scheduling, regional prompts, a local or external Prompt Assistant, and Style Creator rounds for discovering artist combinations.
+- **Smart model detection** - 30+ model families, including Krea 2, FLUX 3 Klein and MOSS-Image, identified through hashes, model metadata, tensor structure and filenames, with sampler/scheduler/CFG presets, split components, GGUF support and optional INT8-Fast loading.
+- **Prompt and style tools** - autocomplete, Prompt Chunks and wildcards, seeded random prompt syntax, scheduling, regional prompts, a local or external Prompt Assistant, Style Creator rounds for discovering artist combinations, and an image interrogator that returns tags, detected artists (Kaloscope) or a description in words.
+- **Characters** - save characters with a name, prompt, portraits and Markdown memory files, and reuse them across sessions and in NovelAI character boxes.
 - **Refinement and references** - MultiDiffusion/SpotDiffusion upscaling, SeedVR2 restoration, face detailing, ControlNet, IP-Adapter/Flux Redux style references, sampler guidance and the SDXL DMD2 preset.
 - **Compare Grid (XYZ)** - per-cell parameter sweeps stitched into a single labelled image.
 - **Queue and feedback** - reorder or cancel pending jobs, interrupt a run, watch previews and progress, and opt into completion notifications.
-- **Gallery & metadata** - Persistent image and video gallery with a Refresh gallery action for externally added, restored or removed files, manual save mode, generation times and A/B comparison; import SwarmUI, A1111 and NovelAI settings, with original NovelAI PNG metadata preserved when copying. Refresh scans the current user's gallery folder and reloads embedded metadata without renaming files.
+- **Gallery & metadata** - Persistent image and video gallery with search, favourites, 1 to 5 star ratings, boards, linked folders on desktop, a Refresh gallery action for externally added, restored or removed files, manual save mode, generation times and A/B comparison; import SwarmUI, A1111 and NovelAI settings, with original NovelAI PNG metadata preserved when copying. Refresh scans the current user's gallery folder and reloads embedded metadata without renaming files. An optional invisible watermark and an always-on gallery fingerprint can restore settings for an image that has lost its metadata.
 - **Self-hostable** - headless web server with roles, per-user galleries, auth, and a dedicated mobile layout.
+- **Themes** - dark and light modes, built-in palettes, and custom themes with your own background and logo that can be imported and exported.
 - **12 languages** - English, German, Spanish, French, Italian, Japanese, Korean, Polish, Portuguese, Russian, Simplified Chinese and Traditional Chinese, switchable without restart.
 
-Controls depend on the selected backend and model. NovelAI offers the three standard image modes; Image Edit, video, music and pause/continue use ComfyUI. YuE2 requires its own checkpoint and native ComfyUI support; managed installs offer the tested runtime update. See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for each feature's requirements.
+Controls depend on the selected backend and model. NovelAI offers the three standard image modes; Image Edit, video, music, Image to 3D and pause/continue use ComfyUI; Anime Scenes uses cloud providers only. YuE2 requires its own checkpoint and native ComfyUI support; managed installs offer the tested runtime update. See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for each feature's requirements.
 
 ---
 
 ## 📦 Quick Start
 
-### Desktop (Windows/Linux)
+### Desktop (Windows, Linux, Apple Silicon macOS)
 
-1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases).
-2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required. On Windows, it also installs an app-local copy of Git when a working Git installation cannot be found.
+1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases): the `.exe` installer for Windows, an `.AppImage`, `.deb` or `.rpm` for Linux, or the `_aarch64.dmg` for macOS 14 or later (see the [Mac guide](docs/MACOS.md)).
+2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected; Apple Metal on Mac) and installs MooshieUI's custom nodes - no Python or pip setup required. On Windows, it also installs an app-local copy of Git when a working Git installation cannot be found.
 3. Start generating; ComfyUI launches automatically.
 
 Managed ComfyUI uses port **18288** for new installations, preserves saved port settings, and chooses another free port if needed. Setup, restart, and shutdown stop only processes identified as MooshieUI's own, including verified keep-alive instances. Existing ComfyUI applications can stay running. To connect to one intentionally, choose **Remote** in the connection settings.
@@ -189,7 +198,7 @@ Ko-fi is there for anyone who can't use GitHub Sponsors: it takes PayPal and car
 
 ## 🤝 Contributing
 
-Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks. See **[docs/push-instructions.md](docs/push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, and CI).
+Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation (`npm run check`) and GlassWorm pre-commit checks. CI runs the GlassWorm audit, the Guardrails checks and the Rust checks. See **[docs/push-instructions.md](docs/push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, and CI).
 
 ---
 
@@ -229,6 +238,13 @@ MooshieUI stands on the shoulders of a huge amount of open-source work. Sincere 
 Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 
 - **[comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux)** (Fannovel16) - ControlNet preprocessors (Canny, Depth, OpenPose, LineArt, and more).
+- **[ComfyUI-Frame-Interpolation](https://github.com/Fannovel16/ComfyUI-Frame-Interpolation)** (Fannovel16) - RIFE and GMFSS video frame interpolation.
+- **[ComfyUI_IPAdapter_plus](https://github.com/cubiq/ComfyUI_IPAdapter_plus)** (cubiq) - IP-Adapter style references.
+- **[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF)** (city96) - GGUF diffusion model and text encoder loading.
+- **[ComfyUI-INT8-Fast](https://github.com/BobJohnson24/ComfyUI-INT8-Fast)** (BobJohnson24) - the optional INT8 loader.
+- **[ComfyUI-MiniMax-H3-Turbo](https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo)** (Larryvrh) and **[ComfyUI-MiniMaxH3-TeaCache](https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache)** (Icyoung) - H3 video Turbo methods and TeaCache.
+- **[ComfyUI-Anima-Ref-Adapter](https://github.com/ElectronGirl/ComfyUI-Anima-Ref-Adapter)** (ElectronGirl) - Anima character references in the Style Reference panel.
+- **[ComfyUI-Cosmos-Reference](https://github.com/Mirumo0u0/ComfyUI-Cosmos-Reference)** (Mirumo0u0) - the reference latent behind Anima ReStyler in Image Edit.
 - **[ComfyUi-Untwisting-RoPE](https://github.com/BigStationW/ComfyUi-Untwisting-RoPE)** and **[ComfyUi-Scale-Image-to-Total-Pixels-Advanced](https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced)** (BigStationW) - training-free style transfer (the Anima style-transfer workflow is ported from Untwisting-RoPE's examples) and advanced image scaling.
 
 ### Research implemented by MooshieUI's own nodes
@@ -241,11 +257,16 @@ Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 ### Models & model creators
 
 - **[WD Taggers v3](https://huggingface.co/SmilingWolf)** (SmilingWolf) - image interrogation/tagging. EVA02 Large is the default; ViT Large, SwinV2, ConvNeXt, and ViT are selectable in Settings. You can also register a custom tagger folder in Settings by pointing MooshieUI at any local folder that contains a WD v3-compatible model.onnx and matching selected_tags.csv; the folder is never modified by the app.
+- **[Kaloscope 3.0](https://huggingface.co/heathcliff01/Kaloscope3.0-preview)** (heathcliff01) - the artist classifier behind **Detect artists** in the interrogator.
 - **[CLIPSeg](https://huggingface.co/CIDAS/clipseg-rd64-refined)** (CIDAS) - text-prompted region detection for `<segment:...>` refinement.
 - **Face detection models** - [Anzhc's YOLOs](https://huggingface.co/Anzhc/Anzhcs_YOLOs) (default face segmentation) and [ADetailer models](https://huggingface.co/Bingsu/adetailer) (Bingsu) for Face Fix.
 - **Upscalers** - OmniSR, SPAN, and DAT (IllustrationJaNai) model weights hosted by [Acly](https://huggingface.co/Acly/Omni-SR) and [AshtakaOOf](https://huggingface.co/AshtakaOOf/safetensored-upscalers).
 - **Prompt Assistant LLMs** - [Qwen](https://huggingface.co/Qwen) (Alibaba) instruct and vision models and [DanTagGen](https://huggingface.co/KBlueLeaf/DanTagGen-delta) (KBlueLeaf), with GGUF quantizations by [bartowski](https://huggingface.co/bartowski); [JoyCaption](https://huggingface.co/fancyfeast/llama-joycaption-beta-one-hf-llava) (fancyfeast) for image descriptions, GGUF by [concedo](https://huggingface.co/concedo).
 - **Supported architectures & recommended models** - [Anima](https://huggingface.co/circlestone-labs/Anima) (Circlestone Labs), [Mugen](https://huggingface.co/CabalResearch/Mugen) (CabalResearch), Nanosaur (whose VAE builds on [Meta's DINOv3](https://github.com/facebookresearch/dinov3) and whose text encoder uses [Google's Gemma 3](https://huggingface.co/google/gemma-3-270m)), [SDXL and its VAE](https://huggingface.co/stabilityai) (Stability AI), and [Juice](https://huggingface.co/Enferlain/juice) (Enferlain).
+
+### Watermarking
+
+- **[TrustMark](https://github.com/adobe/trustmark)** (Adobe) - the invisible watermark behind the optional gallery watermark.
 
 ### Ecosystem compatibility & inspiration
 
@@ -262,8 +283,9 @@ Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 - **[Danbooru](https://danbooru.donmai.us/)** and **[Gelbooru](https://gelbooru.com/)** - the tag taxonomies behind autocomplete (~140k tags; Gelbooru-derived Anima list curated by [BetaDoggo](https://huggingface.co/BetaDoggo)).
 - **[Animadex](https://animadex.net/)** - the character and LoRA database integration.
 - **[NovelAI](https://novelai.net/)** - the optional hosted image-generation backend, enhancement passes and Director Tools.
+- **[ElevenLabs](https://elevenlabs.io/)** and **[fal.ai](https://fal.ai/)** - the optional cloud voice and video providers behind Anime Scenes.
 - **[Photopea](https://www.photopea.com/)** - the embedded full image editor.
-- **GitHub** and **Cloudflare** - code hosting, CI/CD, releases, and the CDN behind the artist gallery.
+- **GitHub** and **Cloudflare** - code hosting, CI/CD, releases, the CDN behind the artist gallery, and [cloudflared](https://github.com/cloudflare/cloudflared) for the optional MCP quick tunnel.
 
 ### Libraries
 
