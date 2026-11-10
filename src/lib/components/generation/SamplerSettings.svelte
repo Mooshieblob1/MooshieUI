@@ -776,7 +776,18 @@
     {/if}
   </div>
 
-  {#if generation.cfg <= 1.0}
+  {#if generation.cfg <= 1.0 && generation.advancedMode}
+    <!-- Advanced Mode: one line, details on hover (#915). -->
+    <p class="flex items-center gap-1 text-[10px] text-amber-300 -mt-1" title={locale.t('generation.sampler.cfg1_warning_body')}>
+      <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" class="w-3 h-3 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+      <span class="truncate">{locale.t('generation.sampler.cfg1_warning_title')}</span>
+      <InfoTip text={locale.t('generation.sampler.cfg1_warning_body')} />
+    </p>
+  {:else if generation.cfg <= 1.0}
     <div class="flex items-start gap-2 rounded-lg border border-amber-600/60 bg-amber-950/30 px-3 py-2 mt-1">
       <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" class="w-4 h-4 mt-0.5 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
