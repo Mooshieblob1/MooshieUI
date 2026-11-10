@@ -316,8 +316,14 @@
         }
       }
 
-      // Anima models produce poor results below 1024 — clamp to 1024² area preserving aspect ratio
-      if (generation.isAnima && (generation.width < 1024 || generation.height < 1024)) {
+      // Anima models produce poor results below 1024, so clamp to a 1024² area
+      // preserving the aspect ratio. Lock resolution means the user chose this
+      // size on purpose, so a locked size is generated as is.
+      if (
+        generation.isAnima &&
+        !generation.resolutionLocked &&
+        (generation.width < 1024 || generation.height < 1024)
+      ) {
         const ratio = generation.width / generation.height;
         const area = 1024 * 1024;
         generation.width = Math.round(Math.sqrt(area * ratio) / 8) * 8;
