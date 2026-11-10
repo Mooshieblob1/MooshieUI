@@ -11056,6 +11056,50 @@ first_stage_model.encoder.norm_out.weight
         }
     }
 
+    /// All-in-one Anima checkpoint as ComfyUI's checkpoint save writes it: the
+    /// DiT under `model.diffusion_model.`, the Qwen3-0.6B encoder under the
+    /// text-encoder prefix and the Qwen-Image VAE under `first_stage_model.`.
+    /// CivitAI fine-tunes such as ColdMilk Anima ship this way (issue 957).
+    fn anima_all_in_one_keys(text_encoder_prefix: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for i in 0..8 {
+            names.push(format!(
+                "model.diffusion_model.blocks.{i}.mlp.layer1.weight"
+            ));
+            names.push(format!(
+                "model.diffusion_model.llm_adapter.blocks.{i}.cross_attn.k_proj.weight"
+            ));
+            names.push(format!(
+                "{text_encoder_prefix}qwen3_06b.transformer.model.layers.{i}.mlp.up_proj.weight"
+            ));
+            names.push(format!(
+                "first_stage_model.decoder.upsamples.{i}.residual.0.gamma"
+            ));
+        }
+        names.push(format!(
+            "{text_encoder_prefix}qwen3_06b.transformer.model.embed_tokens.weight"
+        ));
+        names
+    }
+
+    #[test]
+    fn anima_all_in_one_checkpoint_is_anima_and_a_full_checkpoint() {
+        for prefix in ["cond_stage_model.", "text_encoders."] {
+            let names = anima_all_in_one_keys(prefix);
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            assert_eq!(
+                infer_architecture_from_key_names(&refs).as_deref(),
+                Some("anima"),
+                "{prefix}"
+            );
+            assert_eq!(
+                infer_model_kind_from_key_names(&refs),
+                Some("checkpoint"),
+                "{prefix}"
+            );
+        }
+    }
+
     #[test]
     fn model_layers_alone_is_not_an_llm() {
         // Without the token-embedding table, `model.layers.` is too generic.
