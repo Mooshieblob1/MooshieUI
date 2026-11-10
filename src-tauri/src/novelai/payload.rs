@@ -1430,7 +1430,7 @@ mod tests {
         let body = build(&input(), &n, v45()).unwrap();
         assert_eq!(
             body["input"],
-            "1girl, solo, very aesthetic, masterpiece, no text"
+            "1girl, solo, location, very aesthetic, masterpiece, no text"
         );
         // The hint names the stack that was actually written.
         assert_eq!(body["parameters"]["tag_hint_qt"], 1);
@@ -1556,6 +1556,10 @@ mod tests {
         assert_eq!(p["tag_hint_uc_preset"], 2);
 
         let body = build(&i, &presets_on(1), v45()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, solo, location, very aesthetic, masterpiece, no text"
+        );
         assert_eq!(
             body["parameters"]["negative_prompt"],
             "nsfw, lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page"
