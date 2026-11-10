@@ -1,3 +1,34 @@
+## What's New in v2.3.42
+
+### NovelAI Enhance
+- **Table and object layouts hold up**: Enhance for V5 keeps scene objects and placement (`behind table`, `table in foreground`) in the base prompt as short tags plus one short sentence. Character boxes keep pose and side of frame only, clothing the object hides is left out, and the rewrite no longer adds tags like `opaque` or `not on table`, or puts an object the scene needs in undesired content. Existing answers are cleaned the same way.
+- **Use memory notes switch**: a new checkbox in the Enhance options (V5 and general Enhance) turns memory notes off for one rewrite, so it works from the text and saved looks alone. It is ticked each time the modal opens.
+- **Only applied rewrites join the session**: a rewrite you close without applying no longer becomes history for the next request, in V5, general and video Enhance. Undo takes the turn back out, and the session keeps the cleaned fields you applied rather than the raw answer.
+- **Memory saved on Apply**: facts a rewrite learned are saved to character memory only when you apply it.
+- **Better retries**: the V5 correction retry now edits the first answer instead of starting over, and keeps whichever attempt has fewer problems.
+- **Review stays open on a backdrop click**: Cancel and Escape still close it. Escape with the gallery picker open closes only the picker.
+
+### Prompt assistant
+- **Safety check in every flow**: general Enhance and video Enhance now refuse the same minor plus explicit requests the V5 rewrite already refused.
+- **Local fallback fits**: with local fallback on, session history is trimmed to fit the local model's context. Errors from the bundled llama-server now say why the request failed.
+- **Model notes recover**: an empty notes verdict expires after a week instead of being cached forever, and notes are rewritten once per model for the new rules.
+- **Custom endpoints get a 300 second timeout**, since long rewrites on local servers can take more than two minutes.
+
+### NovelAI
+- **V4.5 Full quality tags**: with Quality tags on, V4.5 Full now gets NovelAI's documented `location, very aesthetic, masterpiece, no text` instead of the V5 stack.
+
+### Settings
+- **Image to 3D description** names both methods (Pixal3D textured meshes and Gaussian splats).
+- **Segmind key field hidden**: nothing uses a Segmind key yet, so the field only shows if one was saved earlier, with a note so it can be cleared.
+
+### Security
+- **SQLite update**: rusqlite 0.41 brings the bundled SQLite past CVE-2026-119375 (RUSTSEC-2026-0459).
+
+### Docs
+- README, docs index, scope, roadmap and contributor docs brought in line with the current app.
+
+---
+
 ## What's New in v2.3.41
 
 ### NovelAI Enhance
