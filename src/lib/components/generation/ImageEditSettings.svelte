@@ -177,8 +177,9 @@
       generation.editReferenceImages = generation.editReferenceImages.map((v, i) =>
         i === slot ? result.name : v,
       );
-      // Slot 0 owns the output geometry for Qwen (Kontext re-scales internally).
-      if (slot === 0 && prepared.width > 0 && prepared.height > 0) {
+      // Slot 0 owns the output geometry for Qwen (Kontext re-scales internally),
+      // unless Lock resolution is on, which keeps the user's own size.
+      if (slot === 0 && !generation.resolutionLocked && prepared.width > 0 && prepared.height > 0) {
         generation.width = snap16(prepared.width);
         generation.height = snap16(prepared.height);
       }
