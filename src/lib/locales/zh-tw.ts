@@ -2535,6 +2535,7 @@ const zhTw: Record<string, string> = {
   "bottom_panel.tab.characters": "角色",
   "characters.search_placeholder": "搜尋已儲存的角色...",
   "characters.arch_tip": "此處儲存的角色僅在選擇 {arch} 模型時顯示",
+  "characters.card_size": "卡片大小",
   "characters.extract": "從提示詞擷取",
   "characters.extract_tip": "使用提示詞助理找出提示詞中的角色，並為此模型架構儲存",
   "characters.extracting": "擷取中...",

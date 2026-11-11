@@ -13,9 +13,23 @@ import {
   type CharacterMemoryFile,
   type LearnedMemory,
 } from "../utils/characterMemory.js";
+import { sanitizeSeen, withSamples, type SamplePictures } from "../utils/sampleCharacters.js";
+import yueThumbnail from "../assets/characters/yue-thumbnail.webp?inline";
+import yueReference from "../assets/characters/yue-reference.webp?inline";
 import { createNovelAiCharacter, generation } from "./generation.svelte.js";
 
 const STORAGE_KEY = "mooshieui.savedCharacters.v1";
+/** Per-device view setting, kept out of the synced cards. */
+const CARD_SIZE_KEY = "mooshieui.savedCharacters.cardSize";
+
+/** Card picture size range for the Characters tab's size slider, in pixels. */
+export const CARD_SIZE_MIN = 48;
+export const CARD_SIZE_MAX = 192;
+export const CARD_SIZE_DEFAULT = 48;
+
+const SAMPLE_PICTURES: Record<string, SamplePictures> = {
+  yue: { thumbnail: yueThumbnail, reference: yueReference },
+};
 
 /** Every NovelAI model shares one architecture bucket; their tags carry over. */
 export const NOVELAI_ARCHITECTURE = "novelai";
@@ -94,6 +108,10 @@ export function architectureLabel(architecture: string): string {
   return MODEL_FAMILY_LABELS[architecture as ModelFamily] ?? architecture;
 }
 
+function clampCardSize(size: number): number {
+  return Math.max(CARD_SIZE_MIN, Math.min(CARD_SIZE_MAX, Math.round(size)));
+}
+
 function sanitize(raw: unknown): SavedCharacter | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
@@ -151,9 +169,45 @@ class SavedCharactersStore {
    * outlive the app.
    */
   portraitClaims = $state<Record<string, string>>({});
+  /** Side of a card's picture in the Characters tab, in pixels. */
+  cardSize = $state(CARD_SIZE_DEFAULT);
+  /**
+   * Sample characters already added for this user (see `sampleCharacters.ts`),
+   * so one deleted stays deleted. Saved and synced with the cards.
+   */
+  private seenSamples: string[] = [];
 
   constructor() {
     this.loadSettings();
+    this.loadCardSize();
+  }
+
+  /** Add the sample characters this user has not had yet. True when any were. */
+  private addSamples(): boolean {
+    const result = withSamples(this.characters, this.seenSamples, SAMPLE_PICTURES, Date.now());
+    if (!result.changed) return false;
+    this.seenSamples = result.seen;
+    this.characters = sanitizeList(result.characters);
+    return true;
+  }
+
+  private loadCardSize(): void {
+    try {
+      const raw = Number(localStorage.getItem(userScopedKey(CARD_SIZE_KEY)));
+      if (Number.isFinite(raw) && raw > 0) this.cardSize = clampCardSize(raw);
+    } catch {
+      // Storage unavailable: keep the default.
+    }
+  }
+
+  /** Set and keep the card picture size. */
+  setCardSize(size: number): void {
+    this.cardSize = clampCardSize(size);
+    try {
+      localStorage.setItem(userScopedKey(CARD_SIZE_KEY), String(this.cardSize));
+    } catch {
+      // Storage unavailable: the size lasts for this session.
+    }
   }
 
   /**
@@ -611,18 +665,21 @@ class SavedCharactersStore {
   loadSettings(): void {
     try {
       const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
-      if (!raw) return;
-      this.characters = sanitizeList(JSON.parse(raw)?.characters);
+      const parsed = raw ? JSON.parse(raw) : null;
+      this.characters = sanitizeList(parsed?.characters);
+      this.seenSamples = sanitizeSeen(parsed?.samples);
     } catch (e) {
       console.error("Failed to load saved characters:", e);
+      return;
     }
+    if (this.addSamples()) this.saveSettings();
   }
 
   saveSettings(): void {
     try {
       localStorage.setItem(
         userScopedKey(STORAGE_KEY),
-        JSON.stringify({ characters: this.characters }),
+        JSON.stringify({ characters: this.characters, samples: this.seenSamples }),
       );
       triggerSync();
     } catch (e) {
@@ -631,16 +688,19 @@ class SavedCharactersStore {
   }
 
   collectPrefs(): unknown {
-    return { characters: this.characters };
+    return { characters: this.characters, samples: this.seenSamples };
   }
 
   applyServerPrefs(data: any): void {
     try {
       if (!Array.isArray(data?.characters)) return;
       this.characters = sanitizeList(data.characters);
+      // A copy saved before samples existed gets them now, once.
+      this.seenSamples = sanitizeSeen(data.samples);
+      this.addSamples();
       localStorage.setItem(
         userScopedKey(STORAGE_KEY),
-        JSON.stringify({ characters: this.characters }),
+        JSON.stringify({ characters: this.characters, samples: this.seenSamples }),
       );
     } catch (e) {
       console.error("Failed to apply server prefs (characters):", e);

@@ -147,6 +147,14 @@ function mergeWithList(primary: unknown, secondary: unknown, listKey: string): u
   return { ...secondary, ...primary, [listKey]: mergeList(primary[listKey], secondary[listKey]) };
 }
 
+/** Cards by id, and the sample characters either side has had (see `sampleCharacters.ts`). */
+function mergeCharacters(primary: unknown, secondary: unknown): unknown {
+  const merged = mergeWithList(primary, secondary, "characters");
+  if (!isObj(merged) || !isObj(primary) || !isObj(secondary)) return merged;
+  const seen = [primary.samples, secondary.samples].flatMap((s) => (Array.isArray(s) ? s : []));
+  return seen.length > 0 ? { ...merged, samples: [...new Set(seen)] } : merged;
+}
+
 function mergeArtistFavourites(primary: unknown, secondary: unknown): unknown {
   if (!isObj(primary)) return secondary ?? primary;
   if (!isObj(secondary)) return primary;
@@ -264,7 +272,7 @@ export function mergeUserPrefs(primary: UserPrefsData, secondary: UserPrefsData)
     autocomplete: pick("autocomplete", fill),
     accessibility: pick("accessibility", fill),
     notes: pick("notes", mergeNotes),
-    characters: pick("characters", (a, b) => mergeWithList(a, b, "characters")),
+    characters: pick("characters", mergeCharacters),
     video_timeline: pick("video_timeline", fill),
     locale: pick("locale", (a) => a),
     artist_local_previews: pick("artist_local_previews", mergeArtistLocalPreviews),

@@ -2576,6 +2576,7 @@ const zh: Record<string, string> = {
   "bottom_panel.tab.characters": "角色",
   "characters.search_placeholder": "搜索已保存的角色...",
   "characters.arch_tip": "此处保存的角色仅在选择 {arch} 模型时显示",
+  "characters.card_size": "卡片大小",
   "characters.extract": "从提示词提取",
   "characters.extract_tip": "使用提示词助手找出提示词中的角色，并为此模型架构保存",
   "characters.extracting": "提取中...",

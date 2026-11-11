@@ -2560,6 +2560,7 @@ const fr: Record<string, string> = {
   "bottom_panel.tab.characters": "Personnages",
   "characters.search_placeholder": "Rechercher des personnages enregistrés...",
   "characters.arch_tip": "Les personnages enregistrés ici n'apparaissent qu'avec un modèle {arch} sélectionné",
+  "characters.card_size": "Taille des cartes",
   "characters.extract": "Extraire du prompt",
   "characters.extract_tip": "Utilise l'assistant de prompt pour trouver les personnages de ton prompt et les enregistrer pour cette architecture de modèle",
   "characters.extracting": "Extraction...",

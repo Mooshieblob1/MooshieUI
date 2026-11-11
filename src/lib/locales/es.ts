@@ -2604,6 +2604,7 @@ const es: Record<string, string> = {
   "bottom_panel.tab.characters": "Personajes",
   "characters.search_placeholder": "Buscar personajes guardados...",
   "characters.arch_tip": "Los personajes guardados aquí solo aparecen con un modelo {arch} seleccionado",
+  "characters.card_size": "Tamaño de tarjeta",
   "characters.extract": "Extraer del prompt",
   "characters.extract_tip": "Usa el asistente de prompts para encontrar los personajes de tu prompt y guardarlos para esta arquitectura de modelo",
   "characters.extracting": "Extrayendo...",

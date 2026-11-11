@@ -2233,6 +2233,7 @@ const en: Record<string, string> = {
   "bottom_panel.tab.characters": "Characters",
   "characters.search_placeholder": "Search saved characters...",
   "characters.arch_tip": "Characters saved here only show while a {arch} model is selected",
+  "characters.card_size": "Card size",
   "characters.extract": "Extract from prompt",
   "characters.extract_tip": "Use the prompt assistant to find the characters in your prompt and save them for this model architecture",
   "characters.extracting": "Extracting...",

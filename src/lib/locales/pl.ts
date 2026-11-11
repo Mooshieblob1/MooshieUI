@@ -2187,6 +2187,7 @@ const pl: Record<string, string> = {
   "bottom_panel.tab.characters": "Postacie",
   "characters.search_placeholder": "Szukaj zapisanych postaci...",
   "characters.arch_tip": "Zapisane tu postacie są widoczne tylko przy wybranym modelu {arch}",
+  "characters.card_size": "Rozmiar kart",
   "characters.extract": "Wyodrębnij z promptu",
   "characters.extract_tip": "Asystent promptów znajdzie postacie w promptcie i zapisze je dla tej architektury modelu",
   "characters.extracting": "Wyodrębnianie...",

@@ -2535,6 +2535,7 @@ const ko: Record<string, string> = {
   "bottom_panel.tab.characters": "캐릭터",
   "characters.search_placeholder": "저장된 캐릭터 검색...",
   "characters.arch_tip": "여기에 저장한 캐릭터는 {arch} 모델을 선택했을 때만 표시됩니다",
+  "characters.card_size": "카드 크기",
   "characters.extract": "프롬프트에서 추출",
   "characters.extract_tip": "프롬프트 도우미로 프롬프트 속 캐릭터를 찾아 이 모델 아키텍처용으로 저장합니다",
   "characters.extracting": "추출 중...",

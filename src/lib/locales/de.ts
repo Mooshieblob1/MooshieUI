@@ -2556,6 +2556,7 @@ const de: Record<string, string> = {
   "bottom_panel.tab.characters": "Charaktere",
   "characters.search_placeholder": "Gespeicherte Charaktere suchen...",
   "characters.arch_tip": "Hier gespeicherte Charaktere werden nur angezeigt, wenn ein {arch}-Modell ausgewählt ist",
+  "characters.card_size": "Kartengröße",
   "characters.extract": "Aus Prompt extrahieren",
   "characters.extract_tip": "Der Prompt-Assistent findet die Charaktere in deinem Prompt und speichert sie für diese Modellarchitektur",
   "characters.extracting": "Wird extrahiert...",
