@@ -26,6 +26,7 @@ import {
   readImageMetadata,
   copyGalleryFileTo,
   type StorageInfo,
+  interrogateGalleryImage,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken, userScopedKey } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
@@ -36,6 +37,7 @@ import { triggerSync } from "../utils/syncTrigger.js";
 import { matchesGallerySearch, parseGallerySearch } from "../utils/gallerySearch.js";
 import { detectCharacters, prepareCards } from "../utils/galleryCharacters.js";
 import { savedCharacters } from "./savedCharacters.svelte.js";
+import { loadGalleryTags, saveGalleryTags, tagsFromInterrogation } from "../utils/galleryTagCache.js";
 import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
 import {
@@ -45,6 +47,12 @@ import {
   type ArtistTagIndex,
 } from "../artist-gallery/detection.js";
 import type { ArtistSearchHit } from "../artist-gallery/types.js";
+
+/** Whether an image carries the prompt it was made with. */
+function hasSavedPrompt(image: OutputImage): boolean {
+  const metadata = image.metadata;
+  return !!(metadata?.positive_prompt?.trim() || metadata?.mooshie_novelai_characters);
+}
 
 /**
  * Whether a gallery entry is a video. Keyed off the stored filename rather
@@ -433,6 +441,10 @@ class GalleryStore {
     this.loadCustomBoards();
     this.loadShowGenerationTime();
     this.loadImageFlags();
+    void loadGalleryTags().then((tags) => {
+      // A scan that finished before the cache was read keeps its newer entries.
+      this.detectedTags = { ...tags, ...this.detectedTags };
+    });
   }
 
   private loadImageFlags() {
@@ -971,7 +983,9 @@ class GalleryStore {
   charactersIn(image: OutputImage): string[] {
     this._prepareDetection();
     if (this._detectCards.length === 0) return [];
-    const metadata = image.metadata;
+    // An image with no saved prompt is read from the tags a scan found in it.
+    const tagged = hasSavedPrompt(image) ? undefined : this.detectedTags[this._assignmentKey(image)];
+    const metadata = tagged ? { positive_prompt: tagged } : image.metadata;
     if (!metadata) return [];
     const key = `${metadata.positive_prompt ?? ""}\u0000${metadata.mooshie_novelai_characters ?? ""}`;
     const cached = this._characterCache.get(image);
@@ -983,6 +997,71 @@ class GalleryStore {
     }
     this._characterCache.set(image, { cards: this._detectCards, key, names });
     return names;
+  }
+
+  /** Tagger output for images with no saved prompt, keyed like board assignments. */
+  detectedTags = $state<Record<string, string>>({});
+  /** A running tagger scan: how far it is. Null when none runs. */
+  tagScan = $state<{ done: number; total: number } | null>(null);
+  private _tagScanStop = false;
+
+  /**
+   * Whether a scan has anything to do for an image: a still in MooshieUI's own
+   * gallery folder with no saved prompt, not scanned before.
+   */
+  needsTagScan(image: OutputImage): boolean {
+    if (!image.gallery_filename || image.linked_folder || isVideoImage(image)) return false;
+    if (hasSavedPrompt(image)) return false;
+    return this.detectedTags[image.gallery_filename] === undefined;
+  }
+
+  /**
+   * Run the tagger over the images in `images` that need it, one at a time,
+   * and keep what it finds. Stops early on `stopTagScan()` or when the tagger
+   * keeps failing. Returns how many images were tagged and the last error.
+   */
+  async scanTags(images: OutputImage[]): Promise<{ scanned: number; error: string | null }> {
+    if (this.tagScan) return { scanned: 0, error: null };
+    const pending = images.filter((image) => this.needsTagScan(image));
+    if (pending.length === 0) return { scanned: 0, error: null };
+    this._tagScanStop = false;
+    this.tagScan = { done: 0, total: pending.length };
+    let scanned = 0;
+    let failures = 0;
+    let error: string | null = null;
+    let unsaved: Record<string, string> = {};
+    const flush = async () => {
+      const batch = unsaved;
+      unsaved = {};
+      if (Object.keys(batch).length > 0) await saveGalleryTags(batch);
+    };
+    try {
+      for (const image of pending) {
+        if (this._tagScanStop) break;
+        const key = image.gallery_filename!;
+        try {
+          const tags = tagsFromInterrogation(await interrogateGalleryImage(key));
+          this.detectedTags = { ...this.detectedTags, [key]: tags };
+          unsaved[key] = tags;
+          scanned++;
+          failures = 0;
+          if (scanned % 20 === 0) await flush();
+        } catch (e) {
+          error = e instanceof Error ? e.message : String(e);
+          // One unreadable file is skipped; a tagger that cannot run at all ends the scan.
+          if (++failures >= 3) break;
+        }
+        this.tagScan = { done: this.tagScan!.done + 1, total: pending.length };
+      }
+    } finally {
+      await flush();
+      this.tagScan = null;
+    }
+    return { scanned, error: failures >= 3 || scanned === 0 ? error : null };
+  }
+
+  stopTagScan() {
+    this._tagScanStop = true;
   }
 
   /** How many loaded images each saved character was found in. */
