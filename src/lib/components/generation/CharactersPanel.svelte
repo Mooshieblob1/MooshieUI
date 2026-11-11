@@ -9,6 +9,8 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import {
+    CARD_SIZE_MAX,
+    CARD_SIZE_MIN,
     architectureLabel,
     architecturePromptStyle,
     characterArchitectures,
@@ -136,6 +138,12 @@
   }
 
   /** Whether Use can attach a card's picture as a Precise Reference (not V5 yet). */
+  /** More of the prompt fits beside a taller picture. */
+  const promptClamp = $derived(
+    savedCharacters.cardSize >= 144 ? "line-clamp-6" : savedCharacters.cardSize >= 96 ? "line-clamp-4" : "line-clamp-2",
+  );
+  const negativeClamp = $derived(savedCharacters.cardSize >= 96 ? "line-clamp-2" : "line-clamp-1");
+
   const canReference = $derived(
     generation.isNovelAi &&
       generation.supportsNovelAiPreciseReference &&
@@ -650,7 +658,8 @@
     <div class="flex gap-2 min-w-0">
     <button
       type="button"
-      class="shrink-0 w-12 h-12 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
+      style="width: {savedCharacters.cardSize}px; height: {savedCharacters.cardSize}px;"
+      class="shrink-0 rounded-md overflow-hidden border flex items-center justify-center transition-colors {thumbMenuId === character.id ? 'border-indigo-500' : 'border-neutral-700 hover:border-neutral-500'} bg-neutral-800 text-neutral-500"
       title={locale.t("characters.thumbnail.change")}
       aria-label={locale.t("characters.thumbnail.change")}
       aria-expanded={thumbMenuId === character.id}
@@ -659,16 +668,20 @@
       {#if thumbBusyId === character.id || portraitBusy(character.id)}
         <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.22-8.56" stroke-linecap="round"/></svg>
       {:else if character.thumbnail}
-        <img src={character.thumbnail} alt={character.name} class="w-full h-full object-cover" />
+        <img
+          src={savedCharacters.cardSize > 96 ? (character.reference ?? character.thumbnail) : character.thumbnail}
+          alt={character.name}
+          class="w-full h-full object-cover"
+        />
       {:else}
         <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
       {/if}
     </button>
     <div class="flex-1 min-w-0 flex flex-col gap-0.5">
       <span class="truncate text-xs font-medium text-neutral-100" title={character.name}>{character.name}</span>
-      <p class="text-[11px] leading-snug text-neutral-400 line-clamp-2 break-words" title={character.prompt}>{character.prompt}</p>
+      <p class="text-[11px] leading-snug text-neutral-400 {promptClamp} break-words" title={character.prompt}>{character.prompt}</p>
       {#if character.negative}
-        <p class="text-[11px] leading-snug text-red-300/70 line-clamp-1 break-words" title={character.negative}>
+        <p class="text-[11px] leading-snug text-red-300/70 {negativeClamp} break-words" title={character.negative}>
           <span class="text-red-400/80 font-medium">{locale.t("characters.negative_prefix")}</span> {character.negative}
         </p>
       {/if}
@@ -847,6 +860,21 @@
         {archLabel}
       </span>
     {/if}
+    <label class="shrink-0 flex items-center gap-1 text-neutral-500" title={locale.t("characters.card_size")}>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      <input
+        type="range"
+        name="saved-character-card-size"
+        min={CARD_SIZE_MIN}
+        max={CARD_SIZE_MAX}
+        step="8"
+        value={savedCharacters.cardSize}
+        oninput={(e) => savedCharacters.setCardSize(Number((e.currentTarget as HTMLInputElement).value))}
+        aria-label={locale.t("characters.card_size")}
+        disabled={!architecture}
+        class="w-16 sm:w-20 accent-indigo-500 disabled:opacity-40"
+      />
+    </label>
     <button
       type="button"
       class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
@@ -899,7 +927,7 @@
     </div>
   {:else}
     <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
-      <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); align-content: start;">
+      <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min({124 + savedCharacters.cardSize * 2}px, 100%), 1fr)); align-content: start;">
         {#each groups as group (group.top.id)}
           <div class="flex flex-col gap-1.5 min-w-0">
             {@render card(group.top)}

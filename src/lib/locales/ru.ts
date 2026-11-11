@@ -2535,6 +2535,7 @@ const ru: Record<string, string> = {
   "bottom_panel.tab.characters": "Персонажи",
   "characters.search_placeholder": "Поиск сохранённых персонажей...",
   "characters.arch_tip": "Сохранённые здесь персонажи видны только при выбранной модели {arch}",
+  "characters.card_size": "Размер карточек",
   "characters.extract": "Извлечь из промпта",
   "characters.extract_tip": "Помощник промптов найдёт персонажей в вашем промпте и сохранит их для этой архитектуры модели",
   "characters.extracting": "Извлечение...",

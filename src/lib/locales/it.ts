@@ -2535,6 +2535,7 @@ const it: Record<string, string> = {
   "bottom_panel.tab.characters": "Personaggi",
   "characters.search_placeholder": "Cerca personaggi salvati...",
   "characters.arch_tip": "I personaggi salvati qui compaiono solo con un modello {arch} selezionato",
+  "characters.card_size": "Dimensione schede",
   "characters.extract": "Estrai dal prompt",
   "characters.extract_tip": "Usa l'assistente prompt per trovare i personaggi nel prompt e salvarli per questa architettura di modello",
   "characters.extracting": "Estrazione...",

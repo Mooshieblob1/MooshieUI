@@ -2560,6 +2560,7 @@ const ja: Record<string, string> = {
   "bottom_panel.tab.characters": "キャラクター",
   "characters.search_placeholder": "保存済みキャラクターを検索...",
   "characters.arch_tip": "ここに保存したキャラクターは {arch} モデル選択時のみ表示されます",
+  "characters.card_size": "カードのサイズ",
   "characters.extract": "プロンプトから抽出",
   "characters.extract_tip": "プロンプトアシスタントでプロンプト内のキャラクターを見つけ、このモデルアーキテクチャ用に保存します",
   "characters.extracting": "抽出中...",
