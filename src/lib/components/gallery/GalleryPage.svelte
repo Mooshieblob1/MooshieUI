@@ -246,13 +246,29 @@
   }
 
   const visibleImages = $derived(gallery.visibleImages);
+  const knownCharacters = $derived(gallery.knownCharacters);
+  /** Counted only while the filter panel shows them. */
+  const characterCounts = $derived(knownCharacters.length > 0 && !gallery.filtersCollapsed ? gallery.characterCounts : {});
+  const characterFilterActive = $derived(gallery.characterFilter !== "all" && knownCharacters.includes(gallery.characterFilter));
+
+  function sortShownByCharacter() {
+    const result = gallery.sortByCharacter(selection.size > 0 ? selectedImages() : orderedImages);
+    gallery.showToast(
+      result.sorted > 0
+        ? locale.t("gallery.sort_by_character_done", { sorted: String(result.sorted), boards: String(result.boards.length) })
+        : locale.t("gallery.sort_by_character_none"),
+      result.sorted > 0 ? "success" : "info",
+    );
+  }
+
   const filtersActive = $derived(
     gallery.searchQuery.trim() !== "" ||
       gallery.boardFilter !== "all" ||
       gallery.sourceFilter !== "all" ||
       gallery.favouritesOnly ||
       gallery.minRating > 0 ||
-      gallery.nsfwFilter !== "all",
+      gallery.nsfwFilter !== "all" ||
+      characterFilterActive,
   );
 
   /** A filter inside the foldable panel is narrowing the gallery (the search box stays visible either way). */
@@ -261,7 +277,8 @@
       gallery.sourceFilter !== "all" ||
       gallery.favouritesOnly ||
       gallery.minRating > 0 ||
-      gallery.nsfwFilter !== "all",
+      gallery.nsfwFilter !== "all" ||
+      characterFilterActive,
   );
 
   const groupedGalleryImages = $derived.by(() => {
@@ -277,6 +294,8 @@
                 ? modeLabel(image.generation_mode)
                 : gallery.groupBy === "board"
                   ? gallery.getBoard(image)
+                  : gallery.groupBy === "character"
+                    ? (gallery.charactersIn(image).join(", ") || locale.t("gallery.no_character"))
                   : (image.prompt_id || locale.t("gallery.no_prompt_id"));
         const bucket = grouped.get(key) ?? [];
         bucket.push(image);
@@ -555,6 +574,7 @@
     void gallery.favouritesOnly;
     void gallery.minRating;
     void gallery.nsfwFilter;
+    void gallery.characterFilter;
     galleryRenderLimit = 48;
   });
 
@@ -571,6 +591,7 @@
     void gallery.blurNsfw;
     void gallery.sourceFilter;
     void gallery.filtersCollapsed;
+    void gallery.characterFilter;
     gallery.saveViewPrefs();
   });
 
@@ -704,6 +725,9 @@
               <option value="mode">{locale.t("gallery.group_mode")}</option>
               <option value="prompt">{locale.t("gallery.group_prompt")}</option>
               <option value="board">{locale.t("gallery.group_board")}</option>
+              {#if knownCharacters.length > 0}
+                <option value="character">{locale.t("gallery.character_filter")}</option>
+              {/if}
             </select>
           </div>
         </div>
@@ -766,6 +790,17 @@
               <option value="only">{locale.t("gallery.nsfw_only")}</option>
             </select>
           </div>
+          {#if knownCharacters.length > 0}
+            <div>
+              <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.character_filter")}</div>
+              <select bind:value={gallery.characterFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+                <option value="all">{locale.t("gallery.character_all")}</option>
+                {#each knownCharacters as name}
+                  <option value={name}>{name} ({characterCounts[name] ?? 0})</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           {#if gallery.linkedFolders.length > 0}
             <div>
               <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.source_filter")}</div>
@@ -800,6 +835,9 @@
             <button onclick={() => (gallery.viewMode = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.viewMode === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
             <button onclick={rescanGalleryMetadata} disabled={gallery.loading || gallery.refreshing} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200 disabled:opacity-50">{locale.t("gallery.rescan_metadata")}</button>
             <button onclick={sortGalleryByArtist} disabled={gallery.autoSorting} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50">{gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}</button>
+            {#if knownCharacters.length > 0}
+              <button onclick={sortShownByCharacter} title={locale.t("gallery.sort_by_character_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200">{locale.t("gallery.sort_by_character")}</button>
+            {/if}
             <label class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
               <input
                 type="checkbox"
@@ -841,6 +879,9 @@
                     <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
                     {#if image.linked_folder}
                       <div class="text-[10px] text-neutral-500 truncate" title={image.linked_folder}>{image.linked_folder}</div>
+                    {/if}
+                    {#if knownCharacters.length > 0 && gallery.charactersIn(image).length > 0}
+                      <div class="text-[10px] text-indigo-300/80 truncate">{gallery.charactersIn(image).join(", ")}</div>
                     {/if}
                   </div>
                   <div class="text-xs text-neutral-400">
