@@ -267,6 +267,13 @@ type GalleryToast = {
  */
 const VARIATION_BATCH_MEMORY = 32;
 
+/**
+ * One collator for the name sort: `localeCompare` with options builds a new
+ * one on every comparison, which is most of the cost of sorting thousands of
+ * names.
+ */
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
+
 class GalleryStore {
   images = $state<OutputImage[]>([]);
   /** Images generated during this app session (not loaded from disk). */
@@ -592,6 +599,47 @@ class GalleryStore {
     this.saveRatings();
   }
 
+  // --- Bulk edits: one assignment and one save for the whole selection. ---
+
+  setFavouriteMany(images: OutputImage[], favourite: boolean) {
+    const next = { ...this.favourites };
+    for (const image of images) {
+      const key = this._assignmentKey(image);
+      if (favourite) next[key] = true;
+      else delete next[key];
+    }
+    this.favourites = next;
+    this.saveFavourites();
+  }
+
+  /** Set a 1 to GALLERY_MAX_RATING star rating on every image; 0 clears it. */
+  setRatingMany(images: OutputImage[], rating: number) {
+    const next = { ...this.ratings };
+    for (const image of images) {
+      const key = this._assignmentKey(image);
+      if (isRating(rating)) next[key] = rating;
+      else delete next[key];
+    }
+    this.ratings = next;
+    this.saveRatings();
+  }
+
+  setNsfwMany(images: OutputImage[], nsfw: boolean) {
+    const next = { ...this.nsfwMarks };
+    for (const image of images) next[this._assignmentKey(image)] = nsfw;
+    this.nsfwMarks = next;
+    this.saveNsfwPrefs();
+  }
+
+  setBoardMany(images: OutputImage[], board: string) {
+    const value = board.trim() || "Unsorted";
+    if (value !== "Unsorted") this.addBoard(value);
+    const next = { ...this.boardAssignments };
+    for (const image of images) next[this._assignmentKey(image)] = value;
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+  }
+
   private get nsfwMatcher(): RegExp | null {
     const key = this.nsfwKeywords.join("\n");
     if (key !== this._nsfwMatcherKey) {
@@ -654,9 +702,7 @@ class GalleryStore {
     return this.images
       .filter((image) => this._passesFilters(image, terms))
       .sort((a, b) => {
-        if (this.sortBy === "name") {
-          return dir * a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
-        }
+        if (this.sortBy === "name") return dir * NAME_COLLATOR.compare(a.filename, b.filename);
         if (this.sortBy === "size") return dir * ((a.file_size_bytes ?? 0) - (b.file_size_bytes ?? 0));
         if (this.sortBy === "rating") {
           return dir * (this.getRating(a) - this.getRating(b) || byDate(a, b));
@@ -2377,10 +2423,25 @@ class GalleryStore {
    * "Delete all" clears the session's videos without touching its images.
    */
   async deleteAllSessionImages(only?: (image: OutputImage) => boolean) {
-    const targets = new Set(only ? this.sessionImages.filter(only) : this.sessionImages);
-    if (targets.size === 0) return;
+    await this.deleteImages(only ? this.sessionImages.filter(only) : this.sessionImages);
+  }
 
+  /**
+   * Delete several images at once: each file goes to the recycle bin, then the
+   * gallery lists and the stored assignments are updated once for the whole
+   * batch instead of once per image. An image whose file could not be deleted
+   * stays in the gallery. Returns how many were deleted.
+   */
+  async deleteImages(
+    images: OutputImage[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const targets = [...new Set(images)];
+    if (targets.length === 0) return 0;
+
+    const removed = new Set<OutputImage>();
     const deleted: string[] = [];
+    let done = 0;
     for (const image of targets) {
       try {
         // Wait out an in-flight save, as deleteImage() does.
@@ -2392,20 +2453,27 @@ class GalleryStore {
         if (image.url) {
           URL.revokeObjectURL(image.url);
         }
+        removed.add(image);
       } catch (e) {
-        console.error("Failed to delete session image:", e);
+        console.error("Failed to delete image:", e);
       }
+      onProgress?.(++done, targets.length);
     }
 
+    const deletedNames = new Set(deleted);
+    const isTarget = (i: OutputImage) =>
+      removed.has(i) || (!!i.gallery_filename && deletedNames.has(i.gallery_filename));
     this._forgetAssignments(deleted);
-    this.images = this.images.filter((i) => !targets.has(i));
-    this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
-    if (this.selectedImage && targets.has(this.selectedImage)) {
+    this.images = this.images.filter((i) => !isTarget(i));
+    this.sessionImages = this.sessionImages.filter((i) => !isTarget(i));
+    if (this.selectedImage && isTarget(this.selectedImage)) {
       this.closeLightbox();
     }
-    if (this.lastSelectedImage && targets.has(this.lastSelectedImage)) {
+    if (this.lastSelectedImage && isTarget(this.lastSelectedImage)) {
       this.lastSelectedImage = null;
     }
+    if (this.comparePin && isTarget(this.comparePin)) this.comparePin = null;
+    return removed.size;
   }
 
   private inferModeFromFilename(image: OutputImage): GenerationMode {
