@@ -34,6 +34,8 @@ import { progress } from "./progress.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { matchesGallerySearch, parseGallerySearch } from "../utils/gallerySearch.js";
+import { detectCharacters, prepareCards } from "../utils/galleryCharacters.js";
+import { savedCharacters } from "./savedCharacters.svelte.js";
 import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
 import {
@@ -200,7 +202,7 @@ const GALLERY_RATINGS_KEY = "mooshieui.gallery.ratings.v1";
 const GALLERY_NSFW_KEY = "mooshieui.gallery.nsfw.v1";
 
 export type GallerySortBy = "date" | "name" | "size" | "rating";
-export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board";
+export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board" | "character";
 export type GalleryViewMode = "huge" | "large" | "small" | "details";
 /** Which images the NSFW filter keeps: everything, only safe ones, or only flagged ones. */
 export type GalleryNsfwFilter = "all" | "hide" | "only";
@@ -339,6 +341,8 @@ class GalleryStore {
   sortDir = $state<"asc" | "desc">("desc");
   groupBy = $state<GalleryGroupBy>("none");
   boardFilter = $state("all");
+  /** Show only images a saved character was found in: the character's name, or "all". */
+  characterFilter = $state("all");
   /** The gallery page's filter panel is folded down to the search row. */
   filtersCollapsed = $state(false);
   viewMode = $state<GalleryViewMode>("large");
@@ -479,6 +483,7 @@ class GalleryStore {
       blurNsfw?: boolean;
       sourceFilter?: string;
       filtersCollapsed?: boolean;
+      characterFilter?: string;
     } | undefined;
     if (!parsed || typeof parsed !== "object") return;
     if (typeof parsed.imagesPerRow === "number") this.imagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
@@ -492,6 +497,7 @@ class GalleryStore {
     if (parsed.nsfwFilter) this.nsfwFilter = parsed.nsfwFilter;
     if (parsed.blurNsfw !== undefined) this.blurNsfw = parsed.blurNsfw;
     if (parsed.sourceFilter) this.sourceFilter = parsed.sourceFilter;
+    if (typeof parsed.characterFilter === "string" && parsed.characterFilter) this.characterFilter = parsed.characterFilter;
     if (parsed.filtersCollapsed !== undefined) this.filtersCollapsed = parsed.filtersCollapsed === true;
   }
 
@@ -509,6 +515,7 @@ class GalleryStore {
       blurNsfw: this.blurNsfw,
       sourceFilter: this.sourceFilter,
       filtersCollapsed: this.filtersCollapsed,
+      characterFilter: this.characterFilter,
     });
   }
 
@@ -694,6 +701,9 @@ class GalleryStore {
       const source = image.linked_folder ?? GALLERY_SOURCE_OWN;
       if (source !== this.sourceFilter) return false;
     }
+    if (this.characterFilter !== "all" && this.knownCharacters.includes(this.characterFilter)) {
+      if (!this.charactersIn(image).includes(this.characterFilter)) return false;
+    }
     if (this.favouritesOnly && !this.isFavourite(image)) return false;
     if (this.minRating > 0 && this.getRating(image) < this.minRating) return false;
     if (this.nsfwFilter !== "all" && this.isNsfw(image) !== (this.nsfwFilter === "only")) return false;
@@ -867,6 +877,103 @@ class GalleryStore {
       [key]: value,
     };
     this.saveBoardAssignments();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Saved character detection
+  // ---------------------------------------------------------------------------
+
+  /** Prepared cards, rebuilt when the saved characters change. */
+  private _detectCardsFor: unknown = null;
+  private _detectCards: ReturnType<typeof prepareCards> = [];
+  /** Card id to the character's display name (a variant reports its parent's). */
+  private _detectNames = new Map<string, string>();
+  private _knownCharacters: string[] = [];
+  /** Per image: the prompt the names were worked out from, so a result is reused until either changes. */
+  private _characterCache = new WeakMap<OutputImage, { cards: unknown; key: string; names: string[] }>();
+
+  private _prepareDetection() {
+    const all = savedCharacters.characters;
+    if (this._detectCardsFor === all) return;
+    this._detectCardsFor = all;
+    const byId = new Map(all.map((c) => [c.id, c]));
+    this._detectNames = new Map();
+    const names = new Set<string>();
+    for (const card of all) {
+      const owner = (card.parentId && byId.get(card.parentId)) || card;
+      const name = owner.name.trim();
+      if (!name) continue;
+      this._detectNames.set(card.id, name);
+      names.add(name);
+    }
+    this._detectCards = prepareCards(all.filter((c) => this._detectNames.has(c.id)));
+    this._knownCharacters = [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  /** Names of the saved characters (variants folded into their parent), sorted. */
+  get knownCharacters(): string[] {
+    this._prepareDetection();
+    return this._knownCharacters;
+  }
+
+  /**
+   * Names of the saved characters found in an image, best match first. Works
+   * from the prompt saved in the image, so an image without one has none.
+   * Cards with the same name (one per model architecture) count as one character.
+   */
+  charactersIn(image: OutputImage): string[] {
+    this._prepareDetection();
+    if (this._detectCards.length === 0) return [];
+    const metadata = image.metadata;
+    if (!metadata) return [];
+    const key = `${metadata.positive_prompt ?? ""}\u0000${metadata.mooshie_novelai_characters ?? ""}`;
+    const cached = this._characterCache.get(image);
+    if (cached && cached.cards === this._detectCards && cached.key === key) return cached.names;
+    const names: string[] = [];
+    for (const hit of detectCharacters(metadata, this._detectCards)) {
+      const name = this._detectNames.get(hit.cardId);
+      if (name && !names.includes(name)) names.push(name);
+    }
+    this._characterCache.set(image, { cards: this._detectCards, key, names });
+    return names;
+  }
+
+  /** How many loaded images each saved character was found in. */
+  get characterCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    if (this.knownCharacters.length === 0) return counts;
+    for (const image of this.images) {
+      for (const name of this.charactersIn(image)) counts[name] = (counts[name] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
+   * File `images` into a board named after the character found in each. Only
+   * Unsorted images move, and only when exactly one character was found, so a
+   * board the user chose and a shared picture are both left alone.
+   */
+  sortByCharacter(images: OutputImage[]): { sorted: number; boards: string[] } {
+    const next = { ...this.boardAssignments };
+    const boards = new Set<string>();
+    let sorted = 0;
+    for (const image of images) {
+      const key = this._assignmentKey(image);
+      if (next[key] && next[key] !== "Unsorted") continue;
+      const names = this.charactersIn(image);
+      if (names.length !== 1) continue;
+      const board = names[0]!.trim();
+      if (!board || board === "Unsorted") continue;
+      next[key] = board;
+      boards.add(board);
+      sorted++;
+    }
+    if (sorted > 0) {
+      for (const board of boards) this.addBoard(board);
+      this.boardAssignments = next;
+      this.saveBoardAssignments();
+    }
+    return { sorted, boards: [...boards] };
   }
 
   // ---------------------------------------------------------------------------
