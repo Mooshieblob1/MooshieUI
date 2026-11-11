@@ -255,6 +255,15 @@
       gallery.nsfwFilter !== "all",
   );
 
+  /** A filter inside the foldable panel is narrowing the gallery (the search box stays visible either way). */
+  const panelFiltersActive = $derived(
+    gallery.boardFilter !== "all" ||
+      gallery.sourceFilter !== "all" ||
+      gallery.favouritesOnly ||
+      gallery.minRating > 0 ||
+      gallery.nsfwFilter !== "all",
+  );
+
   const groupedGalleryImages = $derived.by(() => {
     if (gallery.groupBy !== "none") {
       const grouped = new Map<string, OutputImage[]>();
@@ -350,6 +359,8 @@
   // help opening, the expiry banner) needs a fresh measurement.
   $effect(() => {
     void showSearchHelp;
+    void gallery.filtersCollapsed;
+    void boardRename;
     void gallery.hasExpiry;
     void filtersActive;
     void gallery.viewMode;
@@ -370,7 +381,6 @@
   const selection = new SvelteSet<OutputImage>();
   /** Where a Shift+click range starts: the last image selected on its own. */
   let selectionAnchor: OutputImage | null = null;
-  let bulkProgress = $state<{ done: number; total: number } | null>(null);
   /** Text of the bulk bar's new board field; null while it shows the board list. */
   let bulkNewBoard = $state<string | null>(null);
 
@@ -460,30 +470,44 @@
     bulkNewBoard = null;
   }
 
-  async function bulkDelete() {
-    if (bulkProgress) return;
-    const images = selectedImages();
+  /**
+   * Delete with an Undo toast instead of a confirm. Originals in a linked
+   * folder still ask first: those are the user's own files, not copies.
+   */
+  function deleteWithUndo(images: OutputImage[]) {
     if (images.length === 0) return;
-    const linked = images.filter((image) => image.linked_folder).length;
-    const message = linked > 0
-      ? locale.t("gallery.bulk.delete_confirm_linked", { count: String(images.length), linked: String(linked) })
-      : locale.t("gallery.bulk.delete_confirm", { count: String(images.length) });
-    if (!confirm(message)) return;
-    bulkProgress = { done: 0, total: images.length };
-    try {
-      const deleted = await gallery.deleteImages(images, (done, total) => {
-        bulkProgress = { done, total };
-      });
-      const failed = images.length - deleted;
-      gallery.showToast(
-        failed > 0
-          ? locale.t("gallery.bulk.toast_delete_failed", { count: String(failed) })
-          : locale.t("gallery.bulk.toast_deleted", { count: String(deleted) }),
-        failed > 0 ? "error" : "success",
-      );
-    } finally {
-      bulkProgress = null;
+    const linked = images.filter((image) => image.linked_folder);
+    if (linked.length > 0) {
+      const message = images.length === 1
+        ? locale.t("gallery.delete_linked_confirm", { folder: linked[0]!.linked_folder! })
+        : locale.t("gallery.bulk.delete_confirm_linked", { count: String(images.length), linked: String(linked.length) });
+      if (!confirm(message)) return;
     }
+    gallery.deleteImagesWithUndo(images);
+  }
+
+  function bulkDelete() {
+    deleteWithUndo(selectedImages());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Board rename and delete
+  // ---------------------------------------------------------------------------
+
+  /** Text of the rename field; null while the board filter shows its list. */
+  let boardRename = $state<string | null>(null);
+  const boardCounts = $derived(gallery.boardCounts);
+  const boardIsEditable = $derived(gallery.boardFilter !== "all" && gallery.boardFilter !== "Unsorted");
+
+  function commitBoardRename() {
+    if (boardRename !== null) gallery.renameBoard(gallery.boardFilter, boardRename);
+    boardRename = null;
+  }
+
+  function deleteCurrentBoard() {
+    const board = gallery.boardFilter;
+    if ((boardCounts[board] ?? 0) > 0 && !confirm(locale.t("gallery.board_delete_confirm", { board }))) return;
+    gallery.deleteBoard(board);
   }
 
   // A selection only ever holds images that are on the page: one that is
@@ -504,7 +528,7 @@
 
   /** Ctrl/Cmd+A selects everything shown, Escape clears, Delete deletes the selection. */
   function onGalleryKeydown(e: KeyboardEvent) {
-    if (e.defaultPrevented || gallery.lightboxOpen || gallery.compareOpen || dirPickerImage || bulkProgress) return;
+    if (e.defaultPrevented || gallery.lightboxOpen || gallery.compareOpen || dirPickerImage) return;
     if (isTypingTarget(e.target)) return;
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
       if (orderedImages.length === 0) return;
@@ -515,7 +539,7 @@
       clearSelection();
     } else if (selection.size > 0 && e.key === "Delete") {
       e.preventDefault();
-      void bulkDelete();
+      bulkDelete();
     }
   }
 
@@ -546,6 +570,7 @@
     void gallery.nsfwFilter;
     void gallery.blurNsfw;
     void gallery.sourceFilter;
+    void gallery.filtersCollapsed;
     gallery.saveViewPrefs();
   });
 
@@ -621,6 +646,17 @@
               title={locale.t("gallery.search.help_title")}
               aria-label={locale.t("gallery.search.help_title")}
             >?</button>
+            <button
+              class="relative h-9 shrink-0 flex items-center gap-1.5 px-3 rounded-lg border text-xs transition-colors {gallery.filtersCollapsed ? 'border-neutral-700 text-neutral-400 hover:border-neutral-500' : 'border-indigo-500 text-indigo-300'}"
+              onclick={() => (gallery.filtersCollapsed = !gallery.filtersCollapsed)}
+              aria-expanded={!gallery.filtersCollapsed}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+              {locale.t("gallery.filters")}
+              {#if gallery.filtersCollapsed && panelFiltersActive}
+                <span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-400" aria-hidden="true"></span>
+              {/if}
+            </button>
           </div>
           {#if showSearchHelp}
             <ul class="mt-2 space-y-0.5 text-[11px] text-neutral-400 leading-relaxed">
@@ -644,6 +680,7 @@
           {/if}
         </div>
 
+        {#if !gallery.filtersCollapsed}
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
           <div class="lg:col-span-2">
             <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.images_per_row")} {viewColumns(gallery.viewMode)}</div>
@@ -674,13 +711,33 @@
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
           <div>
             <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.board_filter")}</div>
-            <select bind:value={gallery.boardFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-              <option value="all">{locale.t("gallery.all_boards")}</option>
-              <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
-              {#each gallery.boards as board}
-                <option value={board}>{board}</option>
-              {/each}
-            </select>
+            <div class="flex items-center gap-1.5">
+              {#if boardRename !== null}
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  type="text"
+                  autofocus
+                  bind:value={boardRename}
+                  aria-label={locale.t("gallery.board_rename")}
+                  class="min-w-0 flex-1 bg-neutral-800 border border-indigo-500 rounded-lg px-2 py-2 text-sm text-neutral-100 focus:outline-none"
+                  onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitBoardRename(); } else if (e.key === "Escape") { e.stopPropagation(); boardRename = null; } }}
+                />
+                <button class="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50" disabled={!boardRename.trim()} title={locale.t("common.save")} aria-label={locale.t("common.save")} onclick={commitBoardRename}>✓</button>
+                <button class="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border border-neutral-700 text-neutral-400 hover:border-neutral-500" title={locale.t("common.cancel")} aria-label={locale.t("common.cancel")} onclick={() => (boardRename = null)}>&times;</button>
+              {:else}
+                <select bind:value={gallery.boardFilter} class="min-w-0 flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+                  <option value="all">{locale.t("gallery.all_boards")}</option>
+                  <option value="Unsorted">{locale.t("gallery.unsorted")} ({boardCounts["Unsorted"] ?? 0})</option>
+                  {#each gallery.boards as board}
+                    <option value={board}>{board} ({boardCounts[board] ?? 0})</option>
+                  {/each}
+                </select>
+                {#if boardIsEditable}
+                  <button class="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300" title={locale.t("gallery.board_rename")} aria-label={locale.t("gallery.board_rename")} onclick={() => (boardRename = gallery.boardFilter)}>✎</button>
+                  <button class="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg border border-neutral-700 text-red-300 hover:border-red-500" title={locale.t("gallery.board_delete")} aria-label={locale.t("gallery.board_delete")} onclick={deleteCurrentBoard}>&times;</button>
+                {/if}
+              {/if}
+            </div>
           </div>
           <div class="lg:col-span-3">
             <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.create_board")}</div>
@@ -754,6 +811,7 @@
             </label>
           </div>
         </div>
+        {/if}
       </div>
 
       {#if galleryTotalCount === 0}
@@ -842,7 +900,7 @@
                       <button class="px-2 py-1 text-[11px] rounded text-neutral-100 {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-neutral-800 hover:bg-neutral-700'}" title={comparePinTitle(image)} onclick={() => gallery.toggleComparePin(image)}>{locale.t("gallery.compare.short")}</button>
                     {/if}
                     <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 disabled:opacity-50" disabled={gallery.saving} onclick={() => gallery.saveImageAs(image)}>{gallery.saving ? locale.t("gallery.saving") : locale.t("gallery.save")}</button>
-                    <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.confirmDeleteImage(image)}>{locale.t("gallery.delete")}</button>
+                    <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => deleteWithUndo([image])}>{locale.t("gallery.delete")}</button>
                   </div>
                 </div>
               {/each}
@@ -952,7 +1010,7 @@
                         <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.isFavourite(image) ? 'bg-pink-700/90 hover:bg-pink-600 text-white' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isFavourite(image)} title={locale.t(gallery.isFavourite(image) ? "gallery.unfavourite" : "gallery.favourite")} onclick={(e) => { e.stopPropagation(); gallery.toggleFavourite(image); }}>♥</button>
                         <button class="w-7 h-7 flex items-center justify-center rounded shadow text-[9px] font-bold {gallery.isNsfw(image) ? 'bg-red-900/90 hover:bg-red-800 text-red-200' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isNsfw(image)} title={locale.t(gallery.isNsfw(image) ? "gallery.mark_safe" : "gallery.mark_nsfw")} onclick={(e) => { e.stopPropagation(); gallery.toggleNsfw(image); }}>{locale.t("gallery.nsfw_badge")}</button>
                         <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow disabled:opacity-50" disabled={gallery.saving} title={locale.t(isVideoImage(image) ? "gallery.save_video_as" : "gallery.save_as")} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>↓</button>
-                        <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.confirmDeleteImage(image); }}>×</button>
+                        <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); deleteWithUndo([image]); }}>×</button>
                       </div>
                     </div>
                     {/each}
@@ -968,9 +1026,6 @@
   {#if selection.size > 0}
     <div class="sticky bottom-0 z-20 mt-3 flex justify-center pointer-events-none">
       <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 rounded-xl border border-indigo-500/60 bg-neutral-900/95 px-3 py-2 shadow-xl shadow-black/50 backdrop-blur" role="toolbar" aria-label={locale.t("gallery.bulk.selected", { count: String(selection.size) })}>
-        {#if bulkProgress}
-          <span class="px-2 text-sm text-neutral-200" aria-live="polite">{locale.t("gallery.bulk.deleting", { done: String(bulkProgress.done), total: String(bulkProgress.total) })}</span>
-        {:else}
           <span class="px-1 text-sm font-medium text-indigo-200 tabular-nums">{locale.t("gallery.bulk.selected", { count: String(selection.size) })}</span>
           {#if selection.size < galleryTotalCount}
             <button class="px-2.5 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500" onclick={selectAll}>{locale.t("gallery.bulk.select_all")}</button>
@@ -1033,7 +1088,6 @@
           <button class="h-8 px-2.5 text-xs rounded bg-red-900/80 hover:bg-red-800 text-red-100" onclick={bulkDelete}>{locale.t("gallery.delete")}</button>
           <span class="w-px h-5 bg-neutral-700" aria-hidden="true"></span>
           <button class="w-8 h-8 flex items-center justify-center rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800" title={locale.t("gallery.bulk.clear")} aria-label={locale.t("gallery.bulk.clear")} onclick={clearSelection}>&times;</button>
-        {/if}
       </div>
     </div>
   {/if}
