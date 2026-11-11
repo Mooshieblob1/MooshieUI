@@ -339,6 +339,8 @@ class GalleryStore {
   sortDir = $state<"asc" | "desc">("desc");
   groupBy = $state<GalleryGroupBy>("none");
   boardFilter = $state("all");
+  /** The gallery page's filter panel is folded down to the search row. */
+  filtersCollapsed = $state(false);
   viewMode = $state<GalleryViewMode>("large");
   /** Search text (see utils/gallerySearch.ts). Not persisted. */
   searchQuery = $state("");
@@ -416,6 +418,11 @@ class GalleryStore {
   }
 
   constructor() {
+    // Leaving the page ends the undo window: the files are deleted now rather
+    // than coming back on the next launch.
+    if (typeof window !== "undefined") {
+      window.addEventListener("pagehide", () => void this.finishPendingDelete());
+    }
     this.loadBoardAssignments();
     this.loadCustomBoards();
     this.loadShowGenerationTime();
@@ -471,6 +478,7 @@ class GalleryStore {
       nsfwFilter?: GalleryNsfwFilter;
       blurNsfw?: boolean;
       sourceFilter?: string;
+      filtersCollapsed?: boolean;
     } | undefined;
     if (!parsed || typeof parsed !== "object") return;
     if (typeof parsed.imagesPerRow === "number") this.imagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
@@ -484,6 +492,7 @@ class GalleryStore {
     if (parsed.nsfwFilter) this.nsfwFilter = parsed.nsfwFilter;
     if (parsed.blurNsfw !== undefined) this.blurNsfw = parsed.blurNsfw;
     if (parsed.sourceFilter) this.sourceFilter = parsed.sourceFilter;
+    if (parsed.filtersCollapsed !== undefined) this.filtersCollapsed = parsed.filtersCollapsed === true;
   }
 
   saveViewPrefs() {
@@ -499,6 +508,7 @@ class GalleryStore {
       nsfwFilter: this.nsfwFilter,
       blurNsfw: this.blurNsfw,
       sourceFilter: this.sourceFilter,
+      filtersCollapsed: this.filtersCollapsed,
     });
   }
 
@@ -797,6 +807,51 @@ class GalleryStore {
       a.localeCompare(b, undefined, { sensitivity: "base" })
     );
     this.saveCustomBoards();
+  }
+
+  /**
+   * Rename a board: every image on it moves to `to`, which may be an existing
+   * board (the two merge). Returns false when the name is empty, reserved or
+   * unchanged.
+   */
+  renameBoard(from: string, to: string): boolean {
+    const name = to.trim();
+    if (!from || from === "Unsorted" || !name || name === "Unsorted" || name === from) return false;
+    const next: Record<string, string> = {};
+    for (const [key, board] of Object.entries(this.boardAssignments)) {
+      next[key] = board === from ? name : board;
+    }
+    this.customBoards = [...new Set(this.customBoards.map((board) => (board === from ? name : board)).concat(name))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    this.saveCustomBoards();
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+    if (this.boardFilter === from) this.boardFilter = name;
+    return true;
+  }
+
+  /** Delete a board. Its images are kept and go back to Unsorted. */
+  deleteBoard(name: string) {
+    if (!name || name === "Unsorted") return;
+    const next: Record<string, string> = {};
+    for (const [key, board] of Object.entries(this.boardAssignments)) {
+      if (board !== name) next[key] = board;
+    }
+    this.customBoards = this.customBoards.filter((board) => board !== name);
+    this.saveCustomBoards();
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+    if (this.boardFilter === name) this.boardFilter = "all";
+  }
+
+  /** How many loaded images sit on each board, Unsorted included. */
+  get boardCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const image of this.images) {
+      const board = this.getBoard(image);
+      counts[board] = (counts[board] ?? 0) + 1;
+    }
+    return counts;
   }
 
   getBoard(image: OutputImage): string {
@@ -1658,6 +1713,7 @@ class GalleryStore {
         const name = diskImage.gallery_filename!;
         const image = existing.get(name);
         if (!image && beforeNames.has(name)) continue; // Deleted during the scan.
+        if (!image && this._pendingDeleteNames.has(name)) continue; // Waiting out its undo window.
         if (image) {
           const changed = image.file_size_bytes !== diskImage.file_size_bytes
             || image.generated_at_ms !== diskImage.generated_at_ms;
@@ -2474,6 +2530,117 @@ class GalleryStore {
     }
     if (this.comparePin && isTarget(this.comparePin)) this.comparePin = null;
     return removed.size;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delete with undo
+  // ---------------------------------------------------------------------------
+
+  /** How long a delete can be undone before the files go to the recycle bin. */
+  static readonly UNDO_DELETE_MS = 7000;
+
+  /**
+   * Images taken off the gallery but not yet deleted from disk. Their files
+   * and their board, favourite and rating marks are untouched until the undo
+   * window closes, so Undo only has to put them back in the list.
+   */
+  private _pendingDelete: {
+    images: OutputImage[];
+    session: Set<OutputImage>;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  /** Gallery files held by a pending delete, so a refresh does not list them again. */
+  private _pendingDeleteNames = new Set<string>();
+
+  /**
+   * Remove images from the gallery now and delete their files once the undo
+   * window closes. A toast offers Undo until then. A second delete, a refresh
+   * of the page or leaving it finishes the first one straight away.
+   */
+  deleteImagesWithUndo(images: OutputImage[]) {
+    const targets = new Set(images);
+    if (targets.size === 0) return;
+    void this.finishPendingDelete();
+
+    const session = new Set(this.sessionImages.filter((i) => targets.has(i)));
+    this.images = this.images.filter((i) => !targets.has(i));
+    this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
+    if (this.selectedImage && targets.has(this.selectedImage)) this.closeLightbox();
+    if (this.lastSelectedImage && targets.has(this.lastSelectedImage)) this.lastSelectedImage = null;
+    if (this.comparePin && targets.has(this.comparePin)) this.comparePin = null;
+
+    const pending = {
+      images: [...targets],
+      session,
+      timer: setTimeout(() => void this.finishPendingDelete(), GalleryStore.UNDO_DELETE_MS),
+    };
+    this._pendingDelete = pending;
+    for (const image of pending.images) {
+      if (image.gallery_filename) this._pendingDeleteNames.add(image.gallery_filename);
+    }
+    this.showToast(locale.t("gallery.bulk.toast_deleted", { count: String(targets.size) }), "success", {
+      durationMs: GalleryStore.UNDO_DELETE_MS,
+      actionLabel: locale.t("gallery.undo"),
+      onAction: () => this.undoPendingDelete(),
+    });
+  }
+
+  /** Put the images of the pending delete back. Nothing was deleted yet. */
+  undoPendingDelete() {
+    const pending = this._pendingDelete;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this._pendingDelete = null;
+    this._releasePendingNames(pending.images);
+    this._restoreImages(pending.images, pending.session);
+  }
+
+  private _releasePendingNames(images: OutputImage[]) {
+    for (const image of images) {
+      if (image.gallery_filename) this._pendingDeleteNames.delete(image.gallery_filename);
+    }
+  }
+
+  private _restoreImages(images: OutputImage[], session: Set<OutputImage>) {
+    const present = new Set(this.images);
+    const back = images.filter((i) => !present.has(i));
+    this.images = [...back, ...this.images];
+    const inSession = new Set(this.sessionImages);
+    const sessionBack = back.filter((i) => session.has(i) && !inSession.has(i));
+    if (sessionBack.length > 0) {
+      this.sessionImages = [...sessionBack, ...this.sessionImages].sort(
+        (a, b) => (b.generated_at_ms ?? 0) - (a.generated_at_ms ?? 0),
+      );
+    }
+  }
+
+  /** Delete the files of the pending delete now. An image that fails comes back. */
+  async finishPendingDelete(): Promise<void> {
+    const pending = this._pendingDelete;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this._pendingDelete = null;
+    const deleted: string[] = [];
+    const failed: OutputImage[] = [];
+    for (const image of pending.images) {
+      try {
+        const galleryFilename = await this.resolveGalleryFilename(image);
+        if (galleryFilename) {
+          await deleteGalleryImage(galleryFilename);
+          deleted.push(galleryFilename);
+        }
+        if (image.url) URL.revokeObjectURL(image.url);
+      } catch (e) {
+        console.error("Failed to delete image:", e);
+        failed.push(image);
+      }
+    }
+    this._releasePendingNames(pending.images);
+    this._forgetAssignments(deleted);
+    if (failed.length > 0) {
+      this._restoreImages(failed, pending.session);
+      this.showToast(locale.t("gallery.bulk.toast_delete_failed", { count: String(failed.length) }), "error");
+    }
   }
 
   private inferModeFromFilename(image: OutputImage): GenerationMode {
