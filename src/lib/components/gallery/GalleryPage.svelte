@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { portal } from "../../utils/portal.js";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
@@ -273,7 +273,16 @@
   const visibleImages = $derived(gallery.visibleImages);
   const knownCharacters = $derived(gallery.knownCharacters);
   /** Counted only while the filter panel shows them. */
-  const characterCounts = $derived(knownCharacters.length > 0 && !gallery.filtersCollapsed ? gallery.characterCounts : {});
+  const characterCounts = $derived(
+    knownCharacters.length > 0 && !gallery.filtersCollapsed && gallery.charactersWarm ? gallery.characterCounts : null,
+  );
+  // Matching thousands of prompts against every saved character is done in the
+  // background, once the prompts are loaded, instead of while the page opens.
+  $effect(() => {
+    void gallery.images.length;
+    if (knownCharacters.length === 0 || gallery.hydratingMetadata) return;
+    untrack(() => void gallery.warmCharacters());
+  });
   const characterFilterActive = $derived(gallery.characterFilter !== "all" && knownCharacters.includes(gallery.characterFilter));
 
   function sortShownByCharacter() {
@@ -1060,7 +1069,7 @@
               <select bind:value={gallery.characterFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
                 <option value="all">{locale.t("gallery.character_all")}</option>
                 {#each knownCharacters as name}
-                  <option value={name}>{name} ({characterCounts[name] ?? 0})</option>
+                  <option value={name}>{characterCounts ? `${name} (${characterCounts[name] ?? 0})` : name}</option>
                 {/each}
               </select>
             </div>

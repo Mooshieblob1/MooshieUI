@@ -103,6 +103,10 @@ export interface PromptUnit {
   /** The whole text, punctuation flattened, padded with spaces: for prose prompts. */
   text: string;
   subjects: Set<Subject>;
+  /** Every word of `text`: a tag whose words are not all here cannot be in it. */
+  words: Set<string>;
+  /** Tags already looked up in this unit, shared by every card. */
+  seen: Map<string, boolean>;
 }
 
 function buildUnit(prompts: string[]): PromptUnit {
@@ -120,7 +124,7 @@ function buildUnit(prompts: string[]): PromptUnit {
   for (const [, word] of text.matchAll(PROSE_SUBJECT)) {
     subjects.add(/^(?:girl|wom[ae]n|lady|female)/.test(word!) ? "girl" : "boy");
   }
-  return { tags, text, subjects };
+  return { tags, text, subjects, words: new Set(text.split(" ")), seen: new Map() };
 }
 
 /**
@@ -147,7 +151,7 @@ export function imageUnits(metadata: Record<string, string> | null | undefined):
   return base.trim() ? [buildUnit([base])] : [];
 }
 
-interface PreparedCard {
+export interface PreparedCard {
   card: DetectCard;
   characterId: string;
   subjects: Subject[];
@@ -206,8 +210,23 @@ export function prepareCards(cards: readonly DetectCard[]): PreparedCard[] {
   });
 }
 
+/** A tag's words, cached: the same few hundred card tags are looked up in every image. */
+const tagWords = new Map<string, string[]>();
+
 function has(unit: PromptUnit, tag: string): boolean {
-  return unit.tags.has(tag) || unit.text.includes(` ${wordsOf(tag)} `);
+  if (unit.tags.has(tag)) return true;
+  const seen = unit.seen.get(tag);
+  if (seen !== undefined) return seen;
+  let words = tagWords.get(tag);
+  if (!words) {
+    words = wordsOf(tag).split(" ");
+    if (tagWords.size > 5000) tagWords.clear();
+    tagWords.set(tag, words);
+  }
+  // Most tags fail on their first word, which spares scanning the whole prompt.
+  const found = words.every((word) => unit.words.has(word)) && unit.text.includes(` ${words.join(" ")} `);
+  unit.seen.set(tag, found);
+  return found;
 }
 
 function fraction(unit: PromptUnit, tags: string[]): number {
@@ -235,9 +254,16 @@ export function detectCharacters(
   cards: readonly PreparedCard[],
   threshold = CHARACTER_MATCH_THRESHOLD,
 ): CharacterHit[] {
-  if (cards.length === 0) return [];
-  const units = imageUnits(metadata);
-  if (units.length === 0) return [];
+  return detectInUnits(imageUnits(metadata), cards, threshold);
+}
+
+/** `detectCharacters` for units built earlier, so an image's prompt is parsed once however often the cards change. */
+export function detectInUnits(
+  units: readonly PromptUnit[],
+  cards: readonly PreparedCard[],
+  threshold = CHARACTER_MATCH_THRESHOLD,
+): CharacterHit[] {
+  if (cards.length === 0 || units.length === 0) return [];
   const best = new Map<string, CharacterHit>();
   for (const card of cards) {
     let score = 0;

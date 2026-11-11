@@ -35,7 +35,7 @@ import { progress } from "./progress.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { matchesGallerySearch, parseGallerySearch } from "../utils/gallerySearch.js";
-import { detectCharacters, prepareCards } from "../utils/galleryCharacters.js";
+import { detectInUnits, imageUnits, prepareCards, type PromptUnit } from "../utils/galleryCharacters.js";
 import { savedCharacters } from "./savedCharacters.svelte.js";
 import { loadGalleryTags, saveGalleryTags, tagsFromInterrogation } from "../utils/galleryTagCache.js";
 import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
@@ -999,13 +999,27 @@ class GalleryStore {
   /** Card id to the character's display name (a variant reports its parent's). */
   private _detectNames = new Map<string, string>();
   private _knownCharacters: string[] = [];
-  /** Per image: the prompt the names were worked out from, so a result is reused until either changes. */
-  private _characterCache = new WeakMap<OutputImage, { cards: unknown; key: string; names: string[] }>();
+  /**
+   * Per image: the prompt it was read from, that prompt parsed, and the names
+   * found for the current cards. The prompt is parsed once; only the matching
+   * is redone when the cards change.
+   */
+  private _characterCache = new WeakMap<
+    OutputImage,
+    { prompt: string | undefined; boxes: string | undefined; units: PromptUnit[]; cards: unknown; names: string[] }
+  >();
+  /** What detection reads from the saved characters, so edits to anything else keep the cache. */
+  private _detectSignature = "";
 
   private _prepareDetection() {
     const all = savedCharacters.characters;
     if (this._detectCardsFor === all) return;
     this._detectCardsFor = all;
+    // A new thumbnail, memory fact or negative prompt changes the list but not
+    // who is who: keep the prepared cards, and with them every cached result.
+    const signature = all.map((c) => `${c.id}\u0000${c.parentId ?? ""}\u0000${c.name}\u0000${c.prompt}`).join("\u0001");
+    if (signature === this._detectSignature) return;
+    this._detectSignature = signature;
     const byId = new Map(all.map((c) => [c.id, c]));
     this._detectNames = new Map();
     const names = new Set<string>();
@@ -1038,15 +1052,22 @@ class GalleryStore {
     const tagged = hasSavedPrompt(image) ? undefined : this.detectedTags[this._assignmentKey(image)];
     const metadata = tagged ? { positive_prompt: tagged } : image.metadata;
     if (!metadata) return [];
-    const key = `${metadata.positive_prompt ?? ""}\u0000${metadata.mooshie_novelai_characters ?? ""}`;
-    const cached = this._characterCache.get(image);
-    if (cached && cached.cards === this._detectCards && cached.key === key) return cached.names;
+    const prompt = metadata.positive_prompt;
+    const boxes = metadata.mooshie_novelai_characters;
+    let cached = this._characterCache.get(image);
+    if (cached && cached.prompt === prompt && cached.boxes === boxes) {
+      if (cached.cards === this._detectCards) return cached.names;
+    } else {
+      cached = { prompt, boxes, units: imageUnits(metadata), cards: null, names: [] };
+      this._characterCache.set(image, cached);
+    }
     const names: string[] = [];
-    for (const hit of detectCharacters(metadata, this._detectCards)) {
+    for (const hit of detectInUnits(cached.units, this._detectCards)) {
       const name = this._detectNames.get(hit.cardId);
       if (name && !names.includes(name)) names.push(name);
     }
-    this._characterCache.set(image, { cards: this._detectCards, key, names });
+    cached.cards = this._detectCards;
+    cached.names = names;
     return names;
   }
 
@@ -1113,6 +1134,26 @@ class GalleryStore {
 
   stopTagScan() {
     this._tagScanStop = true;
+  }
+
+  /**
+   * True once a background pass has matched every loaded image against the
+   * saved characters, so counting them is a cache read rather than a freeze.
+   */
+  charactersWarm = $state(false);
+  private _warmRun = 0;
+
+  /** Match the loaded images in small slices between frames. A newer call replaces an older one. */
+  async warmCharacters(): Promise<void> {
+    const run = ++this._warmRun;
+    this.charactersWarm = false;
+    const images = [...this.images];
+    for (let i = 0; i < images.length; i += 200) {
+      if (run !== this._warmRun) return;
+      for (const image of images.slice(i, i + 200)) this.charactersIn(image);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    if (run === this._warmRun) this.charactersWarm = true;
   }
 
   /** How many loaded images each saved character was found in. */
