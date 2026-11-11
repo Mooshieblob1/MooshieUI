@@ -17,6 +17,7 @@
   import { uploadImageBytes } from "../../utils/api.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import { UPSCALE_FACTOR } from "../../utils/novelaiEnhance.js";
+  import { isTauri } from "../../utils/ipc.js";
   import { buildGalleryRows, rowOffsets, selectionRange, visibleRowRange } from "../../utils/galleryGrid.js";
   import type { GalleryViewMode } from "../../stores/gallery.svelte.js";
   import type { OutputImage } from "../../types/index.js";
@@ -268,6 +269,7 @@
       gallery.favouritesOnly ||
       gallery.minRating > 0 ||
       gallery.nsfwFilter !== "all" ||
+      gallery.duplicatesOnly ||
       characterFilterActive,
   );
 
@@ -278,10 +280,31 @@
       gallery.favouritesOnly ||
       gallery.minRating > 0 ||
       gallery.nsfwFilter !== "all" ||
+      gallery.duplicatesOnly ||
       characterFilterActive,
   );
 
+  /** Groups get a header row: Group By is on, or the page shows sets of repeated generations. */
+  const showGroupHeaders = $derived(gallery.groupBy !== "none" || gallery.duplicatesOnly);
+
   const groupedGalleryImages = $derived.by(() => {
+    if (gallery.duplicatesOnly) {
+      // One group per repeated generation, oldest copy first.
+      const sets = new Map<string, OutputImage[]>();
+      for (const image of visibleImages) {
+        const key = gallery.duplicateKey(image) ?? "";
+        const bucket = sets.get(key) ?? [];
+        bucket.push(image);
+        sets.set(key, bucket);
+      }
+      return Array.from(sets.values()).map((images) => {
+        images.sort((a, b) => (a.generated_at_ms ?? 0) - (b.generated_at_ms ?? 0));
+        return {
+          label: locale.t("gallery.duplicate_group", { seed: images[0]?.metadata?.seed ?? "", count: String(images.length) }),
+          images,
+        };
+      });
+    }
     if (gallery.groupBy !== "none") {
       const grouped = new Map<string, OutputImage[]>();
       for (const image of visibleImages) {
@@ -369,7 +392,7 @@
     const width = Math.max(0, (listWidth - GRID_GAP * (gridColumns - 1)) / gridColumns);
     return Math.round(gallery.viewMode === "huge" ? (width * 3) / 4 : width);
   });
-  const gridRows = $derived(buildGalleryRows(groupedGalleryImages, gridColumns, gallery.groupBy !== "none"));
+  const gridRows = $derived(buildGalleryRows(groupedGalleryImages, gridColumns, showGroupHeaders));
   const gridOffsets = $derived(rowOffsets(gridRows, tileHeight + GRID_GAP, GRID_HEADER_HEIGHT));
   const gridHeight = $derived(gridOffsets[gridOffsets.length - 1] ?? 0);
   const gridRange = $derived(visibleRowRange(gridOffsets, viewTop, viewHeight, GRID_OVERSCAN));
@@ -541,24 +564,176 @@
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Repeated generations
+  // ---------------------------------------------------------------------------
+
+  /** In every set of repeated generations, select all but the oldest copy. */
+  function selectDuplicateExtras() {
+    selection.clear();
+    for (const group of groupedGalleryImages) setSelected(group.images.slice(1), true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Export
+  // ---------------------------------------------------------------------------
+
+  let exportProgress = $state<{ done: number; total: number } | null>(null);
+
+  async function bulkExport() {
+    if (exportProgress) return;
+    const images = selectedImages();
+    if (images.length === 0) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, multiple: false, title: locale.t("gallery.bulk.export_title") });
+      if (typeof dir !== "string" || !dir) return;
+      exportProgress = { done: 0, total: images.length };
+      const saved = await gallery.exportImagesToDir(images, dir, (done, total) => {
+        exportProgress = { done, total };
+      });
+      const failed = images.length - saved;
+      gallery.showToast(
+        failed > 0
+          ? locale.t("gallery.bulk.toast_export_failed", { count: String(failed) })
+          : locale.t("gallery.bulk.toast_exported", { count: String(saved) }),
+        failed > 0 ? "error" : "success",
+      );
+    } catch (e) {
+      console.error("Failed to export images:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_save"), "error");
+    } finally {
+      exportProgress = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drag onto a board chip
+  // ---------------------------------------------------------------------------
+
+  const DRAG_TYPE = "application/x-mooshieui-gallery";
+  /** The images being dragged: the selection when the dragged tile is part of it, else that tile. */
+  let dragImages: OutputImage[] = [];
+  let dragActive = $state(false);
+  let dragOverBoard = $state<string | null>(null);
+
+  function onTileDragStart(e: DragEvent, image: OutputImage) {
+    dragImages = selection.has(image) ? selectedImages() : [image];
+    dragActive = true;
+    e.dataTransfer?.setData(DRAG_TYPE, String(dragImages.length));
+  }
+
+  function onTileDragEnd() {
+    dragActive = false;
+    dragOverBoard = null;
+    dragImages = [];
+  }
+
+  function onChipDragOver(e: DragEvent, board: string) {
+    if (!dragActive) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    dragOverBoard = board;
+  }
+
+  function onChipDrop(e: DragEvent, board: string) {
+    if (!dragActive || dragImages.length === 0) return;
+    e.preventDefault();
+    const images = dragImages;
+    onTileDragEnd();
+    gallery.setBoardMany(images, board);
+    gallery.showToast(
+      locale.t("gallery.bulk.toast_moved", {
+        count: String(images.length),
+        board: board === "Unsorted" ? locale.t("gallery.unsorted") : board,
+      }),
+      "success",
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Keyboard cursor
+  // ---------------------------------------------------------------------------
+
+  /** The image the arrow keys are on. Shown as a ring; Space selects it, Enter opens it. */
+  let cursor = $state<OutputImage | null>(null);
+
+  /** Scroll the grid so the row holding `image` is fully on screen. */
+  function revealInGrid(image: OutputImage) {
+    if (!scroller || !listEl) return;
+    const row = gridRows.findIndex((r) => r.kind === "tiles" && r.images.includes(image));
+    if (row === -1) return;
+    measureGrid();
+    const top = gridOffsets[row]!;
+    const bottom = gridOffsets[row + 1]!;
+    const listTop = scroller.scrollTop - viewTop;
+    // The bulk bar covers the bottom of the viewport while a selection is active.
+    const covered = selection.size > 0 ? 72 : 8;
+    if (top < viewTop + 8) scroller.scrollTop = listTop + top - 8;
+    else if (bottom > viewTop + viewHeight - covered) scroller.scrollTop = listTop + bottom - viewHeight + covered;
+  }
+
+  function moveCursor(delta: number, extend: boolean) {
+    const order = orderedImages;
+    if (order.length === 0) return;
+    let index = cursor ? order.indexOf(cursor) : -1;
+    if (index === -1) {
+      // Start on the first tile that is on screen.
+      const first = gridRows.slice(gridRange.start, gridRange.end).find(
+        (row, i) => row.kind === "tiles" && gridOffsets[gridRange.start + i]! >= viewTop,
+      );
+      index = Math.max(0, order.indexOf(first?.images[0] ?? order[0]!));
+    } else {
+      index = Math.max(0, Math.min(order.length - 1, index + delta));
+    }
+    const next = order[index]!;
+    if (extend) {
+      if (!selectionAnchor) selectionAnchor = cursor ?? next;
+      selectRangeTo(next);
+    }
+    cursor = next;
+    if (gallery.viewMode === "details") {
+      // The detailed list grows as it scrolls; make sure the row exists first.
+      if (index >= galleryRenderLimit) galleryRenderLimit = index + 48;
+      void tick().then(() => document.querySelector("[data-gallery-cursor]")?.scrollIntoView({ block: "nearest" }));
+    } else {
+      revealInGrid(next);
+    }
+  }
+
   function isTypingTarget(target: EventTarget | null): boolean {
     return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
   }
 
   /** Ctrl/Cmd+A selects everything shown, Escape clears, Delete deletes the selection. */
   function onGalleryKeydown(e: KeyboardEvent) {
-    if (e.defaultPrevented || gallery.lightboxOpen || gallery.compareOpen || dirPickerImage) return;
+    if (e.defaultPrevented || gallery.lightboxOpen || gallery.compareOpen || dirPickerImage || exportProgress) return;
     if (isTypingTarget(e.target)) return;
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
       if (orderedImages.length === 0) return;
       e.preventDefault();
       selectAll();
-    } else if (selection.size > 0 && e.key === "Escape") {
+    } else if ((selection.size > 0 || cursor) && e.key === "Escape") {
       e.preventDefault();
       clearSelection();
+      cursor = null;
     } else if (selection.size > 0 && e.key === "Delete") {
       e.preventDefault();
       bulkDelete();
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.startsWith("Arrow")) {
+      const perRow = gallery.viewMode === "details" ? 1 : gridColumns;
+      const delta = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" ? -perRow : perRow;
+      e.preventDefault();
+      moveCursor(delta, e.shiftKey);
+    } else if (cursor && orderedImages.includes(cursor) && !(e.target instanceof HTMLButtonElement)) {
+      // A focused button keeps Space and Enter for itself.
+      if (e.key === " ") {
+        e.preventDefault();
+        toggleSelected(cursor);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        void gallery.openLightbox(cursor);
+      }
     }
   }
 
@@ -575,6 +750,7 @@
     void gallery.minRating;
     void gallery.nsfwFilter;
     void gallery.characterFilter;
+    void gallery.duplicatesOnly;
     galleryRenderLimit = 48;
   });
 
@@ -818,6 +994,13 @@
               <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.favouritesOnly} />
               {locale.t("gallery.favourites_only")}
             </label>
+            <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500" title={locale.t("gallery.duplicates_only_tooltip")}>
+              <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.duplicatesOnly} />
+              {locale.t("gallery.duplicates_only")}
+            </label>
+            {#if gallery.duplicatesOnly && galleryTotalCount > 0}
+              <button class="px-3 py-2 text-xs rounded border border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200" title={locale.t("gallery.duplicates_select_extras_tooltip")} onclick={selectDuplicateExtras}>{locale.t("gallery.duplicates_select_extras")}</button>
+            {/if}
             <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500" title={locale.t("gallery.blur_nsfw_tooltip")}>
               <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.blurNsfw} />
               {locale.t("gallery.blur_nsfw")}
@@ -852,14 +1035,22 @@
         {/if}
       </div>
 
+      <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label={locale.t("gallery.board_filter")}>
+        {@render boardChip("all", locale.t("gallery.all_boards"), gallery.images.length)}
+        {@render boardChip("Unsorted", locale.t("gallery.unsorted"), boardCounts["Unsorted"] ?? 0)}
+        {#each gallery.boards as board}
+          {@render boardChip(board, board, boardCounts[board] ?? 0)}
+        {/each}
+      </div>
+
       {#if galleryTotalCount === 0}
         <div class="py-12 text-center text-sm text-neutral-500">{locale.t("gallery.no_matches")}</div>
       {/if}
 
       {#if gallery.viewMode === "details"}
-        {#each galleryGroupsVisible as group (group.label)}
+        {#each galleryGroupsVisible as group}
           <section class="space-y-2">
-            {#if gallery.groupBy !== "none"}
+            {#if showGroupHeaders}
               <div class="flex items-center gap-2">
                 {@render groupBox(group.images)}
                 <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
@@ -870,7 +1061,7 @@
                 <div></div><div>{locale.t("gallery.col_preview")}</div><div>{locale.t("gallery.col_name")}</div><div>{locale.t("gallery.col_date")}</div><div>{locale.t("gallery.col_size")}</div><div>{locale.t("gallery.col_actions")}</div>
               </div>
               {#each group.images as image (image)}
-                <div class="grid grid-cols-[28px_72px_1fr_150px_120px_420px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0 [content-visibility:auto] [contain-intrinsic-size:auto_76px] {selection.has(image) ? 'bg-indigo-500/10' : ''}">
+                <div class="grid grid-cols-[28px_72px_1fr_150px_120px_420px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0 [content-visibility:auto] [contain-intrinsic-size:auto_76px] {selection.has(image) ? 'bg-indigo-500/10' : ''} {cursor === image ? 'outline-2 -outline-offset-2 outline-white' : ''}" data-gallery-cursor={cursor === image ? "" : undefined}>
                   {@render selectBox(image, true)}
                   <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={(e) => onTileClick(e, image)}>
                     <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} loading="lazy" decoding="async" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-md scale-110' : ''}" />
@@ -967,13 +1158,13 @@
                 {:else}
                   <div class="grid" style="grid-template-columns: repeat({gridColumns}, minmax(0, 1fr)); gap: {GRID_GAP}px; height: {tileHeight}px; margin-bottom: {GRID_GAP}px;">
                     {#each row.images as image (image)}
-                    <div class="group relative h-full rounded-lg overflow-hidden border transition-colors {selection.has(image) ? 'border-indigo-400 ring-2 ring-indigo-500' : 'border-neutral-800 hover:border-indigo-500'}">
+                    <div role="presentation" ondragstart={(e) => onTileDragStart(e, image)} ondragend={onTileDragEnd} class="group relative h-full rounded-lg overflow-hidden border transition-colors {selection.has(image) ? 'border-indigo-400 ring-2 ring-indigo-500' : 'border-neutral-800 hover:border-indigo-500'} {cursor === image ? 'outline-2 outline-offset-2 outline-white' : ''}">
                       <button
                         class="w-full h-full"
                         title={isVideoImage(image) ? locale.t("gallery.play_video") : image.filename}
                         onclick={(e) => onTileClick(e, image)}
                       >
-                        <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} decoding="async" draggable="false" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
+                        <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} decoding="async" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
                       </button>
                       {#if gallery.shouldBlur(image)}
                         <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1126,7 +1317,12 @@
           {#if comparePair}
             <button class="h-8 px-2.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200" onclick={() => { const [a, b] = comparePair!; void gallery.openCompare(a, b); }}>{locale.t("gallery.compare.short")}</button>
           {/if}
-          <button class="h-8 px-2.5 text-xs rounded bg-red-900/80 hover:bg-red-800 text-red-100" onclick={bulkDelete}>{locale.t("gallery.delete")}</button>
+          {#if isTauri}
+            <button class="h-8 px-2.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-60 tabular-nums" title={locale.t("gallery.bulk.export_title")} disabled={!!exportProgress} onclick={bulkExport}>
+              {exportProgress ? locale.t("gallery.bulk.exporting", { done: String(exportProgress.done), total: String(exportProgress.total) }) : locale.t("gallery.bulk.export")}
+            </button>
+          {/if}
+          <button class="h-8 px-2.5 text-xs rounded bg-red-900/80 hover:bg-red-800 text-red-100" disabled={!!exportProgress} onclick={bulkDelete}>{locale.t("gallery.delete")}</button>
           <span class="w-px h-5 bg-neutral-700" aria-hidden="true"></span>
           <button class="w-8 h-8 flex items-center justify-center rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800" title={locale.t("gallery.bulk.clear")} aria-label={locale.t("gallery.bulk.clear")} onclick={clearSelection}>&times;</button>
       </div>
@@ -1173,4 +1369,20 @@
     class="w-5.5 h-5.5 shrink-0 flex items-center justify-center rounded border transition-colors {all ? 'bg-indigo-500 border-indigo-300 text-white' : 'border-neutral-600 text-transparent hover:border-neutral-300'}"
     onclick={() => setSelected(images, !all)}
   ><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+{/snippet}
+
+{#snippet boardChip(board: string, label: string, count: number)}
+  <!-- A drop target for dragged tiles; "all" is a view, not a board. -->
+  <button
+    type="button"
+    aria-pressed={gallery.boardFilter === board}
+    class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors {dragOverBoard === board ? 'border-indigo-300 bg-indigo-500/30 text-white' : gallery.boardFilter === board ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200' : dragActive && board !== 'all' ? 'border-dashed border-indigo-500/70 text-neutral-200' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
+    onclick={() => (gallery.boardFilter = board)}
+    ondragover={board === "all" ? undefined : (e) => onChipDragOver(e, board)}
+    ondragleave={() => { if (dragOverBoard === board) dragOverBoard = null; }}
+    ondrop={board === "all" ? undefined : (e) => onChipDrop(e, board)}
+  >
+    <span class="max-w-40 truncate">{label}</span>
+    <span class="text-[10px] text-neutral-500 tabular-nums">{count}</span>
+  </button>
 {/snippet}

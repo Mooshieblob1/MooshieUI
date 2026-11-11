@@ -343,6 +343,8 @@ class GalleryStore {
   boardFilter = $state("all");
   /** Show only images a saved character was found in: the character's name, or "all". */
   characterFilter = $state("all");
+  /** Show only images made more than once with the same prompt, seed and settings. Not remembered. */
+  duplicatesOnly = $state(false);
   /** The gallery page's filter panel is folded down to the search row. */
   filtersCollapsed = $state(false);
   viewMode = $state<GalleryViewMode>("large");
@@ -695,7 +697,15 @@ class GalleryStore {
   }
 
   /** Whether `image` passes the board, source, favourite, rating and NSFW filters and the search. */
-  private _passesFilters(image: OutputImage, terms: ReturnType<typeof parseGallerySearch>): boolean {
+  private _passesFilters(
+    image: OutputImage,
+    terms: ReturnType<typeof parseGallerySearch>,
+    repeated: Set<string> | null = null,
+  ): boolean {
+    if (repeated) {
+      const key = this.duplicateKey(image);
+      if (!key || !repeated.has(key)) return false;
+    }
     if (this.boardFilter !== "all" && this.getBoard(image) !== this.boardFilter) return false;
     if (this.sourceFilter !== "all") {
       const source = image.linked_folder ?? GALLERY_SOURCE_OWN;
@@ -719,8 +729,9 @@ class GalleryStore {
     const terms = parseGallerySearch(this.searchQuery);
     const dir = this.sortDir === "asc" ? 1 : -1;
     const byDate = (a: OutputImage, b: OutputImage) => (a.generated_at_ms ?? 0) - (b.generated_at_ms ?? 0);
+    const repeated = this.duplicatesOnly ? this._repeatedKeys() : null;
     return this.images
-      .filter((image) => this._passesFilters(image, terms))
+      .filter((image) => this._passesFilters(image, terms, repeated))
       .sort((a, b) => {
         if (this.sortBy === "name") return dir * NAME_COLLATOR.compare(a.filename, b.filename);
         if (this.sortBy === "size") return dir * ((a.file_size_bytes ?? 0) - (b.file_size_bytes ?? 0));
@@ -877,6 +888,42 @@ class GalleryStore {
       [key]: value,
     };
     this.saveBoardAssignments();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Repeated generations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What makes two images the same generation: prompt, negative, seed, model,
+   * sampler settings and size. Null when the image has no seed on record, so
+   * images without metadata are never called duplicates of each other.
+   */
+  duplicateKey(image: OutputImage): string | null {
+    const m = image.metadata;
+    if (!m?.seed) return null;
+    return [
+      m.positive_prompt, m.negative_prompt, m.seed, m.model, m.steps, m.cfg, m.sampler, m.scheduler, m.size,
+      m.mooshie_novelai_characters,
+    ].map((part) => part ?? "").join("\u0000");
+  }
+
+  /**
+   * Keys made by more than one run. Images of one batch share a seed and are
+   * not copies of each other, so a key only counts once a second run has it.
+   */
+  private _repeatedKeys(): Set<string> {
+    const runs = new Map<string, Set<string | OutputImage>>();
+    for (const image of this.images) {
+      const key = this.duplicateKey(image);
+      if (!key) continue;
+      let seen = runs.get(key);
+      if (!seen) runs.set(key, (seen = new Set()));
+      seen.add(image.prompt_id || image);
+    }
+    const repeated = new Set<string>();
+    for (const [key, seen] of runs) if (seen.size > 1) repeated.add(key);
+    return repeated;
   }
 
   // ---------------------------------------------------------------------------
@@ -2176,18 +2223,64 @@ class GalleryStore {
     }
   }
 
+  /**
+   * Write one image (or copy one video) into `dir`, metadata embedded. `used`
+   * holds the lower-cased names already written in this batch; a clash gets a
+   * numbered suffix instead of overwriting the earlier file.
+   */
+  private async _writeToDir(image: OutputImage, dir: string, used?: Set<string>): Promise<void> {
+    const unique = (name: string): string => {
+      if (!used) return name;
+      const dot = name.lastIndexOf(".");
+      const stem = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : "";
+      let candidate = name;
+      for (let n = 2; used.has(candidate.toLowerCase()); n++) candidate = `${stem}_${n}${ext}`;
+      used.add(candidate.toLowerCase());
+      return candidate;
+    };
+    if (isVideoImage(image)) {
+      const videoFilename = await this.resolveGalleryFilename(image);
+      if (!videoFilename) throw new Error("video is not saved to the gallery yet");
+      await copyGalleryFileTo(videoFilename, `${dir}/${unique(image.filename || videoFilename)}`);
+      return;
+    }
+    const webpBytes = await this._resolveWebpBytes(image);
+    let bytes = webpBytes ?? (await this.resolveImagePngBytes(image));
+    const rawName = image.filename || `image_${Date.now()}.png`;
+    const filename =
+      webpBytes !== null ? webpNormalizedFilename(rawName) : pngNormalizedFilename(rawName);
+    if (image.metadata) {
+      bytes = await embedImageMetadataBytes(bytes, image.metadata, generation.metadataMode);
+    }
+    await saveImageFile(bytes, `${dir}/${unique(filename)}`);
+  }
+
+  /** Save copies of several images into one folder. Returns how many were written. */
+  async exportImagesToDir(
+    images: OutputImage[],
+    dir: string,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<number> {
+    const used = new Set<string>();
+    let saved = 0;
+    let done = 0;
+    for (const image of images) {
+      try {
+        await this._writeToDir(image, dir, used);
+        saved++;
+      } catch (e) {
+        console.error("Failed to export image:", e);
+      }
+      onProgress?.(++done, images.length);
+    }
+    return saved;
+  }
+
   /** Save an image directly to a specific directory (manual save mode). Embeds metadata. */
   async saveImageToDir(image: OutputImage, dir: string) {
     try {
-      const webpBytes = await this._resolveWebpBytes(image);
-      let bytes = webpBytes ?? (await this.resolveImagePngBytes(image));
-      const rawName = image.filename || `image_${Date.now()}.png`;
-      const filename =
-        webpBytes !== null ? webpNormalizedFilename(rawName) : pngNormalizedFilename(rawName);
-      if (image.metadata) {
-        bytes = await embedImageMetadataBytes(bytes, image.metadata, generation.metadataMode);
-      }
-      await saveImageFile(bytes, `${dir}/${filename}`);
+      await this._writeToDir(image, dir);
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image to directory:", e);
