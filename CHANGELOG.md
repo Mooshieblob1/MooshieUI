@@ -10,6 +10,7 @@
 - **Export selection (desktop)**: copies every selected image to a folder with metadata embedded, the same as Save to folder.
 - **Repeats filter**: shows images generated more than once with the same settings, grouped per set, and Select extras picks every copy but the oldest.
 - **Find saved characters**: images are matched to your saved characters by their prompt tags, with no model run. Adds a Character filter with counts, Group By Character, Sort by Character into boards, and characters listed in Detailed View.
+- **Scan for characters**: images with no saved prompt (imports, stripped metadata) can be scanned with the built-in tagger so saved characters are found in them too. Works on the selection or everything shown, remembers what it already tagged, and can be stopped mid-scan.
 - **Collapsible filters**: a Filters button folds the panel down to the search row and shows a dot when a folded filter is active.
 - **Faster with large galleries**: the grid only keeps nearby rows on screen, and thumbnails are cached on disk (pruned past 1 GiB) instead of being re-encoded every time.
 
