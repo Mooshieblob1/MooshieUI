@@ -223,16 +223,40 @@
     await gallery.rescanMetadata();
   }
 
+  /** A toast for a change to the boards, with an Undo that puts them back. */
+  function boardChangeToast(message: string, before: ReturnType<typeof gallery.boardSnapshot>) {
+    gallery.showToast(message, "success", {
+      durationMs: 10000,
+      actionLabel: locale.t("gallery.undo"),
+      onAction: () => {
+        gallery.restoreBoards(before);
+        gallery.clearToast();
+      },
+    });
+  }
+
   async function sortGalleryByArtist() {
+    const before = gallery.boardSnapshot();
     const result = await gallery.autoSortByArtist(connection.artistGalleryManifestUrl);
     if (result.sorted === 0 && result.scanned > 0) {
       gallery.showToast(locale.t("gallery.sort_by_artist_none"), "info");
     } else if (result.sorted > 0) {
-      gallery.showToast(
+      boardChangeToast(
         locale.t("gallery.sort_by_artist_done", { sorted: String(result.sorted), boards: String(result.boards.length) }),
-        "success",
+        before,
       );
     }
+  }
+
+  const artistBoards = $derived(gallery.artistBoards);
+  const characterBoards = $derived(gallery.characterBoards);
+
+  /** Take an automatic sort back: its boards go, their images return to Unsorted. */
+  function removeSortedBoards(boards: string[]) {
+    if (boards.length === 0) return;
+    const before = gallery.boardSnapshot();
+    gallery.removeBoards(boards);
+    boardChangeToast(locale.t("gallery.sort_removed", { boards: String(boards.length) }), before);
   }
 
   function saveToDir(image: OutputImage) {
@@ -253,13 +277,16 @@
   const characterFilterActive = $derived(gallery.characterFilter !== "all" && knownCharacters.includes(gallery.characterFilter));
 
   function sortShownByCharacter() {
+    const before = gallery.boardSnapshot();
     const result = gallery.sortByCharacter(selection.size > 0 ? selectedImages() : orderedImages);
-    gallery.showToast(
-      result.sorted > 0
-        ? locale.t("gallery.sort_by_character_done", { sorted: String(result.sorted), boards: String(result.boards.length) })
-        : locale.t("gallery.sort_by_character_none"),
-      result.sorted > 0 ? "success" : "info",
-    );
+    if (result.sorted > 0) {
+      boardChangeToast(
+        locale.t("gallery.sort_by_character_done", { sorted: String(result.sorted), boards: String(result.boards.length) }),
+        before,
+      );
+    } else {
+      gallery.showToast(locale.t("gallery.sort_by_character_none"), "info");
+    }
   }
 
   /** Over this many images a scan asks first: the tagger takes about a second each. */
@@ -532,6 +559,9 @@
     bulkNewBoard = null;
   }
 
+  /** Deleting more images than this at once asks first, Undo or not. */
+  const BULK_DELETE_CONFIRM = 10;
+
   /**
    * Delete with an Undo toast instead of a confirm. Originals in a linked
    * folder still ask first: those are the user's own files, not copies.
@@ -544,6 +574,8 @@
         ? locale.t("gallery.delete_linked_confirm", { folder: linked[0]!.linked_folder! })
         : locale.t("gallery.bulk.delete_confirm_linked", { count: String(images.length), linked: String(linked.length) });
       if (!confirm(message)) return;
+    } else if (images.length > BULK_DELETE_CONFIRM) {
+      if (!confirm(locale.t("gallery.bulk.delete_confirm", { count: String(images.length) }))) return;
     }
     gallery.deleteImagesWithUndo(images);
   }
@@ -560,6 +592,42 @@
   let boardRename = $state<string | null>(null);
   const boardCounts = $derived(gallery.boardCounts);
   const boardIsEditable = $derived(gallery.boardFilter !== "all" && gallery.boardFilter !== "Unsorted");
+
+  /** More boards than this and the chip row shows the busiest few plus a searchable list. */
+  const BOARD_CHIP_LIMIT = 10;
+  let boardPickerOpen = $state(false);
+  let boardPickerQuery = $state("");
+  const chipBoards = $derived.by(() => {
+    const boards = gallery.boards;
+    if (boards.length <= BOARD_CHIP_LIMIT) return boards;
+    const busiest = [...boards].sort((a, b) => (boardCounts[b] ?? 0) - (boardCounts[a] ?? 0)).slice(0, BOARD_CHIP_LIMIT - 2);
+    const shown = new Set(busiest);
+    if (boardIsEditable) shown.add(gallery.boardFilter);
+    return boards.filter((board) => shown.has(board));
+  });
+  const boardPickerMatches = $derived.by(() => {
+    const query = boardPickerQuery.trim().toLowerCase();
+    return query ? gallery.boards.filter((board) => board.toLowerCase().includes(query)) : gallery.boards;
+  });
+
+  function pickBoard(board: string) {
+    gallery.boardFilter = board;
+    boardPickerOpen = false;
+    boardPickerQuery = "";
+  }
+
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
+
+  /** Closes the board list on a click anywhere outside it. */
+  function boardPickerDismiss(node: HTMLElement) {
+    const onDown = (e: PointerEvent) => {
+      if (!node.contains(e.target as Node)) boardPickerOpen = false;
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return { destroy: () => document.removeEventListener("pointerdown", onDown, true) };
+  }
 
   function commitBoardRename() {
     if (boardRename !== null) gallery.renameBoard(gallery.boardFilter, boardRename);
@@ -1038,8 +1106,14 @@
             <button onclick={() => (gallery.viewMode = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.viewMode === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
             <button onclick={rescanGalleryMetadata} disabled={gallery.loading || gallery.refreshing} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200 disabled:opacity-50">{locale.t("gallery.rescan_metadata")}</button>
             <button onclick={sortGalleryByArtist} disabled={gallery.autoSorting} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50">{gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}</button>
+            {#if artistBoards.length > 0}
+              <button onclick={() => removeSortedBoards(artistBoards)} title={locale.t("gallery.sort_remove_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300">{locale.t("gallery.sort_by_artist_remove", { boards: String(artistBoards.length) })}</button>
+            {/if}
             {#if knownCharacters.length > 0}
               <button onclick={sortShownByCharacter} title={locale.t("gallery.sort_by_character_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200">{locale.t("gallery.sort_by_character")}</button>
+              {#if characterBoards.length > 0}
+                <button onclick={() => removeSortedBoards(characterBoards)} title={locale.t("gallery.sort_remove_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300">{locale.t("gallery.sort_by_character_remove", { boards: String(characterBoards.length) })}</button>
+              {/if}
               <button onclick={scanForCharacters} title={locale.t("gallery.character_scan_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.tagScan ? 'border-amber-600 text-amber-300 hover:border-amber-400' : 'border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200'}">{gallery.tagScan ? locale.t("gallery.character_scan_stop", { done: String(gallery.tagScan.done), total: String(gallery.tagScan.total) }) : locale.t("gallery.character_scan")}</button>
             {/if}
             <label class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
@@ -1059,9 +1133,62 @@
       <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label={locale.t("gallery.board_filter")}>
         {@render boardChip("all", locale.t("gallery.all_boards"), gallery.images.length)}
         {@render boardChip("Unsorted", locale.t("gallery.unsorted"), boardCounts["Unsorted"] ?? 0)}
-        {#each gallery.boards as board}
+        {#each chipBoards as board (board)}
           {@render boardChip(board, board, boardCounts[board] ?? 0)}
         {/each}
+        {#if chipBoards.length < gallery.boards.length}
+          <div class="relative" use:boardPickerDismiss>
+            <button
+              type="button"
+              aria-expanded={boardPickerOpen}
+              onclick={() => { boardPickerOpen = !boardPickerOpen; boardPickerQuery = ""; }}
+              class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border transition-colors {boardPickerOpen ? 'border-indigo-500 text-indigo-200' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
+            >
+              <span>{locale.t("gallery.all_board_list")}</span>
+              <span class="text-[10px] text-neutral-500 tabular-nums">{gallery.boards.length}</span>
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            {#if boardPickerOpen}
+              <div class="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl">
+                <input
+                  use:focusOnMount
+                  bind:value={boardPickerQuery}
+                  placeholder={locale.t("gallery.board_search")}
+                  aria-label={locale.t("gallery.board_search")}
+                  onkeydown={(e) => {
+                    if (e.key === "Escape") { e.preventDefault(); boardPickerOpen = false; }
+                    else if (e.key === "Enter" && boardPickerMatches[0]) { e.preventDefault(); pickBoard(boardPickerMatches[0]); }
+                  }}
+                  class="w-full bg-transparent border-b border-neutral-700 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-500 outline-none"
+                />
+                <div class="max-h-72 overflow-y-auto py-1">
+                  {#each boardPickerMatches as board (board)}
+                    <button
+                      type="button"
+                      onclick={() => pickBoard(board)}
+                      class="w-full flex items-center justify-between gap-3 px-3 py-1.5 text-left text-xs transition-colors {gallery.boardFilter === board ? 'bg-indigo-500/15 text-indigo-200' : 'text-neutral-300 hover:bg-neutral-800'}"
+                    >
+                      <span class="truncate">{board}</span>
+                      <span class="text-[10px] text-neutral-500 tabular-nums">{boardCounts[board] ?? 0}</span>
+                    </button>
+                  {:else}
+                    <div class="px-3 py-2 text-xs text-neutral-500">{locale.t("gallery.board_search_none")}</div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+        {#if filtersActive}
+          <button
+            type="button"
+            onclick={() => gallery.resetFilters()}
+            class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-full border border-amber-700/70 text-amber-300 transition-colors hover:border-amber-500 hover:text-amber-200"
+          >
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            {locale.t("gallery.reset_filters")}
+          </button>
+        {/if}
       </div>
 
       {#if galleryTotalCount === 0}

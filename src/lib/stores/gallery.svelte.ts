@@ -877,6 +877,57 @@ class GalleryStore {
     if (this.boardFilter === name) this.boardFilter = "all";
   }
 
+  /** The boards as they stand, to hand back to `restoreBoards` for an Undo. */
+  boardSnapshot(): { assignments: Record<string, string>; boards: string[]; filter: string } {
+    return { assignments: this.boardAssignments, boards: this.customBoards, filter: this.boardFilter };
+  }
+
+  restoreBoards(snapshot: { assignments: Record<string, string>; boards: string[]; filter: string }) {
+    this.customBoards = snapshot.boards;
+    this.saveCustomBoards();
+    this.boardAssignments = snapshot.assignments;
+    this.saveBoardAssignments();
+    this.boardFilter = snapshot.filter;
+  }
+
+  /** Boards Sort by Artist made: they carry the `@artist` name. */
+  get artistBoards(): string[] {
+    return this.boards.filter((board) => board.startsWith("@"));
+  }
+
+  /** Boards named after a saved character, which is what Sort by Character makes. */
+  get characterBoards(): string[] {
+    const names = new Set(this.knownCharacters.map((name) => name.trim()));
+    return this.boards.filter((board) => names.has(board));
+  }
+
+  /** Delete several boards at once. Their images are kept and go back to Unsorted. */
+  removeBoards(names: string[]) {
+    const gone = new Set(names.filter((name) => name && name !== "Unsorted"));
+    if (gone.size === 0) return;
+    const next: Record<string, string> = {};
+    for (const [key, board] of Object.entries(this.boardAssignments)) {
+      if (!gone.has(board)) next[key] = board;
+    }
+    this.customBoards = this.customBoards.filter((board) => !gone.has(board));
+    this.saveCustomBoards();
+    this.boardAssignments = next;
+    this.saveBoardAssignments();
+    if (gone.has(this.boardFilter)) this.boardFilter = "all";
+  }
+
+  /** Show every image again: clear the search and every filter. Sort, grouping and view stay. */
+  resetFilters() {
+    this.searchQuery = "";
+    this.boardFilter = "all";
+    this.sourceFilter = "all";
+    this.favouritesOnly = false;
+    this.minRating = 0;
+    this.nsfwFilter = "all";
+    this.duplicatesOnly = false;
+    this.characterFilter = "all";
+  }
+
   /** How many loaded images sit on each board, Unsorted included. */
   get boardCounts(): Record<string, number> {
     const counts: Record<string, number> = {};
