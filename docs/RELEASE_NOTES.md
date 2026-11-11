@@ -1,3 +1,27 @@
+## What's New in v2.3.43
+
+### Gallery
+- **Multi-select with bulk actions**: every tile and Detailed View row has a checkbox. Shift+click selects a range, Ctrl/Cmd+click picks single images, Ctrl/Cmd+A selects everything the filters show, and group headers select a whole group. A bar at the bottom moves the selection to a board, sets rating, favourite or NSFW, compares two images, or deletes.
+- **Undo for delete**: deleting from the gallery page removes the images at once and shows a 7 second Undo toast. Files only go to the recycle bin when the toast closes, and Undo restores board, favourite and rating marks. Originals in a linked folder still ask first.
+- **Boards**: rename or delete a board beside the board filter (renaming onto an existing name merges them, deleting sends images back to Unsorted). A row of board chips above the grid shows counts, sets the filter, and accepts dragged tiles or the whole selection.
+- **Arrow keys**: move a cursor through the grid, Shift+arrow extends the selection, Space selects, Enter opens, Escape clears. Works in Detailed View too.
+- **Export selection (desktop)**: copies every selected image to a folder with metadata embedded, the same as Save to folder.
+- **Repeats filter**: shows images generated more than once with the same settings, grouped per set, and Select extras picks every copy but the oldest.
+- **Find saved characters**: images are matched to your saved characters by their prompt tags, with no model run. Adds a Character filter with counts, Group By Character, Sort by Character into boards, and characters listed in Detailed View.
+- **Scan for characters**: images with no saved prompt (imports, stripped metadata) can be scanned with the built-in tagger so saved characters are found in them too. Works on the selection or everything shown, remembers what it already tagged, and can be stopped mid-scan.
+- **Collapsible filters**: a Filters button folds the panel down to the search row and shows a dot when a folded filter is active.
+- **Faster with large galleries**: the grid only keeps nearby rows on screen, and thumbnails are cached on disk (pruned past 1 GiB) instead of being re-encoded every time.
+
+### Models
+- **All-in-one Anima checkpoints generate**: Anima files with the text encoder and VAE baked in (such as ColdMilk Anima) are no longer refused as split-only.
+- **Flux 2 previews no longer crash generation**: MOSS-Image, Flux 2 Klein and dev, and Ideogram 4 failed at the first live preview with "shape is invalid". The latent was being unpacked twice.
+
+### Generation
+- **Lock resolution holds**: a locked custom size is no longer overwritten by the Anima minimum size at generate time or by uploading an image edit reference.
+- **Shorter CFG 1 warning in Advanced Mode**: one line with the full explanation in a tooltip. The full box is unchanged with Advanced Mode off.
+
+---
+
 ## What's New in v2.3.42
 
 ### NovelAI Enhance
