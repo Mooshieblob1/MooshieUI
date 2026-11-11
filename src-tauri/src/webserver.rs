@@ -2025,6 +2025,8 @@ async fn thumbnail_handler(
         }
     };
 
+    let cache_control = crate::thumbnail_cache::cache_control_for_query(query);
+
     // Decoding a JXL and encoding WebP is CPU-bound. Run it off the async
     // runtime, like the full-image route, so a gallery page requesting dozens of
     // uncached thumbnails at once can't stall every other request on the server.
@@ -2037,7 +2039,7 @@ async fn thumbnail_handler(
             StatusCode::OK,
             [
                 ("content-type", "image/webp".to_string()),
-                ("cache-control", "no-cache".to_string()),
+                ("cache-control", cache_control.to_string()),
             ],
             data,
         )

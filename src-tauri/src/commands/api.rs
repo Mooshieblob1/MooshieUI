@@ -2664,13 +2664,24 @@ pub fn generate_thumbnail(
 }
 
 /// A WebP thumbnail of the image at `path`, at most `max_size` on its long side.
+///
+/// Served from the on-disk thumbnail cache when the file was thumbnailed at this
+/// size before, so only the first view of an image pays for the decode.
 pub fn generate_thumbnail_at(path: &std::path::Path, max_size: u32) -> Result<Vec<u8>, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("Read failed: {}", e))?;
-
-    let img = decode_gallery_image(&bytes)?;
     // `size` comes from the request URL, and `thumbnail` scales up as well
     // as down: `size=100000` asked for a ~40 GB buffer. The UI uses 256-1024.
     let max_size = max_size.clamp(16, 2048);
+    let cache_dir = crate::thumbnail_cache::default_dir();
+    crate::thumbnail_cache::get_or_generate(cache_dir.as_deref(), path, max_size, || {
+        render_thumbnail(path, max_size)
+    })
+}
+
+/// Decode the image at `path` and encode a WebP thumbnail of it.
+fn render_thumbnail(path: &std::path::Path, max_size: u32) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Read failed: {}", e))?;
+
+    let img = decode_gallery_image(&bytes)?;
     let thumb = img.thumbnail(max_size, max_size);
 
     let mut buf = std::io::Cursor::new(Vec::new());

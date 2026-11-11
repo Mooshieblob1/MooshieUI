@@ -36,6 +36,7 @@ pub mod setup;
 pub mod state;
 pub mod temp_images;
 pub mod templates;
+pub mod thumbnail_cache;
 pub mod user_prefs;
 pub mod user_secrets;
 pub mod watermark;
@@ -434,7 +435,10 @@ pub fn run() {
                             tauri::http::Response::builder()
                                 .status(200)
                                 .header("Content-Type", "image/webp")
-                                .header("Cache-Control", "no-cache")
+                                .header(
+                                    "Cache-Control",
+                                    thumbnail_cache::cache_control_for_query(query),
+                                )
                                 .body(data)
                                 .unwrap(),
                         );

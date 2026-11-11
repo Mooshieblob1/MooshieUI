@@ -52,6 +52,11 @@ jobs:
           npx esbuild scripts/tests/naiLayout.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiLayout.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/naiLayout.test.mjs"
 
+      - name: Gallery grid windowing and selection tests
+        run: |
+          npx esbuild scripts/tests/galleryGrid.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/galleryGrid.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/galleryGrid.test.mjs"
+
       - name: Skill notes cache tests
         run: |
           npx esbuild scripts/tests/skillNotes.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/skillNotes.test.mjs" --log-level=warning

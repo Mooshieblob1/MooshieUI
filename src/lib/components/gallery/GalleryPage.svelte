@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tick } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { portal } from "../../utils/portal.js";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import { gallery, isVideoImage, GALLERY_MAX_RATING, GALLERY_SOURCE_OWN } from "../../stores/gallery.svelte.js";
@@ -15,6 +17,7 @@
   import { uploadImageBytes } from "../../utils/api.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import { UPSCALE_FACTOR } from "../../utils/novelaiEnhance.js";
+  import { buildGalleryRows, rowOffsets, selectionRange, visibleRowRange } from "../../utils/galleryGrid.js";
   import type { GalleryViewMode } from "../../stores/gallery.svelte.js";
   import type { OutputImage } from "../../types/index.js";
 
@@ -27,6 +30,8 @@
   let { onSwitchToGenerate, onMake3D }: Props = $props();
 
   let newBoardName = $state("");
+  // Detailed view only: its rows vary in height, so it grows as you scroll
+  // instead of being windowed like the grid.
   let galleryRenderLimit = $state(48);
   // The search box writes to the store after a short pause, so a large
   // gallery is not re-filtered on every keystroke.
@@ -286,7 +291,233 @@
     return result;
   });
 
-  const thumbSize = $derived(viewColumns(gallery.viewMode) <= 3 ? 480 : 384);
+  const gridColumns = $derived(viewColumns(gallery.viewMode));
+  const thumbSize = $derived(gridColumns <= 3 ? 480 : 384);
+
+  // ---------------------------------------------------------------------------
+  // Windowed grid
+  // ---------------------------------------------------------------------------
+
+  const GRID_GAP = 12;
+  const GRID_HEADER_HEIGHT = 32;
+  /** Rows kept rendered above and below the viewport, in pixels. */
+  const GRID_OVERSCAN = 600;
+
+  let scroller = $state<HTMLElement | null>(null);
+  let listEl: HTMLElement | null = null;
+  let listWidth = $state(0);
+  /** How far the viewport's top edge is into the grid; negative while the filters are still on screen. */
+  let viewTop = $state(0);
+  let viewHeight = $state(0);
+  let measureFrame = 0;
+
+  function measureGrid() {
+    measureFrame = 0;
+    if (!scroller || !listEl) return;
+    viewTop = scroller.getBoundingClientRect().top - listEl.getBoundingClientRect().top;
+    viewHeight = scroller.clientHeight;
+    listWidth = listEl.clientWidth;
+  }
+
+  function scheduleMeasure() {
+    if (!measureFrame) measureFrame = requestAnimationFrame(measureGrid);
+  }
+
+  function gridList(node: HTMLElement) {
+    listEl = node;
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(node);
+    if (scroller) observer.observe(scroller);
+    measureGrid();
+    return {
+      destroy() {
+        observer.disconnect();
+        if (listEl === node) listEl = null;
+      },
+    };
+  }
+
+  const tileHeight = $derived.by(() => {
+    const width = Math.max(0, (listWidth - GRID_GAP * (gridColumns - 1)) / gridColumns);
+    return Math.round(gallery.viewMode === "huge" ? (width * 3) / 4 : width);
+  });
+  const gridRows = $derived(buildGalleryRows(groupedGalleryImages, gridColumns, gallery.groupBy !== "none"));
+  const gridOffsets = $derived(rowOffsets(gridRows, tileHeight + GRID_GAP, GRID_HEADER_HEIGHT));
+  const gridHeight = $derived(gridOffsets[gridOffsets.length - 1] ?? 0);
+  const gridRange = $derived(visibleRowRange(gridOffsets, viewTop, viewHeight, GRID_OVERSCAN));
+
+  // Anything that moves the grid without scrolling or resizing it (the search
+  // help opening, the expiry banner) needs a fresh measurement.
+  $effect(() => {
+    void showSearchHelp;
+    void gallery.hasExpiry;
+    void filtersActive;
+    void gallery.viewMode;
+    void gridRows.length;
+    void tick().then(scheduleMeasure);
+  });
+
+  $effect(() => () => {
+    if (measureFrame) cancelAnimationFrame(measureFrame);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Multi-select and bulk actions
+  // ---------------------------------------------------------------------------
+
+  // Board names are trimmed, so a leading space can never be a real board.
+  const NEW_BOARD_OPTION = " new";
+  const selection = new SvelteSet<OutputImage>();
+  /** Where a Shift+click range starts: the last image selected on its own. */
+  let selectionAnchor: OutputImage | null = null;
+  let bulkProgress = $state<{ done: number; total: number } | null>(null);
+  /** Text of the bulk bar's new board field; null while it shows the board list. */
+  let bulkNewBoard = $state<string | null>(null);
+
+  /** Every shown image in on-screen order, groups included. */
+  const orderedImages = $derived(groupedGalleryImages.flatMap((group) => group.images));
+
+  function selectedImages(): OutputImage[] {
+    return [...selection];
+  }
+
+  function setSelected(images: OutputImage[], selected: boolean) {
+    for (const image of images) {
+      if (selected) selection.add(image);
+      else selection.delete(image);
+    }
+  }
+
+  function toggleSelected(image: OutputImage) {
+    setSelected([image], !selection.has(image));
+    selectionAnchor = image;
+  }
+
+  function selectRangeTo(image: OutputImage) {
+    setSelected(selectionRange(orderedImages, selectionAnchor, image), true);
+    if (!selectionAnchor || !orderedImages.includes(selectionAnchor)) selectionAnchor = image;
+  }
+
+  function selectAll() {
+    setSelected(orderedImages, true);
+  }
+
+  function clearSelection() {
+    selection.clear();
+    selectionAnchor = null;
+    bulkNewBoard = null;
+  }
+
+  /** A tile's image: Shift+click selects a range, Ctrl/Cmd+click one image, a plain click opens it. */
+  function onTileClick(e: MouseEvent, image: OutputImage) {
+    if (e.shiftKey) {
+      e.preventDefault();
+      selectRangeTo(image);
+    } else if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      toggleSelected(image);
+    } else {
+      void gallery.openLightbox(image);
+    }
+  }
+
+  function onSelectBoxClick(e: MouseEvent, image: OutputImage) {
+    e.stopPropagation();
+    if (e.shiftKey) selectRangeTo(image);
+    else toggleSelected(image);
+  }
+
+  const allSelectedFavourite = $derived(selection.size > 0 && selectedImages().every((image) => gallery.isFavourite(image)));
+  const allSelectedNsfw = $derived(selection.size > 0 && selectedImages().every((image) => gallery.isNsfw(image)));
+  /** The two selected stills, when exactly two are selected. */
+  const comparePair = $derived.by((): [OutputImage, OutputImage] | null => {
+    if (selection.size !== 2) return null;
+    const [a, b] = selectedImages();
+    return a && b && !isVideoImage(a) && !isVideoImage(b) ? [a, b] : null;
+  });
+
+  function bulkMove(board: string) {
+    const images = selectedImages();
+    gallery.setBoardMany(images, board);
+    gallery.showToast(
+      locale.t("gallery.bulk.toast_moved", {
+        count: String(images.length),
+        board: board === "Unsorted" ? locale.t("gallery.unsorted") : board,
+      }),
+      "success",
+    );
+  }
+
+  function bulkBoardChosen(value: string) {
+    if (value === NEW_BOARD_OPTION) bulkNewBoard = "";
+    else if (value) bulkMove(value);
+  }
+
+  function bulkMoveToNewBoard() {
+    const name = bulkNewBoard?.trim();
+    if (!name) return;
+    bulkMove(name);
+    bulkNewBoard = null;
+  }
+
+  async function bulkDelete() {
+    if (bulkProgress) return;
+    const images = selectedImages();
+    if (images.length === 0) return;
+    const linked = images.filter((image) => image.linked_folder).length;
+    const message = linked > 0
+      ? locale.t("gallery.bulk.delete_confirm_linked", { count: String(images.length), linked: String(linked) })
+      : locale.t("gallery.bulk.delete_confirm", { count: String(images.length) });
+    if (!confirm(message)) return;
+    bulkProgress = { done: 0, total: images.length };
+    try {
+      const deleted = await gallery.deleteImages(images, (done, total) => {
+        bulkProgress = { done, total };
+      });
+      const failed = images.length - deleted;
+      gallery.showToast(
+        failed > 0
+          ? locale.t("gallery.bulk.toast_delete_failed", { count: String(failed) })
+          : locale.t("gallery.bulk.toast_deleted", { count: String(deleted) }),
+        failed > 0 ? "error" : "success",
+      );
+    } finally {
+      bulkProgress = null;
+    }
+  }
+
+  // A selection only ever holds images that are on the page: one that is
+  // filtered out or deleted elsewhere leaves it, so a bulk delete can never
+  // take an image the user cannot see.
+  $effect(() => {
+    const shown = orderedImages;
+    if (selection.size === 0) return;
+    const visible = new Set(shown);
+    for (const image of selection) {
+      if (!visible.has(image)) selection.delete(image);
+    }
+  });
+
+  function isTypingTarget(target: EventTarget | null): boolean {
+    return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+  }
+
+  /** Ctrl/Cmd+A selects everything shown, Escape clears, Delete deletes the selection. */
+  function onGalleryKeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || gallery.lightboxOpen || gallery.compareOpen || dirPickerImage || bulkProgress) return;
+    if (isTypingTarget(e.target)) return;
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
+      if (orderedImages.length === 0) return;
+      e.preventDefault();
+      selectAll();
+    } else if (selection.size > 0 && e.key === "Escape") {
+      e.preventDefault();
+      clearSelection();
+    } else if (selection.size > 0 && e.key === "Delete") {
+      e.preventDefault();
+      void bulkDelete();
+    }
+  }
 
   if (typeof window !== "undefined") gallery.loadViewPrefs();
 
@@ -323,7 +554,9 @@
   });
 </script>
 
-<div class="p-3 md:p-6 h-full flex flex-col overflow-y-auto will-change-scroll">
+<svelte:window onkeydown={onGalleryKeydown} />
+
+<div bind:this={scroller} onscroll={scheduleMeasure} class="p-3 md:p-6 h-full flex flex-col overflow-y-auto will-change-scroll">
   <div class="flex shrink-0 items-center justify-between gap-3 mb-3">
     <h2 class="text-base font-semibold text-neutral-200">{locale.t("nav.gallery")}</h2>
     <button
@@ -527,20 +760,24 @@
         <div class="py-12 text-center text-sm text-neutral-500">{locale.t("gallery.no_matches")}</div>
       {/if}
 
-      {#each galleryGroupsVisible as group}
-        <section class="space-y-2">
-          {#if gallery.groupBy !== "none"}
-            <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
-          {/if}
-          {#if gallery.viewMode === "details"}
-            <div class="rounded-xl border border-neutral-800 overflow-hidden">
-              <div class="grid grid-cols-[72px_1fr_150px_120px_420px] gap-2 px-3 py-2 bg-neutral-900 text-[11px] uppercase tracking-wide text-neutral-500 border-b border-neutral-800">
-                <div>{locale.t("gallery.col_preview")}</div><div>{locale.t("gallery.col_name")}</div><div>{locale.t("gallery.col_date")}</div><div>{locale.t("gallery.col_size")}</div><div>{locale.t("gallery.col_actions")}</div>
+      {#if gallery.viewMode === "details"}
+        {#each galleryGroupsVisible as group (group.label)}
+          <section class="space-y-2">
+            {#if gallery.groupBy !== "none"}
+              <div class="flex items-center gap-2">
+                {@render groupBox(group.images)}
+                <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
               </div>
-              {#each group.images as image}
-                <div class="grid grid-cols-[72px_1fr_150px_120px_420px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0">
-                  <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={() => gallery.openLightbox(image)}>
-                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-md scale-110' : ''}" />
+            {/if}
+            <div class="rounded-xl border border-neutral-800 overflow-hidden">
+              <div class="grid grid-cols-[28px_72px_1fr_150px_120px_420px] gap-2 px-3 py-2 bg-neutral-900 text-[11px] uppercase tracking-wide text-neutral-500 border-b border-neutral-800">
+                <div></div><div>{locale.t("gallery.col_preview")}</div><div>{locale.t("gallery.col_name")}</div><div>{locale.t("gallery.col_date")}</div><div>{locale.t("gallery.col_size")}</div><div>{locale.t("gallery.col_actions")}</div>
+              </div>
+              {#each group.images as image (image)}
+                <div class="grid grid-cols-[28px_72px_1fr_150px_120px_420px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0 [content-visibility:auto] [contain-intrinsic-size:auto_76px] {selection.has(image) ? 'bg-indigo-500/10' : ''}">
+                  {@render selectBox(image, true)}
+                  <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={(e) => onTileClick(e, image)}>
+                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} loading="lazy" decoding="async" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-md scale-110' : ''}" />
                   </button>
                   <div class="min-w-0">
                     <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
@@ -610,103 +847,194 @@
                 </div>
               {/each}
             </div>
-          {:else}
-            <div class="grid gap-3" style="grid-template-columns: repeat({viewColumns(gallery.viewMode)}, minmax(0, 1fr));">
-              {#each group.images as image}
-                <div class="group relative rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors {gallery.viewMode === 'huge' ? 'aspect-4/3' : 'aspect-square'}">
-                  <button
-                    class="w-full h-full"
-                    title={isVideoImage(image) ? locale.t("gallery.play_video") : image.filename}
-                    onclick={() => gallery.openLightbox(image)}
-                  >
-                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
-                  </button>
-                  {#if gallery.shouldBlur(image)}
-                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span class="px-2 py-0.5 rounded bg-black/70 text-[11px] font-semibold text-red-300">{locale.t("gallery.nsfw_badge")}</span>
-                    </div>
-                  {/if}
-                  {#if isVideoImage(image)}
-                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
-                        <svg class="w-5 h-5 text-white translate-x-px" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </div>
-                    </div>
-                    {#if image.duration_seconds != null}
-                      <div class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-mono pointer-events-none">
-                        {formatDuration(image.duration_seconds)}
-                      </div>
-                    {/if}
-                  {/if}
-                  {#if gallery.showGenerationTime && image.generationTimeMs != null}
-                    <div class="absolute {isVideoImage(image) && image.duration_seconds != null ? 'top-7' : 'top-1'} right-1 px-1.5 py-0.5 rounded bg-black/70 text-amber-300 text-[10px] font-mono pointer-events-none">
-                      {formatGenerationTime(image.generationTimeMs, locale.current)}
-                    </div>
-                  {/if}
-                  <div class="absolute top-1 left-1 flex items-center gap-1 pointer-events-none">
-                    <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200">{boardLabel(image)}</div>
-                    {#if gallery.isFavourite(image)}
-                      <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-pink-400" title={locale.t("gallery.favourite")}>♥</div>
-                    {/if}
-                    {#if gallery.getRating(image) > 0}
-                      <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-amber-300" title={locale.t("gallery.rating")}>★{gallery.getRating(image)}</div>
-                    {/if}
+          </section>
+        {/each}
+        {#if galleryRenderLimit < galleryTotalCount}
+          <div use:loadMoreGallery class="h-4 w-full"></div>
+        {/if}
+      {:else}
+        <!-- Windowed grid: the list is as tall as every row, but only the rows
+             near the viewport are in the DOM, so scrolling a gallery of
+             thousands of images costs the same as scrolling a few dozen. -->
+        <div use:gridList class="relative select-none" style="height: {gridHeight}px;">
+          {#if listWidth > 0}
+            <div class="absolute inset-x-0 top-0" style="transform: translateY({gridOffsets[gridRange.start] ?? 0}px);">
+              {#each gridRows.slice(gridRange.start, gridRange.end) as row (row.key)}
+                {#if row.kind === "header"}
+                  <div class="flex items-center gap-2" style="height: {GRID_HEADER_HEIGHT}px;">
+                    {@render groupBox(row.images)}
+                    <h3 class="text-sm text-neutral-300 font-medium truncate">{row.label}</h3>
                   </div>
-                  {#if generation.manualSaveMode && !image.gallery_filename}
-                    <div class="absolute top-0 right-0 pt-1 pr-1 transition-opacity {tileOverlayClass(image)}">
-                      <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow" title={locale.t("gallery.save_to_folder")} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                {:else}
+                  <div class="grid" style="grid-template-columns: repeat({gridColumns}, minmax(0, 1fr)); gap: {GRID_GAP}px; height: {tileHeight}px; margin-bottom: {GRID_GAP}px;">
+                    {#each row.images as image (image)}
+                    <div class="group relative h-full rounded-lg overflow-hidden border transition-colors {selection.has(image) ? 'border-indigo-400 ring-2 ring-indigo-500' : 'border-neutral-800 hover:border-indigo-500'}">
+                      <button
+                        class="w-full h-full"
+                        title={isVideoImage(image) ? locale.t("gallery.play_video") : image.filename}
+                        onclick={(e) => onTileClick(e, image)}
+                      >
+                        <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} decoding="async" draggable="false" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
                       </button>
+                      {#if gallery.shouldBlur(image)}
+                        <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <span class="px-2 py-0.5 rounded bg-black/70 text-[11px] font-semibold text-red-300">{locale.t("gallery.nsfw_badge")}</span>
+                        </div>
+                      {/if}
+                      {#if isVideoImage(image)}
+                        <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-white translate-x-px" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </div>
+                        </div>
+                        {#if image.duration_seconds != null}
+                          <div class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] font-mono pointer-events-none">
+                            {formatDuration(image.duration_seconds)}
+                          </div>
+                        {/if}
+                      {/if}
+                      {#if gallery.showGenerationTime && image.generationTimeMs != null}
+                        <div class="absolute {isVideoImage(image) && image.duration_seconds != null ? 'top-7' : 'top-1'} right-1 px-1.5 py-0.5 rounded bg-black/70 text-amber-300 text-[10px] font-mono pointer-events-none">
+                          {formatGenerationTime(image.generationTimeMs, locale.current)}
+                        </div>
+                      {/if}
+                      <div class="absolute top-1 left-1 flex items-center gap-1 pointer-events-none">
+                        {@render selectBox(image, selection.size > 0)}
+                        <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200">{boardLabel(image)}</div>
+                        {#if gallery.isFavourite(image)}
+                          <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-pink-400" title={locale.t("gallery.favourite")}>♥</div>
+                        {/if}
+                        {#if gallery.getRating(image) > 0}
+                          <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-amber-300" title={locale.t("gallery.rating")}>★{gallery.getRating(image)}</div>
+                        {/if}
+                      </div>
+                      {#if generation.manualSaveMode && !image.gallery_filename}
+                        <div class="absolute top-0 right-0 pt-1 pr-1 transition-opacity {tileOverlayClass(image)}">
+                          <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow" title={locale.t("gallery.save_to_folder")} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                          </button>
+                        </div>
+                      {/if}
+                      <button
+                        type="button"
+                        class="hidden pointer-coarse:flex absolute bottom-1.5 right-1.5 z-10 w-7 h-7 items-center justify-center rounded shadow {touchActionsImage === image ? 'bg-indigo-600 text-neutral-100' : 'bg-black/70 text-neutral-200'}"
+                        title={locale.t("gallery.col_actions")}
+                        aria-label={locale.t("gallery.col_actions")}
+                        aria-expanded={touchActionsImage === image}
+                        onclick={(e) => { e.stopPropagation(); touchActionsImage = touchActionsImage === image ? null : image; }}
+                      >{touchActionsImage === image ? "×" : "⋯"}</button>
+                      <div class="absolute bottom-0 inset-x-0 flex flex-wrap justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 pointer-coarse:pr-10 transition-opacity bg-linear-to-t from-black/80 to-transparent {tileOverlayClass(image)}">
+                        {#if !isVideoImage(image)}
+                          <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("gallery.img2img")} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
+                          <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.inpaint")} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>✎</button>
+                          {#if !image.is_upscaled}
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.upscale")} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>+</button>
+                          {/if}
+                          {#if directorToolsAvailable()}
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("novelai.director.action")} onclick={(e) => { e.stopPropagation(); directorTools.open(image, image.thumbnailUrl || image.url || null); }}>DT</button>
+                          {/if}
+                          <!-- The three NovelAI image actions, each its own button.
+                               They share one modal but cost wildly different
+                               amounts (about 1 Anlas, about 48, and a paid img2img
+                               pass), so the cheap one must not sit behind the
+                               expensive one. Same three buttons, same order, as the
+                               lightbox bar. -->
+                          {#if naiImageEnhanceAvailable()}
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.tab_upscale", { factor: UPSCALE_FACTOR })} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "upscale"); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/></svg></button>
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.tab_variations")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "variations"); }}>⧉</button>
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.action")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l9-9"/><path d="M14.5 6.5l3 3"/><path d="M13 3.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"/><path d="M19 13l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg></button>
+                          {/if}
+                          <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow" title={locale.t("gallery.copy")} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg></button>
+                          <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500 text-neutral-100' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" title={comparePinTitle(image)} onclick={(e) => { e.stopPropagation(); gallery.toggleComparePin(image); }}>⇄</button>
+                        {/if}
+                        <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.isFavourite(image) ? 'bg-pink-700/90 hover:bg-pink-600 text-white' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isFavourite(image)} title={locale.t(gallery.isFavourite(image) ? "gallery.unfavourite" : "gallery.favourite")} onclick={(e) => { e.stopPropagation(); gallery.toggleFavourite(image); }}>♥</button>
+                        <button class="w-7 h-7 flex items-center justify-center rounded shadow text-[9px] font-bold {gallery.isNsfw(image) ? 'bg-red-900/90 hover:bg-red-800 text-red-200' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isNsfw(image)} title={locale.t(gallery.isNsfw(image) ? "gallery.mark_safe" : "gallery.mark_nsfw")} onclick={(e) => { e.stopPropagation(); gallery.toggleNsfw(image); }}>{locale.t("gallery.nsfw_badge")}</button>
+                        <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow disabled:opacity-50" disabled={gallery.saving} title={locale.t(isVideoImage(image) ? "gallery.save_video_as" : "gallery.save_as")} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>↓</button>
+                        <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.confirmDeleteImage(image); }}>×</button>
+                      </div>
                     </div>
-                  {/if}
-                  <button
-                    type="button"
-                    class="hidden pointer-coarse:flex absolute bottom-1.5 right-1.5 z-10 w-7 h-7 items-center justify-center rounded shadow {touchActionsImage === image ? 'bg-indigo-600 text-neutral-100' : 'bg-black/70 text-neutral-200'}"
-                    title={locale.t("gallery.col_actions")}
-                    aria-label={locale.t("gallery.col_actions")}
-                    aria-expanded={touchActionsImage === image}
-                    onclick={(e) => { e.stopPropagation(); touchActionsImage = touchActionsImage === image ? null : image; }}
-                  >{touchActionsImage === image ? "×" : "⋯"}</button>
-                  <div class="absolute bottom-0 inset-x-0 flex flex-wrap justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 pointer-coarse:pr-10 transition-opacity bg-linear-to-t from-black/80 to-transparent {tileOverlayClass(image)}">
-                    {#if !isVideoImage(image)}
-                      <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("gallery.img2img")} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
-                      <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.inpaint")} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>✎</button>
-                      {#if !image.is_upscaled}
-                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.upscale")} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>+</button>
-                      {/if}
-                      {#if directorToolsAvailable()}
-                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("novelai.director.action")} onclick={(e) => { e.stopPropagation(); directorTools.open(image, image.thumbnailUrl || image.url || null); }}>DT</button>
-                      {/if}
-                      <!-- The three NovelAI image actions, each its own button.
-                           They share one modal but cost wildly different
-                           amounts (about 1 Anlas, about 48, and a paid img2img
-                           pass), so the cheap one must not sit behind the
-                           expensive one. Same three buttons, same order, as the
-                           lightbox bar. -->
-                      {#if naiImageEnhanceAvailable()}
-                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.tab_upscale", { factor: UPSCALE_FACTOR })} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "upscale"); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/></svg></button>
-                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.tab_variations")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null, "variations"); }}>⧉</button>
-                        <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("novelai.enhance.action")} onclick={(e) => { e.stopPropagation(); naiImageEnhance.open(image, image.thumbnailUrl || image.url || null); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l9-9"/><path d="M14.5 6.5l3 3"/><path d="M13 3.5l1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1z"/><path d="M19 13l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg></button>
-                      {/if}
-                      <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow" title={locale.t("gallery.copy")} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></svg></button>
-                      <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500 text-neutral-100' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" title={comparePinTitle(image)} onclick={(e) => { e.stopPropagation(); gallery.toggleComparePin(image); }}>⇄</button>
-                    {/if}
-                    <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.isFavourite(image) ? 'bg-pink-700/90 hover:bg-pink-600 text-white' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isFavourite(image)} title={locale.t(gallery.isFavourite(image) ? "gallery.unfavourite" : "gallery.favourite")} onclick={(e) => { e.stopPropagation(); gallery.toggleFavourite(image); }}>♥</button>
-                    <button class="w-7 h-7 flex items-center justify-center rounded shadow text-[9px] font-bold {gallery.isNsfw(image) ? 'bg-red-900/90 hover:bg-red-800 text-red-200' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" aria-pressed={gallery.isNsfw(image)} title={locale.t(gallery.isNsfw(image) ? "gallery.mark_safe" : "gallery.mark_nsfw")} onclick={(e) => { e.stopPropagation(); gallery.toggleNsfw(image); }}>{locale.t("gallery.nsfw_badge")}</button>
-                    <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow disabled:opacity-50" disabled={gallery.saving} title={locale.t(isVideoImage(image) ? "gallery.save_video_as" : "gallery.save_as")} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>↓</button>
-                    <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.confirmDeleteImage(image); }}>×</button>
+                    {/each}
                   </div>
-                </div>
+                {/if}
               {/each}
             </div>
           {/if}
-        </section>
-      {/each}
-      {#if galleryRenderLimit < galleryTotalCount}
-        <div use:loadMoreGallery class="h-4 w-full"></div>
+        </div>
       {/if}
+    </div>
+  {/if}
+  {#if selection.size > 0}
+    <div class="sticky bottom-0 z-20 mt-3 flex justify-center pointer-events-none">
+      <div class="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 rounded-xl border border-indigo-500/60 bg-neutral-900/95 px-3 py-2 shadow-xl shadow-black/50 backdrop-blur" role="toolbar" aria-label={locale.t("gallery.bulk.selected", { count: String(selection.size) })}>
+        {#if bulkProgress}
+          <span class="px-2 text-sm text-neutral-200" aria-live="polite">{locale.t("gallery.bulk.deleting", { done: String(bulkProgress.done), total: String(bulkProgress.total) })}</span>
+        {:else}
+          <span class="px-1 text-sm font-medium text-indigo-200 tabular-nums">{locale.t("gallery.bulk.selected", { count: String(selection.size) })}</span>
+          {#if selection.size < galleryTotalCount}
+            <button class="px-2.5 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500" onclick={selectAll}>{locale.t("gallery.bulk.select_all")}</button>
+          {/if}
+          <span class="w-px h-5 bg-neutral-700" aria-hidden="true"></span>
+          {#if bulkNewBoard !== null}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="text"
+              autofocus
+              bind:value={bulkNewBoard}
+              placeholder={locale.t("gallery.placeholder_board")}
+              class="w-36 bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+              onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); bulkMoveToNewBoard(); } else if (e.key === "Escape") { e.stopPropagation(); bulkNewBoard = null; } }}
+            />
+            <button class="px-2.5 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50" disabled={!bulkNewBoard.trim()} onclick={bulkMoveToNewBoard}>{locale.t("gallery.add")}</button>
+          {:else}
+            <select
+              class="max-w-40 bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-200"
+              aria-label={locale.t("gallery.bulk.move_to_board")}
+              value=""
+              onchange={(e) => { const el = e.currentTarget; bulkBoardChosen(el.value); el.value = ""; }}
+            >
+              <option value="" disabled hidden>{locale.t("gallery.bulk.move_to_board")}</option>
+              <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
+              {#each gallery.boards as board}
+                <option value={board}>{board}</option>
+              {/each}
+              <option value={NEW_BOARD_OPTION}>{locale.t("gallery.bulk.new_board")}</option>
+            </select>
+          {/if}
+          <select
+            class="bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-amber-300"
+            aria-label={locale.t("gallery.bulk.set_rating")}
+            value=""
+            onchange={(e) => { const el = e.currentTarget; gallery.setRatingMany(selectedImages(), Number(el.value)); el.value = ""; }}
+          >
+            <option value="" disabled hidden>{locale.t("gallery.bulk.set_rating")}</option>
+            <option value={0}>{locale.t("gallery.rating_none")}</option>
+            {#each Array.from({ length: GALLERY_MAX_RATING }, (_, i) => i + 1) as stars}
+              <option value={stars}>{"★".repeat(stars)}</option>
+            {/each}
+          </select>
+          <button
+            class="w-8 h-8 flex items-center justify-center rounded {allSelectedFavourite ? 'bg-pink-700/90 hover:bg-pink-600 text-white' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200'}"
+            aria-pressed={allSelectedFavourite}
+            title={locale.t(allSelectedFavourite ? "gallery.unfavourite" : "gallery.favourite")}
+            aria-label={locale.t(allSelectedFavourite ? "gallery.unfavourite" : "gallery.favourite")}
+            onclick={() => gallery.setFavouriteMany(selectedImages(), !allSelectedFavourite)}
+          >♥</button>
+          <button
+            class="h-8 px-2 flex items-center justify-center rounded text-[10px] font-bold {allSelectedNsfw ? 'bg-red-900/90 hover:bg-red-800 text-red-200' : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200'}"
+            aria-pressed={allSelectedNsfw}
+            title={locale.t(allSelectedNsfw ? "gallery.mark_safe" : "gallery.mark_nsfw")}
+            onclick={() => gallery.setNsfwMany(selectedImages(), !allSelectedNsfw)}
+          >{locale.t("gallery.nsfw_badge")}</button>
+          {#if comparePair}
+            <button class="h-8 px-2.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200" onclick={() => { const [a, b] = comparePair!; void gallery.openCompare(a, b); }}>{locale.t("gallery.compare.short")}</button>
+          {/if}
+          <button class="h-8 px-2.5 text-xs rounded bg-red-900/80 hover:bg-red-800 text-red-100" onclick={bulkDelete}>{locale.t("gallery.delete")}</button>
+          <span class="w-px h-5 bg-neutral-700" aria-hidden="true"></span>
+          <button class="w-8 h-8 flex items-center justify-center rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800" title={locale.t("gallery.bulk.clear")} aria-label={locale.t("gallery.bulk.clear")} onclick={clearSelection}>&times;</button>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -726,3 +1054,28 @@
     </div>
   </div>
 {/if}
+
+{#snippet selectBox(image: OutputImage, shown: boolean)}
+  <button
+    type="button"
+    role="checkbox"
+    aria-checked={selection.has(image)}
+    aria-label={locale.t("gallery.bulk.select")}
+    title={locale.t("gallery.bulk.select")}
+    class="pointer-events-auto w-5.5 h-5.5 shrink-0 items-center justify-center rounded border shadow transition-colors {selection.has(image) ? 'flex bg-indigo-500 border-indigo-300 text-white' : `bg-black/70 border-neutral-400 text-transparent hover:border-white ${shown ? 'flex' : 'hidden group-hover:flex group-has-[:focus-visible]:flex pointer-coarse:flex'}`}"
+    onclick={(e) => onSelectBoxClick(e, image)}
+  ><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+{/snippet}
+
+{#snippet groupBox(images: OutputImage[])}
+  {@const all = images.length > 0 && images.every((image) => selection.has(image))}
+  <button
+    type="button"
+    role="checkbox"
+    aria-checked={all}
+    aria-label={locale.t("gallery.bulk.select_group")}
+    title={locale.t("gallery.bulk.select_group")}
+    class="w-5.5 h-5.5 shrink-0 flex items-center justify-center rounded border transition-colors {all ? 'bg-indigo-500 border-indigo-300 text-white' : 'border-neutral-600 text-transparent hover:border-neutral-300'}"
+    onclick={() => setSelected(images, !all)}
+  ><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+{/snippet}
