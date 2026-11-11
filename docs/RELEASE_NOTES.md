@@ -1,3 +1,18 @@
+## What's New in v2.3.44
+
+### Characters
+- **Yue sample character**: every user gets Yue once, on a fresh install or the first time an existing install opens this version. She is added for NovelAI and for each local tag model (Illustrious, SDXL, Pony, Anima, SD 1.5) with a face close-up as her picture. Natural-language models such as Flux get no card. Deleting her is remembered across synced devices, so she does not come back.
+- **Card size slider**: the Characters tab header has a Card size slider, from 48 px (the old size, still the default) to 192 px. Bigger cards show more prompt lines. Saved per device.
+
+### Gallery
+- **Sorts can be undone**: Sort by Artist and Sort by Character show an Undo in their toast. For an earlier sort, Remove artist boards / Remove character boards deletes those boards and sends the images back to Unsorted, also with Undo.
+- **Reset filters**: one button clears the search and every filter. Sort, grouping and view stay as they are.
+- **Board row stays short**: past 10 boards the row shows the 8 largest plus the selected one, and More boards opens a searchable list of every board with its count.
+- **Confirm for large deletes**: deleting more than 10 selected images asks first. Undo still follows.
+- **Gallery opens without a freeze**: matching saved characters against every prompt no longer blocks the page. With 43 characters and 6,000 images, opening went from a 2.0 s freeze to 0.14 s, and the Character counts fill in once ready.
+
+---
+
 ## What's New in v2.3.43
 
 ### Gallery
