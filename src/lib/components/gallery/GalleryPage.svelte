@@ -262,6 +262,26 @@
     );
   }
 
+  /** Over this many images a scan asks first: the tagger takes about a second each. */
+  const TAG_SCAN_CONFIRM = 100;
+
+  async function scanForCharacters() {
+    if (gallery.tagScan) {
+      gallery.stopTagScan();
+      return;
+    }
+    const scope = selection.size > 0 ? selectedImages() : orderedImages;
+    const count = scope.filter((image) => gallery.needsTagScan(image)).length;
+    if (count === 0) {
+      gallery.showToast(locale.t("gallery.character_scan_none"), "info");
+      return;
+    }
+    if (count > TAG_SCAN_CONFIRM && !confirm(locale.t("gallery.character_scan_confirm", { count: String(count) }))) return;
+    const result = await gallery.scanTags(scope);
+    if (result.error) gallery.showToast(locale.t("gallery.character_scan_failed", { error: result.error }), "error");
+    else gallery.showToast(locale.t("gallery.character_scan_done", { count: String(result.scanned) }), "success");
+  }
+
   const filtersActive = $derived(
     gallery.searchQuery.trim() !== "" ||
       gallery.boardFilter !== "all" ||
@@ -1020,6 +1040,7 @@
             <button onclick={sortGalleryByArtist} disabled={gallery.autoSorting} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50">{gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}</button>
             {#if knownCharacters.length > 0}
               <button onclick={sortShownByCharacter} title={locale.t("gallery.sort_by_character_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200">{locale.t("gallery.sort_by_character")}</button>
+              <button onclick={scanForCharacters} title={locale.t("gallery.character_scan_tooltip")} class="px-3 py-1.5 text-xs rounded border transition-colors {gallery.tagScan ? 'border-amber-600 text-amber-300 hover:border-amber-400' : 'border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200'}">{gallery.tagScan ? locale.t("gallery.character_scan_stop", { done: String(gallery.tagScan.done), total: String(gallery.tagScan.total) }) : locale.t("gallery.character_scan")}</button>
             {/if}
             <label class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
               <input
