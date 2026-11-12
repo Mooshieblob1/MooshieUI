@@ -715,7 +715,7 @@
     <button
       onclick={handleCancelCurrent}
       oncontextmenu={handleCancelAll}
-      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-neutral-700 text-neutral-200 transition-colors hover:border-red-500/70 hover:bg-red-500/10 hover:text-red-300"
+      class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-700 text-white shadow-lg shadow-red-700/20 transition-colors hover:bg-red-600"
       title={locale.t('generation.cancel_hint')}
       aria-label={locale.t('generation.cancel_hint')}
     >
