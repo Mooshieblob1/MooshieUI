@@ -24,6 +24,7 @@
   } from "../../utils/krea2Encoder.js";
   import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
+  import { isFlux1VaeName } from "../../utils/splitVae.js";
 
   interface ModelFile {
     filename: string;
@@ -746,13 +747,6 @@
     return ZIMAGE_ENCODER_MARKERS.some((marker) => lower.includes(marker));
   }
 
-  /** Flux 1 VAE (`ae.safetensors` or any non-Flux-2 `flux` name). Mirrors `find_flux1_vae` in api.rs. */
-  function isFlux1Vae(filename: string): boolean {
-    const lower = filename.toLowerCase();
-    const basename = lower.split(/[\\/]/).pop() ?? lower;
-    return basename === "ae.safetensors" || (lower.includes("flux") && !lower.includes("flux2") && !lower.includes("flux.2"));
-  }
-
   /**
    * Split families that only work with one specific text encoder. Their
    * diffusion weights usually arrive alone (Model Hub, CivitAI), so the
@@ -772,7 +766,7 @@
     clipType: "lumina2",
     isEncoder: isZImageEncoder,
     encoderFile: ZIMAGE_ENCODER_FILE,
-    isVae: isFlux1Vae,
+    isVae: isFlux1VaeName,
     vaeFile: ZIMAGE_VAE_FILE,
   };
 
