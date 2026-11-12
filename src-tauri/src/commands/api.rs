@@ -4891,6 +4891,20 @@ fn find_first_vae_matching(vaes: &[String], markers: &[&str]) -> Option<String> 
     })
 }
 
+/// Comfy-Org's stock Qwen Image VAE, shared by Anima, Qwen Image and Krea 2.
+const QWEN_IMAGE_VAE_FILE: &str = "qwen_image_vae.safetensors";
+
+/// The VAE whose file name (ignoring any subfolder and case) is `basename`.
+fn find_vae_by_basename(vaes: &[String], basename: &str) -> Option<String> {
+    vaes.iter()
+        .find(|vae| {
+            vae.rsplit(['/', '\\'])
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case(basename))
+        })
+        .cloned()
+}
+
 fn find_first_text_encoder_matching(encoders: &[String], markers: &[&str]) -> Option<String> {
     encoders.iter().find_map(|encoder| {
         let lower = encoder.to_lowercase();
@@ -4991,13 +5005,14 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan"
+        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan" | "krea2"
     ) {
-        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
-    }
-
-    if family == "krea2" {
-        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
+        // The stock file first: decoder fine-tunes such as
+        // `qwen_image_sharp_vae_bf16` sort ahead of it but are an opt-in look,
+        // which the user picks in the VAE list (and the frontend then keeps).
+        return find_vae_by_basename(vaes, QWEN_IMAGE_VAE_FILE)
+            .or_else(|| find_first_vae_matching(vaes, &["qwen"]))
+            .or_else(|| vaes.first().cloned());
     }
 
     if family == "ideogram4" {
@@ -5511,6 +5526,41 @@ mod split_model_pairing_tests {
         assert_eq!(
             recommended_vae_from_available("diffusion_models", "zib", &vaes),
             Some("FLUX1/flux_vae.safetensors".to_string())
+        );
+    }
+
+    #[test]
+    fn qwen_latent_families_default_to_the_stock_vae_over_a_sharpened_one() {
+        // ComfyUI lists VAEs sorted, so the sharpened decoder comes first.
+        let vaes = list(&[
+            "qwen_image_sharp_vae_bf16.safetensors",
+            "qwen_image_sharp_vae_x1.5_bf16.safetensors",
+            "qwen_image_vae.safetensors",
+            "sdxl_vae.safetensors",
+        ]);
+        for family in ["anima", "krea2", "qwen"] {
+            assert_eq!(
+                recommended_vae_from_available("diffusion_models", family, &vaes),
+                Some("qwen_image_vae.safetensors".to_string()),
+                "{family}"
+            );
+        }
+        let vaes = list(&[
+            "Anima\\QWEN_IMAGE_VAE.safetensors",
+            "qwen_image_sharp_vae_bf16.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "anima", &vaes),
+            Some("Anima\\QWEN_IMAGE_VAE.safetensors".to_string())
+        );
+        // With only the sharpened file installed it is still a Qwen Image VAE.
+        let vaes = list(&[
+            "qwen_image_sharp_vae_bf16.safetensors",
+            "sdxl_vae.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "krea2", &vaes),
+            Some("qwen_image_sharp_vae_bf16.safetensors".to_string())
         );
     }
 }
