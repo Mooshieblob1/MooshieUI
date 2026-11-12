@@ -77,6 +77,7 @@ import {
   type EnhanceScaleChoice,
 } from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
+import { shouldKeepSplitVae } from "../utils/splitVae.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
@@ -1982,10 +1983,13 @@ class GenerationStore {
     if (!recommended) return;
 
     const current = this.vae.trim();
-    if (current !== recommended) {
-      this.vae = recommended;
-      if (save) this.saveSettings();
-    }
+    if (current === recommended) return;
+    // Keep a pick that is installed and decodes this family's latents, such as a
+    // sharpened Qwen Image VAE on Anima or Krea 2. Only an empty, missing or
+    // mismatched VAE (an SDXL VAE left over on Anima, say) gets replaced.
+    if (shouldKeepSplitVae(current, this.modelFamily, vaes)) return;
+    this.vae = recommended;
+    if (save) this.saveSettings();
   }
 
   /** SDXL-style area conditioning (ConditioningSetArea). */

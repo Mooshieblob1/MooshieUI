@@ -82,6 +82,11 @@ jobs:
           npx esbuild scripts/tests/promptClickableRanges.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptClickableRanges.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptClickableRanges.test.mjs"
 
+      - name: Split model VAE tests
+        run: |
+          npx esbuild scripts/tests/splitVae.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/splitVae.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/splitVae.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 
