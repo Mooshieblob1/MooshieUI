@@ -4955,5 +4955,17 @@ const ru: Record<string, string> = {
   "editor.discard_yes": "Отменить",
   "editor.keep": "Продолжить",
   "editor.fit": "Вписать",
+  "editor.adjust.highlights": "Света",
+  "editor.adjust.shadows": "Тени",
+  "editor.adjust.vibrance": "Сочность",
+  "editor.adjust.vignette": "Виньетка",
+  "editor.group.light": "Свет",
+  "editor.group.color": "Цвет",
+  "editor.group.curve": "Кривая",
+  "editor.group.detail": "Детали",
+  "editor.group.effects": "Эффекты",
+  "editor.preset": "Пресет",
+  "editor.preset_name": "Название",
+  "editor.preset_delete": "Удалить пресет",
 };
 export default ru;

@@ -4909,5 +4909,17 @@ const en: Record<string, string> = {
   "editor.discard_yes": "Discard",
   "editor.keep": "Keep editing",
   "editor.fit": "Fit",
+  "editor.adjust.highlights": "Highlights",
+  "editor.adjust.shadows": "Shadows",
+  "editor.adjust.vibrance": "Vibrance",
+  "editor.adjust.vignette": "Vignette",
+  "editor.group.light": "Light",
+  "editor.group.color": "Color",
+  "editor.group.curve": "Curve",
+  "editor.group.detail": "Detail",
+  "editor.group.effects": "Effects",
+  "editor.preset": "Preset",
+  "editor.preset_name": "Name",
+  "editor.preset_delete": "Delete preset",
 };
 export default en;

@@ -21,6 +21,34 @@ export interface Adjustments {
   sharpen: number;
   /** 0..100 */
   blur: number;
+  /** -100..100, recovers (negative) or lifts the bright tones */
+  highlights: number;
+  /** -100..100, deepens or opens up the dark tones */
+  shadows: number;
+  /** -100..100, saturation that favours the muted colours */
+  vibrance: number;
+  /** -100 (dark corners) .. 100 (light corners) */
+  vignette: number;
+  /** Tone curve control points, x and y in 0..255, sorted by x. */
+  curve: CurvePoint[];
+}
+
+export type CurvePoint = [number, number];
+
+/** The sliders: every adjustment that is a single number. */
+export type AdjustmentKey = Exclude<keyof Adjustments, "curve">;
+
+export const IDENTITY_CURVE: readonly CurvePoint[] = Object.freeze([
+  Object.freeze([0, 0]) as unknown as CurvePoint,
+  Object.freeze([255, 255]) as unknown as CurvePoint,
+]);
+
+export function isIdentityCurve(curve: readonly CurvePoint[]): boolean {
+  return curve.every(([x, y]) => x === y);
+}
+
+function sameCurve(a: readonly CurvePoint[], b: readonly CurvePoint[]): boolean {
+  return a.length === b.length && a.every((p, i) => p[0] === b[i][0] && p[1] === b[i][1]);
 }
 
 export const NEUTRAL_ADJUSTMENTS: Readonly<Adjustments> = Object.freeze({
@@ -32,16 +60,53 @@ export const NEUTRAL_ADJUSTMENTS: Readonly<Adjustments> = Object.freeze({
   tint: 0,
   sharpen: 0,
   blur: 0,
+  highlights: 0,
+  shadows: 0,
+  vibrance: 0,
+  vignette: 0,
+  curve: IDENTITY_CURVE as CurvePoint[],
 });
 
-export const ADJUSTMENT_KEYS = Object.keys(NEUTRAL_ADJUSTMENTS) as (keyof Adjustments)[];
+export const ADJUSTMENT_KEYS = (Object.keys(NEUTRAL_ADJUSTMENTS) as (keyof Adjustments)[]).filter(
+  (k): k is AdjustmentKey => k !== "curve",
+);
 
 export function isNeutral(a: Adjustments): boolean {
-  return ADJUSTMENT_KEYS.every((k) => a[k] === 0);
+  return ADJUSTMENT_KEYS.every((k) => a[k] === 0) && isIdentityCurve(a.curve);
 }
 
 export function sameAdjustments(a: Adjustments, b: Adjustments): boolean {
-  return ADJUSTMENT_KEYS.every((k) => a[k] === b[k]);
+  return ADJUSTMENT_KEYS.every((k) => a[k] === b[k]) && sameCurve(a.curve, b.curve);
+}
+
+/**
+ * Clean up adjustments read from storage (a saved preset): unknown keys are
+ * dropped, numbers clamped, and a malformed curve becomes the identity.
+ */
+export function normalizeAdjustments(raw: unknown): Adjustments {
+  const out: Adjustments = { ...NEUTRAL_ADJUSTMENTS, curve: IDENTITY_CURVE.map((p) => [p[0], p[1]] as CurvePoint) };
+  if (!raw || typeof raw !== "object") return out;
+  const source = raw as Record<string, unknown>;
+  for (const key of ADJUSTMENT_KEYS) {
+    const value = source[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    const min = key === "hue" ? -180 : key === "sharpen" || key === "blur" ? 0 : -100;
+    const max = key === "hue" ? 180 : 100;
+    out[key] = Math.round(Math.min(max, Math.max(min, value)));
+  }
+  if (Array.isArray(source.curve)) {
+    const points: CurvePoint[] = [];
+    for (const p of source.curve) {
+      if (!Array.isArray(p) || p.length !== 2) continue;
+      const [x, y] = p as unknown[];
+      if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+      points.push([Math.round(Math.min(255, Math.max(0, x))), Math.round(Math.min(255, Math.max(0, y)))]);
+    }
+    points.sort((a, b) => a[0] - b[0]);
+    const unique = points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0]);
+    if (unique.length >= 2) out.curve = unique;
+  }
+  return out;
 }
 
 /** Row-major 3x4 affine colour transform: out = M * [r, g, b, 1]. */
@@ -215,6 +280,149 @@ export function blurSigma(blur: number): number {
 }
 
 /**
+ * A 256-entry lookup table through the curve's control points, using a
+ * monotone cubic (Fritsch-Carlson) so the curve never overshoots between two
+ * points. Input below the first point or above the last holds that point's y.
+ */
+export function curveLut(curve: readonly CurvePoint[]): Uint8ClampedArray {
+  const lut = new Uint8ClampedArray(256);
+  const n = curve.length;
+  if (n === 0) {
+    for (let i = 0; i < 256; i++) lut[i] = i;
+    return lut;
+  }
+  if (n === 1) {
+    lut.fill(curve[0][1]);
+    return lut;
+  }
+  const xs = curve.map((p) => p[0]);
+  const ys = curve.map((p) => p[1]);
+  const slopes: number[] = [];
+  for (let i = 0; i < n - 1; i++) slopes.push((ys[i + 1] - ys[i]) / Math.max(1e-6, xs[i + 1] - xs[i]));
+  const tangents: number[] = [slopes[0]];
+  for (let i = 1; i < n - 1; i++) {
+    tangents.push(slopes[i - 1] * slopes[i] <= 0 ? 0 : (slopes[i - 1] + slopes[i]) / 2);
+  }
+  tangents.push(slopes[n - 2]);
+  for (let i = 0; i < n - 1; i++) {
+    if (slopes[i] === 0) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+      continue;
+    }
+    const a = tangents[i] / slopes[i];
+    const b = tangents[i + 1] / slopes[i];
+    const length = a * a + b * b;
+    if (length > 9) {
+      const t = 3 / Math.sqrt(length);
+      tangents[i] = t * a * slopes[i];
+      tangents[i + 1] = t * b * slopes[i];
+    }
+  }
+  let segment = 0;
+  for (let x = 0; x < 256; x++) {
+    if (x <= xs[0]) {
+      lut[x] = ys[0];
+      continue;
+    }
+    if (x >= xs[n - 1]) {
+      lut[x] = ys[n - 1];
+      continue;
+    }
+    while (segment < n - 2 && x > xs[segment + 1]) segment++;
+    const h = xs[segment + 1] - xs[segment];
+    const t = (x - xs[segment]) / h;
+    const t2 = t * t;
+    const t3 = t2 * t;
+    lut[x] =
+      (2 * t3 - 3 * t2 + 1) * ys[segment] +
+      (t3 - 2 * t2 + t) * h * tangents[segment] +
+      (-2 * t3 + 3 * t2) * ys[segment + 1] +
+      (t3 - t2) * h * tangents[segment + 1];
+  }
+  return lut;
+}
+
+/**
+ * The tone tools that are not a plain matrix: shadows, highlights, vibrance,
+ * the tone curve and the vignette. One pass over the pixels, in place.
+ */
+export function applyTone(data: Uint8ClampedArray, width: number, height: number, a: Adjustments): void {
+  const shadows = a.shadows / 100;
+  const highlights = a.highlights / 100;
+  const vibrance = a.vibrance / 100;
+  const vignette = a.vignette / 100;
+  const lut = isIdentityCurve(a.curve) ? null : curveLut(a.curve);
+  const tonal = shadows !== 0 || highlights !== 0;
+  if (!tonal && vibrance === 0 && vignette === 0 && !lut) return;
+
+  const cx = (width - 1) / 2;
+  const cy = (height - 1) / 2;
+  const maxDist2 = Math.max(1, cx * cx + cy * cy);
+  // 27/4 scales both weights to peak at exactly 1.
+  const PEAK = 6.75;
+
+  let i = 0;
+  for (let y = 0; y < height; y++) {
+    const dy2 = (y - cy) * (y - cy);
+    for (let x = 0; x < width; x++, i += 4) {
+      let r = data[i];
+      let g = data[i + 1];
+      let b = data[i + 2];
+
+      if (tonal) {
+        const l = (LUMA_R * r + LUMA_G * g + LUMA_B * b) / 255;
+        // Shadows act around the lower third, highlights around the upper
+        // third; both fade to nothing at pure black and pure white.
+        const delta = 90 * PEAK * (shadows * l * (1 - l) * (1 - l) + highlights * l * l * (1 - l));
+        r += delta;
+        g += delta;
+        b += delta;
+      }
+
+      if (vibrance !== 0) {
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const saturation = Math.min(1, Math.max(0, (max - min) / 255));
+        const k = 1 + vibrance * (1 - saturation);
+        const l = LUMA_R * r + LUMA_G * g + LUMA_B * b;
+        r = l + (r - l) * k;
+        g = l + (g - l) * k;
+        b = l + (b - l) * k;
+      }
+
+      if (lut) {
+        r = lut[r < 0 ? 0 : r > 255 ? 255 : Math.round(r)];
+        g = lut[g < 0 ? 0 : g > 255 ? 255 : Math.round(g)];
+        b = lut[b < 0 ? 0 : b > 255 ? 255 : Math.round(b)];
+      }
+
+      if (vignette !== 0) {
+        const d = Math.sqrt(((x - cx) * (x - cx) + dy2) / maxDist2);
+        // Untouched centre, smooth falloff to the corners.
+        const t = d <= 0.3 ? 0 : (d - 0.3) / 0.7;
+        const w = t * t * (3 - 2 * t);
+        if (vignette < 0) {
+          const k = 1 + vignette * w * 0.85;
+          r *= k;
+          g *= k;
+          b *= k;
+        } else {
+          const k = vignette * w * 0.85;
+          r += (255 - r) * k;
+          g += (255 - g) * k;
+          b += (255 - b) * k;
+        }
+      }
+
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+    }
+  }
+}
+
+/**
  * Apply the whole adjustment stack to RGBA bytes in place. `scale` is the
  * ratio of this buffer to the full-resolution image (1 for the export, less
  * for the on-screen preview), so blur and sharpen look the same at both.
@@ -238,6 +446,7 @@ export function applyAdjustments(
   ) {
     applyColorMatrix(data, colorMatrix(a));
   }
+  applyTone(data, width, height, a);
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +613,7 @@ export function buildEditNote(ops: EditOp[], adjustments: Adjustments, earlier?:
     for (const key of ADJUSTMENT_KEYS) {
       if (adjustments[key] !== 0) entry[key] = adjustments[key];
     }
+    if (!isIdentityCurve(adjustments.curve)) entry.curve = adjustments.curve;
     list.push(entry);
   }
   return JSON.stringify(list.slice(-MAX_NOTE_OPS));

@@ -4994,5 +4994,17 @@ const pl: Record<string, string> = {
   "editor.discard_yes": "Odrzuć",
   "editor.keep": "Edytuj dalej",
   "editor.fit": "Dopasuj",
+  "editor.adjust.highlights": "Światła",
+  "editor.adjust.shadows": "Cienie",
+  "editor.adjust.vibrance": "Jaskrawość",
+  "editor.adjust.vignette": "Winieta",
+  "editor.group.light": "Światło",
+  "editor.group.color": "Kolor",
+  "editor.group.curve": "Krzywa",
+  "editor.group.detail": "Szczegóły",
+  "editor.group.effects": "Efekty",
+  "editor.preset": "Ustawienie",
+  "editor.preset_name": "Nazwa",
+  "editor.preset_delete": "Usuń ustawienie",
 };
 export default pl;

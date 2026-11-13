@@ -3,6 +3,10 @@ import test from "node:test";
 import {
   NEUTRAL_ADJUSTMENTS,
   applyAdjustments,
+  applyTone,
+  curveLut,
+  normalizeAdjustments,
+  sameAdjustments,
   buildEditNote,
   colorMatrix,
   dragCropRect,
@@ -141,4 +145,74 @@ test("editing an edit appends to its note and keeps the first original", () => {
 test("an image with no metadata gets none invented", () => {
   assert.equal(editedMetadata(null, [{ op: "flip", axis: "h" }], adjust({}), { width: 1, height: 1 }, null, "d"), null);
   assert.equal(editedMetadata({}, [], adjust({}), { width: 1, height: 1 }, null, "d"), null);
+});
+
+test("an identity curve maps every level to itself and points are hit exactly", () => {
+  const identity = curveLut([[0, 0], [255, 255]]);
+  assert.ok(Array.from(identity).every((v, i) => v === i));
+  const lut = curveLut([[0, 0], [64, 40], [192, 220], [255, 255]]);
+  assert.equal(lut[64], 40);
+  assert.equal(lut[192], 220);
+  // Monotone input stays monotone: an S-curve never doubles back.
+  for (let i = 1; i < 256; i++) assert.ok(lut[i] >= lut[i - 1]);
+});
+
+test("a curve holds its end values outside the outer points", () => {
+  const lut = curveLut([[50, 20], [200, 240]]);
+  assert.equal(lut[0], 20);
+  assert.equal(lut[255], 240);
+});
+
+test("shadows and highlights leave pure black and white alone", () => {
+  const data = pixels(0, 0, 0, 255, 255, 255, 255, 255, 80, 80, 80, 255, 180, 180, 180, 255);
+  applyTone(data, 4, 1, adjust({ shadows: 100, highlights: -100 }));
+  assert.deepEqual(Array.from(data.slice(0, 8)), [0, 0, 0, 255, 255, 255, 255, 255]);
+  assert.ok(data[8] > 80, "shadows lifted");
+  assert.ok(data[12] < 180, "highlights pulled down");
+});
+
+test("vibrance boosts muted colours more than saturated ones and keeps greys", () => {
+  const data = pixels(120, 110, 100, 255, 250, 20, 20, 255, 90, 90, 90, 255);
+  applyTone(data, 3, 1, adjust({ vibrance: 100 }));
+  const mutedGain = (data[0] - data[2]) / 20;
+  const vividGain = (data[4] - data[5]) / 230;
+  assert.ok(mutedGain > vividGain);
+  assert.deepEqual(Array.from(data.slice(8, 11)), [90, 90, 90]);
+});
+
+test("vignette darkens the corners and leaves the centre", () => {
+  const w = 21;
+  const data = new Uint8ClampedArray(w * w * 4).fill(200);
+  applyTone(data, w, w, adjust({ vignette: -100 }));
+  assert.equal(data[(10 * w + 10) * 4], 200);
+  assert.ok(data[0] < 60);
+  const light = new Uint8ClampedArray(w * w * 4).fill(100);
+  applyTone(light, w, w, adjust({ vignette: 100 }));
+  assert.ok(light[0] > 200);
+});
+
+test("a curve counts as an adjustment and is written into the edit note", () => {
+  const curved = adjust({ curve: [[0, 0], [128, 160], [255, 255]] });
+  assert.ok(!isNeutral(curved));
+  assert.ok(!sameAdjustments(curved, adjust({})));
+  assert.deepEqual(JSON.parse(buildEditNote([], curved)), [{ op: "adjust", curve: [[0, 0], [128, 160], [255, 255]] }]);
+});
+
+test("stored presets are cleaned up before use", () => {
+  const preset = normalizeAdjustments({
+    brightness: 500,
+    hue: -999,
+    blur: -5,
+    bogus: 1,
+    contrast: "12",
+    curve: [[300, -4], [0, 10], "x", [0, 99]],
+  });
+  assert.equal(preset.brightness, 100);
+  assert.equal(preset.hue, -180);
+  assert.equal(preset.blur, 0);
+  assert.equal(preset.contrast, 0);
+  assert.deepEqual(preset.curve, [[0, 10], [255, 0]]);
+  assert.ok(!("bogus" in preset));
+  assert.ok(isNeutral(normalizeAdjustments(null)));
+  assert.ok(isNeutral(normalizeAdjustments({ curve: [[5, 5]] })));
 });

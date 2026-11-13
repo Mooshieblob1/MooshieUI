@@ -4956,5 +4956,17 @@ const pt: Record<string, string> = {
   "editor.discard_yes": "Descartar",
   "editor.keep": "Continuar editando",
   "editor.fit": "Ajustar",
+  "editor.adjust.highlights": "Realces",
+  "editor.adjust.shadows": "Sombras",
+  "editor.adjust.vibrance": "Vibração",
+  "editor.adjust.vignette": "Vinheta",
+  "editor.group.light": "Luz",
+  "editor.group.color": "Cor",
+  "editor.group.curve": "Curva",
+  "editor.group.detail": "Detalhe",
+  "editor.group.effects": "Efeitos",
+  "editor.preset": "Predefinição",
+  "editor.preset_name": "Nome",
+  "editor.preset_delete": "Excluir predefinição",
 };
 export default pt;

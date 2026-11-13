@@ -4955,5 +4955,17 @@ const it: Record<string, string> = {
   "editor.discard_yes": "Scarta",
   "editor.keep": "Continua a modificare",
   "editor.fit": "Adatta",
+  "editor.adjust.highlights": "Luci",
+  "editor.adjust.shadows": "Ombre",
+  "editor.adjust.vibrance": "Vividezza",
+  "editor.adjust.vignette": "Vignettatura",
+  "editor.group.light": "Luce",
+  "editor.group.color": "Colore",
+  "editor.group.curve": "Curva",
+  "editor.group.detail": "Dettaglio",
+  "editor.group.effects": "Effetti",
+  "editor.preset": "Predefinito",
+  "editor.preset_name": "Nome",
+  "editor.preset_delete": "Elimina predefinito",
 };
 export default it;

@@ -4981,5 +4981,17 @@ const fr: Record<string, string> = {
   "editor.discard_yes": "Abandonner",
   "editor.keep": "Continuer",
   "editor.fit": "Ajuster",
+  "editor.adjust.highlights": "Hautes lumières",
+  "editor.adjust.shadows": "Ombres",
+  "editor.adjust.vibrance": "Vibrance",
+  "editor.adjust.vignette": "Vignettage",
+  "editor.group.light": "Lumière",
+  "editor.group.color": "Couleur",
+  "editor.group.curve": "Courbe",
+  "editor.group.detail": "Détail",
+  "editor.group.effects": "Effets",
+  "editor.preset": "Préréglage",
+  "editor.preset_name": "Nom",
+  "editor.preset_delete": "Supprimer le préréglage",
 };
 export default fr;

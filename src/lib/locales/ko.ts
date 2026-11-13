@@ -4955,5 +4955,17 @@ const ko: Record<string, string> = {
   "editor.discard_yes": "버리기",
   "editor.keep": "계속 편집",
   "editor.fit": "맞춤",
+  "editor.adjust.highlights": "밝은 영역",
+  "editor.adjust.shadows": "어두운 영역",
+  "editor.adjust.vibrance": "활기",
+  "editor.adjust.vignette": "비네팅",
+  "editor.group.light": "밝기",
+  "editor.group.color": "색상",
+  "editor.group.curve": "곡선",
+  "editor.group.detail": "디테일",
+  "editor.group.effects": "효과",
+  "editor.preset": "프리셋",
+  "editor.preset_name": "이름",
+  "editor.preset_delete": "프리셋 삭제",
 };
 export default ko;

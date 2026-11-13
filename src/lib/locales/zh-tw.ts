@@ -4955,5 +4955,17 @@ const zhTw: Record<string, string> = {
   "editor.discard_yes": "捨棄",
   "editor.keep": "繼續編輯",
   "editor.fit": "符合",
+  "editor.adjust.highlights": "亮部",
+  "editor.adjust.shadows": "陰影",
+  "editor.adjust.vibrance": "自然飽和度",
+  "editor.adjust.vignette": "暈影",
+  "editor.group.light": "光線",
+  "editor.group.color": "顏色",
+  "editor.group.curve": "曲線",
+  "editor.group.detail": "細節",
+  "editor.group.effects": "效果",
+  "editor.preset": "預設集",
+  "editor.preset_name": "名稱",
+  "editor.preset_delete": "刪除預設集",
 };
 export default zhTw;

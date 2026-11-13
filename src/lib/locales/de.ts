@@ -4957,5 +4957,17 @@ const de: Record<string, string> = {
   "editor.discard_yes": "Verwerfen",
   "editor.keep": "Weiter bearbeiten",
   "editor.fit": "Einpassen",
+  "editor.adjust.highlights": "Lichter",
+  "editor.adjust.shadows": "Tiefen",
+  "editor.adjust.vibrance": "Dynamik",
+  "editor.adjust.vignette": "Vignette",
+  "editor.group.light": "Licht",
+  "editor.group.color": "Farbe",
+  "editor.group.curve": "Kurve",
+  "editor.group.detail": "Details",
+  "editor.group.effects": "Effekte",
+  "editor.preset": "Vorgabe",
+  "editor.preset_name": "Name",
+  "editor.preset_delete": "Vorgabe löschen",
 };
 export default de;

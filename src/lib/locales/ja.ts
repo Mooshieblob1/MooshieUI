@@ -4980,5 +4980,17 @@ const ja: Record<string, string> = {
   "editor.discard_yes": "破棄",
   "editor.keep": "編集を続ける",
   "editor.fit": "全体表示",
+  "editor.adjust.highlights": "ハイライト",
+  "editor.adjust.shadows": "シャドウ",
+  "editor.adjust.vibrance": "自然な彩度",
+  "editor.adjust.vignette": "周辺光量",
+  "editor.group.light": "ライト",
+  "editor.group.color": "カラー",
+  "editor.group.curve": "トーンカーブ",
+  "editor.group.detail": "ディテール",
+  "editor.group.effects": "効果",
+  "editor.preset": "プリセット",
+  "editor.preset_name": "名前",
+  "editor.preset_delete": "プリセットを削除",
 };
 export default ja;

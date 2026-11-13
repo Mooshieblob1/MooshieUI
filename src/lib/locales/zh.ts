@@ -4956,5 +4956,17 @@ const zh: Record<string, string> = {
   "editor.discard_yes": "放弃",
   "editor.keep": "继续编辑",
   "editor.fit": "适应",
+  "editor.adjust.highlights": "高光",
+  "editor.adjust.shadows": "阴影",
+  "editor.adjust.vibrance": "自然饱和度",
+  "editor.adjust.vignette": "暗角",
+  "editor.group.light": "光线",
+  "editor.group.color": "颜色",
+  "editor.group.curve": "曲线",
+  "editor.group.detail": "细节",
+  "editor.group.effects": "效果",
+  "editor.preset": "预设",
+  "editor.preset_name": "名称",
+  "editor.preset_delete": "删除预设",
 };
 export default zh;

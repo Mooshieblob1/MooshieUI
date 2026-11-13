@@ -31,6 +31,9 @@
     ADJUSTMENT_KEYS,
     NEUTRAL_ADJUSTMENTS,
     applyAdjustments,
+    curveLut,
+    isIdentityCurve,
+    normalizeAdjustments,
     dragCropRect,
     editedMetadata,
     fitAspectRect,
@@ -38,7 +41,7 @@
     roundRect,
     sameAdjustments,
   } from "../../utils/imageEditorOps.js";
-  import type { Adjustments, CropHandle, EditOp, Rect } from "../../utils/imageEditorOps.js";
+  import type { AdjustmentKey, Adjustments, CropHandle, CurvePoint, EditOp, Rect } from "../../utils/imageEditorOps.js";
   import type { GenerationMode } from "../../types/index.js";
 
   type Tool = "hand" | "zoom" | "crop";
@@ -69,16 +72,23 @@
     { key: "9:16", label: "9:16", ratio: 9 / 16 },
   ];
 
-  const SLIDERS: { key: keyof Adjustments; min: number; max: number }[] = [
-    { key: "brightness", min: -100, max: 100 },
-    { key: "contrast", min: -100, max: 100 },
-    { key: "saturation", min: -100, max: 100 },
-    { key: "hue", min: -180, max: 180 },
-    { key: "temperature", min: -100, max: 100 },
-    { key: "tint", min: -100, max: 100 },
-    { key: "sharpen", min: 0, max: 100 },
-    { key: "blur", min: 0, max: 100 },
+  type Slider = { key: AdjustmentKey; min: number; max: number };
+  const range = (key: AdjustmentKey, min = -100, max = 100): Slider => ({ key, min, max });
+  /** Panel sections, top to bottom. The tone curve sits after "light". */
+  const GROUPS: { key: string; sliders: Slider[] }[] = [
+    { key: "light", sliders: [range("brightness"), range("contrast"), range("highlights"), range("shadows")] },
+    {
+      key: "color",
+      sliders: [range("temperature"), range("tint"), range("saturation"), range("vibrance"), range("hue", -180, 180)],
+    },
+    { key: "detail", sliders: [range("sharpen", 0), range("blur", 0)] },
+    { key: "effects", sliders: [range("vignette")] },
   ];
+
+  const PRESETS_KEY = "mooshieui.editor.presets.v1";
+  const MAX_PRESETS = 24;
+  /** How close (in curve units, 0..255) a press must be to grab a point. */
+  const CURVE_GRAB = 14;
 
   const source = $derived(imageEditor.source);
 
@@ -308,6 +318,132 @@
 
   function redo() {
     if (canRedo && !busy) restore(historyIndex + 1);
+  }
+
+  // ------------------------------------------------------------ tone curve
+
+  let curveEl = $state<SVGSVGElement | null>(null);
+  let curveDrag: number | null = null;
+
+  const curvePath = $derived.by(() => {
+    const lut = curveLut(adjustments.curve);
+    let d = "";
+    for (let x = 0; x < 256; x++) d += `${x === 0 ? "M" : "L"}${x} ${255 - lut[x]}`;
+    return d;
+  });
+
+  /** Pointer position in curve units. The SVG's viewBox is -6..261 on both axes. */
+  function curvePoint(e: MouseEvent): CurvePoint {
+    const rect = curveEl!.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 267 - 6;
+    const y = 255 - (((e.clientY - rect.top) / Math.max(1, rect.height)) * 267 - 6);
+    return [Math.round(Math.min(255, Math.max(0, x))), Math.round(Math.min(255, Math.max(0, y)))];
+  }
+
+  function moveCurvePoint(index: number, [x, y]: CurvePoint) {
+    const points = adjustments.curve;
+    const last = points.length - 1;
+    // The end points slide up and down only; inner points stay between
+    // their neighbours so the curve remains a function of x.
+    const nx = index === 0 ? 0 : index === last ? 255 : Math.min(points[index + 1][0] - 1, Math.max(points[index - 1][0] + 1, x));
+    adjustments.curve = points.map((p, i) => (i === index ? [nx, y] : p) as CurvePoint);
+  }
+
+  function onCurveDown(e: PointerEvent) {
+    if (busy || !curveEl || e.button !== 0) return;
+    const [x, y] = curvePoint(e);
+    const points = adjustments.curve;
+    let index = points.findIndex((p) => Math.abs(p[0] - x) <= CURVE_GRAB && Math.abs(p[1] - y) <= CURVE_GRAB);
+    if (index < 0) {
+      if (x <= 0 || x >= 255 || points.some((p) => p[0] === x)) return;
+      index = points.findIndex((p) => p[0] > x);
+      adjustments.curve = [...points.slice(0, index), [x, y] as CurvePoint, ...points.slice(index)];
+    }
+    curveDrag = index;
+    moveCurvePoint(index, [x, y]);
+    curveEl.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onCurveMove(e: PointerEvent) {
+    if (curveDrag === null) return;
+    moveCurvePoint(curveDrag, curvePoint(e));
+  }
+
+  function onCurveUp(e: PointerEvent) {
+    if (curveDrag === null) return;
+    curveDrag = null;
+    if (curveEl?.hasPointerCapture(e.pointerId)) curveEl.releasePointerCapture(e.pointerId);
+    commitAdjustments();
+  }
+
+  /** Double-click removes an inner point. */
+  function onCurveDblClick(e: MouseEvent) {
+    if (busy || !curveEl) return;
+    const [x, y] = curvePoint(e);
+    const points = adjustments.curve;
+    const index = points.findIndex((p) => Math.abs(p[0] - x) <= CURVE_GRAB && Math.abs(p[1] - y) <= CURVE_GRAB);
+    if (index <= 0 || index >= points.length - 1) return;
+    adjustments.curve = points.filter((_, i) => i !== index);
+    commitAdjustments();
+  }
+
+  function resetCurve() {
+    adjustments.curve = NEUTRAL_ADJUSTMENTS.curve;
+    commitAdjustments();
+  }
+
+  // --------------------------------------------------------------- presets
+
+  interface Preset {
+    name: string;
+    adjustments: Adjustments;
+  }
+
+  function loadPresets(): Preset[] {
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem(PRESETS_KEY) ?? "[]");
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((p): p is { name: string; adjustments: unknown } => !!p && typeof p.name === "string" && p.name.trim() !== "")
+        .slice(0, MAX_PRESETS)
+        .map((p) => ({ name: p.name.trim().slice(0, 40), adjustments: normalizeAdjustments(p.adjustments) }));
+    } catch {
+      return [];
+    }
+  }
+
+  let presets = $state<Preset[]>(loadPresets());
+  let presetNaming = $state(false);
+  let presetName = $state("");
+
+  function storePresets(next: Preset[]) {
+    presets = next;
+    try {
+      localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
+    } catch (e) {
+      console.warn("Image editor: could not store presets:", e);
+    }
+  }
+
+  function savePreset() {
+    const name = presetName.trim().slice(0, 40);
+    if (!name) return;
+    const entry: Preset = { name, adjustments: normalizeAdjustments($state.snapshot(adjustments)) };
+    // Saving under an existing name replaces it.
+    storePresets([entry, ...presets.filter((p) => p.name !== name)].slice(0, MAX_PRESETS));
+    presetNaming = false;
+    presetName = "";
+  }
+
+  function applyPreset(preset: Preset) {
+    if (busy) return;
+    adjustments = normalizeAdjustments(preset.adjustments);
+    commitAdjustments();
+  }
+
+  function focusOnMount(node: HTMLInputElement) {
+    node.focus();
   }
 
   // ------------------------------------------------------------- pixel ops
@@ -573,6 +709,7 @@
     void stageH;
     void crop;
     for (const key of ADJUSTMENT_KEYS) void adjustments[key];
+    void adjustments.curve;
     if (!viewEl) return;
     const frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
@@ -819,14 +956,18 @@
 
     if (key === "escape") {
       e.preventDefault();
-      if (sizeOpen) sizeOpen = false;
+      if (presetNaming) presetNaming = false;
+      else if (sizeOpen) sizeOpen = false;
       else if (tool === "crop") cancelCrop();
       else if (confirmClose) confirmClose = false;
       else requestClose();
       return;
     }
     if (isTyping(e.target)) {
-      if (key === "enter" && sizeOpen) {
+      if (key === "enter" && presetNaming) {
+        e.preventDefault();
+        savePreset();
+      } else if (key === "enter" && sizeOpen) {
         e.preventDefault();
         applySize();
       }
@@ -1024,25 +1165,89 @@
             onclick={() => { adjustments = { ...NEUTRAL_ADJUSTMENTS }; commitAdjustments(); }}
           >{locale.t("common.reset")}</button>
         </div>
-        <div class="flex flex-col gap-3 p-3 overflow-y-auto">
-          {#each SLIDERS as slider (slider.key)}
-            <label class="flex flex-col gap-1">
-              <span class="flex items-center text-xs">
-                <span class="flex-1 text-neutral-300">{locale.t(`editor.adjust.${slider.key}`)}</span>
-                <span class="tabular-nums {adjustments[slider.key] === 0 ? 'text-neutral-500' : 'text-indigo-300'}">{adjustments[slider.key]}</span>
-              </span>
-              <input
-                type="range"
-                min={slider.min}
-                max={slider.max}
-                step="1"
-                class="w-full accent-indigo-500"
-                disabled={busy}
-                bind:value={adjustments[slider.key]}
-                onchange={commitAdjustments}
-                ondblclick={() => { adjustments[slider.key] = 0; commitAdjustments(); }}
-              />
-            </label>
+        <div class="flex flex-wrap items-center gap-1 px-3 py-2 border-b border-neutral-800">
+          {#each presets as preset (preset.name)}
+            <span class="flex items-center h-6 rounded bg-neutral-800 text-[11px] text-neutral-200">
+              <button type="button" class="h-6 pl-2 pr-1 hover:text-white disabled:opacity-40" disabled={busy} onclick={() => applyPreset(preset)}>{preset.name}</button>
+              <button type="button" class="flex items-center justify-center w-5 h-6 text-neutral-500 hover:text-red-400" title={locale.t("editor.preset_delete")} aria-label="{locale.t('editor.preset_delete')}: {preset.name}" onclick={() => storePresets(presets.filter((p) => p.name !== preset.name))}><X size={11} /></button>
+            </span>
+          {/each}
+          {#if presetNaming}
+            <input
+              use:focusOnMount
+              type="text"
+              maxlength="40"
+              class="h-6 w-28 px-2 rounded bg-neutral-800 border border-neutral-600 text-[11px] text-neutral-100 select-text"
+              placeholder={locale.t("editor.preset_name")}
+              aria-label={locale.t("editor.preset_name")}
+              bind:value={presetName}
+              onblur={() => { if (!presetName.trim()) presetNaming = false; }}
+            />
+            <button type="button" class="h-6 px-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] disabled:opacity-40" disabled={!presetName.trim()} onclick={savePreset}>{locale.t("common.save")}</button>
+          {:else}
+            <button
+              type="button"
+              class="h-6 px-2 rounded border border-dashed border-neutral-700 text-[11px] text-neutral-400 hover:text-neutral-100 hover:border-neutral-500 disabled:opacity-35"
+              disabled={busy || isNeutral(adjustments)}
+              onclick={() => { presetName = ""; presetNaming = true; }}
+            >+ {locale.t("editor.preset")}</button>
+          {/if}
+        </div>
+        <div class="flex flex-col gap-4 p-3 overflow-y-auto">
+          {#each GROUPS as group (group.key)}
+            <div class="flex flex-col gap-2.5">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">{locale.t(`editor.group.${group.key}`)}</span>
+              {#each group.sliders as slider (slider.key)}
+                <label class="flex flex-col gap-1">
+                  <span class="flex items-center text-xs">
+                    <span class="flex-1 text-neutral-300">{locale.t(`editor.adjust.${slider.key}`)}</span>
+                    <span class="tabular-nums {adjustments[slider.key] === 0 ? 'text-neutral-500' : 'text-indigo-300'}">{adjustments[slider.key]}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={slider.min}
+                    max={slider.max}
+                    step="1"
+                    class="w-full accent-indigo-500"
+                    disabled={busy}
+                    bind:value={adjustments[slider.key]}
+                    onchange={commitAdjustments}
+                    ondblclick={() => { adjustments[slider.key] = 0; commitAdjustments(); }}
+                  />
+                </label>
+              {/each}
+            </div>
+            {#if group.key === "light"}
+              <div class="flex flex-col gap-2">
+                <span class="flex items-center">
+                  <span class="flex-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">{locale.t("editor.group.curve")}</span>
+                  <button type="button" class="text-[11px] text-neutral-400 hover:text-neutral-100 disabled:opacity-35 disabled:hover:text-neutral-400" disabled={busy || isIdentityCurve(adjustments.curve)} onclick={resetCurve}>{locale.t("common.reset")}</button>
+                </span>
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <svg
+                  bind:this={curveEl}
+                  viewBox="-6 -6 267 267"
+                  class="w-full aspect-square rounded bg-neutral-950 border border-neutral-800 touch-none cursor-crosshair"
+                  role="img"
+                  aria-label={locale.t("editor.group.curve")}
+                  onpointerdown={onCurveDown}
+                  onpointermove={onCurveMove}
+                  onpointerup={onCurveUp}
+                  onpointercancel={onCurveUp}
+                  ondblclick={onCurveDblClick}
+                >
+                  {#each [63.75, 127.5, 191.25] as line (line)}
+                    <line x1={line} y1="0" x2={line} y2="255" stroke="#262626" stroke-width="1" />
+                    <line x1="0" y1={line} x2="255" y2={line} stroke="#262626" stroke-width="1" />
+                  {/each}
+                  <line x1="0" y1="255" x2="255" y2="0" stroke="#404040" stroke-width="1" stroke-dasharray="4 4" />
+                  <path d={curvePath} fill="none" stroke="#e5e5e5" stroke-width="2" />
+                  {#each adjustments.curve as point, index (index)}
+                    <circle cx={point[0]} cy={255 - point[1]} r="5" fill="#171717" stroke="#e5e5e5" stroke-width="2" />
+                  {/each}
+                </svg>
+              </div>
+            {/if}
           {/each}
         </div>
       </div>
