@@ -317,9 +317,10 @@ pub struct NovelAiParams {
     pub local_vae: Option<String>,
     /// Prompt in ComfyUI weight syntax, for the local pass only.
     ///
-    /// By the time params reach the backend the top-level `positive_prompt`
-    /// has been rewritten into NovelAI's `1.1::tag::` syntax, which
-    /// `CLIPTextEncode` would take literally.
+    /// Unset by the app: the local pass translates the top-level
+    /// `positive_prompt`, which may hold NovelAI's `1.1::tag::` syntax, on its
+    /// own (`templates::upscale_standalone::build_params`). An override for a
+    /// caller that wants that pass to run on different text.
     #[serde(default)]
     pub local_positive_prompt: Option<String>,
     /// Negative counterpart of [`Self::local_positive_prompt`].

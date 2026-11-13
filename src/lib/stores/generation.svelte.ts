@@ -58,6 +58,7 @@ import {
   NOVELAI_MAX_VIBES,
   NOVELAI_MAX_DIRECTOR_REFERENCES,
 } from "../utils/novelaiModels.js";
+import { translatePromptWeightSyntax } from "../utils/promptWeightSyntax.js";
 import {
   H3_DIFFUSION_MARKERS,
   H3_MAX_REF_IMAGES,
@@ -331,100 +332,6 @@ interface ModelPreset {
 
 function isModelFamily(value: unknown): value is ModelFamily {
   return typeof value === "string" && MODEL_FAMILIES.includes(value as ModelFamily);
-}
-
-/**
- * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
- * - {text} → (text:1.05)   — each layer multiplies by 1.05
- * - [text] → (text:0.9524)  — each layer divides by 1.05
- * - 1.1::text:: → (text:1.1) — A1111-style weight prefix
- * Processes innermost brackets first, so nesting works: {{tag}} → ((tag:1.05):1.05)
- */
-function translateNaiWeightSyntax(prompt: string): string {
-  // Process A1111-style weight::text:: syntax first
-  prompt = prompt.replace(/(\d+\.?\d*)::([^:]+)::/g, (_m, weight, text) => {
-    return `(${text.trim()}:${parseFloat(weight).toFixed(2)})`;
-  });
-
-  // Process innermost {text} → (text:1.05) repeatedly
-  let prev: string;
-  do {
-    prev = prompt;
-    prompt = prompt.replace(/\{([^{}]+)\}/g, (_m, inner) => `(${inner}:1.05)`);
-  } while (prompt !== prev);
-
-  // Process innermost [text] → (text:0.95) repeatedly
-  // Skip escaped brackets \[ and \]
-  do {
-    prev = prompt;
-    prompt = prompt.replace(/(?<!\\)\[([^\[\]]+)\]/g, (_m, inner) => `(${inner}:0.95)`);
-  } while (prompt !== prev);
-
-  return prompt;
-}
-
-/**
- * Translate InvokeAI/compel weight + emphasis syntax to ComfyUI (tag:weight).
- * - (group)0.8      -> (group:0.8)      explicit weight, number OUTSIDE the paren
- * - (group)+ / ++   -> (group:1.10) / (group:1.21)   group emphasis, 1.1^n
- * - (group)- / --   -> (group:0.90) / (group:0.81)   group de-emphasis, 0.9^n
- * - word+ / word--  -> (word:1.10) / (word:0.81)     bareword emphasis
- * Guard: bareword rewrite only fires when the base (token minus the trailing
- * +/- run) contains an ASCII letter, so emoticon tags like +_+ and bare ++ / 1+
- * are left untouched. Blend/swap operators are intentionally not handled.
- *
- * Escape: a backslash directly before a trailing +/- run keeps it a literal
- * character instead of emphasis — e.g. a crossover tag "nero (bride)\+astolfo"
- * or a character name "La\+ darkness" whose name is not emphasis syntax. The
- * escaping backslash is stripped from the output either way.
- */
-function translateInvokeAiWeightSyntax(prompt: string): string {
-  const emphasisWeight = (marks: string): string => {
-    const base = marks[0] === "+" ? 1.1 : 0.9;
-    return Math.pow(base, marks.length).toFixed(2);
-  };
-
-  // 1. Group trailing explicit weight: (group)0.8 -> (group:0.8)
-  prompt = prompt.replace(
-    /\(([^()]+)\)(\d+\.?\d*)(?=[\s,(){}\[\]]|$)/g,
-    (_m, inner, weight) => `(${inner}:${weight})`,
-  );
-
-  // 2. Group emphasis: (group)+++ / (group)--- -> (group:W). Innermost-first.
-  // An escaped run is left untouched here (returned byte-for-byte) so the loop
-  // still converges; the escaping backslash is stripped once, after the loop,
-  // so the now-literal +/- doesn't get re-matched and wrongly converted on a
-  // later pass.
-  let prev: string;
-  do {
-    prev = prompt;
-    prompt = prompt.replace(
-      /\(([^()]+)\)(\\(?:\++|-+)|\++|-+)/g,
-      (_m, inner, marks) => {
-        if (marks[0] === "\\") return `(${inner})${marks}`;
-        return `(${inner}:${emphasisWeight(marks)})`;
-      },
-    );
-  } while (prompt !== prev);
-  prompt = prompt.replace(/\)\\(\++|-+)/g, ")$1");
-
-  // 3. Bareword emphasis: tokenize on delimiters, rewrite word+ / word- when the
-  // base has a letter. Delimiters: whitespace , ( ) { }
-  prompt = prompt.replace(/[^\s,(){}]+/g, (token) => {
-    const m = token.match(/^(.*?)(\\?)(\++|-+)$/);
-    if (!m) return token;
-    const [, base, esc, marks] = m;
-    if (esc) return base + marks;
-    if (!/[a-zA-Z]/.test(base)) return token;
-    return `(${base}:${emphasisWeight(marks)})`;
-  });
-
-  return prompt;
-}
-
-/** Apply InvokeAI translation, then NAI translation, to a prompt string. */
-function translatePromptWeightSyntax(prompt: string): string {
-  return translateNaiWeightSyntax(translateInvokeAiWeightSyntax(prompt));
 }
 
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
@@ -3742,9 +3649,10 @@ class GenerationStore {
    * image or mask it needs is missing, so a stale mode cannot burn Anlas on a
    * request NovelAI would reject.
    *
-   * Both `local_*` prompts stay null. The NovelAI syntax reversal happens in
-   * Rust while building the payload and never touches `params`, so the
-   * top-level prompt is still the ComfyUI-syntax one the free local pass wants.
+   * Both `local_*` prompts stay null. The top-level prompt goes out in the
+   * syntax the user wrote, and Rust translates it each way it is needed:
+   * `to_novelai` while building the NovelAI payload, `from_novelai` for the
+   * free local pass (`upscale_standalone::build_params`).
    */
   private novelAiParams(characters: NovelAiCharacter[]): NovelAiParams | null {
     if (!this.isNovelAi) return null;
@@ -4254,7 +4162,12 @@ class GenerationStore {
     const parsedPositive = parseScheduledPrompt(positivePrompt);
     const parsedNegative = parseScheduledPrompt(negativePrompt);
 
-    const translatedPositiveBase = translatePromptWeightSyntax(parsedPositive.baseText);
+    // The base prompts are what a NovelAI request sends, so in NovelAI mode
+    // they keep the NovelAI weight syntax the user wrote (`1.2::tag::`,
+    // `{tag}`) instead of being converted to ComfyUI's and back again in
+    // Rust. Segments and detail prompts below are only ever read by ComfyUI.
+    const baseSyntax = this.isNovelAi ? "novelai" : "comfyui";
+    const translatedPositiveBase = translatePromptWeightSyntax(parsedPositive.baseText, baseSyntax);
     const translatedPositiveSegments = parsedPositive.segments.map((s) => ({
       text: translatePromptWeightSyntax(s.text),
       start: s.start,
@@ -4306,7 +4219,7 @@ class GenerationStore {
     const params: GenerationParams = {
       mode: this.mode,
       positive_prompt: translatedPositiveBase,
-      negative_prompt: translatePromptWeightSyntax(parsedNegative.baseText),
+      negative_prompt: translatePromptWeightSyntax(parsedNegative.baseText, baseSyntax),
       positive_segments: translatedPositiveSegments,
       negative_segments: parsedNegative.segments.map((s) => ({
         text: translatePromptWeightSyntax(s.text),

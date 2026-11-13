@@ -520,12 +520,14 @@ Two details make it work:
   names a NovelAI model that ComfyUI cannot load, so the request carries a
   separate `local_checkpoint` (plus its architecture and v-pred flag). Without
   one, the pass is skipped and the image is delivered untouched.
-- **The prompt does not need swapping.** The NovelAI syntax rewrite happens in
-  Rust while the request body is built and never mutates `params`, so the
-  top-level prompt stays in ComfyUI syntax and is what the local pass uses. The
+- **The prompt is translated, not swapped.** The top-level prompt reaches Rust
+  in the syntax the user wrote, NovelAI weights included (see section 4).
+  `upscale_standalone::build_params` runs it through
+  `prompt_syntax::from_novelai` so the local pass gets ComfyUI syntax. The
   request also carries optional `local_positive_prompt` and
-  `local_negative_prompt` overrides, for a caller that wants the local pass to
-  run on different text; when they are null the top-level prompt is used.
+  `local_negative_prompt` overrides, already in ComfyUI syntax, for a caller
+  that wants the local pass to run on different text; when they are null the
+  translated top-level prompt is used.
 
 All stages report as one generation. With NovelAI face detailing enabled, the
 local refiner uses a private ComfyUI websocket connected before submission. It
@@ -671,10 +673,29 @@ information, as does copying the saved PNG to the clipboard.
 
 ## 4. Prompt syntax
 
-Outside NovelAI mode the app translates NovelAI weight syntax (`1.1::tag::`)
-into ComfyUI syntax (`(tag:1.1)`). In NovelAI mode that reverses: what the user
-types in A1111 or ComfyUI syntax is converted to NovelAI syntax on the way out.
-Behaviour outside NovelAI mode is unchanged.
+The prompt box holds whatever the user typed or imported, in any of the
+supported weight syntaxes, and nothing rewrites it there. It is translated only
+when a request is built, and only as far as the backend needs
+(`src/lib/utils/promptWeightSyntax.ts`):
+
+- **Outside NovelAI mode** NovelAI weight syntax (`1.1::tag::`, `{tag}`,
+  `[tag]`) is translated into ComfyUI syntax (`(tag:1.1)`).
+- **In NovelAI mode** NovelAI syntax goes out exactly as written. A1111 or
+  ComfyUI weights (`(tag:1.2)`) are converted to NovelAI syntax in Rust
+  (`prompt_syntax::to_novelai`), which leaves text already in NovelAI syntax
+  alone.
+- **A prompt imported from a NovelAI image** keeps the syntax NovelAI wrote,
+  in the base prompt, the undesired content and every character box.
+- **The weight buttons** edit a weighted tag in the syntax it already has. A
+  plain selection is wrapped as `(tag:1.05)`, or as `1.05::tag::` while a
+  NovelAI model is selected.
+
+Until 2026-11-13 a NovelAI prompt was converted to ComfyUI syntax in the
+frontend and back to NovelAI syntax in Rust. That round trip changed the text
+NovelAI received: `1.2::a, b::` became one span per tag, weights were rounded
+to two decimals, and `-1::hat::` lost its sign and went out as `-hat`. Imports
+were converted to ComfyUI syntax as well, so a prompt copied off novelai.net
+never looked the way it was written.
 
 The `@` sigil is also mode-dependent. In ComfyUI mode artist tags are inserted as
 `@tag`. In NovelAI mode they are inserted bare, because there `@` is the
@@ -3637,3 +3658,66 @@ these files).
 
 **Do not skip:** 1, 3, 6.
 **Low-risk, skip if short on time:** 4, 8, 9.
+
+### 2026-11-13 - NovelAI weight syntax is kept as written
+
+**Reported as.** A prompt imported from a NovelAI image showed `(tag:1.2)`
+where the image said `1.2::tag::`, and the request for a way to keep the
+NovelAI format, or at least send it to NovelAI correctly.
+
+**What was happening.** Two conversions, both on by default.
+
+- Import: `novelai::metadata` (desktop) and `novelaiPngMetadata.ts` (browser
+  mode) rewrote every imported prompt into ComfyUI syntax.
+- Send: `toParams()` translated NovelAI syntax into ComfyUI syntax for every
+  backend, and `prompt_syntax::to_novelai` translated it back for NovelAI. The
+  request did reach NovelAI in NovelAI syntax, but not the same text:
+  `1.2::rain, night::` went out as `1.2::rain::, 1.2::night::`, `1.05::tag::`
+  as `{tag}`, `1.234::tag::` as `1.23::tag::`, and `-1::hat::` as `-hat`,
+  because the frontend pattern did not read the minus sign. That last one
+  silently dropped every negative weight in the base prompt and undesired
+  content, including the `-1::trait::` spans Enhance for V5 writes. Character
+  boxes were never translated, so they were unaffected.
+
+**What changed.**
+
+- Imports keep the syntax NovelAI wrote, in every prompt field.
+- In NovelAI mode `toParams()` sends the base prompt and undesired content as
+  written. `to_novelai` still converts A1111 and InvokeAI weights, and leaves
+  NovelAI syntax alone. The translators moved out of the generation store into
+  `src/lib/utils/promptWeightSyntax.ts`.
+- The two places a NovelAI request's prompt is read as ComfyUI syntax now
+  translate it themselves with `prompt_syntax::from_novelai`: the local refine
+  pass (`upscale_standalone::build_params`) and the face-detail tag extraction
+  (`face_detail.rs`).
+- Negative weights survive the NovelAI to ComfyUI translation in both copies
+  (`-1::hat::` becomes `(hat:-1.00)`), and are highlighted and stepped as one
+  weighted tag in the prompt box.
+- The weight buttons wrap a plain selection as `1.05::tag::` while a NovelAI
+  model is selected, with the comma guard when the text ends in a digit.
+- Gallery artist detection strips NovelAI weight markers, since saved prompts
+  of NovelAI images now carry them.
+
+No toggle: nothing converts the text in the box any more, so there is nothing
+to switch off. Image metadata saved for a NovelAI generation now holds the
+prompt in the syntax it was typed in, which reverses the note under
+"Style fragment weights in NovelAI mode" above.
+
+**MCP:** no change. `setups::apply` writes the agent's prompt into
+`positive_prompt`, which takes the same two Rust translations.
+
+**Testing required: yes.** `cargo test` (6 new tests) and
+`scripts/tests/promptWeightSyntax.test.ts` (13 tests, run by Guardrails) cover
+the translation, the import and the buttons. The requests themselves need a
+NovelAI account.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Import an image from novelai.net whose prompt has `1.2::tag::`, `{tag}` and `-1::tag::` | The prompt, undesired content and character boxes show that syntax unchanged |
+| 2 | Generate it on the same NovelAI model, then open the result's metadata on novelai.net or re-import it | The prompt matches what was in the box, span for span |
+| 3 | NovelAI model, type `(blue hair:1.3)`, generate | The image is weighted; NovelAI's metadata shows `1.3::blue hair::` |
+| 4 | NovelAI model with local post-process on, prompt containing `1.2::tag::`, generate | The local pass runs and the result is not visibly affected by literal `::` text |
+| 5 | NovelAI model, select a plain tag, press the weight up button | It becomes `1.05::tag::`; pressing down returns the bare tag |
+| 6 | Local model, paste the NovelAI prompt from step 1, generate | Generates as before, weights applied |
+
+**Do not skip:** 1, 2.

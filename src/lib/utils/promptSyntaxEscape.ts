@@ -46,7 +46,7 @@ const EMPHASIS_TOKEN_RE = /[^\s,(){}]+/g;
  * Backslash-escape a trailing `+`/`-` run in each token of `text`.
  *
  * The send-time translator (`translateInvokeAiWeightSyntax` in
- * `generation.svelte.ts`) reads a trailing `+`/`-` run as InvokeAI emphasis
+ * `promptWeightSyntax.ts`) reads a trailing `+`/`-` run as InvokeAI emphasis
  * weighting, so a tag whose *name* ends in one — `blood+`, `k+`, `9-nine-`,
  * `grs-` — is otherwise rewritten to `(blood:1.10)` / `(9-nine:0.90)` and the
  * literal character is lost. The translator honours a backslash escape and

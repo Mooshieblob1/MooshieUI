@@ -1,15 +1,25 @@
 //! Translate prompt weight syntax between ComfyUI/A1111 and NovelAI.
 //!
-//! The frontend translates *into* ComfyUI syntax (`1.1::tag::` becomes
-//! `(tag:1.1)`) because ComfyUI is the default backend. NovelAI does not
-//! understand `(tag:1.1)`: it reads the parentheses as literal characters and
-//! the weight is silently lost, so a prompt that looked weighted in the UI
-//! generates unweighted and the user pays Anlas for it.
+//! The prompt box holds whatever the user typed or imported, in either syntax,
+//! and nothing rewrites it there. Translation happens only at the boundary
+//! where a backend could not read it:
 //!
-//! This module runs on the way out for every NovelAI request, and on the way
-//! back in when NovelAI's own metadata is read out of a PNG. It lives in Rust
-//! rather than next to the frontend translator because the repo has no frontend
-//! test framework and a silent bug here costs real money.
+//! - [`to_novelai`] runs on the way out for every NovelAI request. NovelAI does
+//!   not understand `(tag:1.1)`: it reads the parentheses as literal characters
+//!   and the weight is silently lost, so a prompt that looked weighted in the
+//!   UI would generate unweighted and the user would pay Anlas for it. Text
+//!   already in NovelAI syntax passes through byte for byte, which is why the
+//!   frontend sends a NovelAI prompt as typed instead of converting it to
+//!   ComfyUI syntax first: that round trip split `1.2::a, b::` into one span
+//!   per tag, rounded weights and dropped the sign of `-1::hat::`.
+//! - [`from_novelai`] runs when a NovelAI request's prompt is handed to
+//!   ComfyUI instead: the local refine pass, and the face-detail tag
+//!   extraction, both written against ComfyUI syntax. It mirrors the
+//!   frontend's `translateNaiWeightSyntax`, which does the same job for a
+//!   local generation.
+//!
+//! It lives in Rust rather than next to the frontend translator because a
+//! silent bug here costs real money.
 //!
 //! # What is converted
 //!
@@ -20,10 +30,10 @@
 //!   `(a, b:1.2)` becomes `1.2::a::, 1.2::b::`
 //! - A weight of 1.0 is dropped rather than written out
 //! - A weight of exactly 1.05 or 0.95 goes back to `{tag}` or `[tag]`. That is
-//!   what the frontend writes for NovelAI's own braces, so `{{{year 2025}}}`
-//!   reaches NovelAI as typed instead of as `1.16::year 2025::`. Nesting
-//!   composes, since the inner group is already `{...}` when the outer one is
-//!   rewritten.
+//!   what [`from_novelai`] and the frontend write for NovelAI's own braces, so
+//!   a prompt that went through either still reaches NovelAI as
+//!   `{{{year 2025}}}` instead of as `1.16::year 2025::`. Nesting composes,
+//!   since the inner group is already `{...}` when the outer one is rewritten.
 //! - A numeric span whose text ends in a digit gets a comma before the closing
 //!   `::`. NovelAI reads `2025::` as the opener of a weight of 2025, so
 //!   `1.3::year 2025::, tag` would weight everything after it by 2025;
@@ -193,23 +203,24 @@ fn apply_weight(segment: &str, weight: f64) -> String {
     format!("{lead}{}::{trimmed}{guard}::{trail}", format_weight(weight))
 }
 
-/// Rewrite a prompt from NovelAI weight syntax back into ComfyUI syntax.
+/// Rewrite a prompt from NovelAI weight syntax into ComfyUI syntax.
 ///
-/// The inverse of [`to_novelai`], for the way back in: NovelAI writes its own
-/// prompt into every PNG it returns, and the app's prompt box holds ComfyUI
-/// syntax on every backend, so that prompt has to be translated before it can
-/// be restored into the panel.
+/// The inverse of [`to_novelai`], for the places a NovelAI request's prompt is
+/// read by something written against ComfyUI syntax: the local refine pass,
+/// whose `CLIPTextEncode` would take `1.1::tag::` literally, and the
+/// face-detail tag extraction. A prompt imported from a NovelAI image does not
+/// come through here; it is restored into the panel as NovelAI wrote it.
 ///
 /// This mirrors the frontend's `translateNaiWeightSyntax`, which does the same
-/// job for a prompt the user pastes in as text:
+/// job for a local generation:
 ///
-/// - `1.1::tag::` becomes `(tag:1.10)`
+/// - `1.1::tag::` becomes `(tag:1.10)`, and `-1::tag::` becomes `(tag:-1.00)`
 /// - `{tag}` becomes `(tag:1.05)` and `[tag]` becomes `(tag:0.95)`, innermost
 ///   first, so `{{tag}}` becomes `((tag:1.05):1.05)`
 /// - An escaped bracket is left alone, since it is a literal character
 ///
-/// Linear in the prompt's length. It runs on metadata read out of arbitrary
-/// images, so a prompt built to be slow must not be able to pin a worker.
+/// Linear in the prompt's length, so a prompt built to be slow cannot pin a
+/// worker.
 pub fn from_novelai(prompt: &str) -> String {
     let out = expand_novelai_weights(prompt);
     let out = rewrite_brackets(&out, '{', '}', "1.05");
@@ -218,10 +229,11 @@ pub fn from_novelai(prompt: &str) -> String {
 
 /// Rewrite every `weight::text::` run as `(text:weight)`.
 ///
-/// The weight is the digit run immediately before the opening `::`, and the run
-/// ends at the next `::`. A run whose text holds a further colon is left alone:
-/// that is not one flat weighted span, and guessing at it would corrupt the
-/// prompt rather than fail visibly.
+/// The weight is the digit run immediately before the opening `::`, with its
+/// minus sign when it has one (see [`is_weight_sign`]), and the run ends at the
+/// next `::`. A run whose text holds a further colon is left alone: that is not
+/// one flat weighted span, and guessing at it would corrupt the prompt rather
+/// than fail visibly.
 fn expand_novelai_weights(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -242,6 +254,9 @@ fn expand_novelai_weights(text: &str) -> String {
                 break;
             }
         }
+        if num_start < i && is_weight_sign(bytes, num_start, cursor) {
+            num_start -= 1;
+        }
         let weight = text[num_start..i].parse::<f64>().ok();
         let close = text[i + 2..].find("::").map(|rel| i + 2 + rel);
         if let (Some(weight), Some(close)) = (weight, close) {
@@ -258,6 +273,23 @@ fn expand_novelai_weights(text: &str) -> String {
     }
     out.push_str(&text[cursor..]);
     out
+}
+
+/// Is the byte before `num_start` the minus sign of the weight starting there?
+///
+/// NovelAI's negative weights (`-1::hat::`) put the sign directly before the
+/// number. A hyphen that ends a word (`sci-1::x::` is not something anyone
+/// writes, but `tag-2::` could be) is part of that word, so the sign only
+/// counts at the start of the text or after a separator.
+fn is_weight_sign(bytes: &[u8], num_start: usize, cursor: usize) -> bool {
+    if num_start <= cursor || bytes[num_start - 1] != b'-' {
+        return false;
+    }
+    let sign = num_start - 1;
+    sign == 0 || {
+        let before = bytes[sign - 1];
+        before.is_ascii_whitespace() || matches!(before, b',' | b'(' | b'[' | b'{' | b':')
+    }
 }
 
 /// Rewrite every unescaped `open ... close` pair as `(inner:weight)`, in one
@@ -583,6 +615,47 @@ mod tests {
     #[test]
     fn from_novelai_handles_a_weight_below_one() {
         assert_eq!(from_novelai("0.9::blurry::"), "(blurry:0.90)");
+    }
+
+    #[test]
+    fn from_novelai_keeps_the_sign_of_a_negative_weight() {
+        assert_eq!(from_novelai("-1::hat::"), "(hat:-1.00)");
+        assert_eq!(
+            from_novelai("1girl, -0.5::coat::, rain"),
+            "1girl, (coat:-0.50), rain"
+        );
+        assert_eq!(from_novelai("{-1::hat::}"), "((hat:-1.00):1.05)");
+    }
+
+    #[test]
+    fn from_novelai_reads_a_hyphen_that_ends_a_word_as_part_of_the_word() {
+        assert_eq!(from_novelai("type-2::tag::"), "type-(tag:2.00)");
+    }
+
+    #[test]
+    fn a_negative_span_survives_both_ways() {
+        // Typed NovelAI syntax goes out untouched, and comes back negative for
+        // the local pass rather than as `-(hat:1.00)`.
+        assert_eq!(to_novelai("-1::hat::"), "-1::hat::");
+        assert_eq!(to_novelai(&from_novelai("-1::hat::")), "-1::hat::");
+    }
+
+    #[test]
+    fn novelai_syntax_goes_out_exactly_as_typed() {
+        // What the frontend now sends for a NovelAI prompt: the user's own
+        // text. None of it may be split per tag, rounded or re-bracketed.
+        for prompt in [
+            "1.2::rain, night::, 1girl",
+            "1.05::tag::",
+            "1.234::tag::",
+            "-1::hat::, 0.6::as109, tianliang duohe fangdongye::",
+            "{{{year 2025}}}, [[blurry]]",
+            "1.3::year 2025,::, tag",
+            "2.1::transparent background::",
+            "1girl, rain,\nText:\nMumei",
+        ] {
+            assert_eq!(to_novelai(prompt), prompt);
+        }
     }
 
     #[test]

@@ -136,9 +136,13 @@ pub async fn run_face_pass(
         let tags = tagger_tags(state, DynamicImage::ImageRgba8(sent.clone()), &detail).await;
         let character =
             face_pass::nearest_character(&nai.characters, nai.use_coords, plan, image_w, image_h);
+        // The tag extraction reads ComfyUI weight syntax, and the scene prompt
+        // may hold NovelAI's. What it keeps goes back through `to_novelai` when
+        // the face request is built.
+        let scene_prompt = super::prompt_syntax::from_novelai(&params.positive_prompt);
         let (prompt, tier) = face_pass::build_face_prompt(
             &detail,
-            &params.positive_prompt,
+            &scene_prompt,
             character.map(|c| c.prompt.as_str()),
             &tags,
         );
