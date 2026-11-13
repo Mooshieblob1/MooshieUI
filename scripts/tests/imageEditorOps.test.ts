@@ -4,6 +4,8 @@ import {
   NEUTRAL_ADJUSTMENTS,
   applyAdjustments,
   applyTone,
+  appendOp,
+  strokeStamps,
   curveLut,
   normalizeAdjustments,
   sameAdjustments,
@@ -215,4 +217,28 @@ test("stored presets are cleaned up before use", () => {
   assert.ok(!("bogus" in preset));
   assert.ok(isNeutral(normalizeAdjustments(null)));
   assert.ok(isNeutral(normalizeAdjustments({ curve: [[5, 5]] })));
+});
+
+test("repeated paint strokes fold into one counted entry", () => {
+  let ops = appendOp([], { op: "brush", n: 1 });
+  ops = appendOp(ops, { op: "brush", n: 1 });
+  ops = appendOp(ops, { op: "eraser", n: 1 });
+  ops = appendOp(ops, { op: "crop", w: 4, h: 4 });
+  ops = appendOp(ops, { op: "brush", n: 1 });
+  assert.deepEqual(ops, [
+    { op: "brush", n: 2 },
+    { op: "eraser", n: 1 },
+    { op: "crop", w: 4, h: 4 },
+    { op: "brush", n: 1 },
+  ]);
+});
+
+test("brush stamps keep even spacing across pointer segments", () => {
+  const first = strokeStamps(0, 0, 10, 0, 4, 0);
+  assert.deepEqual(first.points, [[4, 0], [8, 0]]);
+  assert.equal(first.carry, 2);
+  const second = strokeStamps(10, 0, 20, 0, 4, first.carry);
+  assert.deepEqual(second.points, [[12, 0], [16, 0], [20, 0]]);
+  assert.equal(second.carry, 0);
+  assert.deepEqual(strokeStamps(5, 5, 5, 5, 4, 1), { points: [], carry: 1 });
 });

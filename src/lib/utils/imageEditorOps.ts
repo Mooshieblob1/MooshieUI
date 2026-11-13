@@ -583,7 +583,49 @@ export type EditOp =
   | { op: "crop"; w: number; h: number }
   | { op: "rotate"; deg: 90 | -90 }
   | { op: "flip"; axis: "h" | "v" }
-  | { op: "resize"; w: number; h: number };
+  | { op: "resize"; w: number; h: number }
+  | { op: CountedOp; n: number };
+
+export type PaintTool = "brush" | "eraser" | "clone";
+/** Operations that repeat many times in a row and are stored as a count. */
+export type CountedOp = PaintTool | "fill" | "clear";
+
+/** Add an operation to the list, folding a repeat of the last counted one into its count. */
+export function appendOp(ops: EditOp[], op: EditOp): EditOp[] {
+  const last = ops[ops.length - 1];
+  if (last && "n" in op && "n" in last && last.op === op.op) {
+    return [...ops.slice(0, -1), { op: op.op, n: last.n + op.n }];
+  }
+  return [...ops, op];
+}
+
+/**
+ * Where a brush stamps along one pointer segment. `carry` is the distance
+ * already travelled since the previous stamp, so spacing stays even across
+ * segments however the pointer events are chopped up.
+ */
+export function strokeStamps(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  spacing: number,
+  carry: number,
+): { points: [number, number][]; carry: number } {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const distance = Math.hypot(dx, dy);
+  const step = Math.max(0.5, spacing);
+  const points: [number, number][] = [];
+  if (distance === 0) return { points, carry };
+  let next = step - carry;
+  while (next <= distance) {
+    const t = next / distance;
+    points.push([x0 + dx * t, y0 + dy * t]);
+    next += step;
+  }
+  return { points, carry: distance - (next - step) };
+}
 
 /** Keep the note small enough for a PNG text chunk and a stealth payload. */
 const MAX_NOTE_OPS = 40;

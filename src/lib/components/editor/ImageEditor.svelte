@@ -2,6 +2,20 @@
   import Hand from "@lucide/svelte/icons/hand";
   import Search from "@lucide/svelte/icons/search";
   import Crop from "@lucide/svelte/icons/crop";
+  import SquareDashed from "@lucide/svelte/icons/square-dashed";
+  import Lasso from "@lucide/svelte/icons/lasso";
+  import Brush from "@lucide/svelte/icons/brush";
+  import Eraser from "@lucide/svelte/icons/eraser";
+  import Stamp from "@lucide/svelte/icons/stamp";
+  import Pipette from "@lucide/svelte/icons/pipette";
+  import Eye from "@lucide/svelte/icons/eye";
+  import EyeOff from "@lucide/svelte/icons/eye-off";
+  import Plus from "@lucide/svelte/icons/plus";
+  import Copy from "@lucide/svelte/icons/copy";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
+  import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
+  import MergeDown from "@lucide/svelte/icons/arrow-down-to-line";
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import Redo2 from "@lucide/svelte/icons/redo-2";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw-square";
@@ -30,10 +44,13 @@
   import {
     ADJUSTMENT_KEYS,
     NEUTRAL_ADJUSTMENTS,
+    appendOp,
     applyAdjustments,
     curveLut,
     isIdentityCurve,
     normalizeAdjustments,
+    rectFromAnchor,
+    strokeStamps,
     dragCropRect,
     editedMetadata,
     fitAspectRect,
@@ -41,13 +58,65 @@
     roundRect,
     sameAdjustments,
   } from "../../utils/imageEditorOps.js";
-  import type { AdjustmentKey, Adjustments, CropHandle, CurvePoint, EditOp, Rect } from "../../utils/imageEditorOps.js";
+  import type { AdjustmentKey, Adjustments, CropHandle, CurvePoint, EditOp, PaintTool, Rect } from "../../utils/imageEditorOps.js";
   import type { GenerationMode } from "../../types/index.js";
 
-  type Tool = "hand" | "zoom" | "crop";
+  type Tool = "hand" | "zoom" | "crop" | "marquee" | "lasso" | "brush" | "eraser" | "clone" | "eyedropper";
+
+  const isPaintTool = (t: Tool): t is PaintTool => t === "brush" || t === "eraser" || t === "clone";
+
+  const TOOL_KEYS: Record<string, Tool> = {
+    h: "hand",
+    v: "hand",
+    z: "zoom",
+    c: "crop",
+    m: "marquee",
+    l: "lasso",
+    b: "brush",
+    e: "eraser",
+    s: "clone",
+    i: "eyedropper",
+  };
+
+  /** One document-sized raster. Canvases are never drawn on after they are stored. */
+  interface Layer {
+    id: number;
+    name: string;
+    canvas: HTMLCanvasElement;
+    visible: boolean;
+    /** 0..100 */
+    opacity: number;
+  }
+
+  /** A closed outline in document pixels; `inverted` selects everything outside it. */
+  interface Selection {
+    points: [number, number][];
+    inverted: boolean;
+  }
+
+  interface Stroke {
+    tool: PaintTool;
+    layerId: number;
+    /** The layer as it was before the stroke. */
+    base: HTMLCanvasElement;
+    /** The layer with the stroke applied; becomes the layer on pointer up. */
+    work: HTMLCanvasElement;
+    /** The stroke alone, at full strength. */
+    mask: HTMLCanvasElement;
+    /** Clone stamp only: the shifted source cut to the stroke's shape. */
+    temp: HTMLCanvasElement | null;
+    cloneSrc: HTMLCanvasElement | null;
+    dx: number;
+    dy: number;
+    tip: HTMLCanvasElement;
+    lastX: number;
+    lastY: number;
+    carry: number;
+  }
 
   interface HistoryEntry {
-    canvas: HTMLCanvasElement;
+    layers: Layer[];
+    activeId: number;
     adjustments: Adjustments;
     ops: EditOp[];
   }
@@ -56,6 +125,10 @@
   const PREVIEW_MAX = 2048;
   const MAX_DIMENSION = 16384;
   const MAX_HISTORY = 30;
+  /** Undo steps share canvases; this caps the distinct pixels they hold. */
+  const HISTORY_BYTES = 768 * 1024 * 1024;
+  const MAX_LAYERS = 16;
+  const MAX_BRUSH = 500;
   const MIN_ZOOM = 0.02;
   const MAX_ZOOM = 32;
   /** Hit radius around a crop handle, in screen pixels. */
@@ -100,9 +173,24 @@
   let error = $state("");
   let confirmClose = $state(false);
 
-  // The document. Canvases are plain objects, not state: `docVersion` is what
-  // the UI reacts to.
-  let doc: HTMLCanvasElement | null = null;
+  // The document: layers bottom to top, all the same size. `docVersion`
+  // changes whenever any pixel on screen may have.
+  let layers = $state.raw<Layer[]>([]);
+  let activeId = $state(0);
+  let nextLayerId = 1;
+  let compCanvas: HTMLCanvasElement | null = null;
+  let compResult: HTMLCanvasElement | null = null;
+  let compFor = -1;
+  let stroke: Stroke | null = null;
+
+  let selection = $state.raw<Selection | null>(null);
+  let color = $state("#ffffff");
+  let brush = $state({ size: 40, hardness: 80, opacity: 100 });
+  /** Clone stamp: where Alt+click sampled, and the fixed offset once painting starts. */
+  let cloneSource = $state.raw<[number, number] | null>(null);
+  let cloneOffset: [number, number] | null = null;
+  /** Pointer position on the stage, for the brush outline. */
+  let hover = $state.raw<[number, number] | null>(null);
   let docW = $state(0);
   let docH = $state(0);
   let docVersion = $state(0);
@@ -124,7 +212,6 @@
   let panY = $state(0);
   let stageW = $state(0);
   let stageH = $state(0);
-  let refitOnResize = false;
 
   let crop = $state<Rect | null>(null);
   let cropPreset = $state("free");
@@ -135,9 +222,7 @@
   let sizeH = $state(0);
   let sizeLocked = $state(true);
 
-  // Preview buffers for the adjustment sliders.
-  let previewBase: HTMLCanvasElement | null = null;
-  let previewScale = 1;
+  // Preview buffer for the adjustment sliders.
   let adjusted: HTMLCanvasElement | null = null;
   let adjustedFor: { version: number; adjustments: Adjustments } | null = null;
 
@@ -145,6 +230,8 @@
   const canRedo = $derived(historyIndex < historyLength - 1);
   const dirty = $derived(historyIndex !== savedIndex);
   const busy = $derived(saving || phase !== "ready");
+  const activeLayer = $derived(layers.find((l) => l.id === activeId) ?? null);
+  const activeIndex = $derived(layers.findIndex((l) => l.id === activeId));
   const metadataTitle = $derived.by(() => {
     const m = sourceMetadata;
     if (!m) return "";
@@ -215,8 +302,16 @@
     crop = null;
     sizeOpen = false;
     adjustments = { ...NEUTRAL_ADJUSTMENTS };
-    doc = null;
-    previewBase = null;
+    layers = [];
+    stroke = null;
+    drag = null;
+    compResult = null;
+    compCanvas = null;
+    selection = null;
+    cloneSource = null;
+    cloneOffset = null;
+    hover = null;
+    nextLayerId = 1;
     adjusted = null;
     adjustedFor = null;
     history = [];
@@ -239,11 +334,18 @@
         bitmap.close();
         sourceMetadata = loaded.metadata;
         editedFrom = loaded.from;
-        history = [{ canvas, adjustments: { ...NEUTRAL_ADJUSTMENTS }, ops: [] }];
+        const background: Layer = {
+          id: nextLayerId++,
+          name: locale.t("editor.layer.background"),
+          canvas,
+          visible: true,
+          opacity: 100,
+        };
+        history = [{ layers: [background], activeId: background.id, adjustments: { ...NEUTRAL_ADJUSTMENTS }, ops: [] }];
         historyLength = 1;
         historyIndex = 0;
         savedIndex = 0;
-        setDoc(canvas);
+        showLayers([background], background.id);
         phase = "ready";
         fitView(true);
       } catch (e) {
@@ -259,29 +361,67 @@
     };
   });
 
+  // ---------------------------------------------------------------- layers
+
+  const layerCanvas = (layer: Layer) => (stroke && stroke.layerId === layer.id ? stroke.work : layer.canvas);
+
+  /** All visible layers flattened, before adjustments. Cached per `docVersion`. */
+  function composite(): HTMLCanvasElement | null {
+    if (layers.length === 0) return null;
+    if (compResult && compFor === docVersion) return compResult;
+    const visible = layers.filter((l) => l.visible);
+    if (visible.length === 1 && visible[0].opacity === 100) {
+      compResult = layerCanvas(visible[0]);
+    } else {
+      if (!compCanvas || compCanvas.width !== docW || compCanvas.height !== docH) compCanvas = makeCanvas(docW, docH);
+      const ctx = compCanvas.getContext("2d")!;
+      ctx.clearRect(0, 0, docW, docH);
+      for (const layer of visible) {
+        ctx.globalAlpha = layer.opacity / 100;
+        ctx.drawImage(layerCanvas(layer), 0, 0);
+      }
+      ctx.globalAlpha = 1;
+      compResult = compCanvas;
+    }
+    compFor = docVersion;
+    return compResult;
+  }
+
+  function showLayers(next: Layer[], active: number) {
+    layers = next;
+    activeId = next.some((l) => l.id === active) ? active : (next[next.length - 1]?.id ?? 0);
+    docW = next[0]?.canvas.width ?? 0;
+    docH = next[0]?.canvas.height ?? 0;
+    docVersion++;
+  }
+
   // --------------------------------------------------------------- history
 
-  function setDoc(canvas: HTMLCanvasElement) {
-    doc = canvas;
-    docW = canvas.width;
-    docH = canvas.height;
-    const scale = Math.min(1, PREVIEW_MAX / Math.max(canvas.width, canvas.height));
-    previewScale = scale;
-    if (scale === 1) {
-      previewBase = canvas;
-    } else {
-      previewBase = makeCanvas(canvas.width * scale, canvas.height * scale);
-      const ctx = previewBase.getContext("2d", { willReadFrequently: true })!;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(canvas, 0, 0, previewBase.width, previewBase.height);
+  function historyBytes(entries: HistoryEntry[]): number {
+    const seen = new Set<HTMLCanvasElement>();
+    let bytes = 0;
+    for (const entry of entries) {
+      for (const layer of entry.layers) {
+        if (seen.has(layer.canvas)) continue;
+        seen.add(layer.canvas);
+        bytes += layer.canvas.width * layer.canvas.height * 4;
+      }
     }
-    docVersion++;
+    return bytes;
   }
 
   function pushHistory(entry: HistoryEntry) {
     history = [...history.slice(0, historyIndex + 1), entry];
-    if (history.length > MAX_HISTORY) {
-      const dropped = history.length - MAX_HISTORY;
+    // Every paint stroke keeps a full copy of its layer, so cap by memory as
+    // well as by count. The current state always survives.
+    let dropped = 0;
+    while (
+      history.length - dropped > 2 &&
+      (history.length - dropped > MAX_HISTORY || historyBytes(history.slice(dropped)) > HISTORY_BYTES)
+    ) {
+      dropped++;
+    }
+    if (dropped > 0) {
       history = history.slice(dropped);
       savedIndex -= dropped;
     }
@@ -289,17 +429,23 @@
     historyIndex = history.length - 1;
   }
 
-  function commitPixels(canvas: HTMLCanvasElement, op: EditOp) {
+  /** Make `next` the document and record it as one undo step. */
+  function commit(next: Layer[], op: EditOp | null = null, active = activeId) {
     const current = history[historyIndex];
-    pushHistory({ canvas, adjustments: { ...adjustments }, ops: [...current.ops, op] });
-    setDoc(canvas);
+    pushHistory({
+      layers: next,
+      activeId: active,
+      adjustments: { ...adjustments },
+      ops: op ? appendOp(current.ops, op) : current.ops,
+    });
+    showLayers(next, active);
   }
 
   /** Record the sliders' current values as one undo step. */
   function commitAdjustments() {
     const current = history[historyIndex];
     if (!current || sameAdjustments(current.adjustments, adjustments)) return;
-    pushHistory({ canvas: current.canvas, adjustments: { ...adjustments }, ops: current.ops });
+    pushHistory({ ...current, activeId, adjustments: { ...adjustments } });
   }
 
   function restore(index: number) {
@@ -309,15 +455,258 @@
     adjustments = { ...entry.adjustments };
     crop = null;
     if (tool === "crop") tool = "hand";
-    if (entry.canvas !== doc) setDoc(entry.canvas);
+    if (entry.layers[0].canvas.width !== docW || entry.layers[0].canvas.height !== docH) selection = null;
+    showLayers(entry.layers, entry.activeId);
   }
 
   function undo() {
-    if (canUndo && !busy) restore(historyIndex - 1);
+    if (canUndo && !busy && !stroke) restore(historyIndex - 1);
   }
 
   function redo() {
-    if (canRedo && !busy) restore(historyIndex + 1);
+    if (canRedo && !busy && !stroke) restore(historyIndex + 1);
+  }
+
+  // ------------------------------------------------------------- layer ops
+
+  function copyCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
+    const out = makeCanvas(source.width, source.height);
+    out.getContext("2d")!.drawImage(source, 0, 0);
+    return out;
+  }
+
+  function newLayerRecord(canvas: HTMLCanvasElement): Layer {
+    const id = nextLayerId++;
+    return { id, name: locale.t("editor.layer.name", { n: String(id) }), canvas, visible: true, opacity: 100 };
+  }
+
+  function insertAbove(layer: Layer) {
+    const index = layers.findIndex((l) => l.id === activeId);
+    const next = [...layers.slice(0, index + 1), layer, ...layers.slice(index + 1)];
+    commit(next, null, layer.id);
+  }
+
+  function addLayer() {
+    if (busy || layers.length >= MAX_LAYERS) return;
+    insertAbove(newLayerRecord(makeCanvas(docW, docH)));
+  }
+
+  /** Ctrl+J: the selection (or the whole layer) copied to a new layer. */
+  function duplicateLayer() {
+    const layer = activeLayer;
+    if (busy || !layer || layers.length >= MAX_LAYERS) return;
+    const canvas = makeCanvas(docW, docH);
+    const ctx = canvas.getContext("2d")!;
+    clipToSelection(ctx);
+    ctx.drawImage(layer.canvas, 0, 0);
+    insertAbove({ ...newLayerRecord(canvas), opacity: layer.opacity });
+  }
+
+  function mergeDown() {
+    const index = layers.findIndex((l) => l.id === activeId);
+    if (busy || index <= 0) return;
+    const upper = layers[index];
+    const lower = layers[index - 1];
+    const canvas = copyCanvas(lower.canvas);
+    const ctx = canvas.getContext("2d")!;
+    ctx.globalAlpha = upper.opacity / 100;
+    if (upper.visible) ctx.drawImage(upper.canvas, 0, 0);
+    const next = [...layers.slice(0, index - 1), { ...lower, canvas }, ...layers.slice(index + 1)];
+    commit(next, null, lower.id);
+  }
+
+  function deleteLayer() {
+    if (busy || layers.length <= 1) return;
+    const index = layers.findIndex((l) => l.id === activeId);
+    const next = layers.filter((l) => l.id !== activeId);
+    commit(next, null, next[Math.max(0, index - 1)].id);
+  }
+
+  function moveLayer(direction: 1 | -1) {
+    const index = layers.findIndex((l) => l.id === activeId);
+    const target = index + direction;
+    if (busy || index < 0 || target < 0 || target >= layers.length) return;
+    const next = [...layers];
+    [next[index], next[target]] = [next[target], next[index]];
+    commit(next);
+  }
+
+  function toggleLayer(id: number) {
+    if (busy) return;
+    commit(layers.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
+  }
+
+  /** Live while the slider moves; `commitLayerOpacity` records the result. */
+  function previewLayerOpacity(value: number) {
+    layers = layers.map((l) => (l.id === activeId ? { ...l, opacity: value } : l));
+    docVersion++;
+  }
+
+  function commitLayerOpacity() {
+    const current = history[historyIndex];
+    const before = current.layers.find((l) => l.id === activeId)?.opacity;
+    if (before === activeLayer?.opacity) return;
+    commit(layers);
+  }
+
+  // ------------------------------------------------------------- selection
+
+  function selectionOutline(sel: Selection): Path2D {
+    const path = new Path2D();
+    sel.points.forEach(([x, y], i) => (i === 0 ? path.moveTo(x, y) : path.lineTo(x, y)));
+    path.closePath();
+    return path;
+  }
+
+  /** Restrict drawing on a document-sized context to the selection, if any. */
+  function clipToSelection(ctx: CanvasRenderingContext2D) {
+    if (!selection) return;
+    const path = selectionOutline(selection);
+    if (selection.inverted) path.rect(0, 0, docW, docH);
+    ctx.clip(path, "evenodd");
+  }
+
+  function selectAll() {
+    selection = { points: [[0, 0], [docW, 0], [docW, docH], [0, docH]], inverted: false };
+  }
+
+  function invertSelection() {
+    if (!selection) selectAll();
+    else selection = { ...selection, inverted: !selection.inverted };
+  }
+
+  /** Alt+Backspace: fill the selection (or the layer) with the brush colour. */
+  function fillSelection() {
+    const layer = activeLayer;
+    if (busy || !layer || !layer.visible) return;
+    const canvas = copyCanvas(layer.canvas);
+    const ctx = canvas.getContext("2d")!;
+    clipToSelection(ctx);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, docW, docH);
+    commit(layers.map((l) => (l.id === layer.id ? { ...l, canvas } : l)), { op: "fill", n: 1 });
+  }
+
+  /** Delete: make the selected pixels of the active layer transparent. */
+  function clearSelection() {
+    const layer = activeLayer;
+    if (busy || !layer || !layer.visible || !selection) return;
+    const canvas = copyCanvas(layer.canvas);
+    const ctx = canvas.getContext("2d")!;
+    clipToSelection(ctx);
+    ctx.clearRect(0, 0, docW, docH);
+    commit(layers.map((l) => (l.id === layer.id ? { ...l, canvas } : l)), { op: "clear", n: 1 });
+  }
+
+  // -------------------------------------------------------------- painting
+
+  /** One soft or hard dab, pre-rendered so a stroke is a run of drawImage calls. */
+  function makeTip(size: number, hardness: number, fill: string): HTMLCanvasElement {
+    const radius = Math.max(0.5, size / 2);
+    const side = Math.ceil(radius * 2) + 2;
+    const tip = makeCanvas(side, side);
+    const ctx = tip.getContext("2d")!;
+    const c = side / 2;
+    const gradient = ctx.createRadialGradient(c, c, 0, c, c, radius);
+    gradient.addColorStop(0, fill);
+    gradient.addColorStop(Math.min(0.98, hardness / 100), fill);
+    gradient.addColorStop(1, `${fill}00`);
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(c, c, radius, 0, Math.PI * 2);
+    ctx.fill();
+    return tip;
+  }
+
+  function stamp(s: Stroke, x: number, y: number) {
+    s.mask.getContext("2d")!.drawImage(s.tip, x - s.tip.width / 2, y - s.tip.height / 2);
+  }
+
+  function beginStroke(kind: PaintTool, x: number, y: number): boolean {
+    const layer = activeLayer;
+    if (!layer || !layer.visible) return false;
+    let cloneSrc: HTMLCanvasElement | null = null;
+    let dx = 0;
+    let dy = 0;
+    if (kind === "clone") {
+      const flat = composite();
+      if (!cloneSource || !flat) return false;
+      // The offset is fixed on the first stroke after picking a source, so
+      // later strokes keep painting the same patch (Photoshop's "Aligned").
+      if (!cloneOffset) cloneOffset = [x - cloneSource[0], y - cloneSource[1]];
+      [dx, dy] = cloneOffset;
+      cloneSrc = copyCanvas(flat);
+    }
+    stroke = {
+      tool: kind,
+      layerId: layer.id,
+      base: layer.canvas,
+      work: copyCanvas(layer.canvas),
+      mask: makeCanvas(docW, docH),
+      temp: kind === "clone" ? makeCanvas(docW, docH) : null,
+      cloneSrc,
+      dx,
+      dy,
+      tip: makeTip(brush.size, brush.hardness, kind === "brush" ? color : "#000000"),
+      lastX: x,
+      lastY: y,
+      carry: 0,
+    };
+    stamp(stroke, x, y);
+    renderStroke();
+    return true;
+  }
+
+  function extendStroke(x: number, y: number) {
+    const s = stroke;
+    if (!s) return;
+    const spacing = Math.max(1, brush.size * (brush.hardness >= 90 ? 0.08 : 0.12));
+    const run = strokeStamps(s.lastX, s.lastY, x, y, spacing, s.carry);
+    for (const [px, py] of run.points) stamp(s, px, py);
+    s.carry = run.carry;
+    s.lastX = x;
+    s.lastY = y;
+    renderStroke();
+  }
+
+  /** Rebuild the working layer from the untouched base plus the stroke so far. */
+  function renderStroke() {
+    const s = stroke;
+    if (!s) return;
+    let paint = s.mask;
+    if (s.temp && s.cloneSrc) {
+      const tctx = s.temp.getContext("2d")!;
+      tctx.globalCompositeOperation = "source-over";
+      tctx.clearRect(0, 0, docW, docH);
+      tctx.drawImage(s.cloneSrc, s.dx, s.dy);
+      tctx.globalCompositeOperation = "destination-in";
+      tctx.drawImage(s.mask, 0, 0);
+      paint = s.temp;
+    }
+    const ctx = s.work.getContext("2d")!;
+    ctx.save();
+    ctx.globalCompositeOperation = "copy";
+    ctx.drawImage(s.base, 0, 0);
+    ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
+    clipToSelection(ctx);
+    ctx.globalAlpha = brush.opacity / 100;
+    ctx.drawImage(paint, 0, 0);
+    ctx.restore();
+    docVersion++;
+  }
+
+  function endStroke() {
+    const s = stroke;
+    if (!s) return;
+    stroke = null;
+    commit(layers.map((l) => (l.id === s.layerId ? { ...l, canvas: s.work } : l)), { op: s.tool, n: 1 });
+  }
+
+  function pickColor(x: number, y: number) {
+    const flat = composite();
+    if (!flat || x < 0 || y < 0 || x >= docW || y >= docH) return;
+    const [r, g, b] = flat.getContext("2d")!.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+    color = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
   }
 
   // ------------------------------------------------------------ tone curve
@@ -448,40 +837,59 @@
 
   // ------------------------------------------------------------- pixel ops
 
+  /** Run one geometric change over every layer and record it. */
+  function transformAll(fn: (source: HTMLCanvasElement) => HTMLCanvasElement, op: EditOp) {
+    selection = null;
+    cloneSource = null;
+    cloneOffset = null;
+    commit(layers.map((l) => ({ ...l, canvas: fn(l.canvas) })), op);
+  }
+
   function rotate(deg: 90 | -90) {
-    if (!doc || busy) return;
-    const out = makeCanvas(doc.height, doc.width);
-    const ctx = out.getContext("2d")!;
-    ctx.translate(out.width / 2, out.height / 2);
-    ctx.rotate((deg * Math.PI) / 180);
-    ctx.drawImage(doc, -doc.width / 2, -doc.height / 2);
+    if (busy || layers.length === 0) return;
     cancelCrop();
-    commitPixels(out, { op: "rotate", deg });
+    transformAll((source) => {
+      const out = makeCanvas(source.height, source.width);
+      const ctx = out.getContext("2d")!;
+      ctx.translate(out.width / 2, out.height / 2);
+      ctx.rotate((deg * Math.PI) / 180);
+      ctx.drawImage(source, -source.width / 2, -source.height / 2);
+      return out;
+    }, { op: "rotate", deg });
     fitView(true);
   }
 
   function flip(axis: "h" | "v") {
-    if (!doc || busy) return;
-    const out = makeCanvas(doc.width, doc.height);
-    const ctx = out.getContext("2d")!;
-    if (axis === "h") {
-      ctx.translate(out.width, 0);
-      ctx.scale(-1, 1);
-    } else {
-      ctx.translate(0, out.height);
-      ctx.scale(1, -1);
-    }
-    ctx.drawImage(doc, 0, 0);
+    if (busy || layers.length === 0) return;
     cancelCrop();
-    commitPixels(out, { op: "flip", axis });
+    transformAll((source) => {
+      const out = makeCanvas(source.width, source.height);
+      const ctx = out.getContext("2d")!;
+      if (axis === "h") {
+        ctx.translate(out.width, 0);
+        ctx.scale(-1, 1);
+      } else {
+        ctx.translate(0, out.height);
+        ctx.scale(1, -1);
+      }
+      ctx.drawImage(source, 0, 0);
+      return out;
+    }, { op: "flip", axis });
+  }
+
+  function setTool(next: Tool) {
+    if (next === "crop") {
+      startCrop();
+      return;
+    }
+    cancelCrop();
+    tool = next;
   }
 
   function startCrop() {
-    if (!doc || busy) return;
+    if (busy || layers.length === 0) return;
     tool = "crop";
     sizeOpen = false;
-    // The options bar takes height from the stage; keep every handle on screen.
-    refitOnResize = true;
     setCropPreset(cropPreset);
   }
 
@@ -498,22 +906,24 @@
   }
 
   function applyCrop() {
-    if (!doc || !crop || busy) return;
+    if (!crop || busy) return;
     const rect = roundRect(crop, docW, docH);
     if (rect.w === docW && rect.h === docH) {
       cancelCrop();
       return;
     }
-    const out = makeCanvas(rect.w, rect.h);
-    out.getContext("2d")!.drawImage(doc, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
     crop = null;
     tool = "hand";
-    commitPixels(out, { op: "crop", w: rect.w, h: rect.h });
+    transformAll((source) => {
+      const out = makeCanvas(rect.w, rect.h);
+      out.getContext("2d")!.drawImage(source, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+      return out;
+    }, { op: "crop", w: rect.w, h: rect.h });
     fitView(true);
   }
 
   function openSize() {
-    if (!doc || busy) return;
+    if (busy || layers.length === 0) return;
     cancelCrop();
     sizeW = docW;
     sizeH = docH;
@@ -528,26 +938,28 @@
   }
 
   function applySize() {
-    if (!doc || busy) return;
+    if (busy || layers.length === 0) return;
     const w = Math.min(MAX_DIMENSION, Math.max(1, Math.round(Number(sizeW) || 0)));
     const h = Math.min(MAX_DIMENSION, Math.max(1, Math.round(Number(sizeH) || 0)));
     sizeOpen = false;
     if (w === docW && h === docH) return;
-    // Halve repeatedly on big reductions: one drawImage step samples too few
-    // source pixels and aliases.
-    let current: HTMLCanvasElement = doc;
-    while (current.width / 2 >= w && current.height / 2 >= h) {
-      const half = makeCanvas(current.width / 2, current.height / 2);
-      const ctx = half.getContext("2d")!;
+    transformAll((source) => {
+      // Halve repeatedly on big reductions: one drawImage step samples too
+      // few source pixels and aliases.
+      let current = source;
+      while (current.width / 2 >= w && current.height / 2 >= h) {
+        const half = makeCanvas(current.width / 2, current.height / 2);
+        const ctx = half.getContext("2d")!;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(current, 0, 0, half.width, half.height);
+        current = half;
+      }
+      const out = makeCanvas(w, h);
+      const ctx = out.getContext("2d")!;
       ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(current, 0, 0, half.width, half.height);
-      current = half;
-    }
-    const out = makeCanvas(w, h);
-    const ctx = out.getContext("2d")!;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(current, 0, 0, w, h);
-    commitPixels(out, { op: "resize", w, h });
+      ctx.drawImage(current, 0, 0, w, h);
+      return out;
+    }, { op: "resize", w, h });
     fitView(true);
   }
 
@@ -581,8 +993,7 @@
       stageW = node.clientWidth;
       stageH = node.clientHeight;
       if (phase !== "ready") return;
-      if (first || refitOnResize) fitView(true);
-      refitOnResize = false;
+      if (first) fitView(true);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(node);
@@ -603,10 +1014,11 @@
     };
   }
 
-  /** The canvas shown on screen: the document, or its adjusted preview. */
+  /** The canvas shown on screen: the flattened layers, or their adjusted preview. */
   function viewSource(): HTMLCanvasElement | null {
-    if (!doc) return null;
-    if (isNeutral(adjustments) || !previewBase) return doc;
+    const flat = composite();
+    if (!flat) return null;
+    if (isNeutral(adjustments)) return flat;
     if (
       adjusted &&
       adjustedFor &&
@@ -615,13 +1027,17 @@
     ) {
       return adjusted;
     }
-    const ctx = previewBase.getContext("2d", { willReadFrequently: true })!;
-    const data = ctx.getImageData(0, 0, previewBase.width, previewBase.height);
-    applyAdjustments(data.data, data.width, data.height, adjustments, previewScale);
-    if (!adjusted || adjusted.width !== data.width || adjusted.height !== data.height) {
-      adjusted = makeCanvas(data.width, data.height);
-    }
-    adjusted.getContext("2d")!.putImageData(data, 0, 0);
+    const scale = Math.min(1, PREVIEW_MAX / Math.max(flat.width, flat.height));
+    const width = Math.max(1, Math.round(flat.width * scale));
+    const height = Math.max(1, Math.round(flat.height * scale));
+    if (!adjusted || adjusted.width !== width || adjusted.height !== height) adjusted = makeCanvas(width, height);
+    const ctx = adjusted.getContext("2d", { willReadFrequently: true })!;
+    ctx.globalCompositeOperation = "copy";
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(flat, 0, 0, width, height);
+    const data = ctx.getImageData(0, 0, width, height);
+    applyAdjustments(data.data, width, height, adjustments, scale);
+    ctx.putImageData(data, 0, 0);
     adjustedFor = { version: docVersion, adjustments: { ...adjustments } };
     return adjusted;
   }
@@ -670,6 +1086,49 @@
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(src, panX, panY, w, h);
 
+    if (selection) {
+      // Two offset dash passes read on any background.
+      ctx.save();
+      ctx.translate(panX, panY);
+      ctx.scale(zoom, zoom);
+      const path = selectionOutline(selection);
+      if (selection.inverted) path.rect(0, 0, docW, docH);
+      ctx.lineWidth = 1 / zoom;
+      ctx.setLineDash([5 / zoom, 5 / zoom]);
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke(path);
+      ctx.lineDashOffset = 5 / zoom;
+      ctx.strokeStyle = "#000000";
+      ctx.stroke(path);
+      ctx.restore();
+    }
+
+    if (tool === "clone" && cloneSource) {
+      const sx = panX + cloneSource[0] * zoom;
+      const sy = panY + cloneSource[1] * zoom;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx - 7, sy + 0.5);
+      ctx.lineTo(sx + 7, sy + 0.5);
+      ctx.moveTo(sx + 0.5, sy - 7);
+      ctx.lineTo(sx + 0.5, sy + 7);
+      ctx.stroke();
+    }
+
+    if (hover && isPaintTool(tool) && !spaceDown) {
+      const radius = Math.max(1, (brush.size / 2) * zoom);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+      ctx.beginPath();
+      ctx.arc(hover[0], hover[1], radius + 1, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(hover[0], hover[1], radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     if (crop) {
       const cx = panX + crop.x * zoom;
       const cy = panY + crop.y * zoom;
@@ -708,6 +1167,12 @@
     void stageW;
     void stageH;
     void crop;
+    void selection;
+    void hover;
+    void tool;
+    void spaceDown;
+    void cloneSource;
+    void brush.size;
     for (const key of ADJUSTMENT_KEYS) void adjustments[key];
     void adjustments.curve;
     if (!viewEl) return;
@@ -760,6 +1225,9 @@
   let drag:
     | { kind: "pan"; x: number; y: number; panX: number; panY: number }
     | { kind: "crop"; handle: CropHandle; x: number; y: number; start: Rect; previous: Rect | null }
+    | { kind: "paint" }
+    | { kind: "marquee"; ax: number; ay: number }
+    | { kind: "lasso"; points: [number, number][] }
     | null = null;
   let dragging = $state(false);
   let hoverCursor = $state("default");
@@ -769,27 +1237,46 @@
     return [e.clientX - rect.left, e.clientY - rect.top];
   }
 
+  const clampX = (x: number) => Math.min(docW, Math.max(0, x));
+  const clampY = (y: number) => Math.min(docH, Math.max(0, y));
+
   function onPointerDown(e: PointerEvent) {
-    if (phase !== "ready" || !stageEl) return;
+    if (phase !== "ready" || !stageEl || drag) return;
     const [sx, sy] = stagePoint(e);
+    const ix = (sx - panX) / zoom;
+    const iy = (sy - panY) / zoom;
     const panning = spaceDown || e.button === 1 || (tool === "hand" && e.button === 0);
     if (panning) {
       drag = { kind: "pan", x: e.clientX, y: e.clientY, panX, panY };
-    } else if (e.button !== 0) {
+    } else if (e.button !== 0 || saving) {
       return;
     } else if (tool === "zoom") {
       zoomTo(zoom * (e.altKey ? 0.5 : 2), sx, sy);
       return;
+    } else if (tool === "eyedropper" || (tool === "brush" && e.altKey)) {
+      pickColor(ix, iy);
+      return;
+    } else if (tool === "clone" && e.altKey) {
+      cloneSource = [clampX(ix), clampY(iy)];
+      cloneOffset = null;
+      return;
+    } else if (isPaintTool(tool)) {
+      if (!beginStroke(tool, ix, iy)) return;
+      drag = { kind: "paint" };
+    } else if (tool === "marquee") {
+      selection = null;
+      drag = { kind: "marquee", ax: clampX(ix), ay: clampY(iy) };
+    } else if (tool === "lasso") {
+      selection = null;
+      drag = { kind: "lasso", points: [[clampX(ix), clampY(iy)]] };
     } else if (tool === "crop") {
       const handle = hitCrop(sx, sy);
-      const ix = Math.min(docW, Math.max(0, (sx - panX) / zoom));
-      const iy = Math.min(docH, Math.max(0, (sy - panY) / zoom));
       drag = {
         kind: "crop",
         handle,
         x: e.clientX,
         y: e.clientY,
-        start: handle === "new" || !crop ? { x: ix, y: iy, w: 0, h: 0 } : { ...crop },
+        start: handle === "new" || !crop ? { x: clampX(ix), y: clampY(iy), w: 0, h: 0 } : { ...crop },
         previous: crop ? { ...crop } : null,
       };
     } else {
@@ -801,21 +1288,41 @@
   }
 
   function onPointerMove(e: PointerEvent) {
+    if (!stageEl) return;
+    const [sx, sy] = stagePoint(e);
+    const ix = (sx - panX) / zoom;
+    const iy = (sy - panY) / zoom;
+    if (isPaintTool(tool)) hover = [sx, sy];
     if (!drag) {
-      if (tool === "crop" && !spaceDown && stageEl) {
-        const [sx, sy] = stagePoint(e);
-        hoverCursor = HANDLE_CURSORS[hitCrop(sx, sy)];
-      }
+      if (tool === "crop" && !spaceDown) hoverCursor = HANDLE_CURSORS[hitCrop(sx, sy)];
       return;
     }
     if (drag.kind === "pan") {
       panX = drag.panX + (e.clientX - drag.x);
       panY = drag.panY + (e.clientY - drag.y);
-      return;
+    } else if (drag.kind === "paint") {
+      extendStroke(ix, iy);
+    } else if (drag.kind === "marquee") {
+      const r = rectFromAnchor(drag.ax, drag.ay, ix, iy, docW, docH, null);
+      const x0 = Math.round(r.x);
+      const y0 = Math.round(r.y);
+      const x1 = Math.round(r.x + r.w);
+      const y1 = Math.round(r.y + r.h);
+      selection = x1 > x0 && y1 > y0 ? { points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], inverted: false } : null;
+    } else if (drag.kind === "lasso") {
+      const last = drag.points[drag.points.length - 1];
+      const px = clampX(ix);
+      const py = clampY(iy);
+      // Skip sub-pixel jitter so the outline stays light.
+      if (Math.hypot(px - last[0], py - last[1]) * zoom >= 2) {
+        drag.points.push([px, py]);
+        selection = drag.points.length >= 3 ? { points: [...drag.points], inverted: false } : null;
+      }
+    } else {
+      const dx = (e.clientX - drag.x) / zoom;
+      const dy = (e.clientY - drag.y) / zoom;
+      crop = dragCropRect(drag.start, drag.handle, dx, dy, docW, docH, cropRatio);
     }
-    const dx = (e.clientX - drag.x) / zoom;
-    const dy = (e.clientY - drag.y) / zoom;
-    crop = dragCropRect(drag.start, drag.handle, dx, dy, docW, docH, cropRatio);
   }
 
   function onPointerUp(e: PointerEvent) {
@@ -823,6 +1330,11 @@
     if (drag.kind === "crop") {
       // A click or a sliver is not a new crop: keep the one that was there.
       if (crop && (crop.w < 2 || crop.h < 2)) crop = drag.previous ?? fitAspectRect(docW, docH, cropRatio);
+    } else if (drag.kind === "paint") {
+      endStroke();
+    } else if (drag.kind === "lasso" && drag.points.length < 3) {
+      // A plain click with a selection tool deselects.
+      selection = null;
     }
     drag = null;
     dragging = false;
@@ -833,18 +1345,20 @@
     if (phase !== "ready") return "default";
     if (spaceDown || tool === "hand") return dragging ? "grabbing" : "grab";
     if (tool === "zoom") return "zoom-in";
-    return hoverCursor;
+    if (tool === "crop") return hoverCursor;
+    return "crosshair";
   });
 
   // ------------------------------------------------------------------ save
 
   async function renderPng(): Promise<number[]> {
-    if (!doc) throw new Error("no document");
-    let out = doc;
+    const flat = composite();
+    if (!flat) throw new Error("no document");
+    let out = flat;
     if (!isNeutral(adjustments)) {
-      out = makeCanvas(doc.width, doc.height);
+      out = makeCanvas(flat.width, flat.height);
       const ctx = out.getContext("2d", { willReadFrequently: true })!;
-      ctx.drawImage(doc, 0, 0);
+      ctx.drawImage(flat, 0, 0);
       const data = ctx.getImageData(0, 0, out.width, out.height);
       applyAdjustments(data.data, data.width, data.height, adjustments, 1);
       ctx.putImageData(data, 0, 0);
@@ -872,7 +1386,7 @@
   }
 
   async function saveToGallery() {
-    if (busy || !doc) return;
+    if (busy || stroke || layers.length === 0) return;
     saving = true;
     error = "";
     // Let the "Saving..." label paint before the pixels are crunched.
@@ -900,7 +1414,7 @@
   }
 
   async function saveAsFile() {
-    if (busy || !doc) return;
+    if (busy || stroke || layers.length === 0) return;
     saving = true;
     error = "";
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -938,13 +1452,10 @@
 
   // -------------------------------------------------------------- keyboard
 
+  /** True only for fields that take text, so sliders and the colour swatch keep shortcuts working. */
   function isTyping(target: EventTarget | null): boolean {
-    return (
-      target instanceof HTMLInputElement &&
-      target.type !== "range" &&
-      target.type !== "checkbox" &&
-      target.type !== "button"
-    );
+    if (target instanceof HTMLTextAreaElement) return true;
+    return target instanceof HTMLInputElement && ["text", "number", "search"].includes(target.type);
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -973,6 +1484,7 @@
       }
       return;
     }
+    if (phase !== "ready") return;
     if (mod) {
       if (key === "z") {
         e.preventDefault();
@@ -1000,6 +1512,24 @@
       } else if (key === "i" && e.altKey) {
         e.preventDefault();
         openSize();
+      } else if (key === "i" && e.shiftKey) {
+        e.preventDefault();
+        invertSelection();
+      } else if (key === "a") {
+        e.preventDefault();
+        selectAll();
+      } else if (key === "d") {
+        e.preventDefault();
+        selection = null;
+      } else if (key === "j") {
+        e.preventDefault();
+        duplicateLayer();
+      } else if (key === "n" && e.shiftKey) {
+        e.preventDefault();
+        addLayer();
+      } else if (key === "e") {
+        e.preventDefault();
+        mergeDown();
       }
       return;
     }
@@ -1018,15 +1548,22 @@
       }
       return;
     }
-    if (e.altKey) return;
-    if (key === "h" || key === "v") {
-      cancelCrop();
-      tool = "hand";
-    } else if (key === "z") {
-      cancelCrop();
-      tool = "zoom";
-    } else if (key === "c") {
-      startCrop();
+    if (key === "backspace" || key === "delete") {
+      e.preventDefault();
+      if (e.altKey) fillSelection();
+      else clearSelection();
+      return;
+    }
+    if (e.altKey || stroke) return;
+    if (key === "[" || key === "{") {
+      if (e.shiftKey) brush.hardness = Math.max(0, brush.hardness - 25);
+      else brush.size = Math.max(1, Math.round(brush.size * 0.85) - 1);
+    } else if (key === "]" || key === "}") {
+      if (e.shiftKey) brush.hardness = Math.min(100, brush.hardness + 25);
+      else brush.size = Math.min(MAX_BRUSH, Math.round(brush.size * 1.15) + 1);
+    } else {
+      const next = TOOL_KEYS[key];
+      if (next) setTool(next);
     }
   }
 
@@ -1048,6 +1585,21 @@
 
   const barButton =
     "flex items-center justify-center w-8 h-8 rounded-md text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 transition-colors disabled:opacity-35 disabled:hover:bg-transparent disabled:cursor-default";
+  const optionButton =
+    "h-7 px-2.5 rounded-md text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100 transition-colors disabled:opacity-35 disabled:hover:bg-transparent";
+  const smallButton =
+    "flex items-center justify-center w-7 h-7 rounded text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 transition-colors disabled:opacity-30 disabled:hover:bg-transparent";
+  const RAIL: { tool: Tool; icon: typeof Hand; gap?: boolean }[] = [
+    { tool: "hand", icon: Hand },
+    { tool: "zoom", icon: Search },
+    { tool: "crop", icon: Crop },
+    { tool: "marquee", icon: SquareDashed, gap: true },
+    { tool: "lasso", icon: Lasso },
+    { tool: "brush", icon: Brush, gap: true },
+    { tool: "eraser", icon: Eraser },
+    { tool: "clone", icon: Stamp },
+    { tool: "eyedropper", icon: Pipette },
+  ];
   const railButton = (active: boolean) =>
     `flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
       active ? "bg-indigo-600 text-white" : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
@@ -1110,30 +1662,74 @@
       <button type="button" class={barButton} title={locale.t("common.close")} aria-label={locale.t("common.close")} onclick={requestClose}><X size={16} /></button>
     </div>
 
-    <!-- Crop options -->
-    {#if tool === "crop" && crop}
-      <div class="flex items-center gap-1 h-10 px-3 shrink-0 bg-neutral-900/70 border-b border-neutral-800">
+    <!-- Options for the active tool -->
+    <div class="flex items-center gap-1 h-10 px-3 shrink-0 bg-neutral-900/70 border-b border-neutral-800 text-xs">
+      {#if tool === "crop" && crop}
         {#each CROP_PRESETS as preset (preset.key)}
           <button
             type="button"
-            class="h-7 px-2.5 rounded-md text-xs transition-colors {cropPreset === preset.key ? 'bg-indigo-600 text-white' : 'text-neutral-300 hover:bg-neutral-800'}"
+            class="h-7 px-2.5 rounded-md transition-colors {cropPreset === preset.key ? 'bg-indigo-600 text-white' : 'text-neutral-300 hover:bg-neutral-800'}"
             aria-pressed={cropPreset === preset.key}
             onclick={() => setCropPreset(preset.key)}
           >{preset.label || locale.t(`editor.crop.${preset.key}`)}</button>
         {/each}
-        <span class="px-3 text-xs tabular-nums text-neutral-400">{Math.round(crop.w)} × {Math.round(crop.h)}</span>
+        <span class="px-3 tabular-nums text-neutral-400">{Math.round(crop.w)} × {Math.round(crop.h)}</span>
         <span class="flex-1"></span>
-        <button type="button" class="h-7 px-3 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-100 text-xs font-medium" onclick={cancelCrop}>{locale.t("common.cancel")}</button>
-        <button type="button" class="h-7 px-3 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium" onclick={applyCrop}>{locale.t("common.apply")}</button>
-      </div>
-    {/if}
+        <button type="button" class="h-7 px-3 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-100 font-medium" onclick={cancelCrop}>{locale.t("common.cancel")}</button>
+        <button type="button" class="h-7 px-3 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium" onclick={applyCrop}>{locale.t("common.apply")}</button>
+      {:else if isPaintTool(tool) || tool === "eyedropper"}
+        {#if tool === "brush" || tool === "eyedropper"}
+          <input type="color" class="w-7 h-7 p-0 rounded border border-neutral-700 bg-transparent cursor-pointer" title={locale.t("editor.brush.color")} aria-label={locale.t("editor.brush.color")} bind:value={color} />
+        {/if}
+        {#if isPaintTool(tool)}
+          <label class="flex items-center gap-2 pl-2 text-neutral-400">
+            {locale.t("editor.brush.size")}
+            <input type="range" min="1" max={MAX_BRUSH} step="1" class="w-28 accent-indigo-500" bind:value={brush.size} />
+            <span class="w-8 tabular-nums text-neutral-200">{brush.size}</span>
+          </label>
+          <label class="flex items-center gap-2 pl-2 text-neutral-400">
+            {locale.t("editor.brush.hardness")}
+            <input type="range" min="0" max="100" step="1" class="w-24 accent-indigo-500" bind:value={brush.hardness} />
+            <span class="w-8 tabular-nums text-neutral-200">{brush.hardness}</span>
+          </label>
+          <label class="flex items-center gap-2 pl-2 text-neutral-400">
+            {locale.t("editor.brush.opacity")}
+            <input type="range" min="1" max="100" step="1" class="w-24 accent-indigo-500" bind:value={brush.opacity} />
+            <span class="w-8 tabular-nums text-neutral-200">{brush.opacity}</span>
+          </label>
+          {#if tool === "clone" && !cloneSource}
+            <span class="pl-3 text-amber-300">{locale.t("editor.clone_hint")}</span>
+          {/if}
+        {/if}
+      {:else if tool === "marquee" || tool === "lasso"}
+        <button type="button" class={optionButton} disabled={busy} onclick={selectAll}>{locale.t("editor.select.all")}</button>
+        <button type="button" class={optionButton} disabled={busy || !selection} onclick={() => (selection = null)}>{locale.t("editor.select.none")}</button>
+        <button type="button" class={optionButton} disabled={busy} onclick={invertSelection}>{locale.t("editor.select.invert")}</button>
+        <span class="w-px h-5 mx-1 bg-neutral-700"></span>
+        <input type="color" class="w-7 h-7 p-0 rounded border border-neutral-700 bg-transparent cursor-pointer" title={locale.t("editor.brush.color")} aria-label={locale.t("editor.brush.color")} bind:value={color} />
+        <button type="button" class={optionButton} disabled={busy || !activeLayer?.visible} onclick={fillSelection}>{locale.t("editor.select.fill")}</button>
+        <button type="button" class={optionButton} disabled={busy || !selection || !activeLayer?.visible} onclick={clearSelection}>{locale.t("editor.select.clear")}</button>
+      {:else}
+        <button type="button" class={optionButton} onclick={() => fitView()}>{locale.t("editor.fit")}</button>
+        <button type="button" class={optionButton} onclick={() => zoomTo(1)}>100%</button>
+      {/if}
+    </div>
 
     <div class="flex flex-1 min-h-0">
       <!-- Tool rail -->
       <div class="flex flex-col items-center gap-1 w-12 py-2 shrink-0 bg-neutral-900 border-r border-neutral-800">
-        <button type="button" class={railButton(tool === "hand")} title={locale.t("editor.tool.hand")} aria-label={locale.t("editor.tool.hand")} aria-pressed={tool === "hand"} onclick={() => { cancelCrop(); tool = "hand"; }}><Hand size={18} /></button>
-        <button type="button" class={railButton(tool === "zoom")} title={locale.t("editor.tool.zoom")} aria-label={locale.t("editor.tool.zoom")} aria-pressed={tool === "zoom"} onclick={() => { cancelCrop(); tool = "zoom"; }}><Search size={18} /></button>
-        <button type="button" class={railButton(tool === "crop")} title={locale.t("editor.tool.crop")} aria-label={locale.t("editor.tool.crop")} aria-pressed={tool === "crop"} disabled={busy} onclick={startCrop}><Crop size={18} /></button>
+        {#each RAIL as item (item.tool)}
+          {#if item.gap}<span class="w-6 h-px my-1 bg-neutral-800"></span>{/if}
+          <button
+            type="button"
+            class={railButton(tool === item.tool)}
+            title={locale.t(`editor.tool.${item.tool}`)}
+            aria-label={locale.t(`editor.tool.${item.tool}`)}
+            aria-pressed={tool === item.tool}
+            disabled={phase !== "ready"}
+            onclick={() => setTool(item.tool)}
+          ><item.icon size={18} /></button>
+        {/each}
       </div>
 
       <!-- Stage -->
@@ -1147,6 +1743,7 @@
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}
         onpointercancel={onPointerUp}
+        onpointerleave={() => (hover = null)}
       >
         <canvas bind:this={viewEl} class="absolute inset-0 w-full h-full"></canvas>
         {#if phase === "error"}
@@ -1193,7 +1790,7 @@
             >+ {locale.t("editor.preset")}</button>
           {/if}
         </div>
-        <div class="flex flex-col gap-4 p-3 overflow-y-auto">
+        <div class="flex flex-col flex-1 min-h-0 gap-4 p-3 overflow-y-auto">
           {#each GROUPS as group (group.key)}
             <div class="flex flex-col gap-2.5">
               <span class="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">{locale.t(`editor.group.${group.key}`)}</span>
@@ -1249,6 +1846,46 @@
               </div>
             {/if}
           {/each}
+        </div>
+
+        <!-- Layers -->
+        <div class="flex flex-col h-60 shrink-0 border-t border-neutral-800">
+          <div class="flex items-center h-9 pl-3 pr-1 border-b border-neutral-800">
+            <span class="flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">{locale.t("editor.layers")}</span>
+            <button type="button" class={smallButton} title={locale.t("editor.layer.new")} aria-label={locale.t("editor.layer.new")} disabled={busy || layers.length >= MAX_LAYERS} onclick={addLayer}><Plus size={14} /></button>
+            <button type="button" class={smallButton} title={locale.t("editor.layer.duplicate")} aria-label={locale.t("editor.layer.duplicate")} disabled={busy || layers.length >= MAX_LAYERS} onclick={duplicateLayer}><Copy size={14} /></button>
+            <button type="button" class={smallButton} title={locale.t("editor.layer.merge")} aria-label={locale.t("editor.layer.merge")} disabled={busy || activeIndex <= 0} onclick={mergeDown}><MergeDown size={14} /></button>
+            <button type="button" class={smallButton} title={locale.t("editor.layer.up")} aria-label={locale.t("editor.layer.up")} disabled={busy || activeIndex < 0 || activeIndex >= layers.length - 1} onclick={() => moveLayer(1)}><ArrowUp size={14} /></button>
+            <button type="button" class={smallButton} title={locale.t("editor.layer.down")} aria-label={locale.t("editor.layer.down")} disabled={busy || activeIndex <= 0} onclick={() => moveLayer(-1)}><ArrowDown size={14} /></button>
+            <button type="button" class={smallButton} title={locale.t("editor.layer.delete")} aria-label={locale.t("editor.layer.delete")} disabled={busy || layers.length <= 1} onclick={deleteLayer}><Trash2 size={14} /></button>
+          </div>
+          {#if activeLayer}
+            <label class="flex items-center gap-2 h-8 px-3 border-b border-neutral-800 text-xs text-neutral-400">
+              {locale.t("editor.brush.opacity")}
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                class="flex-1 min-w-0 accent-indigo-500"
+                disabled={busy}
+                value={activeLayer.opacity}
+                oninput={(e) => previewLayerOpacity(Number(e.currentTarget.value))}
+                onchange={commitLayerOpacity}
+              />
+              <span class="w-7 text-right tabular-nums text-neutral-200">{activeLayer.opacity}</span>
+            </label>
+          {/if}
+          <div class="flex-1 min-h-0 overflow-y-auto">
+            {#each [...layers].reverse() as layer (layer.id)}
+              <div class="flex items-center h-8 text-xs {layer.id === activeId ? 'bg-indigo-600/25 text-neutral-100' : 'text-neutral-300 hover:bg-neutral-800/60'}">
+                <button type="button" class="flex items-center justify-center w-8 h-8 shrink-0 {layer.visible ? 'text-neutral-300' : 'text-neutral-600'} hover:text-white" title={locale.t("editor.layer.visibility")} aria-label="{locale.t('editor.layer.visibility')}: {layer.name}" aria-pressed={layer.visible} disabled={busy} onclick={() => toggleLayer(layer.id)}>
+                  {#if layer.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
+                </button>
+                <button type="button" class="flex-1 min-w-0 h-8 pr-3 text-left truncate" aria-pressed={layer.id === activeId} onclick={() => (activeId = layer.id)}>{layer.name}</button>
+              </div>
+            {/each}
+          </div>
         </div>
       </div>
     </div>
