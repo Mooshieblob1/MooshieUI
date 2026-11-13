@@ -52,6 +52,8 @@
     NEUTRAL_ADJUSTMENTS,
     alphaBounds,
     appendOp,
+    carriesNovelAiChunks,
+    copyPngTextChunks,
     applyAdjustments,
     curveLut,
     isIdentityCurve,
@@ -263,6 +265,8 @@
 
   let sourceMetadata = $state<Record<string, string> | null>(null);
   let editedFrom: string | null = null;
+  /** The source file when it is a NovelAI PNG: its text chunks go back onto every save. */
+  let novelAiSource: Uint8Array | null = null;
   let generationMode: GenerationMode | undefined;
 
   let tool = $state<Tool>("hand");
@@ -383,11 +387,13 @@
     historyLength = 0;
     sourceMetadata = null;
     editedFrom = null;
+    novelAiSource = null;
     generationMode = src.image?.generation_mode;
 
     void (async () => {
       try {
         const loaded = await loadSource(src);
+        const raw = new Uint8Array(await loaded.blob.arrayBuffer());
         const bitmap = await createImageBitmap(loaded.blob);
         if (cancelled) {
           bitmap.close();
@@ -398,6 +404,7 @@
         bitmap.close();
         sourceMetadata = loaded.metadata;
         editedFrom = loaded.from;
+        novelAiSource = carriesNovelAiChunks(raw) ? raw : null;
         const background: Layer = {
           id: nextLayerId++,
           name: locale.t("editor.layer.background"),
@@ -1806,7 +1813,11 @@
     }
     const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("PNG encode failed");
-    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    let bytes: Uint8Array = new Uint8Array(await blob.arrayBuffer());
+    // novelai.net only reads its own chunks, and the save path leaves a PNG
+    // that has them untouched, so they have to be on the file before it goes.
+    if (novelAiSource) bytes = copyPngTextChunks(novelAiSource, bytes) ?? bytes;
+    return Array.from(bytes);
   }
 
   function outputMetadata(): Record<string, string> | null {

@@ -732,3 +732,74 @@ export function editedMetadata(
   if (!out.mooshie_edited_from && editedFrom) out.mooshie_edited_from = editedFrom;
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// PNG text chunks
+// ---------------------------------------------------------------------------
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const TEXT_CHUNKS = ["tEXt", "zTXt", "iTXt"];
+
+interface PngChunk {
+  kind: string;
+  /** The whole chunk: length, type, data and CRC. */
+  start: number;
+  end: number;
+}
+
+/** The chunks of a PNG in file order, or null when the bytes are not a well-formed PNG. */
+function pngChunks(bytes: Uint8Array): PngChunk[] | null {
+  if (bytes.length < 8 || PNG_SIGNATURE.some((b, i) => bytes[i] !== b)) return null;
+  const chunks: PngChunk[] = [];
+  let at = 8;
+  while (at + 12 <= bytes.length) {
+    const length = ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+    const end = at + 12 + length;
+    if (end > bytes.length) return null;
+    const kind = String.fromCharCode(bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]);
+    chunks.push({ kind, start: at, end });
+    if (kind === "IEND") return chunks;
+    at = end;
+  }
+  return null;
+}
+
+/**
+ * True for a PNG that still has NovelAI's own text chunks (`Software` or
+ * `Source` naming NovelAI), the same test the backend uses to leave such a
+ * file untouched on save.
+ */
+export function carriesNovelAiChunks(bytes: Uint8Array): boolean {
+  for (const chunk of pngChunks(bytes) ?? []) {
+    if (chunk.kind !== "tEXt") continue;
+    const data = bytes.subarray(chunk.start + 8, chunk.end - 4);
+    const split = data.indexOf(0);
+    if (split < 0) continue;
+    const latin1 = (part: Uint8Array) => String.fromCharCode(...part.subarray(0, 256));
+    const keyword = latin1(data.subarray(0, split));
+    if (keyword !== "Software" && keyword !== "Source") continue;
+    if (latin1(data.subarray(split + 1)).toLowerCase().includes("novelai")) return true;
+  }
+  return false;
+}
+
+/**
+ * `target` with `source`'s text chunks spliced in before its pixel data, byte
+ * for byte, so their CRCs and any UTF-8 a writer put in them survive. Null
+ * when there is nothing to copy or either side is not a PNG.
+ */
+export function copyPngTextChunks(source: Uint8Array, target: Uint8Array): Uint8Array | null {
+  const text = (pngChunks(source) ?? []).filter((c) => TEXT_CHUNKS.includes(c.kind));
+  const insertAt = pngChunks(target)?.find((c) => c.kind === "IDAT")?.start;
+  if (text.length === 0 || insertAt === undefined) return null;
+  const extra = text.reduce((sum, c) => sum + (c.end - c.start), 0);
+  const out = new Uint8Array(target.length + extra);
+  out.set(target.subarray(0, insertAt), 0);
+  let at = insertAt;
+  for (const chunk of text) {
+    out.set(source.subarray(chunk.start, chunk.end), at);
+    at += chunk.end - chunk.start;
+  }
+  out.set(target.subarray(insertAt), at);
+  return out;
+}

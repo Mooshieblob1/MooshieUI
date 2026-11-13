@@ -12,6 +12,8 @@ import {
   buildEditNote,
   colorMatrix,
   alphaBounds,
+  carriesNovelAiChunks,
+  copyPngTextChunks,
   dragCropRect,
   scaleRect,
   editedMetadata,
@@ -270,4 +272,52 @@ test("alpha bounds box the opaque pixels and report an empty layer", () => {
   data[(1 * 6 + 2) * 4 + 3] = 255;
   data[(3 * 6 + 4) * 4 + 3] = 1;
   assert.deepEqual(alphaBounds(data, 6, 4), { x: 2, y: 1, w: 3, h: 3 });
+});
+
+/** A structurally valid PNG (CRCs are not checked by the splice). */
+function fakePng(chunks: [string, number[]][]): Uint8Array {
+  const out = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  for (const [kind, data] of chunks) {
+    const n = data.length;
+    out.push((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+    out.push(...[...kind].map((c) => c.charCodeAt(0)), ...data, 1, 2, 3, 4);
+  }
+  return new Uint8Array(out);
+}
+const textChunk = (key: string, value: string): [string, number[]] => [
+  "tEXt",
+  [...[...key].map((c) => c.charCodeAt(0)), 0, ...new TextEncoder().encode(value)],
+];
+
+test("NovelAI text chunks are recognised and carried onto an edited PNG byte for byte", () => {
+  const source = fakePng([
+    ["IHDR", [1, 2, 3]],
+    textChunk("Software", "NovelAI"),
+    textChunk("Comment", '{"prompt":"青い髪"}'),
+    ["IDAT", [9, 9]],
+    ["IEND", []],
+  ]);
+  const edited = fakePng([["IHDR", [4, 5, 6]], ["sRGB", [0]], ["IDAT", [7, 7, 7]], ["IEND", []]]);
+  assert.equal(carriesNovelAiChunks(source), true);
+  assert.equal(carriesNovelAiChunks(edited), false);
+
+  const spliced = copyPngTextChunks(source, edited)!;
+  assert.equal(carriesNovelAiChunks(spliced), true);
+  // The text sits right before IDAT, unchanged, and nothing else moved.
+  const idat = fakePng([["IDAT", [7, 7, 7]], ["IEND", []]]).subarray(8);
+  const text = source.subarray(8 + 15, source.length - 14 - 12);
+  assert.deepEqual([...spliced.subarray(spliced.length - idat.length)], [...idat]);
+  assert.deepEqual([...spliced.subarray(spliced.length - idat.length - text.length, spliced.length - idat.length)], [...text]);
+  assert.equal(spliced.length, edited.length + text.length);
+});
+
+test("other PNGs and broken bytes are left alone", () => {
+  const plain = fakePng([["IHDR", [1]], textChunk("Software", "AUTOMATIC1111"), ["IDAT", [1]], ["IEND", []]]);
+  const bare = fakePng([["IHDR", [1]], ["IDAT", [1]], ["IEND", []]]);
+  assert.equal(carriesNovelAiChunks(plain), false);
+  assert.equal(carriesNovelAiChunks(new Uint8Array([1, 2, 3])), false);
+  assert.equal(copyPngTextChunks(bare, plain), null);
+  assert.equal(copyPngTextChunks(plain, new Uint8Array([1, 2, 3])), null);
+  assert.equal(copyPngTextChunks(plain.subarray(0, plain.length - 5), bare), null);
+  assert.equal(carriesNovelAiChunks(fakePng([["IHDR", [1]], textChunk("Source", "NovelAI Diffusion V4.5 4BDE2A90"), ["IDAT", [1]], ["IEND", []]])), true);
 });
