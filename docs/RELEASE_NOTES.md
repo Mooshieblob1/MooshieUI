@@ -1,3 +1,17 @@
+## What's New in v2.3.45
+
+### NovelAI
+- **Weight syntax kept as written**: prompts imported from NovelAI images keep `1.2::tag::` instead of turning into `(tag:1.2)`, in the prompt, undesired content and every character box. In NovelAI mode the base prompt and undesired content are sent exactly as typed.
+- **Negative weights fixed**: `-1::tag::` in the base prompt or undesired content no longer loses its weight on the way to NovelAI. This includes the spans Enhance for V5 writes.
+
+### Models
+- **Picked VAE stays on split models**: a VAE you choose for Anima, Krea 2, Qwen, Flux 2 and other split models is no longer replaced on startup or reconnect, as long as it is installed and fits the model. This makes the Qwen-Image Sharp VAE usable on Anima and Krea 2. The default for Qwen-based models is now the stock `qwen_image_vae`.
+
+### Desktop
+- **External links open in your browser**: Open on CivitAI and about 20 other links (Model Hub, Animadex, artist pages, music sources) did nothing in the desktop app. They now open in the system browser.
+- **Solid red Stop button**: the Stop button beside Generate is now solid red while a generation runs, like the mobile one.
+
+---
 ## What's New in v2.3.44
 
 ### Characters
