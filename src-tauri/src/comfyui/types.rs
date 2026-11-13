@@ -495,6 +495,16 @@ pub struct GenerationParams {
     /// cheapest (no extra model call per step), higher pushes harder.
     #[serde(default = "default_anima_ref_guidance")]
     pub anima_ref_guidance: f32,
+    #[serde(default)]
+    pub anima_ref_method: String,
+    #[serde(default)]
+    pub snapref_adapter: Option<String>,
+    #[serde(default = "default_snapref_mode")]
+    pub snapref_mode: String,
+    #[serde(default = "default_style_ref_end")]
+    pub snapref_fidelity: f32,
+    #[serde(default)]
+    pub snapref_references: Vec<SnapRefReference>,
     /// Anima character reference: `AnimaRefAdapter.correction` (apg, rescale, none).
     #[serde(default = "default_anima_ref_correction")]
     pub anima_ref_correction: String,
@@ -673,6 +683,16 @@ fn default_style_ref_weight_type() -> String {
 fn default_style_ref_end() -> f32 {
     1.0
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapRefReference {
+    pub image: Option<String>,
+    pub strength: f32,
+}
+
+fn default_snapref_mode() -> String {
+    "Character & Style".into()
+}
+
 fn default_anima_ref_guidance() -> f32 {
     4.5
 }

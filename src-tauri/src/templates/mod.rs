@@ -301,12 +301,14 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
                 params.model_architecture
             ));
         }
-        if params
-            .style_ref_image
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
+        style_ref::validate_snapref(params)?;
+        if !style_ref::snapref_active(params)
+            && params
+                .style_ref_image
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
         {
             return Err(
                 "Style reference is enabled but no reference image was provided. \
@@ -2849,6 +2851,35 @@ mod tests {
         let workflow = workflow.as_object().unwrap();
         assert_eq!(nodes_of_class(workflow, "MooshieAnimaTeaCache").len(), 1);
         assert!(nodes_of_class(workflow, "AnimaRefAdapter").is_empty());
+    }
+
+    #[test]
+    fn snapref_flows_through_the_image_pipeline_and_skips_teacache() {
+        for mode in ["txt2img", "img2img", "inpainting"] {
+            let mut params = anima_character_ref_params();
+            params.mode = mode.into();
+            params.input_image = Some("input.png".into());
+            params.mask_image = Some("mask.png".into());
+            params.style_ref_image = None;
+            params.anima_ref_method = "snapref".into();
+            params.snapref_adapter = Some("snapref_v2a.safetensors".into());
+            params.snapref_mode = "Character".into();
+            params.snapref_fidelity = 0.5;
+            params.snapref_references = vec![crate::comfyui::types::SnapRefReference {
+                image: Some("character.png".into()),
+                strength: 1.0,
+            }];
+            params.anima_teacache_enabled = true;
+            assert!(validate_generation_params(&params).is_ok());
+            let workflow = build_workflow(&params, 42, false);
+            let workflow = workflow.as_object().unwrap();
+            assert_eq!(nodes_of_class(workflow, "SnapRefSimple").len(), 1);
+            assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+            params.mode = "txt2img".into();
+            params.style_transfer_enabled = true;
+            params.style_reference_image = Some("style.png".into());
+            assert!(validate_generation_params(&params).is_err());
+        }
     }
 
     #[test]

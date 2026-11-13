@@ -43,6 +43,13 @@ pub async fn generate(
     // `[Errno 21] Is a directory: '<input_dir>/'`, which surfaces as a generic
     // execution error far away from the actual cause.
     templates::validate_generation_params(&params).map_err(AppError::InvalidWorkflow)?;
+    crate::comfyui::nodes::verify_snapref_for_generation(
+        &state.http_client,
+        &state.base_url().await,
+        &params,
+    )
+    .await
+    .map_err(AppError::InvalidWorkflow)?;
     // A remote ComfyUI lists and loads its own model files, so the local
     // install is only consulted when the app launched the server itself.
     let models_are_local = {

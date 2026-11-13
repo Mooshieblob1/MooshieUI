@@ -3462,6 +3462,12 @@ async fn dispatch_command(
             // Tauri command, so it needs the same NovelAI -> local model swap.
             crate::templates::upscale_standalone::rewrite_novelai_request(&mut params)?;
             crate::templates::validate_generation_params(&params)?;
+            crate::comfyui::nodes::verify_snapref_for_generation(
+                &state.http_client,
+                &state.base_url().await,
+                &params,
+            )
+            .await?;
             {
                 // Skipped for a remote ComfyUI, whose LoRAs live on that server.
                 let config = state.config.read().await;
