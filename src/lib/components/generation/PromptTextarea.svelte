@@ -21,6 +21,7 @@
   import {
     getUnknownTagRanges,
     buildSpellcheckPieces,
+    type SpellcheckDialect,
     type SpellcheckPiece,
   } from "../../utils/promptSpellcheck.js";
   import {
@@ -655,14 +656,21 @@
 
   // Exclude the token under the caret only when there's no active selection.
   const spellcheckCaret = $derived(selectionStart === selectionEnd ? selectionStart : -1);
+  // Natural-language models are not spellchecked: their prompts are prose, so
+  // nearly every phrase would be flagged. NovelAI gets its own dialect, which
+  // knows V5's tokens and syntax on top of the Danbooru taglist.
+  const spellcheckDialect = $derived<SpellcheckDialect | null>(
+    generation.promptStyle === "prose" ? null : generation.promptStyle === "novelai" ? "novelai" : "danbooru",
+  );
+  const spellcheckActive = $derived(
+    tagAssist && autocomplete.spellcheckEnabled && spellcheckDialect !== null,
+  );
   const spellcheckRanges = $derived(
-    tagAssist && autocomplete.spellcheckEnabled
-      ? getUnknownTagRanges(value, (n) => autocomplete.isKnownTag(n), spellcheckCaret)
+    spellcheckActive && spellcheckDialect
+      ? getUnknownTagRanges(value, (n) => autocomplete.isKnownTag(n), spellcheckCaret, spellcheckDialect)
       : [],
   );
-  const showSpellcheckOverlay = $derived(
-    tagAssist && autocomplete.spellcheckEnabled && spellcheckRanges.length > 0,
-  );
+  const showSpellcheckOverlay = $derived(spellcheckActive && spellcheckRanges.length > 0);
   const spellcheckPieces = $derived(
     showSpellcheckOverlay ? buildSpellcheckPieces(value.length, spellcheckRanges) : [],
   );
@@ -813,7 +821,7 @@
    * point before `contextmenu` fires, so hit-test the caret against unknown pieces.
    */
   function handleTextareaContextMenu(event: MouseEvent) {
-    if (!textareaEl || !tagAssist || !autocomplete.spellcheckEnabled) return;
+    if (!textareaEl || !spellcheckActive) return;
     const caret = textareaEl.selectionStart;
     const piece = spellcheckPieces.find(
       (p) => p.unknown && p.name !== null && caret >= p.start && caret <= p.end,
@@ -846,7 +854,10 @@
     textareaEl.setSelectionRange(piece.start, piece.end);
     syncSelectionRange();
 
-    const suggestions = autocomplete.suggestSimilar(piece.name);
+    // NovelAI interaction tags keep their source# / target# / mutual# prefix:
+    // only the action after it is looked up and replaced.
+    const prefix = spellcheckDialect === "novelai" ? (piece.name.match(/^\s*(?:source|target|mutual)#\s*/i)?.[0] ?? "") : "";
+    const suggestions = autocomplete.suggestSimilar(piece.name.slice(prefix.length));
     if (suggestions.length === 0) {
       spellMenuItems = [
         {
@@ -857,7 +868,7 @@
     } else {
       spellMenuItems = suggestions.map((tag) => ({
         label: tag.n.replace(/_/g, " "),
-        action: () => replaceRange(piece.start, piece.end, formatTagForPrompt(tag.n)),
+        action: () => replaceRange(piece.start, piece.end, prefix.trim() + formatTagForPrompt(tag.n)),
       }));
     }
     spellMenuX = event.clientX;

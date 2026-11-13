@@ -17,6 +17,7 @@ import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
+  TAG_PROMPT_FAMILIES,
   TURBO_MODEL_VARIANTS,
   signalsIndicateVPred,
   familyRequiresSeparateClip,
@@ -1478,6 +1479,19 @@ class GenerationStore {
    */
   get isNovelAi(): boolean {
     return this._mode !== "video" && isNovelAiModel(this.checkpoint);
+  }
+
+  /**
+   * How prompts for the active model are written: Danbooru tags, NovelAI's
+   * tag dialect (Danbooru plus V5 tokens, `artist:`, `source#` and prose
+   * lines), or natural language. An undetected family counts as tags, since
+   * an unrecognised checkpoint is usually an SDXL merge.
+   */
+  get promptStyle(): "tags" | "novelai" | "prose" {
+    if (this._mode === "video") return "prose";
+    if (this.isNovelAi) return "novelai";
+    if (this.modelFamily === "unknown" || TAG_PROMPT_FAMILIES.has(this.modelFamily)) return "tags";
+    return "prose";
   }
 
   /** Capability flags for the selected NovelAI model, or null outside NovelAI mode. */

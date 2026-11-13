@@ -44,6 +44,19 @@ export const MODEL_FAMILIES = [
 
 export type ModelFamily = typeof MODEL_FAMILIES[number];
 
+/**
+ * Families whose prompts are written as Danbooru-style tags. Everything else
+ * (Flux, Krea, Qwen, Z-Image, ...) is prompted in natural language, where tag
+ * tooling such as the spellcheck underline only misfires.
+ */
+export const TAG_PROMPT_FAMILIES: ReadonlySet<ModelFamily> = new Set<ModelFamily>([
+  "sdxl",
+  "illustrious",
+  "pony",
+  "sd15",
+  "anima",
+]);
+
 /** Display names per family. Families without an entry (`unknown`, the edit models) have none. */
 export const MODEL_FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
   anima: "Anima",
