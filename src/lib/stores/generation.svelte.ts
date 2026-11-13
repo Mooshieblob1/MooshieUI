@@ -866,6 +866,13 @@ class GenerationStore {
   styleRefClipVision = $state<string | null>(null);
   /** Anima character reference: optional second character (right side). */
   styleRefImage2 = $state<string | null>(null);
+  animaRefMethod = $state<"anima_ref_adapter" | "snapref">("anima_ref_adapter");
+  snaprefAdapter = $state<string | null>(null);
+  snaprefMode = $state<"Character & Style" | "Character">("Character & Style");
+  snaprefFidelity = $state(1);
+  snaprefReferences = $state<{ image: string | null; strength: number }[]>([
+    { image: null, strength: 1 }, { image: null, strength: 1 },
+  ]);
   animaRefGuidance = $state(4.5);
   animaRefCorrection = $state("apg");
   facefixEnabled = $state(false);
@@ -3191,6 +3198,17 @@ class GenerationStore {
     if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
     if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
     if (saved.styleRefImage2 !== undefined) this.styleRefImage2 = saved.styleRefImage2;
+    this.animaRefMethod = saved.animaRefMethod === "snapref" ? "snapref" : "anima_ref_adapter";
+    if (saved.snaprefAdapter !== undefined) this.snaprefAdapter = saved.snaprefAdapter;
+    if (saved.snaprefMode === "Character" || saved.snaprefMode === "Character & Style") this.snaprefMode = saved.snaprefMode;
+    if (typeof saved.snaprefFidelity === "number") this.snaprefFidelity = Math.max(0, Math.min(1, saved.snaprefFidelity));
+    if (Array.isArray(saved.snaprefReferences)) {
+      this.snaprefReferences = saved.snaprefReferences.slice(0, 8).map((r: any) => ({
+        image: typeof r?.image === "string" ? r.image : null,
+        strength: typeof r?.strength === "number" ? Math.max(0, Math.min(2, r.strength)) : 1,
+      }));
+      while (this.snaprefReferences.length < 2) this.snaprefReferences = [...this.snaprefReferences, { image: null, strength: 1 }];
+    }
     if (saved.animaRefGuidance !== undefined) this.animaRefGuidance = saved.animaRefGuidance;
     if (saved.animaRefCorrection) this.animaRefCorrection = saved.animaRefCorrection;
     if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
@@ -3367,6 +3385,11 @@ class GenerationStore {
         styleRefReduxModel: this.styleRefReduxModel,
         styleRefClipVision: this.styleRefClipVision,
         styleRefImage2: this.styleRefImage2,
+        animaRefMethod: this.animaRefMethod,
+        snaprefAdapter: this.snaprefAdapter,
+        snaprefMode: this.snaprefMode,
+        snaprefFidelity: this.snaprefFidelity,
+        snaprefReferences: this.snaprefReferences,
         animaRefGuidance: this.animaRefGuidance,
         animaRefCorrection: this.animaRefCorrection,
         facefixEnabled: this.facefixEnabled,
@@ -3544,6 +3567,11 @@ class GenerationStore {
       styleRefReduxModel: this.styleRefReduxModel,
       styleRefClipVision: this.styleRefClipVision,
       styleRefImage2: this.styleRefImage2,
+      animaRefMethod: this.animaRefMethod,
+      snaprefAdapter: this.snaprefAdapter,
+      snaprefMode: this.snaprefMode,
+      snaprefFidelity: this.snaprefFidelity,
+      snaprefReferences: this.snaprefReferences,
       animaRefGuidance: this.animaRefGuidance,
       animaRefCorrection: this.animaRefCorrection,
       facefixEnabled: this.facefixEnabled,
@@ -4343,6 +4371,11 @@ class GenerationStore {
       style_ref_redux_model: this.styleRefReduxModel,
       style_ref_clip_vision: this.styleRefClipVision,
       style_ref_image_2: this.styleRefImage2,
+      anima_ref_method: this.animaRefMethod,
+      snapref_adapter: this.snaprefAdapter,
+      snapref_mode: this.snaprefMode,
+      snapref_fidelity: this.snaprefFidelity,
+      snapref_references: this.snaprefReferences,
       anima_ref_guidance: this.animaRefGuidance,
       anima_ref_correction: this.animaRefCorrection,
       anima_teacache_enabled: this.animaTeacacheEnabled,

@@ -20,6 +20,7 @@ struct RequiredCustomNodePackage {
     /// reviewing upstream changes, and keep the Dockerfile's copy in step
     /// (checked by `dockerfile_node_pins_match`).
     git_rev: &'static str,
+    source_subdir: Option<&'static str>,
     verify_nodes: &'static [&'static str],
     /// Requirements file to pip-install from, relative to the package root.
     /// Almost every pack ships `requirements.txt`, but not all
@@ -30,9 +31,18 @@ struct RequiredCustomNodePackage {
 
 const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
+        name: "snapref",
+        git_url: "https://github.com/ArcAnima/SnapRef.git",
+        git_rev: "1f7e606621052c11486c7aa5ccf6c2c12c2c5a3a",
+        source_subdir: Some("comfyui_nodes/snapref"),
+        verify_nodes: &["SnapRefSimple"],
+        requirements_file: "requirements.txt",
+    },
+    RequiredCustomNodePackage {
         name: "ComfyUi-Untwisting-RoPE",
         git_url: "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
         git_rev: "b62f39cd22c0d72c83af4b1da7d6c95b6f1e26f3",
+        source_subdir: None,
         verify_nodes: &["RFInversion", "UntwistingRoPE"],
         requirements_file: "requirements.txt",
     },
@@ -40,6 +50,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         name: "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
         git_url: "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
         git_rev: "79e831097bb7a76ade3a28359300e62332086c42",
+        source_subdir: None,
         verify_nodes: &["ImageScaleToTotalPixelsX"],
         requirements_file: "requirements.txt",
     },
@@ -50,6 +61,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         name: "ComfyUI-Cosmos-Reference",
         git_url: "https://github.com/Mirumo0u0/ComfyUI-Cosmos-Reference.git",
         git_rev: "6fd6b27e7c72847d69ad74f4c9cb68ce91b319df",
+        source_subdir: None,
         verify_nodes: &["ApplyCosmosReferenceLatent"],
         requirements_file: "requirements.txt",
     },
@@ -60,6 +72,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         name: "ComfyUI-Anima-Ref-Adapter",
         git_url: "https://github.com/ElectronGirl/ComfyUI-Anima-Ref-Adapter.git",
         git_rev: "bd1e094a2592f40b085e423a1a507b4c288ba9f1",
+        source_subdir: None,
         verify_nodes: &["AnimaRefAdapter"],
         requirements_file: "requirements.txt",
     },
@@ -85,6 +98,7 @@ const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
     name: "ComfyUI-GGUF",
     git_url: "https://github.com/city96/ComfyUI-GGUF.git",
     git_rev: "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+    source_subdir: None,
     verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
     requirements_file: "requirements.txt",
 }];
@@ -98,6 +112,7 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCus
     name: "comfyui_controlnet_aux",
     git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
     git_rev: "59b1fc411ede8623b2997855b8018f0b3b6cf49f",
+    source_subdir: None,
     verify_nodes: &[
         "CannyEdgePreprocessor",
         "DepthAnythingV2Preprocessor",
@@ -119,6 +134,7 @@ const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
     name: RIFE_PACKAGE_DIR,
     git_url: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git",
     git_rev: "26545cc2dd95bc3d27f056016300673bdeee78f5",
+    source_subdir: None,
     verify_nodes: &["RIFE VFI", "GMFSS Fortuna VFI"],
     // The pack ships no requirements.txt. `requirements-with-cupy.txt` pulls a
     // multi-hundred-MB CUDA-version-specific cupy wheel; the no-cupy file
@@ -173,6 +189,7 @@ const H3_TURBO_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePack
     name: H3_TURBO_PACKAGE_DIR,
     git_url: "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git",
     git_rev: "4274783a23afcfdbea3b4876cb79effd6c510785",
+    source_subdir: None,
     verify_nodes: &["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
     // The pack ships no requirements file at all — it imports torch and comfy's
     // own modules only, so the clone is the entire install.
@@ -200,6 +217,7 @@ const H3_TEACACHE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodeP
     name: H3_TEACACHE_PACKAGE_DIR,
     git_url: "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
     git_rev: "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f",
+    source_subdir: None,
     verify_nodes: &["MiniMaxH3TeaCache"],
     // The pack's pyproject.toml declares no dependencies beyond ComfyUI itself
     // (pure torch, already provided by the host), and it ships no
@@ -248,6 +266,7 @@ const INT8_FAST_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePac
     name: "ComfyUI-INT8-Fast",
     git_url: "https://github.com/BobJohnson24/ComfyUI-INT8-Fast.git",
     git_rev: "48a88b2fde88e986c6444fa1f51589b6089d04f3",
+    source_subdir: None,
     verify_nodes: &["OTUNetLoaderW8A8"],
     requirements_file: "requirements.txt",
 }];
@@ -263,6 +282,7 @@ const IPADAPTER_PLUS_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNo
     name: IPADAPTER_PLUS_PACKAGE_DIR,
     git_url: "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
     git_rev: "a0f451a5113cf9becb0847b92884cb10cbdec0ef",
+    source_subdir: None,
     verify_nodes: &["IPAdapterUnifiedLoader", "IPAdapterAdvanced"],
     requirements_file: "requirements.txt",
 }];
@@ -1682,7 +1702,14 @@ async fn ensure_custom_node_package(
             package.git_url,
             package.git_rev
         );
-        clone_custom_node(package.git_url, package.git_rev, &target_dir, network_proxy).await?;
+        clone_custom_node(
+            package.git_url,
+            package.git_rev,
+            &target_dir,
+            network_proxy,
+            package.source_subdir,
+        )
+        .await?;
     }
 
     let requirements = target_dir.join(package.requirements_file);
@@ -1780,6 +1807,7 @@ async fn clone_custom_node(
     git_rev: &str,
     target_dir: &Path,
     network_proxy: Option<&str>,
+    source_subdir: Option<&str>,
 ) -> Result<(), String> {
     let parent = target_dir
         .parent()
@@ -1812,7 +1840,12 @@ async fn clone_custom_node(
         if !head.eq_ignore_ascii_case(git_rev) {
             return Err(format!("checked out {head}, expected {git_rev}"));
         }
-        std::fs::rename(&staging, target_dir).map_err(|e| {
+        let source = source_subdir.map_or_else(|| staging.clone(), |subdir| staging.join(subdir));
+        if source_subdir.is_some() {
+            std::fs::copy(staging.join("LICENSE"), source.join("LICENSE"))
+                .map_err(|e| format!("cannot preserve node package license: {e}"))?;
+        }
+        std::fs::rename(&source, target_dir).map_err(|e| {
             format!(
                 "cannot move the checkout into '{}': {e}",
                 target_dir.display()
@@ -2356,9 +2389,50 @@ mod tests {
         }
         let (root, url, sha) = local_upstream();
         let target = root.join("custom_nodes").join("Pack");
-        clone_custom_node(&url, &sha, &target, None).await.unwrap();
+        clone_custom_node(&url, &sha, &target, None, None)
+            .await
+            .unwrap();
         assert!(target.join("__init__.py").is_file());
         assert_eq!(git_in(&target, &["rev-parse", "HEAD"]), sha);
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn subtree_install_keeps_node_files_and_license_without_training_dependencies() {
+        if !git_available() {
+            return;
+        }
+        let (root, url, _) = local_upstream();
+        let upstream = root.join("upstream");
+        let nested = upstream.join("comfyui_nodes/snapref");
+        std::fs::create_dir_all(nested.join("web")).unwrap();
+        std::fs::write(nested.join("__init__.py"), "NODE_CLASS_MAPPINGS = {}\n").unwrap();
+        std::fs::write(nested.join("web/snapref.js"), "// UI").unwrap();
+        std::fs::write(upstream.join("LICENSE"), "upstream license").unwrap();
+        std::fs::write(upstream.join("requirements.txt"), "training-only").unwrap();
+        git_in(&upstream, &["add", "."]);
+        git_in(&upstream, &["commit", "-q", "-m", "node subtree"]);
+        let sha = git_in(&upstream, &["rev-parse", "HEAD"]);
+        let target = root.join("custom_nodes/snapref");
+        clone_custom_node(&url, &sha, &target, None, Some("comfyui_nodes/snapref"))
+            .await
+            .unwrap();
+        assert!(target.join("__init__.py").is_file());
+        assert!(target.join("web/snapref.js").is_file());
+        assert_eq!(
+            std::fs::read_to_string(target.join("LICENSE")).unwrap(),
+            "upstream license"
+        );
+        assert!(!target.join("requirements.txt").exists());
+        assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
+        let missing = root.join("custom_nodes/missing");
+        assert!(
+            clone_custom_node(&url, &sha, &missing, None, Some("missing"))
+                .await
+                .is_err()
+        );
+        assert!(!missing.exists());
         assert_eq!(leftover_staging_dirs(&root.join("custom_nodes")), 0);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2370,7 +2444,7 @@ mod tests {
         }
         let (root, url, _) = local_upstream();
         let target = root.join("custom_nodes").join("Pack");
-        let err = clone_custom_node(&url, &"0".repeat(40), &target, None)
+        let err = clone_custom_node(&url, &"0".repeat(40), &target, None, None)
             .await
             .unwrap_err();
         assert!(err.contains("git install failed"), "{err}");
@@ -2533,4 +2607,38 @@ mod install_script_tests {
         }
         let _ = std::fs::remove_dir_all(&base);
     }
+}
+
+/// Check the simple-node signature as older SnapRef releases only accept two pictures.
+pub async fn verify_snapref_for_generation(
+    client: &reqwest::Client,
+    base_url: &str,
+    params: &GenerationParams,
+) -> Result<(), String> {
+    if !crate::templates::style_ref::snapref_active(params) {
+        return Ok(());
+    }
+    let info: serde_json::Value = client
+        .get(format!("{base_url}/object_info/SnapRefSimple"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let inputs = [
+        "reference",
+        "strength",
+        "mode",
+        "fidelity",
+        "reference_8",
+        "strength_8",
+    ]
+    .map(String::from);
+    if crate::commands::api::node_info_matches(&info, "SnapRefSimple", Some(&inputs)) {
+        return Ok(());
+    }
+    Err("SnapRef needs the current SnapRefSimple node with eight-reference support. Restart managed ComfyUI, or update custom_nodes/snapref on the remote server and restart it.".into())
 }

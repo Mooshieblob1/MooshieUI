@@ -11,7 +11,7 @@
     downloadModel,
   } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
   const IPADAPTER_CLASS = "IPAdapterUnifiedLoader";
@@ -36,6 +36,38 @@
     filename: "anima_ref_adapter_v2_r64.safetensors",
     sha256: "71dda6079e18d354e16e3347bc49a9b710afd9495c378efbb833d30cac9cb81b",
   };
+  const snaprefModels = [
+    {
+      filename: "snapref_v2a.safetensors",
+      category: "loras",
+      url: "https://huggingface.co/0ppxnhximxr/snapref-v2a/resolve/e6d6a21e4d56faae4454a1cc9bfd065d87358bf2/snapref_v2a.safetensors",
+      sha256: "8a22fc28d060447544eda283b36efe2dcdbad7422cbc0b8d42828d55a8a61ab4",
+    },
+    {
+      filename: "snapref_v1a.safetensors",
+      category: "loras",
+      url: "https://huggingface.co/0ppxnhximxr/snapref-v1a/resolve/bc3ca7091c08acce8f20af8f1cd7ed8643261023/snapref_v1a.safetensors",
+      sha256: "0b8c6897845bb721c46977eae034a95492aa39cf22342b345f7e0315f4bd81fd",
+    },
+  ];
+  let downloadingModel = $state(animaRefLora.filename);
+  let snaprefAvailable = $state<boolean | null>(null);
+  const isSnapref = $derived(generation.styleRefIsAnima && generation.animaRefMethod === "snapref");
+  const snaprefWeights = $derived(models.loras.filter((name) => /snapref/i.test(name)));
+  $effect(() => {
+    if (!isSnapref || generation.snaprefAdapter || !snaprefWeights.length) return;
+    generation.snaprefAdapter = snaprefModels.flatMap((m) => snaprefWeights.filter((name) => name.split(/[\\/]/).pop() === m.filename))[0] ?? snaprefWeights[0];
+    generation.saveSettings();
+  });
+  $effect(() => {
+    void models.cacheScope;
+    if (!isSnapref) return;
+    let current = true;
+    checkNodeAvailable("SnapRefSimple", ["reference_8", "strength_8", "fidelity"])
+      .then((ready) => { if (current) snaprefAvailable = ready; })
+      .catch(() => { if (current) snaprefAvailable = null; });
+    return () => { current = false; };
+  });
   const animaRefCorrections = ["apg", "rescale", "none"];
 
   let ipadapterAvailable = $state<boolean | null>(null);
@@ -43,7 +75,12 @@
   let installError = $state<string | null>(null);
   // Slot 0 is the reference every family uses; slot 1 is Anima's second character.
   let uploadingSlot = $state<number | null>(null);
-  let previews = $state<(string | null)[]>([null, null]);
+  let previews = $state<Record<string, string>>({});
+  let mounted = true;
+  onDestroy(() => {
+    mounted = false;
+    Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
+  });
   let pasteSlot = $state<number | null>(null);
 
   let loraDownloading = $state(false);
@@ -60,19 +97,47 @@
   const animaLoraInstalled = $derived(
     models.loras.some((m) => m.endsWith(animaRefLora.filename)),
   );
-  const slots = $derived(isAnima ? [0, 1] : [0]);
+  const slots = $derived(isSnapref ? generation.snaprefReferences.map((_, i) => i) : isAnima ? [0, 1] : [0]);
 
   function slotImage(slot: number): string | null {
+    if (isSnapref) return generation.snaprefReferences[slot]?.image ?? null;
     return slot === 0 ? generation.styleRefImage : generation.styleRefImage2;
   }
 
   function setSlotImage(slot: number, name: string | null, preview: string | null) {
-    if (slot === 0) generation.styleRefImage = name;
+    const old = slotImage(slot);
+    if (old && previews[old]) {
+      URL.revokeObjectURL(previews[old]);
+      delete previews[old];
+    }
+    if (isSnapref) generation.snaprefReferences = generation.snaprefReferences.map((r, i) => i === slot ? { ...r, image: name } : r);
+    else if (slot === 0) generation.styleRefImage = name;
     else generation.styleRefImage2 = name;
-    const next = [...previews];
-    next[slot] = preview;
-    previews = next;
+    if (name && preview) previews[name] = preview;
     generation.saveSettings();
+  }
+
+  // Keep an asynchronous upload bound to the original slot and settings snapshot.
+  function imageWriter(slot: number) {
+    const snapref = isSnapref;
+    const reference = snapref ? generation.snaprefReferences[slot] : null;
+    const image = slotImage(slot);
+    return (name: string, preview: string | null) => {
+      const index = reference ? generation.snaprefReferences.indexOf(reference) : slot;
+      if (!mounted || snapref !== isSnapref || index < 0 || slotImage(index) !== image) {
+        if (preview) URL.revokeObjectURL(preview);
+        return;
+      }
+      setSlotImage(index, name, preview);
+    };
+  }
+
+  function uploadName(name: string) {
+    return isSnapref ? `snapref_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`}_${name.split(/[\\/]/).pop()}` : name;
+  }
+
+  function inputName(result: { name: string; subfolder: string }) {
+    return result.subfolder ? `${result.subfolder}/${result.name}` : result.name;
   }
 
   const ipadapterWeightTypes = [
@@ -110,18 +175,25 @@
     });
   });
 
-  async function downloadAnimaLora() {
+  async function downloadReferenceModel(model = animaRefLora) {
+    const scope = models.cacheScope;
+    const selectedAdapter = generation.snaprefAdapter;
+    downloadingModel = model.filename;
     loraDownloadError = null;
     loraDownloading = true;
     try {
       await downloadModel(
-        animaRefLora.url,
-        animaRefLora.category,
-        animaRefLora.filename,
+        model.url,
+        model.category,
+        model.filename,
         undefined,
-        animaRefLora.sha256,
+        model.sha256,
       );
       await models.refresh();
+      if (snaprefModels.includes(model) && models.cacheScope === scope && generation.snaprefAdapter === selectedAdapter) {
+        generation.snaprefAdapter = model.filename;
+      }
+      generation.saveSettings();
     } catch (e) {
       loraDownloadError = locale.t("generation.style_ref.anima_lora_error", { error: `${e}` });
     } finally {
@@ -168,55 +240,68 @@
   });
 
   async function handleTauriDrop(path: string, slot: number) {
+    if (uploadingSlot !== null) return;
+    const write = imageWriter(slot);
+    const name = uploadName(path);
     uploadingSlot = slot;
     try {
-      const result = await uploadImage(path);
-      setSlotImage(slot, result.name, null);
+      if (isSnapref) {
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const bytes = await readFile(path);
+        const result = await uploadImageBytes(Array.from(bytes), name);
+        write(inputName(result), URL.createObjectURL(new Blob([bytes])));
+      } else {
+        const result = await uploadImage(path);
+        write(inputName(result), null);
+      }
     } catch (e) {
-      console.error("style ref tauri drop failed:", e);
-    } finally {
-      uploadingSlot = null;
-    }
+      installError = locale.t("generation.style_ref.upload_error");
+      console.error("style ref drop failed:", e);
+    } finally { uploadingSlot = null; }
   }
 
   async function pasteImage(slot: number) {
-    const bytes = await readClipboardImageSafe().catch(() => null);
-    if (!bytes || !bytes.length) return;
+    if (uploadingSlot !== null) return;
+    const write = imageWriter(slot);
+    const name = uploadName("pasted_style_ref.png");
     uploadingSlot = slot;
     try {
-      const result = await uploadImageBytes(bytes, "pasted_style_ref.png");
-      setSlotImage(slot, result.name, null);
+      const bytes = await readClipboardImageSafe();
+      if (!bytes?.length) return;
+      const result = await uploadImageBytes(bytes, name);
+      write(inputName(result), URL.createObjectURL(new Blob([new Uint8Array(bytes)])));
     } catch (e) {
+      installError = locale.t("generation.style_ref.upload_error");
       console.error("style ref paste failed:", e);
-    } finally {
-      uploadingSlot = null;
-    }
+    } finally { uploadingSlot = null; }
   }
 
-  async function handleFileBrowse(slot: number) {
+  function handleFileBrowse(slot: number) {
+    const write = imageWriter(slot);
+    const snapref = isSnapref;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
-    input.onchange = async () => {
+    input.onchange = () => {
       const file = input.files?.[0];
-      if (!file) return;
-      await uploadFile(file, slot);
+      if (file && snapref === isSnapref) void uploadFile(file, slot, write);
     };
     input.click();
   }
 
-  async function uploadFile(file: File, slot: number) {
+  async function uploadFile(file: File, slot: number, write = imageWriter(slot)) {
+    if (uploadingSlot !== null) return;
+    const name = uploadName(file.name);
     uploadingSlot = slot;
+    installError = null;
     try {
-      const buf = await file.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(buf));
-      const result = await uploadImageBytes(bytes, file.name);
-      setSlotImage(slot, result.name, URL.createObjectURL(file));
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const result = await uploadImageBytes(bytes, name);
+      write(inputName(result), URL.createObjectURL(file));
     } catch (e) {
+      installError = locale.t("generation.style_ref.upload_error");
       console.error("style ref upload failed:", e);
-    } finally {
-      uploadingSlot = null;
-    }
+    } finally { uploadingSlot = null; }
   }
 
   function handleWebDrop(event: DragEvent, slot: number) {
@@ -232,6 +317,7 @@
   }
 
   function slotLabel(slot: number): string {
+    if (isSnapref) return locale.t("generation.style_ref.snapref_reference", { number: slot + 1 });
     if (!isAnima) return locale.t("generation.style_ref.image");
     return slot === 0
       ? locale.t("generation.style_ref.anima_character")
@@ -278,23 +364,70 @@
         {locale.t("generation.style_ref.unsupported")}
       </div>
     {:else}
+      {#if isAnima}
+        <label class="block text-neutral-400">
+          {locale.t("generation.style_ref.method")}
+          <select class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none" aria-label={locale.t("generation.style_ref.method")} bind:value={generation.animaRefMethod} onchange={() => generation.saveSettings()}>
+            <option value="anima_ref_adapter">{locale.t("generation.style_ref.anima_mode")}</option>
+            <option value="snapref">SnapRef</option>
+          </select>
+        </label>
+      {/if}
+      {#if isSnapref}
+        <label class="block text-neutral-400">
+          {locale.t("generation.style_ref.snapref_weights")}
+          <select class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none" aria-label={locale.t("generation.style_ref.snapref_weights")} bind:value={generation.snaprefAdapter} onchange={() => generation.saveSettings()}>
+            {#if !snaprefWeights.length && !generation.snaprefAdapter}
+              <option value={null} disabled>{locale.t("generation.style_ref.snapref_select")}</option>
+            {/if}
+            {#if generation.snaprefAdapter && !snaprefWeights.includes(generation.snaprefAdapter)}
+              <option value={generation.snaprefAdapter}>{generation.snaprefAdapter} — {locale.t("generation.style_ref.snapref_missing")}</option>
+            {/if}
+            {#each snaprefWeights as weight}<option value={weight}>{weight}</option>{/each}
+          </select>
+        </label>
+        {#if snaprefAvailable === false}<p class="text-[11px] text-amber-400">{locale.t("generation.style_ref.snapref_nodes")}</p>{/if}
+        {#if models.remote}
+          <p class="text-[11px] text-neutral-500">{locale.t("generation.style_ref.snapref_remote")}</p>
+        {:else}
+          {#each snaprefModels as model}
+            {#if !snaprefWeights.some((name) => name.split(/[\\/]/).pop() === model.filename)}
+              <button class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 disabled:opacity-50" disabled={loraDownloading} onclick={() => downloadReferenceModel(model)}>{locale.t("generation.style_ref.snapref_download", { model: model.filename })}</button>
+            {/if}
+          {/each}
+        {/if}
+        <label class="block text-neutral-400">
+          {locale.t("generation.style_ref.snapref_mode")}
+          <select class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none" aria-label={locale.t("generation.style_ref.snapref_mode")} bind:value={generation.snaprefMode} onchange={() => generation.saveSettings()}>
+            <option value="Character & Style">{locale.t("generation.style_ref.snapref_cs")}</option>
+            <option value="Character">{locale.t("generation.style_ref.anima_character")}</option>
+          </select>
+        </label>
+        <label for="snapref-fidelity" class="block text-neutral-400">
+          {locale.t("generation.style_ref.snapref_fidelity")} <span class="text-neutral-300">{generation.snaprefFidelity.toFixed(2)}</span>
+          <InfoTip text={locale.t("generation.style_ref.snapref_fidelity_tip")} />
+          <input id="snapref-fidelity" type="range" min="0" max="1" step="0.05" class="w-full" bind:value={generation.snaprefFidelity} onchange={() => generation.saveSettings()} />
+        </label>
+      {/if}
+      {#if installError}<p class="text-[11px] text-red-400">{installError}</p>{/if}
+
       <!-- Family badge -->
       <div class="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
         {isRedux
           ? locale.t("generation.style_ref.redux_mode")
           : isAnima
-            ? locale.t("generation.style_ref.anima_mode")
+            ? (isSnapref ? "SnapRef" : locale.t("generation.style_ref.anima_mode"))
             : locale.t("generation.style_ref.ipadapter_mode")}
-        {#if isAnima}<InfoTip text={locale.t("generation.style_ref.anima_note")} />{/if}
+        {#if isAnima}<InfoTip text={locale.t(isSnapref ? "generation.style_ref.snapref_note" : "generation.style_ref.anima_note")} />{/if}
       </div>
 
       {#if isAnima}
-        {#if !animaLoraInstalled}
+        {#if !isSnapref && !animaLoraInstalled}
           <div class="space-y-1">
             <button
               class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-100 transition-colors hover:border-indigo-500 disabled:opacity-50"
               disabled={loraDownloading}
-              onclick={downloadAnimaLora}
+              onclick={() => downloadReferenceModel()}
               title={locale.t("generation.style_ref.anima_lora_auto")}
             >
               {locale.t("generation.style_ref.anima_lora_download")}
@@ -305,7 +438,7 @@
           <div class="rounded-lg bg-neutral-800/80 px-3 py-2">
             <div class="mb-1 flex items-center justify-between text-[11px] text-neutral-400">
               <span class="mr-2 truncate">
-                {locale.t("generation.upscale.downloading", { model: animaRefLora.filename })}
+                {locale.t("generation.upscale.downloading", { model: downloadingModel })}
               </span>
               {#if dlTotal > 0}
                 <span class="shrink-0 tabular-nums">
@@ -363,12 +496,12 @@
         {@const image = slotImage(slot)}
         <div>
           <div class="mb-1 text-neutral-400">
-            {slotLabel(slot)}{#if isAnima && slot === 1}<InfoTip text={locale.t("generation.style_ref.anima_two_characters_tip")} />{/if}
+            {slotLabel(slot)}{#if isAnima && !isSnapref && slot === 1}<InfoTip text={locale.t("generation.style_ref.anima_two_characters_tip")} />{/if}
           </div>
-          {#if image && previews[slot]}
+          {#if image && previews[image]}
             <div class="relative mb-2">
               <img
-                src={previews[slot]}
+                src={previews[image]}
                 alt={slotLabel(slot)}
                 class="max-h-32 w-full rounded-lg object-cover"
               />
@@ -393,6 +526,11 @@
 
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleFileBrowse(slot); }
+            }}
             use:tauriDropTarget={slot}
             data-drop-zone="style-ref-{slot}"
             class="cursor-pointer select-none rounded-lg border border-dashed border-neutral-700 px-3 py-3 text-center text-neutral-500 transition-colors hover:border-neutral-500"
@@ -403,7 +541,7 @@
             onclick={() => handleFileBrowse(slot)}
           >
             {#if uploadingSlot === slot}
-              <span class="text-indigo-400">Uploading...</span>
+              <span class="text-indigo-400">{locale.t("generation.style_ref.snapref_uploading")}</span>
             {:else}
               {isAnima
                 ? locale.t("generation.style_ref.anima_drop_image")
@@ -413,10 +551,30 @@
               >
             {/if}
           </div>
+          {#if isSnapref && image}
+            <label for="snapref-strength-{slot}" class="mt-2 block text-neutral-400">
+              {locale.t("generation.style_ref.strength")} <span class="text-neutral-300">{generation.snaprefReferences[slot].strength.toFixed(2)}</span>
+              <InfoTip text={locale.t("generation.style_ref.snapref_strength_tip")} />
+              <input id="snapref-strength-{slot}" type="range" min="0" max="2" step="0.05" class="w-full" bind:value={generation.snaprefReferences[slot].strength} onchange={() => generation.saveSettings()} />
+            </label>
+          {/if}
+          {#if isSnapref && slot > 1}
+            <button class="touch-target text-neutral-500 hover:text-neutral-300" disabled={uploadingSlot !== null} onclick={() => {
+              clearImage(slot);
+              generation.snaprefReferences = generation.snaprefReferences.filter((_, i) => i !== slot);
+              generation.saveSettings();
+            }}>{locale.t("generation.style_ref.snapref_remove")}</button>
+          {/if}
         </div>
       {/each}
+      {#if isSnapref && slots.length < 8}
+        <button class="touch-target w-full rounded-lg border border-neutral-700 px-3 py-2 text-indigo-400 hover:border-indigo-500" disabled={uploadingSlot !== null} onclick={() => {
+          generation.snaprefReferences = [...generation.snaprefReferences, { image: null, strength: 1 }];
+          generation.saveSettings();
+        }}>{locale.t("generation.style_ref.snapref_add")}</button>
+      {/if}
 
-      {#if isAnima}
+      {#if isAnima && !isSnapref}
         <!-- Reference guidance -->
         <div>
           <div class="mb-1 text-neutral-400">

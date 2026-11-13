@@ -1,5 +1,5 @@
 //! Style reference injection: Flux Redux (core nodes), IP-Adapter+ (SD1.5/SDXL)
-//! and the Anima Reference Adapter (character reference).
+//! and Anima character reference (Reference Adapter or SnapRef).
 //!
 //! Flux Redux: StyleModelLoader + CLIPVisionLoader + CLIPVisionEncode + StyleModelApply
 //! IP-Adapter: IPAdapterUnifiedLoader + IPAdapter (IPAdapterAdvanced)
@@ -44,6 +44,80 @@ pub fn anima_ref_active(params: &GenerationParams) -> bool {
         && params.mode != "video"
         && params.mode != "image_edit"
         && is_anima_family(&params.model_architecture)
+}
+
+pub fn snapref_active(params: &GenerationParams) -> bool {
+    anima_ref_active(params) && params.anima_ref_method == "snapref"
+}
+
+pub fn validate_snapref(params: &GenerationParams) -> Result<(), String> {
+    if !["", "anima_ref_adapter", "snapref"].contains(&params.anima_ref_method.as_str()) {
+        return Err("Unknown Anima reference method.".into());
+    }
+    if !snapref_active(params) {
+        return Ok(());
+    }
+    if trimmed_image(params.snapref_adapter.as_deref()).is_none() {
+        return Err("Select or download SnapRef adapter weights before generating.".into());
+    }
+    if !["Character & Style", "Character"].contains(&params.snapref_mode.as_str()) {
+        return Err("Unknown SnapRef mode.".into());
+    }
+    if params.snapref_references.len() > 8
+        || !params
+            .snapref_references
+            .iter()
+            .any(|r| trimmed_image(r.image.as_deref()).is_some())
+    {
+        return Err(
+            "SnapRef requires between one and eight reference images of the same character.".into(),
+        );
+    }
+    if !params.snapref_fidelity.is_finite()
+        || !(0.0..=1.0).contains(&params.snapref_fidelity)
+        || params
+            .snapref_references
+            .iter()
+            .any(|r| !r.strength.is_finite() || !(0.0..=2.0).contains(&r.strength))
+    {
+        return Err("SnapRef strength must be 0–2 and fidelity must be 0–1.".into());
+    }
+    Ok(())
+}
+
+pub fn inject_snapref(result: &mut WorkflowResult, params: &GenerationParams) {
+    let id = result.next_id.to_string();
+    let mut inputs = json!({
+        "model": [result.model_source.0, result.model_source.1],
+        "clip": [result.clip_source.0, result.clip_source.1],
+        "vae": [result.vae_source.0, result.vae_source.1],
+        "adapter": params.snapref_adapter.as_deref().unwrap_or("").trim(),
+        "mode": params.snapref_mode,
+        "fidelity": params.snapref_fidelity,
+    });
+    for (i, (image, strength)) in params
+        .snapref_references
+        .iter()
+        .filter_map(|r| trimmed_image(r.image.as_deref()).map(|image| (image, r.strength)))
+        .enumerate()
+    {
+        let suffix = if i == 0 {
+            String::new()
+        } else {
+            format!("_{}", i + 1)
+        };
+        inputs[format!("reference{suffix}")] = json!(image);
+        inputs[format!("strength{suffix}")] = json!(strength);
+    }
+    result.workflow.insert(
+        id.clone(),
+        json!({"class_type": "SnapRefSimple", "inputs": inputs}),
+    );
+    result.model_source = (id.clone(), 0);
+    result.next_id += 1;
+    if let Some(sampler) = result.workflow.get_mut(&result.sampler_id) {
+        sampler["inputs"]["model"] = json!([id, 0]);
+    }
 }
 
 /// `AnimaRefAdapter.correction` choices.
@@ -385,7 +459,11 @@ pub fn inject_style_ref(result: &mut WorkflowResult, params: &GenerationParams) 
     } else if is_sd15_family(arch) || is_sdxl_family(arch) {
         inject_ipadapter(result, params);
     } else if is_anima_family(arch) {
-        inject_anima_ref_adapter(result, params);
+        if snapref_active(params) {
+            inject_snapref(result, params);
+        } else {
+            inject_anima_ref_adapter(result, params);
+        }
     }
     // Unsupported families are caught by validate_params before reaching here.
 }
@@ -691,5 +769,130 @@ mod tests {
         params.style_ref_enabled = false;
         assert!(!anima_ref_active(&params));
         assert!(!anima_ref_active(&style_ref_params("sdxl")));
+    }
+    #[test]
+    fn older_requests_keep_the_existing_adapter_and_snapref_defaults() {
+        let mut value = serde_json::to_value(anima_params()).unwrap();
+        for key in [
+            "anima_ref_method",
+            "snapref_adapter",
+            "snapref_mode",
+            "snapref_fidelity",
+            "snapref_references",
+        ] {
+            value.as_object_mut().unwrap().remove(key);
+        }
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        assert!(!snapref_active(&params));
+        assert_eq!(params.snapref_mode, "Character & Style");
+        assert_eq!(params.snapref_fidelity, 1.0);
+        let mut result = base_result();
+        inject_style_ref(&mut result, &params);
+        assert_eq!(
+            node(&result, "AnimaRefAdapter")["class_type"],
+            "AnimaRefAdapter"
+        );
+    }
+
+    fn snapref_params() -> GenerationParams {
+        let mut p = anima_params();
+        p.anima_ref_method = "snapref".into();
+        p.snapref_adapter = Some("subfolder/snapref_v2a.safetensors".into());
+        p.snapref_mode = "Character & Style".into();
+        p.snapref_fidelity = 1.0;
+        p.style_ref_image = None;
+        p.snapref_references = vec![crate::comfyui::types::SnapRefReference {
+            image: Some("character.png".into()),
+            strength: 1.0,
+        }];
+        p
+    }
+
+    #[test]
+    fn snapref_uses_the_existing_sampler_in_all_image_modes() {
+        for mode in ["txt2img", "img2img", "inpainting"] {
+            for adapter in [
+                "snapref_v1a.safetensors",
+                "subfolder/snapref_v2a_fp8.safetensors",
+            ] {
+                let mut p = snapref_params();
+                p.mode = mode.into();
+                p.snapref_adapter = Some(adapter.into());
+                assert!(validate_snapref(&p).is_ok());
+                let mut result = base_result();
+                inject_style_ref(&mut result, &p);
+                let inputs = &node(&result, "SnapRefSimple")["inputs"];
+                assert_eq!(inputs["adapter"], adapter);
+                assert_eq!(inputs["model"], json!(["0", 0]));
+                assert_eq!(inputs["clip"], json!(["0", 1]));
+                assert_eq!(inputs["vae"], json!(["0", 2]));
+                assert_eq!(inputs["reference"], "character.png");
+                assert_eq!(
+                    result.workflow["1"]["inputs"]["model"],
+                    json!([result.model_source.0, 0])
+                );
+                assert_eq!(result.positive_source, ("2".into(), 0));
+                assert!(!result
+                    .workflow
+                    .values()
+                    .any(|n| n["class_type"] == "AnimaRefAdapter"
+                        || n["class_type"] == "ImageStitch"));
+            }
+        }
+    }
+
+    #[test]
+    fn snapref_preserves_eight_weights_and_compacts_empty_slots() {
+        let mut p = snapref_params();
+        p.snapref_references = (0..8)
+            .map(|i| crate::comfyui::types::SnapRefReference {
+                image: Some(format!("ref_{i}.png")),
+                strength: i as f32 / 4.0,
+            })
+            .collect();
+        let mut result = base_result();
+        inject_style_ref(&mut result, &p);
+        let inputs = &node(&result, "SnapRefSimple")["inputs"];
+        assert_eq!(inputs["strength"], 0.0);
+        assert_eq!(inputs["reference_8"], "ref_7.png");
+        assert_eq!(inputs["strength_8"], 1.75);
+        p.snapref_references[0].image = Some("  ".into());
+        let mut result = base_result();
+        inject_style_ref(&mut result, &p);
+        let inputs = &node(&result, "SnapRefSimple")["inputs"];
+        assert_eq!(inputs["reference"], "ref_1.png");
+        assert_eq!(inputs["strength"], 0.25);
+        assert!(inputs.get("reference_8").is_none());
+    }
+
+    #[test]
+    fn snapref_validation_rejects_missing_inputs_and_invalid_ranges() {
+        let p = snapref_params();
+        let mut invalid = p.clone();
+        invalid.snapref_references.clear();
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_adapter = None;
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_mode = "cs".into();
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_references = vec![p.snapref_references[0].clone(); 9];
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_fidelity = 1.1;
+        assert!(validate_snapref(&invalid).is_err());
+        let mut invalid = p.clone();
+        invalid.snapref_references[0].strength = -0.1;
+        assert!(validate_snapref(&invalid).is_err());
+        let mut zero = p.clone();
+        zero.snapref_references[0].strength = 0.0;
+        assert!(validate_snapref(&zero).is_ok());
+        for mode in ["image_edit", "video"] {
+            let mut inactive = p.clone();
+            inactive.mode = mode.into();
+            assert!(!snapref_active(&inactive));
+        }
     }
 }

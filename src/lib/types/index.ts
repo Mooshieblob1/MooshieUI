@@ -464,6 +464,11 @@ export interface GenerationParams {
   /** Anima character reference: second character, stitched right of style_ref_image. */
   style_ref_image_2?: string | null;
   /** Anima character reference: AnimaRefAdapter ref_guidance (1 = no extra model call). */
+  anima_ref_method?: "anima_ref_adapter" | "snapref";
+  snapref_adapter?: string | null;
+  snapref_mode?: "Character & Style" | "Character";
+  snapref_fidelity?: number;
+  snapref_references?: { image: string | null; strength: number }[];
   anima_ref_guidance?: number;
   /** Anima character reference: AnimaRefAdapter correction (apg, rescale, none). */
   anima_ref_correction?: string;
