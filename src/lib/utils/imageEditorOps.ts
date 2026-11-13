@@ -494,6 +494,55 @@ export function rectFromAnchor(
   return { x: dirX > 0 ? ax : ax - w, y: dirY > 0 ? ay : ay - h, w, h };
 }
 
+/**
+ * A layer's content box after dragging `handle` by (dx, dy) image pixels.
+ * Unlike a crop it may leave the image, and it never flips: the side opposite
+ * the handle stays put and the box bottoms out at one pixel.
+ */
+export function scaleRect(start: Rect, handle: CropHandle, dx: number, dy: number, proportional: boolean): Rect {
+  if (handle === "move" || handle === "new") return { x: start.x + dx, y: start.y + dy, w: start.w, h: start.h };
+  const west = handle.includes("w");
+  const east = handle.includes("e");
+  const north = handle.includes("n");
+  const south = handle.includes("s");
+  let w = Math.max(1, start.w + (east ? dx : west ? -dx : 0));
+  let h = Math.max(1, start.h + (south ? dy : north ? -dy : 0));
+  if (proportional && start.w > 0 && start.h > 0) {
+    const ratio = start.w / start.h;
+    if (!west && !east) w = h * ratio;
+    else if (!north && !south) h = w / ratio;
+    else {
+      const scale = Math.max(w / start.w, h / start.h);
+      w = start.w * scale;
+      h = start.h * scale;
+    }
+  }
+  // An edge handle keeps the box centred on the other axis.
+  const x = west ? start.x + start.w - w : east ? start.x : start.x + (start.w - w) / 2;
+  const y = north ? start.y + start.h - h : south ? start.y : start.y + (start.h - h) / 2;
+  return { x, y, w, h };
+}
+
+/** The box around every pixel that is not fully transparent, or null for an empty layer. */
+export function alphaBounds(data: Uint8ClampedArray, width: number, height: number): Rect | null {
+  let left = width;
+  let right = -1;
+  let top = height;
+  let bottom = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4 + 3;
+    for (let x = 0; x < width; x++) {
+      if (data[row + x * 4] === 0) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      bottom = y;
+    }
+  }
+  if (right < 0) return null;
+  return { x: left, y: top, w: right - left + 1, h: bottom - top + 1 };
+}
+
 /** A crop rectangle after dragging `handle` by (dx, dy) image pixels. */
 export function dragCropRect(
   start: Rect,
@@ -588,7 +637,7 @@ export type EditOp =
 
 export type PaintTool = "brush" | "eraser" | "clone";
 /** Operations that repeat many times in a row and are stored as a count. */
-export type CountedOp = PaintTool | "fill" | "clear";
+export type CountedOp = PaintTool | "fill" | "clear" | "move" | "text" | "mask";
 
 /** Add an operation to the list, folding a repeat of the last counted one into its count. */
 export function appendOp(ops: EditOp[], op: EditOp): EditOp[] {

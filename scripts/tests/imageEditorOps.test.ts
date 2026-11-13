@@ -11,7 +11,9 @@ import {
   sameAdjustments,
   buildEditNote,
   colorMatrix,
+  alphaBounds,
   dragCropRect,
+  scaleRect,
   editedMetadata,
   fitAspectRect,
   gaussianBlur,
@@ -241,4 +243,31 @@ test("brush stamps keep even spacing across pointer segments", () => {
   assert.deepEqual(second.points, [[12, 0], [16, 0], [20, 0]]);
   assert.equal(second.carry, 0);
   assert.deepEqual(strokeStamps(5, 5, 5, 5, 4, 1), { points: [], carry: 1 });
+});
+
+test("scaling a layer keeps the opposite side fixed and its proportions", () => {
+  const start = { x: 10, y: 20, w: 100, h: 50 };
+  assert.deepEqual(scaleRect(start, "move", 7, -3, true), { x: 17, y: 17, w: 100, h: 50 });
+  assert.deepEqual(scaleRect(start, "se", 100, 0, true), { x: 10, y: 20, w: 200, h: 100 });
+  assert.deepEqual(scaleRect(start, "nw", -100, 0, true), { x: -90, y: -30, w: 200, h: 100 });
+  // An edge handle grows the other axis around the centre.
+  assert.deepEqual(scaleRect(start, "e", 100, 0, true), { x: 10, y: -5, w: 200, h: 100 });
+  assert.deepEqual(scaleRect(start, "e", 100, 0, false), { x: 10, y: 20, w: 200, h: 50 });
+  assert.deepEqual(scaleRect(start, "se", 30, 10, false), { x: 10, y: 20, w: 130, h: 60 });
+});
+
+test("scaling never flips or collapses a layer", () => {
+  const start = { x: 10, y: 20, w: 100, h: 50 };
+  const free = scaleRect(start, "se", -500, -500, false);
+  assert.deepEqual(free, { x: 10, y: 20, w: 1, h: 1 });
+  const west = scaleRect(start, "w", 500, 0, false);
+  assert.deepEqual(west, { x: 109, y: 20, w: 1, h: 50 });
+});
+
+test("alpha bounds box the opaque pixels and report an empty layer", () => {
+  const data = new Uint8ClampedArray(6 * 4 * 4);
+  assert.equal(alphaBounds(data, 6, 4), null);
+  data[(1 * 6 + 2) * 4 + 3] = 255;
+  data[(3 * 6 + 4) * 4 + 3] = 1;
+  assert.deepEqual(alphaBounds(data, 6, 4), { x: 2, y: 1, w: 3, h: 3 });
 });

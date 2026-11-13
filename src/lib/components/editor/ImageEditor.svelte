@@ -1,4 +1,10 @@
 <script lang="ts">
+  import { tick } from "svelte";
+  import Move from "@lucide/svelte/icons/move";
+  import Type from "@lucide/svelte/icons/type";
+  import Bold from "@lucide/svelte/icons/bold";
+  import Italic from "@lucide/svelte/icons/italic";
+  import VenetianMask from "@lucide/svelte/icons/venetian-mask";
   import Hand from "@lucide/svelte/icons/hand";
   import Search from "@lucide/svelte/icons/search";
   import Crop from "@lucide/svelte/icons/crop";
@@ -44,6 +50,7 @@
   import {
     ADJUSTMENT_KEYS,
     NEUTRAL_ADJUSTMENTS,
+    alphaBounds,
     appendOp,
     applyAdjustments,
     curveLut,
@@ -57,17 +64,19 @@
     isNeutral,
     roundRect,
     sameAdjustments,
+    scaleRect,
   } from "../../utils/imageEditorOps.js";
   import type { AdjustmentKey, Adjustments, CropHandle, CurvePoint, EditOp, PaintTool, Rect } from "../../utils/imageEditorOps.js";
   import type { GenerationMode } from "../../types/index.js";
 
-  type Tool = "hand" | "zoom" | "crop" | "marquee" | "lasso" | "brush" | "eraser" | "clone" | "eyedropper";
+  type Tool = "move" | "text" | "hand" | "zoom" | "crop" | "marquee" | "lasso" | "brush" | "eraser" | "clone" | "eyedropper";
 
   const isPaintTool = (t: Tool): t is PaintTool => t === "brush" || t === "eraser" || t === "clone";
 
   const TOOL_KEYS: Record<string, Tool> = {
     h: "hand",
-    v: "hand",
+    v: "move",
+    t: "text",
     z: "zoom",
     c: "crop",
     m: "marquee",
@@ -78,6 +87,42 @@
     i: "eyedropper",
   };
 
+  /** Canvas composite operations, in Photoshop's menu order. */
+  const BLEND_MODES = [
+    "normal",
+    "darken",
+    "multiply",
+    "color-burn",
+    "lighten",
+    "screen",
+    "color-dodge",
+    "overlay",
+    "soft-light",
+    "hard-light",
+    "difference",
+    "hue",
+    "saturation",
+    "color",
+    "luminosity",
+  ] as const;
+  type BlendMode = (typeof BLEND_MODES)[number];
+
+  const FONTS = ["sans-serif", "serif", "monospace", "cursive", "Arial", "Georgia", "Impact", "Courier New", "Times New Roman", "Verdana"];
+  const MIN_TEXT = 4;
+  const MAX_TEXT = 2000;
+
+  /** A line of type. `x`, `y` is the top left corner in document pixels. */
+  interface TextSpec {
+    text: string;
+    font: string;
+    size: number;
+    bold: boolean;
+    italic: boolean;
+    color: string;
+    x: number;
+    y: number;
+  }
+
   /** One document-sized raster. Canvases are never drawn on after they are stored. */
   interface Layer {
     id: number;
@@ -86,6 +131,12 @@
     visible: boolean;
     /** 0..100 */
     opacity: number;
+    blend: BlendMode;
+    /** Document-sized; a pixel's alpha is how much of the layer shows there. */
+    mask: HTMLCanvasElement | null;
+    maskOn: boolean;
+    /** Set while the layer is still editable type; painting on it clears this. */
+    text: TextSpec | null;
   }
 
   /** A closed outline in document pixels; `inverted` selects everything outside it. */
@@ -97,6 +148,8 @@
   interface Stroke {
     tool: PaintTool;
     layerId: number;
+    /** The stroke paints the layer's mask instead of its pixels. */
+    onMask: boolean;
     /** The layer as it was before the stroke. */
     base: HTMLCanvasElement;
     /** The layer with the stroke applied; becomes the layer on pointer up. */
@@ -182,6 +235,13 @@
   let compResult: HTMLCanvasElement | null = null;
   let compFor = -1;
   let stroke: Stroke | null = null;
+  /** A move or resize of one layer, shown live until the pointer is released. */
+  let xform: { id: number; from: Rect; to: Rect } | null = null;
+  let scratch: HTMLCanvasElement | null = null;
+  /** Brush and eraser paint the active layer's mask instead of its pixels. */
+  let maskEdit = $state(false);
+  let textDraft = $state({ font: "sans-serif", size: 64, bold: false, italic: false });
+  let textInput = $state<HTMLInputElement | null>(null);
 
   let selection = $state.raw<Selection | null>(null);
   let color = $state("#ffffff");
@@ -232,6 +292,8 @@
   const busy = $derived(saving || phase !== "ready");
   const activeLayer = $derived(layers.find((l) => l.id === activeId) ?? null);
   const activeIndex = $derived(layers.findIndex((l) => l.id === activeId));
+  const onMask = $derived(maskEdit && !!activeLayer?.mask && activeLayer.maskOn);
+  const textSpec = $derived(activeLayer?.text ?? null);
   const metadataTitle = $derived.by(() => {
     const m = sourceMetadata;
     if (!m) return "";
@@ -304,6 +366,8 @@
     adjustments = { ...NEUTRAL_ADJUSTMENTS };
     layers = [];
     stroke = null;
+    xform = null;
+    maskEdit = false;
     drag = null;
     compResult = null;
     compCanvas = null;
@@ -340,7 +404,12 @@
           canvas,
           visible: true,
           opacity: 100,
+          blend: "normal",
+          mask: null,
+          maskOn: true,
+          text: null,
         };
+        textDraft.size = Math.min(400, Math.max(12, Math.round(Math.max(canvas.width, canvas.height) / 16)));
         history = [{ layers: [background], activeId: background.id, adjustments: { ...NEUTRAL_ADJUSTMENTS }, ops: [] }];
         historyLength = 1;
         historyIndex = 0;
@@ -363,24 +432,59 @@
 
   // ---------------------------------------------------------------- layers
 
-  const layerCanvas = (layer: Layer) => (stroke && stroke.layerId === layer.id ? stroke.work : layer.canvas);
+  const layerCanvas = (layer: Layer) =>
+    stroke && stroke.layerId === layer.id && !stroke.onMask ? stroke.work : layer.canvas;
+  const layerMask = (layer: Layer) =>
+    !layer.maskOn ? null : stroke && stroke.layerId === layer.id && stroke.onMask ? stroke.work : layer.mask;
+
+  /** Map the box `from` onto the box `to`. */
+  function applyXform(ctx: CanvasRenderingContext2D, from: Rect, to: Rect) {
+    const sx = to.w / from.w;
+    const sy = to.h / from.h;
+    ctx.setTransform(sx, 0, 0, sy, to.x - from.x * sx, to.y - from.y * sy);
+    ctx.imageSmoothingQuality = "high";
+  }
+
+  /** A layer as it is composited: moved or resized while a drag is live, and cut by its mask. */
+  function layerPixels(layer: Layer): HTMLCanvasElement {
+    const pixels = layerCanvas(layer);
+    const mask = layerMask(layer);
+    const moving = xform && xform.id === layer.id ? xform : null;
+    if (!mask && !moving) return pixels;
+    if (!scratch || scratch.width !== docW || scratch.height !== docH) scratch = makeCanvas(docW, docH);
+    const ctx = scratch.getContext("2d")!;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, docW, docH);
+    if (moving) applyXform(ctx, moving.from, moving.to);
+    ctx.drawImage(pixels, 0, 0);
+    if (mask) {
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.drawImage(mask, 0, 0);
+    }
+    return scratch;
+  }
 
   /** All visible layers flattened, before adjustments. Cached per `docVersion`. */
   function composite(): HTMLCanvasElement | null {
     if (layers.length === 0) return null;
     if (compResult && compFor === docVersion) return compResult;
     const visible = layers.filter((l) => l.visible);
-    if (visible.length === 1 && visible[0].opacity === 100) {
-      compResult = layerCanvas(visible[0]);
+    const only = visible.length === 1 ? visible[0] : null;
+    if (only && only.opacity === 100 && !layerMask(only) && xform?.id !== only.id) {
+      compResult = layerCanvas(only);
     } else {
       if (!compCanvas || compCanvas.width !== docW || compCanvas.height !== docH) compCanvas = makeCanvas(docW, docH);
       const ctx = compCanvas.getContext("2d")!;
       ctx.clearRect(0, 0, docW, docH);
       for (const layer of visible) {
+        const pixels = layerPixels(layer);
         ctx.globalAlpha = layer.opacity / 100;
-        ctx.drawImage(layerCanvas(layer), 0, 0);
+        ctx.globalCompositeOperation = layer.blend === "normal" ? "source-over" : layer.blend;
+        ctx.drawImage(pixels, 0, 0);
       }
       ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
       compResult = compCanvas;
     }
     compFor = docVersion;
@@ -402,9 +506,11 @@
     let bytes = 0;
     for (const entry of entries) {
       for (const layer of entry.layers) {
-        if (seen.has(layer.canvas)) continue;
-        seen.add(layer.canvas);
-        bytes += layer.canvas.width * layer.canvas.height * 4;
+        for (const canvas of [layer.canvas, layer.mask]) {
+          if (!canvas || seen.has(canvas)) continue;
+          seen.add(canvas);
+          bytes += canvas.width * canvas.height * 4;
+        }
       }
     }
     return bytes;
@@ -454,6 +560,7 @@
     historyIndex = index;
     adjustments = { ...entry.adjustments };
     crop = null;
+    xform = null;
     if (tool === "crop") tool = "hand";
     if (entry.layers[0].canvas.width !== docW || entry.layers[0].canvas.height !== docH) selection = null;
     showLayers(entry.layers, entry.activeId);
@@ -477,13 +584,75 @@
 
   function newLayerRecord(canvas: HTMLCanvasElement): Layer {
     const id = nextLayerId++;
-    return { id, name: locale.t("editor.layer.name", { n: String(id) }), canvas, visible: true, opacity: 100 };
+    return {
+      id,
+      name: locale.t("editor.layer.name", { n: String(id) }),
+      canvas,
+      visible: true,
+      opacity: 100,
+      blend: "normal",
+      mask: null,
+      maskOn: true,
+      text: null,
+    };
   }
 
-  function insertAbove(layer: Layer) {
+  function insertAbove(layer: Layer, op: EditOp | null = null) {
     const index = layers.findIndex((l) => l.id === activeId);
     const next = [...layers.slice(0, index + 1), layer, ...layers.slice(index + 1)];
-    commit(next, null, layer.id);
+    maskEdit = false;
+    commit(next, op, layer.id);
+  }
+
+  /** The active layer swapped for a changed copy. */
+  const withActive = (patch: Partial<Layer>) => layers.map((l) => (l.id === activeId ? { ...l, ...patch } : l));
+
+  /** A layer's pixels with its mask applied for good. */
+  function masked(layer: Layer): HTMLCanvasElement {
+    if (!layer.mask || !layer.maskOn) return layer.canvas;
+    const out = copyCanvas(layer.canvas);
+    const ctx = out.getContext("2d")!;
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage(layer.mask, 0, 0);
+    return out;
+  }
+
+  function selectLayer(id: number, editMask = false) {
+    const layer = layers.find((l) => l.id === id);
+    if (!layer) return;
+    maskEdit = editMask && !!layer.mask && !(maskEdit && activeId === id);
+    activeId = id;
+    if (layer.text) {
+      color = layer.text.color;
+      textDraft = { font: layer.text.font, size: layer.text.size, bold: layer.text.bold, italic: layer.text.italic };
+    }
+  }
+
+  function setBlend(blend: BlendMode) {
+    if (busy || !activeLayer || activeLayer.blend === blend) return;
+    commit(withActive({ blend }));
+  }
+
+  /** A new mask shows the selection, or the whole layer when nothing is selected. */
+  function addMask() {
+    if (busy || !activeLayer || activeLayer.mask) return;
+    const mask = makeCanvas(docW, docH);
+    const ctx = mask.getContext("2d")!;
+    clipToSelection(ctx);
+    ctx.fillRect(0, 0, docW, docH);
+    commit(withActive({ mask, maskOn: true }), { op: "mask", n: 1 });
+    maskEdit = true;
+  }
+
+  function deleteMask() {
+    if (busy || !activeLayer?.mask) return;
+    maskEdit = false;
+    commit(withActive({ mask: null, maskOn: true }));
+  }
+
+  function toggleMask() {
+    if (busy || !activeLayer?.mask) return;
+    commit(withActive({ maskOn: !activeLayer.maskOn }));
   }
 
   function addLayer() {
@@ -499,7 +668,14 @@
     const ctx = canvas.getContext("2d")!;
     clipToSelection(ctx);
     ctx.drawImage(layer.canvas, 0, 0);
-    insertAbove({ ...newLayerRecord(canvas), opacity: layer.opacity });
+    insertAbove({
+      ...newLayerRecord(canvas),
+      opacity: layer.opacity,
+      blend: layer.blend,
+      mask: layer.mask,
+      maskOn: layer.maskOn,
+      text: selection ? null : layer.text,
+    });
   }
 
   function mergeDown() {
@@ -507,11 +683,16 @@
     if (busy || index <= 0) return;
     const upper = layers[index];
     const lower = layers[index - 1];
-    const canvas = copyCanvas(lower.canvas);
+    // Both masks are baked in: the merged pixels are what was on screen.
+    const baked = masked(lower);
+    const canvas = baked === lower.canvas ? copyCanvas(baked) : baked;
     const ctx = canvas.getContext("2d")!;
     ctx.globalAlpha = upper.opacity / 100;
-    if (upper.visible) ctx.drawImage(upper.canvas, 0, 0);
-    const next = [...layers.slice(0, index - 1), { ...lower, canvas }, ...layers.slice(index + 1)];
+    ctx.globalCompositeOperation = upper.blend === "normal" ? "source-over" : upper.blend;
+    if (upper.visible) ctx.drawImage(masked(upper), 0, 0);
+    const merged: Layer = { ...lower, canvas, mask: null, maskOn: true, text: null };
+    const next = [...layers.slice(0, index - 1), merged, ...layers.slice(index + 1)];
+    maskEdit = false;
     commit(next, null, lower.id);
   }
 
@@ -519,6 +700,7 @@
     if (busy || layers.length <= 1) return;
     const index = layers.findIndex((l) => l.id === activeId);
     const next = layers.filter((l) => l.id !== activeId);
+    maskEdit = false;
     commit(next, null, next[Math.max(0, index - 1)].id);
   }
 
@@ -575,27 +757,37 @@
     else selection = { ...selection, inverted: !selection.inverted };
   }
 
-  /** Alt+Backspace: fill the selection (or the layer) with the brush colour. */
+  /** Alt+Backspace: fill the selection (or the layer) with the brush colour. On a mask it hides. */
   function fillSelection() {
     const layer = activeLayer;
     if (busy || !layer || !layer.visible) return;
-    const canvas = copyCanvas(layer.canvas);
+    const canvas = copyCanvas(onMask && layer.mask ? layer.mask : layer.canvas);
     const ctx = canvas.getContext("2d")!;
     clipToSelection(ctx);
+    if (onMask) {
+      ctx.clearRect(0, 0, docW, docH);
+      commit(withActive({ mask: canvas }), { op: "mask", n: 1 });
+      return;
+    }
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, docW, docH);
-    commit(layers.map((l) => (l.id === layer.id ? { ...l, canvas } : l)), { op: "fill", n: 1 });
+    commit(withActive({ canvas, text: null }), { op: "fill", n: 1 });
   }
 
-  /** Delete: make the selected pixels of the active layer transparent. */
+  /** Delete: make the selected pixels of the active layer transparent. On a mask it reveals. */
   function clearSelection() {
     const layer = activeLayer;
     if (busy || !layer || !layer.visible || !selection) return;
-    const canvas = copyCanvas(layer.canvas);
+    const canvas = copyCanvas(onMask && layer.mask ? layer.mask : layer.canvas);
     const ctx = canvas.getContext("2d")!;
     clipToSelection(ctx);
+    if (onMask) {
+      ctx.fillRect(0, 0, docW, docH);
+      commit(withActive({ mask: canvas }), { op: "mask", n: 1 });
+      return;
+    }
     ctx.clearRect(0, 0, docW, docH);
-    commit(layers.map((l) => (l.id === layer.id ? { ...l, canvas } : l)), { op: "clear", n: 1 });
+    commit(withActive({ canvas, text: null }), { op: "clear", n: 1 });
   }
 
   // -------------------------------------------------------------- painting
@@ -625,6 +817,9 @@
   function beginStroke(kind: PaintTool, x: number, y: number): boolean {
     const layer = activeLayer;
     if (!layer || !layer.visible) return false;
+    const mask = onMask ? layer.mask : null;
+    if (mask && kind === "clone") return false;
+    const base = mask ?? layer.canvas;
     let cloneSrc: HTMLCanvasElement | null = null;
     let dx = 0;
     let dy = 0;
@@ -640,14 +835,15 @@
     stroke = {
       tool: kind,
       layerId: layer.id,
-      base: layer.canvas,
-      work: copyCanvas(layer.canvas),
+      onMask: !!mask,
+      base,
+      work: copyCanvas(base),
       mask: makeCanvas(docW, docH),
       temp: kind === "clone" ? makeCanvas(docW, docH) : null,
       cloneSrc,
       dx,
       dy,
-      tip: makeTip(brush.size, brush.hardness, kind === "brush" ? color : "#000000"),
+      tip: makeTip(brush.size, brush.hardness, kind === "brush" && !mask ? color : "#000000"),
       lastX: x,
       lastY: y,
       carry: 0,
@@ -687,7 +883,9 @@
     ctx.save();
     ctx.globalCompositeOperation = "copy";
     ctx.drawImage(s.base, 0, 0);
-    ctx.globalCompositeOperation = s.tool === "eraser" ? "destination-out" : "source-over";
+    // On a mask the brush hides (removes alpha) and the eraser brings it back.
+    const removes = s.onMask ? s.tool === "brush" : s.tool === "eraser";
+    ctx.globalCompositeOperation = removes ? "destination-out" : "source-over";
     clipToSelection(ctx);
     ctx.globalAlpha = brush.opacity / 100;
     ctx.drawImage(paint, 0, 0);
@@ -699,7 +897,11 @@
     const s = stroke;
     if (!s) return;
     stroke = null;
-    commit(layers.map((l) => (l.id === s.layerId ? { ...l, canvas: s.work } : l)), { op: s.tool, n: 1 });
+    if (s.onMask) {
+      commit(layers.map((l) => (l.id === s.layerId ? { ...l, mask: s.work } : l)), { op: "mask", n: 1 });
+    } else {
+      commit(layers.map((l) => (l.id === s.layerId ? { ...l, canvas: s.work, text: null } : l)), { op: s.tool, n: 1 });
+    }
   }
 
   function pickColor(x: number, y: number) {
@@ -707,6 +909,159 @@
     if (!flat || x < 0 || y < 0 || x >= docW || y >= docH) return;
     const [r, g, b] = flat.getContext("2d")!.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
     color = `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  // ------------------------------------------------------------------ text
+
+  const fontOf = (t: TextSpec) =>
+    `${t.italic ? "italic " : ""}${t.bold ? "bold " : ""}${t.size}px ${/\s/.test(t.font) ? `"${t.font}"` : t.font}`;
+
+  function renderText(spec: TextSpec, width = docW, height = docH): HTMLCanvasElement {
+    const canvas = makeCanvas(width, height);
+    const ctx = canvas.getContext("2d")!;
+    ctx.font = fontOf(spec);
+    ctx.textBaseline = "top";
+    ctx.fillStyle = spec.color;
+    ctx.fillText(spec.text, spec.x, spec.y);
+    return canvas;
+  }
+
+  const textName = (spec: TextSpec) => spec.text.trim().slice(0, 24) || locale.t("editor.text.placeholder");
+  const clampTextSize = (size: number) => Math.min(MAX_TEXT, Math.max(MIN_TEXT, Math.round(size) || MIN_TEXT));
+
+  /** A click with the Text tool: a new line of type, ready to be typed over. */
+  function createText(x: number, y: number) {
+    if (busy || layers.length >= MAX_LAYERS) return;
+    const spec: TextSpec = {
+      text: locale.t("editor.text.placeholder"),
+      ...$state.snapshot(textDraft),
+      color,
+      x: Math.round(x),
+      y: Math.round(y - textDraft.size / 2),
+    };
+    insertAbove({ ...newLayerRecord(renderText(spec)), name: textName(spec), text: spec }, { op: "text", n: 1 });
+    void tick().then(() => {
+      textInput?.focus();
+      textInput?.select();
+    });
+  }
+
+  /** Restyle the active text layer. Live while typing; `record` makes it one undo step. */
+  function updateText(patch: Partial<TextSpec>, record: boolean) {
+    if (patch.font !== undefined) textDraft.font = patch.font;
+    if (patch.size !== undefined) textDraft.size = patch.size;
+    if (patch.bold !== undefined) textDraft.bold = patch.bold;
+    if (patch.italic !== undefined) textDraft.italic = patch.italic;
+    const layer = activeLayer;
+    if (busy || !layer?.text) return;
+    const text = { ...layer.text, ...patch };
+    const next = withActive({ text, name: textName(text), canvas: renderText(text) });
+    if (record) commit(next);
+    else {
+      layers = next;
+      docVersion++;
+    }
+  }
+
+  function commitText() {
+    const before = history[historyIndex]?.layers.find((l) => l.id === activeId);
+    if (before && activeLayer && before.text !== activeLayer.text) commit(layers);
+  }
+
+  // ------------------------------------------------------------------ move
+
+  const boundsCache = new WeakMap<HTMLCanvasElement, Rect | null>();
+
+  /** The box around a layer's pixels, found on a small copy so 4K layers stay quick. */
+  function layerBounds(layer: Layer): Rect | null {
+    const canvas = layer.canvas;
+    const cached = boundsCache.get(canvas);
+    if (cached !== undefined) return cached;
+    const scale = Math.min(1, 512 / Math.max(canvas.width, canvas.height));
+    const w = Math.max(1, Math.ceil(canvas.width * scale));
+    const h = Math.max(1, Math.ceil(canvas.height * scale));
+    const small = makeCanvas(w, h);
+    const ctx = small.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(canvas, 0, 0, w, h);
+    const box = alphaBounds(ctx.getImageData(0, 0, w, h).data, w, h);
+    let bounds: Rect | null = null;
+    if (box) {
+      const kx = canvas.width / w;
+      const ky = canvas.height / h;
+      const x = Math.floor(box.x * kx);
+      const y = Math.floor(box.y * ky);
+      bounds = {
+        x,
+        y,
+        w: Math.min(canvas.width, Math.ceil((box.x + box.w) * kx)) - x,
+        h: Math.min(canvas.height, Math.ceil((box.y + box.h) * ky)) - y,
+      };
+    }
+    boundsCache.set(canvas, bounds);
+    return bounds;
+  }
+
+  /** The layer redrawn so that its box `from` lands on `to`. Type is set again rather than resampled. */
+  function movedLayer(layer: Layer, from: Rect, to: Rect): Layer {
+    const bake = (source: HTMLCanvasElement) => {
+      const out = makeCanvas(docW, docH);
+      const ctx = out.getContext("2d")!;
+      applyXform(ctx, from, to);
+      ctx.drawImage(source, 0, 0);
+      return out;
+    };
+    const mask = layer.mask ? bake(layer.mask) : null;
+    if (layer.text) {
+      const scale = to.w / from.w;
+      const text: TextSpec = {
+        ...layer.text,
+        size: clampTextSize(layer.text.size * scale),
+        x: to.x + (layer.text.x - from.x) * scale,
+        y: to.y + (layer.text.y - from.y) * scale,
+      };
+      return { ...layer, text, mask, canvas: renderText(text) };
+    }
+    return { ...layer, mask, canvas: bake(layer.canvas) };
+  }
+
+  function finishMove() {
+    const move = xform;
+    xform = null;
+    docVersion++;
+    const layer = move ? layers.find((l) => l.id === move.id) : null;
+    if (!move || !layer) return;
+    const { from, to } = move;
+    if (from.x === to.x && from.y === to.y && from.w === to.w && from.h === to.h) return;
+    const moved = movedLayer(layer, from, to);
+    if (moved.text) textDraft.size = moved.text.size;
+    commit(layers.map((l) => (l.id === layer.id ? moved : l)), { op: "move", n: 1 });
+  }
+
+  let nudged: { index: number; time: number } | null = null;
+
+  /** Arrow keys. A quick run of taps is one undo step, not one each. */
+  function nudge(dx: number, dy: number) {
+    const layer = activeLayer;
+    if (busy || stroke || drag || !layer || !layer.visible) return;
+    const from = { x: 0, y: 0, w: 1, h: 1 };
+    const next = withActive(movedLayer(layer, from, { x: dx, y: dy, w: 1, h: 1 }));
+    const now = performance.now();
+    if (nudged && nudged.index === historyIndex && historyIndex !== savedIndex && now - nudged.time < 1000) {
+      history[historyIndex] = { ...history[historyIndex], layers: next };
+      showLayers(next, activeId);
+    } else {
+      commit(next, { op: "move", n: 1 });
+    }
+    nudged = { index: historyIndex, time: now };
+  }
+
+  function textLayerAt(x: number, y: number): Layer | null {
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const layer = layers[i];
+      const box = layer.visible && layer.text ? layerBounds(layer) : null;
+      if (box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) return layer;
+    }
+    return null;
   }
 
   // ------------------------------------------------------------ tone curve
@@ -838,11 +1193,28 @@
   // ------------------------------------------------------------- pixel ops
 
   /** Run one geometric change over every layer and record it. */
-  function transformAll(fn: (source: HTMLCanvasElement) => HTMLCanvasElement, op: EditOp) {
+  function transformAll(
+    fn: (source: HTMLCanvasElement) => HTMLCanvasElement,
+    op: EditOp,
+    /** Where a line of type ends up; null turns it into plain pixels. */
+    textFn: (text: TextSpec) => TextSpec | null = () => null,
+  ) {
     selection = null;
     cloneSource = null;
     cloneOffset = null;
-    commit(layers.map((l) => ({ ...l, canvas: fn(l.canvas) })), op);
+    commit(
+      layers.map((l) => {
+        const canvas = fn(l.canvas);
+        const text = l.text ? textFn(l.text) : null;
+        return {
+          ...l,
+          canvas: text ? renderText(text, canvas.width, canvas.height) : canvas,
+          mask: l.mask ? fn(l.mask) : null,
+          text,
+        };
+      }),
+      op,
+    );
   }
 
   function rotate(deg: 90 | -90) {
@@ -918,7 +1290,7 @@
       const out = makeCanvas(rect.w, rect.h);
       out.getContext("2d")!.drawImage(source, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
       return out;
-    }, { op: "crop", w: rect.w, h: rect.h });
+    }, { op: "crop", w: rect.w, h: rect.h }, (text) => ({ ...text, x: text.x - rect.x, y: text.y - rect.y }));
     fitView(true);
   }
 
@@ -943,6 +1315,8 @@
     const h = Math.min(MAX_DIMENSION, Math.max(1, Math.round(Number(sizeH) || 0)));
     sizeOpen = false;
     if (w === docW && h === docH) return;
+    const sx = w / docW;
+    const sy = h / docH;
     transformAll((source) => {
       // Halve repeatedly on big reductions: one drawImage step samples too
       // few source pixels and aliases.
@@ -959,7 +1333,10 @@
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(current, 0, 0, w, h);
       return out;
-    }, { op: "resize", w, h });
+    }, { op: "resize", w, h }, (text) =>
+      // A stretched resize cannot be set as type again.
+      Math.abs(sx - sy) > 0.005 ? null : { ...text, size: clampTextSize(text.size * sy), x: text.x * sx, y: text.y * sy },
+    );
     fitView(true);
   }
 
@@ -1103,6 +1480,26 @@
       ctx.restore();
     }
 
+    if ((tool === "move" || tool === "text") && activeLayer?.visible && (tool === "move" || activeLayer.text)) {
+      const box = xform && xform.id === activeLayer.id ? xform.to : layerBounds(activeLayer);
+      if (box) {
+        const bx = Math.round(panX + box.x * zoom) + 0.5;
+        const by = Math.round(panY + box.y * zoom) + 0.5;
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#818cf8";
+        ctx.strokeRect(bx, by, Math.round(box.w * zoom), Math.round(box.h * zoom));
+        if (tool === "move") {
+          ctx.fillStyle = "#ffffff";
+          for (const [hx, hy] of handlePoints(box)) {
+            const px = Math.round(panX + hx * zoom);
+            const py = Math.round(panY + hy * zoom);
+            ctx.fillRect(px - 4, py - 4, 8, 8);
+            ctx.strokeRect(px - 3.5, py - 3.5, 7, 7);
+          }
+        }
+      }
+    }
+
     if (tool === "clone" && cloneSource) {
       const sx = panX + cloneSource[0] * zoom;
       const sy = panY + cloneSource[1] * zoom;
@@ -1172,6 +1569,7 @@
     void tool;
     void spaceDown;
     void cloneSource;
+    void activeId;
     void brush.size;
     for (const key of ADJUSTMENT_KEYS) void adjustments[key];
     void adjustments.curve;
@@ -1194,6 +1592,18 @@
       [x, y + h, "sw"],
       [x, y + h / 2, "w"],
     ];
+  }
+
+  /** Which part of the active layer's box is under the pointer; "move" anywhere else. */
+  function hitMove(sx: number, sy: number): CropHandle {
+    const box = activeLayer ? layerBounds(activeLayer) : null;
+    if (!box) return "move";
+    for (const [hx, hy, handle] of handlePoints(box)) {
+      if (Math.abs(panX + hx * zoom - sx) <= HANDLE_HIT && Math.abs(panY + hy * zoom - sy) <= HANDLE_HIT) {
+        return handle;
+      }
+    }
+    return "move";
   }
 
   function hitCrop(sx: number, sy: number): CropHandle {
@@ -1226,6 +1636,7 @@
     | { kind: "pan"; x: number; y: number; panX: number; panY: number }
     | { kind: "crop"; handle: CropHandle; x: number; y: number; start: Rect; previous: Rect | null }
     | { kind: "paint" }
+    | { kind: "move"; handle: CropHandle; x: number; y: number; from: Rect }
     | { kind: "marquee"; ax: number; ay: number }
     | { kind: "lasso"; points: [number, number][] }
     | null = null;
@@ -1263,6 +1674,20 @@
     } else if (isPaintTool(tool)) {
       if (!beginStroke(tool, ix, iy)) return;
       drag = { kind: "paint" };
+    } else if (tool === "move" || tool === "text") {
+      if (tool === "text") {
+        const hit = textLayerAt(ix, iy);
+        if (!hit) {
+          createText(ix, iy);
+          e.preventDefault();
+          return;
+        }
+        selectLayer(hit.id);
+      }
+      const layer = layers.find((l) => l.id === activeId);
+      const from = layer?.visible ? layerBounds(layer) : null;
+      if (!from) return;
+      drag = { kind: "move", handle: tool === "move" ? hitMove(sx, sy) : "move", x: e.clientX, y: e.clientY, from };
     } else if (tool === "marquee") {
       selection = null;
       drag = { kind: "marquee", ax: clampX(ix), ay: clampY(iy) };
@@ -1295,6 +1720,7 @@
     if (isPaintTool(tool)) hover = [sx, sy];
     if (!drag) {
       if (tool === "crop" && !spaceDown) hoverCursor = HANDLE_CURSORS[hitCrop(sx, sy)];
+      else if (tool === "move" && !spaceDown) hoverCursor = HANDLE_CURSORS[hitMove(sx, sy)];
       return;
     }
     if (drag.kind === "pan") {
@@ -1302,6 +1728,18 @@
       panY = drag.panY + (e.clientY - drag.y);
     } else if (drag.kind === "paint") {
       extendStroke(ix, iy);
+    } else if (drag.kind === "move") {
+      let dx = (e.clientX - drag.x) / zoom;
+      let dy = (e.clientY - drag.y) / zoom;
+      if (drag.handle === "move") {
+        // Whole pixels keep a moved layer sharp.
+        dx = Math.round(dx);
+        dy = Math.round(dy);
+      }
+      // Corners and edges keep the proportions; Shift lets go of them. Type always keeps them.
+      const proportional = !e.shiftKey || !!activeLayer?.text;
+      xform = { id: activeId, from: drag.from, to: scaleRect(drag.from, drag.handle, dx, dy, proportional) };
+      docVersion++;
     } else if (drag.kind === "marquee") {
       const r = rectFromAnchor(drag.ax, drag.ay, ix, iy, docW, docH, null);
       const x0 = Math.round(r.x);
@@ -1332,6 +1770,8 @@
       if (crop && (crop.w < 2 || crop.h < 2)) crop = drag.previous ?? fitAspectRect(docW, docH, cropRatio);
     } else if (drag.kind === "paint") {
       endStroke();
+    } else if (drag.kind === "move") {
+      finishMove();
     } else if (drag.kind === "lasso" && drag.points.length < 3) {
       // A plain click with a selection tool deselects.
       selection = null;
@@ -1345,7 +1785,8 @@
     if (phase !== "ready") return "default";
     if (spaceDown || tool === "hand") return dragging ? "grabbing" : "grab";
     if (tool === "zoom") return "zoom-in";
-    if (tool === "crop") return hoverCursor;
+    if (tool === "crop" || tool === "move") return hoverCursor;
+    if (tool === "text") return "text";
     return "crosshair";
   });
 
@@ -1467,7 +1908,8 @@
 
     if (key === "escape") {
       e.preventDefault();
-      if (presetNaming) presetNaming = false;
+      if (textInput && e.target === textInput) textInput.blur();
+      else if (presetNaming) presetNaming = false;
       else if (sizeOpen) sizeOpen = false;
       else if (tool === "crop") cancelCrop();
       else if (confirmClose) confirmClose = false;
@@ -1481,6 +1923,9 @@
       } else if (key === "enter" && sizeOpen) {
         e.preventDefault();
         applySize();
+      } else if (key === "enter" && e.target instanceof HTMLInputElement) {
+        // Leaving the field records the text or size as one undo step.
+        e.target.blur();
       }
       return;
     }
@@ -1555,6 +2000,12 @@
       return;
     }
     if (e.altKey || stroke) return;
+    if (key.startsWith("arrow") && (tool === "move" || (tool === "text" && textSpec))) {
+      e.preventDefault();
+      const step = e.shiftKey ? 10 : 1;
+      nudge(key === "arrowleft" ? -step : key === "arrowright" ? step : 0, key === "arrowup" ? -step : key === "arrowdown" ? step : 0);
+      return;
+    }
     if (key === "[" || key === "{") {
       if (e.shiftKey) brush.hardness = Math.max(0, brush.hardness - 25);
       else brush.size = Math.max(1, Math.round(brush.size * 0.85) - 1);
@@ -1590,6 +2041,7 @@
   const smallButton =
     "flex items-center justify-center w-7 h-7 rounded text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100 transition-colors disabled:opacity-30 disabled:hover:bg-transparent";
   const RAIL: { tool: Tool; icon: typeof Hand; gap?: boolean }[] = [
+    { tool: "move", icon: Move },
     { tool: "hand", icon: Hand },
     { tool: "zoom", icon: Search },
     { tool: "crop", icon: Crop },
@@ -1599,7 +2051,13 @@
     { tool: "eraser", icon: Eraser },
     { tool: "clone", icon: Stamp },
     { tool: "eyedropper", icon: Pipette },
+    { tool: "text", icon: Type, gap: true },
   ];
+  const toggleChip = (on: boolean) =>
+    `h-6 px-2 rounded text-[11px] transition-colors disabled:opacity-35 ${
+      on ? "bg-indigo-600 text-white" : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+    }`;
+  const field = "h-7 px-2 rounded bg-neutral-800 border border-neutral-700 text-neutral-100 disabled:opacity-40";
   const railButton = (active: boolean) =>
     `flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
       active ? "bg-indigo-600 text-white" : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
@@ -1678,7 +2136,11 @@
         <button type="button" class="h-7 px-3 rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-100 font-medium" onclick={cancelCrop}>{locale.t("common.cancel")}</button>
         <button type="button" class="h-7 px-3 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-medium" onclick={applyCrop}>{locale.t("common.apply")}</button>
       {:else if isPaintTool(tool) || tool === "eyedropper"}
-        {#if tool === "brush" || tool === "eyedropper"}
+        {#if onMask && (tool === "brush" || tool === "eraser")}
+          <span class="flex items-center gap-1.5 h-6 px-2 rounded bg-indigo-600/25 text-indigo-200">
+            <VenetianMask size={13} />{locale.t("editor.mask")}: {locale.t(tool === "brush" ? "editor.mask.hide" : "editor.mask.reveal")}
+          </span>
+        {:else if tool === "brush" || tool === "eyedropper"}
           <input type="color" class="w-7 h-7 p-0 rounded border border-neutral-700 bg-transparent cursor-pointer" title={locale.t("editor.brush.color")} aria-label={locale.t("editor.brush.color")} bind:value={color} />
         {/if}
         {#if isPaintTool(tool)}
@@ -1701,6 +2163,53 @@
             <span class="pl-3 text-amber-300">{locale.t("editor.clone_hint")}</span>
           {/if}
         {/if}
+      {:else if tool === "text"}
+        <input
+          bind:this={textInput}
+          type="text"
+          maxlength="200"
+          class="{field} w-56 select-text"
+          placeholder={locale.t("editor.text.placeholder")}
+          aria-label={locale.t("editor.text.placeholder")}
+          disabled={busy || !textSpec}
+          value={textSpec?.text ?? ""}
+          oninput={(e) => updateText({ text: e.currentTarget.value }, false)}
+          onchange={commitText}
+        />
+        <select
+          class="{field} w-36"
+          title={locale.t("editor.text.font")}
+          aria-label={locale.t("editor.text.font")}
+          disabled={busy}
+          value={textSpec?.font ?? textDraft.font}
+          onchange={(e) => { updateText({ font: e.currentTarget.value }, true); e.currentTarget.blur(); }}
+        >
+          {#each FONTS as font (font)}
+            <option value={font}>{font}</option>
+          {/each}
+        </select>
+        <input
+          type="number"
+          min={MIN_TEXT}
+          max={MAX_TEXT}
+          class="{field} w-16 select-text"
+          title={locale.t("editor.brush.size")}
+          aria-label={locale.t("editor.brush.size")}
+          disabled={busy}
+          value={textSpec?.size ?? textDraft.size}
+          onchange={(e) => updateText({ size: clampTextSize(Number(e.currentTarget.value)) }, true)}
+        />
+        <button type="button" class="{smallButton} {(textSpec?.bold ?? textDraft.bold) ? 'bg-indigo-600 text-white' : ''}" title={locale.t("editor.text.bold")} aria-label={locale.t("editor.text.bold")} aria-pressed={textSpec?.bold ?? textDraft.bold} disabled={busy} onclick={() => updateText({ bold: !(textSpec?.bold ?? textDraft.bold) }, true)}><Bold size={14} /></button>
+        <button type="button" class="{smallButton} {(textSpec?.italic ?? textDraft.italic) ? 'bg-indigo-600 text-white' : ''}" title={locale.t("editor.text.italic")} aria-label={locale.t("editor.text.italic")} aria-pressed={textSpec?.italic ?? textDraft.italic} disabled={busy} onclick={() => updateText({ italic: !(textSpec?.italic ?? textDraft.italic) }, true)}><Italic size={14} /></button>
+        <input
+          type="color"
+          class="w-7 h-7 p-0 rounded border border-neutral-700 bg-transparent cursor-pointer"
+          title={locale.t("editor.brush.color")}
+          aria-label={locale.t("editor.brush.color")}
+          value={color}
+          oninput={(e) => { color = e.currentTarget.value; updateText({ color }, false); }}
+          onchange={commitText}
+        />
       {:else if tool === "marquee" || tool === "lasso"}
         <button type="button" class={optionButton} disabled={busy} onclick={selectAll}>{locale.t("editor.select.all")}</button>
         <button type="button" class={optionButton} disabled={busy || !selection} onclick={() => (selection = null)}>{locale.t("editor.select.none")}</button>
@@ -1849,32 +2358,54 @@
         </div>
 
         <!-- Layers -->
-        <div class="flex flex-col h-60 shrink-0 border-t border-neutral-800">
+        <div class="flex flex-col h-72 shrink-0 border-t border-neutral-800">
           <div class="flex items-center h-9 pl-3 pr-1 border-b border-neutral-800">
-            <span class="flex-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">{locale.t("editor.layers")}</span>
+            <span class="flex-1 min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-neutral-400">{locale.t("editor.layers")}</span>
             <button type="button" class={smallButton} title={locale.t("editor.layer.new")} aria-label={locale.t("editor.layer.new")} disabled={busy || layers.length >= MAX_LAYERS} onclick={addLayer}><Plus size={14} /></button>
             <button type="button" class={smallButton} title={locale.t("editor.layer.duplicate")} aria-label={locale.t("editor.layer.duplicate")} disabled={busy || layers.length >= MAX_LAYERS} onclick={duplicateLayer}><Copy size={14} /></button>
+            <button type="button" class={smallButton} title={locale.t("editor.mask.add")} aria-label={locale.t("editor.mask.add")} disabled={busy || !activeLayer || !!activeLayer.mask} onclick={addMask}><VenetianMask size={14} /></button>
             <button type="button" class={smallButton} title={locale.t("editor.layer.merge")} aria-label={locale.t("editor.layer.merge")} disabled={busy || activeIndex <= 0} onclick={mergeDown}><MergeDown size={14} /></button>
             <button type="button" class={smallButton} title={locale.t("editor.layer.up")} aria-label={locale.t("editor.layer.up")} disabled={busy || activeIndex < 0 || activeIndex >= layers.length - 1} onclick={() => moveLayer(1)}><ArrowUp size={14} /></button>
             <button type="button" class={smallButton} title={locale.t("editor.layer.down")} aria-label={locale.t("editor.layer.down")} disabled={busy || activeIndex <= 0} onclick={() => moveLayer(-1)}><ArrowDown size={14} /></button>
             <button type="button" class={smallButton} title={locale.t("editor.layer.delete")} aria-label={locale.t("editor.layer.delete")} disabled={busy || layers.length <= 1} onclick={deleteLayer}><Trash2 size={14} /></button>
           </div>
           {#if activeLayer}
-            <label class="flex items-center gap-2 h-8 px-3 border-b border-neutral-800 text-xs text-neutral-400">
-              {locale.t("editor.brush.opacity")}
+            <div class="flex items-center gap-2 h-9 px-2 border-b border-neutral-800 text-xs text-neutral-400">
+              <select
+                class="h-6 w-28 px-1 rounded bg-neutral-800 border border-neutral-700 text-[11px] text-neutral-100 disabled:opacity-40"
+                title={locale.t("editor.layer.blend")}
+                aria-label={locale.t("editor.layer.blend")}
+                disabled={busy}
+                value={activeLayer.blend}
+                onchange={(e) => { setBlend(e.currentTarget.value as BlendMode); e.currentTarget.blur(); }}
+              >
+                {#each BLEND_MODES as mode (mode)}
+                  <option value={mode}>{locale.t(`editor.blend.${mode.replace("-", "_")}`)}</option>
+                {/each}
+              </select>
               <input
                 type="range"
                 min="0"
                 max="100"
                 step="1"
                 class="flex-1 min-w-0 accent-indigo-500"
+                title={locale.t("editor.brush.opacity")}
+                aria-label={locale.t("editor.brush.opacity")}
                 disabled={busy}
                 value={activeLayer.opacity}
                 oninput={(e) => previewLayerOpacity(Number(e.currentTarget.value))}
                 onchange={commitLayerOpacity}
               />
               <span class="w-7 text-right tabular-nums text-neutral-200">{activeLayer.opacity}</span>
-            </label>
+            </div>
+            {#if activeLayer.mask}
+              <div class="flex items-center gap-1 h-8 pl-3 pr-1 border-b border-neutral-800 text-xs">
+                <span class="flex-1 min-w-0 truncate text-neutral-400">{locale.t("editor.mask")}</span>
+                <button type="button" class={toggleChip(onMask)} aria-pressed={onMask} disabled={busy || !activeLayer.maskOn} onclick={() => (maskEdit = !maskEdit)}>{locale.t("editor.mask.paint")}</button>
+                <button type="button" class={toggleChip(activeLayer.maskOn)} aria-pressed={activeLayer.maskOn} disabled={busy} onclick={toggleMask}>{locale.t("editor.mask.on")}</button>
+                <button type="button" class={smallButton} title={locale.t("editor.mask.delete")} aria-label={locale.t("editor.mask.delete")} disabled={busy} onclick={deleteMask}><Trash2 size={13} /></button>
+              </div>
+            {/if}
           {/if}
           <div class="flex-1 min-h-0 overflow-y-auto">
             {#each [...layers].reverse() as layer (layer.id)}
@@ -1882,7 +2413,21 @@
                 <button type="button" class="flex items-center justify-center w-8 h-8 shrink-0 {layer.visible ? 'text-neutral-300' : 'text-neutral-600'} hover:text-white" title={locale.t("editor.layer.visibility")} aria-label="{locale.t('editor.layer.visibility')}: {layer.name}" aria-pressed={layer.visible} disabled={busy} onclick={() => toggleLayer(layer.id)}>
                   {#if layer.visible}<Eye size={14} />{:else}<EyeOff size={14} />{/if}
                 </button>
-                <button type="button" class="flex-1 min-w-0 h-8 pr-3 text-left truncate" aria-pressed={layer.id === activeId} onclick={() => (activeId = layer.id)}>{layer.name}</button>
+                <button type="button" class="flex items-center gap-1.5 flex-1 min-w-0 h-8 pr-2 text-left" aria-pressed={layer.id === activeId} onclick={() => selectLayer(layer.id)}>
+                  {#if layer.text}<Type size={12} class="shrink-0 text-neutral-400" />{/if}
+                  <span class="truncate">{layer.name}</span>
+                </button>
+                {#if layer.mask}
+                  <button
+                    type="button"
+                    class="flex items-center justify-center w-6 h-6 mr-1 shrink-0 rounded border {layer.id === activeId && onMask ? 'border-indigo-400 bg-indigo-600 text-white' : 'border-neutral-600 text-neutral-300 hover:text-white'} {layer.maskOn ? '' : 'opacity-40'}"
+                    title={locale.t("editor.mask.paint")}
+                    aria-label="{locale.t('editor.mask')}: {layer.name}"
+                    aria-pressed={layer.id === activeId && onMask}
+                    disabled={busy}
+                    onclick={() => selectLayer(layer.id, true)}
+                  ><VenetianMask size={12} /></button>
+                {/if}
               </div>
             {/each}
           </div>
