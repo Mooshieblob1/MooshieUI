@@ -82,6 +82,11 @@ jobs:
           npx esbuild scripts/tests/promptClickableRanges.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptClickableRanges.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptClickableRanges.test.mjs"
 
+      - name: Prompt weight syntax tests
+        run: |
+          npx esbuild scripts/tests/promptWeightSyntax.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptWeightSyntax.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/promptWeightSyntax.test.mjs"
+
       - name: Split model VAE tests
         run: |
           npx esbuild scripts/tests/splitVae.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/splitVae.test.mjs" --log-level=warning

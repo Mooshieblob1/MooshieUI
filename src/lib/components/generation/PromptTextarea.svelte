@@ -557,10 +557,11 @@
     const selected = value.substring(start, end);
 
     // Edit the number in place for A1111 (tag:w), NAI N::tag::, and InvokeAI
-    // (tag)N; wrap plain text. Returns null for recognized-but-non-numeric
+    // (tag)N; wrap plain text, in NovelAI syntax when a NovelAI model is
+    // selected. Returns null for recognized-but-non-numeric
     // forms (emphasis marks, brace wrap) — the buttons grey out for those, but
     // guard here too in case Ctrl+Up/Down reaches it.
-    const newText = adjustWeightText(selected, delta);
+    const newText = adjustWeightText(selected, delta, { novelai: generation.isNovelAi });
     if (newText === null) return;
 
     value = value.substring(0, start) + newText + value.substring(end);

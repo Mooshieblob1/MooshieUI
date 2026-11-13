@@ -117,8 +117,8 @@ function trailingWeightLen(raw: string, j: number): number {
 }
 
 // NAI numeric weight: N::text::, where text has no colon. Mirrors the
-// translateNaiWeightSyntax regex.
-const NAI_NUMERIC_RE = /(\d+\.?\d*)::[^:]+::/g;
+// translateNaiWeightSyntax regex, minus sign of a negative weight included.
+const NAI_NUMERIC_RE = /((?:(?<=^|[\s,(\[{:])-)?\d+\.?\d*)::[^:]+::/g;
 
 function getWeightedRanges(raw: string, inertRanges: readonly PromptTextRange[]): Range[] {
   const stack: OpenToken[] = [];

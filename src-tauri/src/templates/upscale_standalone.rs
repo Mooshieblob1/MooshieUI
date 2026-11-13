@@ -168,10 +168,15 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     out.positive_segments = Vec::new();
     out.negative_segments = Vec::new();
 
-    // Optional overrides. The NovelAI syntax rewrite happens while the request
-    // body is built and never touches `params`, so the top-level prompt is
-    // already the ComfyUI-syntax one this pass wants. These exist only for a
-    // caller that wants the local pass to run on different text.
+    // A NovelAI request carries its prompt as the user wrote it, NovelAI weight
+    // syntax included, and `CLIPTextEncode` would take `1.2::tag::` and `{tag}`
+    // literally. Translated here, for this pass only, into the ComfyUI syntax
+    // a local generation would have been sent with.
+    out.positive_prompt = crate::novelai::prompt_syntax::from_novelai(&out.positive_prompt);
+    out.negative_prompt = crate::novelai::prompt_syntax::from_novelai(&out.negative_prompt);
+
+    // Optional overrides, already in ComfyUI syntax, for a caller that wants
+    // the local pass to run on different text.
     if let Some(pos) = nai.local_positive_prompt.clone() {
         out.positive_prompt = pos;
     }
@@ -522,7 +527,9 @@ mod tests {
         };
         let p = with_nai(nai);
         let out = build_params(&p, "nai-abc.png").expect("derived");
-        assert_eq!(out.positive_prompt, p.positive_prompt);
+        // Translated out of the NovelAI syntax the request carries it in.
+        assert_eq!(out.positive_prompt, "(masterpiece:1.30), girl");
+        assert_eq!(out.negative_prompt, "(bad:1.10)");
     }
 
     #[test]
@@ -785,6 +792,25 @@ mod tests {
         // The override exists precisely to bypass the extraction path and its
         // fall back to the full positive conditioning.
         assert!(!out.facefix_auto_prompt);
+    }
+
+    #[test]
+    fn novelai_weight_syntax_is_translated_for_the_local_pass() {
+        // The frontend sends a NovelAI prompt as typed. ComfyUI cannot read
+        // that syntax, so the pass that hands it to ComfyUI converts it.
+        let mut nai = local_nai();
+        nai.local_positive_prompt = None;
+        nai.local_negative_prompt = None;
+        let mut p = with_nai(nai);
+        p.positive_prompt = "1girl, 1.2::rain, night::, {smile}, -1::hat::".into();
+        p.negative_prompt = "[blurry], (lowres:1.3)".into();
+
+        let out = build_params(&p, "nai.png").expect("derived");
+        assert_eq!(
+            out.positive_prompt,
+            "1girl, (rain, night:1.20), (smile:1.05), (hat:-1.00)"
+        );
+        assert_eq!(out.negative_prompt, "(blurry:0.95), (lowres:1.3)");
     }
 
     #[test]

@@ -30,7 +30,6 @@ use std::collections::HashMap;
 
 use super::models::{EFFORT_HIGH, EFFORT_MEDIUM};
 use super::presets::{QualityPreset, UcPreset};
-use super::prompt_syntax;
 
 /// The chunk NovelAI stamps its name into, and the value it writes.
 const SOFTWARE_CHUNK: &str = "Software";
@@ -251,13 +250,20 @@ pub fn parse_stealth_json(text: &str) -> Option<HashMap<String, String>> {
 ///
 /// Far past anything NovelAI accepts, whose prompts are capped in tokens. The
 /// metadata comes from whatever image the user opened, and a small compressed
-/// chunk can inflate to megabytes, so the text is cut before its weight syntax
-/// is converted and before it lands in the prompt panel.
+/// chunk can inflate to megabytes, so the text is cut before it lands in the
+/// prompt panel.
 const MAX_IMPORTED_PROMPT_BYTES: usize = 64 * 1024;
 
-/// Convert one imported prompt into ComfyUI weight syntax, capped in length.
+/// One imported prompt, capped in length and otherwise exactly as NovelAI
+/// wrote it.
+///
+/// The weight syntax is deliberately not converted. `1.2::tag::`, `{tag}` and
+/// `[tag]` are what the image was made with and what NovelAI reads, so they
+/// are what the panel shows. A NovelAI request sends them as they stand, and a
+/// local generation translates them when it is sent, the same as it does for a
+/// prompt typed in that syntax.
 fn import_prompt(text: &str) -> String {
-    prompt_syntax::from_novelai(truncate_on_char_boundary(text, MAX_IMPORTED_PROMPT_BYTES))
+    truncate_on_char_boundary(text, MAX_IMPORTED_PROMPT_BYTES).to_string()
 }
 
 /// The longest prefix of `text` that fits in `max` bytes without splitting a
@@ -502,18 +508,31 @@ mod tests {
     }
 
     #[test]
-    fn prompts_come_back_in_comfyui_weight_syntax() {
+    fn prompts_come_back_in_the_weight_syntax_novelai_wrote() {
         let comment = v4_comment();
+        let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+        let params = parse_chunks(&map).expect("novelai chunks");
+        assert_eq!(params.get("positive_prompt").unwrap(), "1girl, {blue hair}");
+        assert_eq!(
+            params.get("negative_prompt").unwrap(),
+            "lowres, {bad anatomy}"
+        );
+    }
+
+    #[test]
+    fn numeric_weights_are_imported_as_written() {
+        let comment = serde_json::json!({
+            "prompt": "1.2::rain, night::, -1::hat::, 1girl",
+            "uc": "0.5::coat::",
+        })
+        .to_string();
         let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
         let params = parse_chunks(&map).expect("novelai chunks");
         assert_eq!(
             params.get("positive_prompt").unwrap(),
-            "1girl, (blue hair:1.05)"
+            "1.2::rain, night::, -1::hat::, 1girl"
         );
-        assert_eq!(
-            params.get("negative_prompt").unwrap(),
-            "lowres, (bad anatomy:1.05)"
-        );
+        assert_eq!(params.get("negative_prompt").unwrap(), "0.5::coat::");
     }
 
     #[test]
@@ -651,7 +670,7 @@ mod tests {
         let characters: serde_json::Value = serde_json::from_str(raw).unwrap();
         let characters = characters.as_array().unwrap();
         assert_eq!(characters.len(), 2);
-        assert_eq!(characters[0]["prompt"], "(red hair:1.05)");
+        assert_eq!(characters[0]["prompt"], "{red hair}");
         assert_eq!(characters[0]["negative_prompt"], "hat");
         assert_eq!(characters[0]["center"]["x"], 0.25);
         assert_eq!(characters[0]["enabled"], true);
@@ -710,23 +729,15 @@ mod prompt_cap_tests {
 
     #[test]
     fn a_normal_prompt_is_imported_whole() {
-        assert_eq!(
-            import_prompt("1girl, {blue hair}"),
-            "1girl, (blue hair:1.05)"
-        );
+        assert_eq!(import_prompt("1girl, {blue hair}"), "1girl, {blue hair}");
     }
 
     #[test]
-    fn a_giant_prompt_is_cut_before_conversion() {
+    fn a_giant_prompt_is_cut_to_the_cap() {
         let giant = "{a}".repeat(1_000_000);
         let out = import_prompt(&giant);
-        // Converted from the capped prefix only: each 3-byte `{a}` becomes the
-        // 8-byte `(a:1.05)`, and the cut leaves one unpaired `{` at the end.
-        assert_eq!(
-            out.len(),
-            MAX_IMPORTED_PROMPT_BYTES / 3 * "(a:1.05)".len() + 1
-        );
-        assert!(out.starts_with("(a:1.05)"));
+        assert_eq!(out.len(), MAX_IMPORTED_PROMPT_BYTES);
+        assert!(out.starts_with("{a}{a}"));
     }
 
     #[test]

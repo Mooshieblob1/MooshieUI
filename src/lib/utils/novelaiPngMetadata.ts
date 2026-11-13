@@ -12,38 +12,6 @@
  * payload as JSON.
  */
 
-/**
- * Translate NovelAI weight syntax back into ComfyUI syntax.
- *
- * `1.1::tag::` becomes `(tag:1.10)`, `{tag}` becomes `(tag:1.05)`, `[tag]`
- * becomes `(tag:0.95)`, innermost first so nesting compounds the way NovelAI
- * applies it. An escaped bracket is a literal character and is left alone.
- *
- * Deliberately duplicated rather than shared: the generation store has this
- * translation for prompts a user types in, and the Rust reader has a third copy
- * for the desktop path. Each layer owns its own, because a leaf util reaching
- * into a store would invert the dependency direction.
- */
-function naiWeightsToComfy(prompt: string): string {
-  let out = prompt.replace(
-    /(\d+\.?\d*)::([^:]+)::/g,
-    (_match, weight: string, text: string) => `(${text.trim()}:${parseFloat(weight).toFixed(2)})`,
-  );
-
-  let previous: string;
-  do {
-    previous = out;
-    out = out.replace(/\{([^{}]+)\}/g, (_match, inner: string) => `(${inner}:1.05)`);
-  } while (out !== previous);
-
-  do {
-    previous = out;
-    out = out.replace(/(?<!\\)\[([^[\]]+)\]/g, (_match, inner: string) => `(${inner}:0.95)`);
-  } while (out !== previous);
-
-  return out;
-}
-
 /** Does this set of PNG text chunks come from NovelAI? */
 export function isNovelAiChunks(chunks: Record<string, string>): boolean {
   const saysNovelAi = (key: string) => (chunks[key] ?? "").toLowerCase().includes("novelai");
@@ -106,8 +74,8 @@ function parseCharacters(comment: any): string | undefined {
     const center = entry?.centers?.[0];
     const negative = negativeList[index]?.char_caption;
     return {
-      prompt: naiWeightsToComfy(typeof entry?.char_caption === "string" ? entry.char_caption : ""),
-      negative_prompt: naiWeightsToComfy(typeof negative === "string" ? negative : ""),
+      prompt: typeof entry?.char_caption === "string" ? entry.char_caption : "",
+      negative_prompt: typeof negative === "string" ? negative : "",
       center: {
         x: typeof center?.x === "number" ? center.x : 0.5,
         y: typeof center?.y === "number" ? center.y : 0.5,
@@ -183,10 +151,13 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
   // flattened rendering of it that folds every character prompt into one line.
   const positive =
     baseCaption(comment?.v4_prompt) ?? scalar(comment?.prompt) ?? chunks.Description;
-  if (positive !== undefined) params.positive_prompt = naiWeightsToComfy(positive);
+  // Prompts are kept in the weight syntax NovelAI wrote (`1.2::tag::`, `{tag}`,
+  // `[tag]`): it is what the image was made with, a NovelAI request sends it as
+  // it stands, and a local generation translates it when it is sent.
+  if (positive !== undefined) params.positive_prompt = positive;
 
   const negative = baseCaption(comment?.v4_negative_prompt) ?? scalar(comment?.uc);
-  if (negative !== undefined) params.negative_prompt = naiWeightsToComfy(negative);
+  if (negative !== undefined) params.negative_prompt = negative;
 
   if (comment) {
     // NovelAI's noise schedule occupies the same slot in the panel as a local
