@@ -15,6 +15,8 @@ open an issue with the feature template and ask.
 - Video generation on the same footing as images: shot planning through the
   timeline director, playback, frame interpolation, and clip export. The
   timeline is a shot list that feeds a ComfyUI graph, not a node editor.
+- A lean built-in image editor for touching up generated images without
+  losing their generation metadata.
 - Music composition through ComfyUI, with style and lyric writing, a local song
   library, playlists, playback, manual lyric timing and audio export.
 - Self-hosting with LAN accounts, roles, per-user galleries and configured GPU
@@ -34,8 +36,10 @@ open an issue with the feature template and ask.
 - Not an operated hosted SaaS service. Users run their own desktop or server;
   the existing multi-user self-hosting features are part of that scope.
 - Not a model training or dataset-management tool.
-- Not a general-purpose image editor beyond the specific in-app editing features
-  already shipped.
+- Not a painting or artwork suite. The built-in image editor covers photo-style
+  touch-ups (crop, transform, colour adjustments and similar) so an edited
+  image keeps its generation metadata; brush engines, vector tools, PSD and
+  print workflows are out.
 - Not a video editor or non-linear editing suite. Clips are planned before
   generation and exported afterwards; MooshieUI does not cut, composite, or
   grade footage. Joining a generated voice track to a generated clip at

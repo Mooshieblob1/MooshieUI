@@ -6,6 +6,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
+  import { imageEditor } from "../../stores/imageEditor.svelte.js";
   import { naiImageEnhance, naiImageEnhanceAvailable } from "../../stores/naiImageEnhance.svelte.js";
   import { generate, uploadImageBytes, downloadModel, saveVideoToGalleryManual } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput, imageUrlToPngBytes } from "../../utils/galleryActions.js";
@@ -466,6 +467,14 @@
     suppressOpenUntil = Date.now() + 500;
   }
 
+  /** Open the built-in editor on the shown output, saved or not. */
+  function openEditor() {
+    const saved = getActiveSavedImage();
+    const url = progress.displayImage;
+    if (saved) imageEditor.open(saved, url);
+    else if (url) imageEditor.openUrl(url, `preview_${Date.now()}.png`);
+  }
+
   function openPreviewContextMenu(e: MouseEvent) {
     if (!progress.displayImage) return;
     e.preventDefault();
@@ -477,6 +486,7 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.send_to_img2img"), action: () => void sendToImg2img() },
       { label: locale.t("gallery.send_to_inpaint"), action: () => void sendToInpaint() },
+      { label: locale.t("gallery.edit"), action: () => openEditor() },
     ];
     if (!progress.wasUpscaled) {
       items.push({ label: refineLabel, action: () => void upscaleImage() });
@@ -602,6 +612,14 @@
           aria-label={locale.t('gallery.send_to_inpaint')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        </button>
+        <button
+          onclick={openEditor}
+          class="flex items-center justify-center w-8 h-8 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg shadow-lg transition-colors"
+          title={locale.t('gallery.edit')}
+          aria-label={locale.t('gallery.edit')}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
         </button>
         <button
           onclick={handleSave}

@@ -74,6 +74,8 @@
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
+  import ImageEditor from "./lib/components/editor/ImageEditor.svelte";
+  import { imageEditor } from "./lib/stores/imageEditor.svelte.js";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
   import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
   import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
@@ -1312,6 +1314,7 @@
         { label: locale.t("gallery.get_tags"), action: () => void interrogateFromPreviewUrl(url) },
         { label: "", action: () => {}, separator: true },
         { label: locale.t("gallery.inpaint"), action: () => void inpaintLightboxPreview() },
+        { label: locale.t("gallery.edit"), action: () => imageEditor.openUrl(url, `preview_${Date.now()}.png`) },
         { label: "", action: () => {}, separator: true },
         { label: locale.t("gallery.save_as"), action: () => void gallery.saveBlobAs(url, `preview_${Date.now()}.png`) },
         { label: locale.t("gallery.copy"), action: () => void gallery.copyBlobToClipboard(url) },
@@ -1337,6 +1340,9 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
+      ...(!isVideoImage(image)
+        ? [{ label: locale.t("gallery.edit"), action: () => imageEditor.open(image, image.url ?? null) }]
+        : []),
       ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
       ...(directorToolsAvailable() && !isVideoImage(image)
         ? [
@@ -4174,6 +4180,7 @@
     startupStatusKind = "starting";
   }}
 />
+<ImageEditor />
 <PhotopeaEditor
   open={photopeaOpen}
   image={photopeaImage}
@@ -4469,6 +4476,14 @@
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "remix")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.13-3.36L23 10M1 14l5.37 4.36A9 9 0 0020.49 15"/></svg>
+        </button>
+        <button
+          title={locale.t("gallery.edit")}
+          aria-label={locale.t("gallery.edit")}
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && imageEditor.open(gallery.selectedImage, gallery.lightboxUrl ?? null)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
         </button>
         <button
           title={locale.t("gallery.edit_photopea")}
