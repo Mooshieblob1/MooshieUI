@@ -20,6 +20,7 @@
   import { isTauri } from "../../utils/ipc.js";
   import { buildGalleryRows, rowOffsets, selectionRange, visibleRowRange } from "../../utils/galleryGrid.js";
   import type { GalleryViewMode } from "../../stores/gallery.svelte.js";
+  import { imageEditor } from "../../stores/imageEditor.svelte.js";
   import type { OutputImage } from "../../types/index.js";
 
   interface Props {
@@ -1276,6 +1277,7 @@
                     {#if !isVideoImage(image)}
                       <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>{locale.t("gallery.i2i")}</button>
                       <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>{locale.t("gallery.inpaint")}</button>
+                      <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => imageEditor.open(image, image.url ?? null)}>{locale.t("gallery.edit")}</button>
                       {#if !image.is_upscaled}
                         <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>{locale.t("gallery.upscale")}</button>
                       {/if}
@@ -1376,6 +1378,7 @@
                         {#if !isVideoImage(image)}
                           <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow" title={locale.t("gallery.img2img")} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
                           <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.inpaint")} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>✎</button>
+                          <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.edit")} aria-label={locale.t("gallery.edit")} onclick={(e) => { e.stopPropagation(); imageEditor.open(image, image.url ?? null); }}><svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg></button>
                           {#if !image.is_upscaled}
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow" title={locale.t("gallery.upscale")} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>+</button>
                           {/if}
