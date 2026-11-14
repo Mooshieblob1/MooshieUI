@@ -1,3 +1,19 @@
+## What's New in v2.3.46
+
+### Image editor
+- **Built-in image editor**: the Edit button on the generation preview opens a full-screen editor whose saves keep the image's generation metadata. Layout and shortcuts follow Photoshop: move, crop with aspect presets, rotate, flip, image size, brush, eraser, clone stamp, eyedropper, rectangular and lasso selections, text, and up to 16 layers with opacity, 15 blend modes and layer masks. Undo and redo go back 30 steps.
+- **Adjustments**: brightness, contrast, highlights, shadows, a tone curve, temperature, tint, saturation, vibrance, hue, sharpen, blur and vignette. They stay editable until you save, and can be saved as named presets.
+- **Saving never overwrites**: Save adds a new gallery item, and Save as file writes a PNG with the same metadata embedded. Closing with unsaved changes asks first.
+- **NovelAI images stay NovelAI images**: editing a NovelAI PNG keeps NovelAI's own PNG text chunks, so novelai.net still recognises the saved file.
+- **Preview buttons**: Edit now shows its label, and Save and Copy are icon buttons with tooltips.
+
+### Prompting
+- **Spellcheck stays out of prose**: the tag spellcheck no longer runs for natural-language models (Flux, Krea, Qwen and similar), and inside tag prompts it skips lines that read as sentences.
+- **NovelAI dialect**: in NovelAI mode the spellcheck knows V5 custom tags, quality toggle tokens, `artist:` tokens, `source#` / `target#` / `mutual#` prefixes, `-N::tag::` weights and the `Text:` block.
+- **Fewer false flags everywhere**: common quality, year and score tokens (`masterpiece`, `very aesthetic`, `year 2024`, `score_9_up`, ...) count as known, and `{{tag}}` nesting is checked as the tag inside.
+
+---
+
 ## What's New in v2.3.45
 
 ### NovelAI
