@@ -72,6 +72,7 @@ docker run --rm --network host -v "$work:/check:ro" fedora:latest bash -euo pipe
   cp /check/mooshieui.repo /etc/yum.repos.d/
   dnf -y -q --disablerepo="*" --enablerepo=mooshieui makecache
   dnf -y --disablerepo="*" --enablerepo=mooshieui download --destdir /tmp mooshie-ui
-  cmp /tmp/MooshieUI-*.rpm /check/release/'"$rpm"'
+  # fedora:latest has no cmp; compare hashes instead.
+  [ "$(sha256sum < /tmp/MooshieUI-*.rpm)" = "$(sha256sum < /check/release/'"$rpm"')" ]
 '
 echo "apt and dnf both accepted the signed repo for $tag"
