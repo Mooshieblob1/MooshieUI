@@ -7,10 +7,13 @@ system.
 
 | Distro | Install | Update |
 | --- | --- | --- |
-| Arch, Manjaro, EndeavourOS | `yay -S mooshieui-bin` | `yay -Syu` |
+| Arch, Manjaro, EndeavourOS | [coming soon](#arch-aur): `yay -S mooshieui-bin` | `yay -Syu` |
 | Debian, Ubuntu, Mint, Pop!_OS | [add the apt repo](#debian-and-ubuntu), then `sudo apt install mooshieui` | `sudo apt update && sudo apt upgrade` |
 | Fedora, RHEL clones | [add the rpm repo](#fedora), then `sudo dnf install mooshieui` | `sudo dnf upgrade --refresh` |
 | Anything else | download the `.AppImage`, `chmod +x` it and run it | in-app updater |
+
+The apt and dnf repos carry every release after v2.3.46. Until the AUR
+package is published, Arch users can use the AppImage.
 
 When a package manager owns the install, MooshieUI's update banner shows the
 command above instead of downloading the update itself.
@@ -23,9 +26,10 @@ in.
 
 ## Arch (AUR)
 
-[`mooshieui-bin`](https://aur.archlinux.org/packages/mooshieui-bin) repackages
-the release `.deb` and is updated automatically on every release. Install it
-with an AUR helper:
+Coming soon: new AUR accounts are paused for now, so the package isn't
+published yet. Once it is, [`mooshieui-bin`](https://aur.archlinux.org/packages/mooshieui-bin)
+repackages the release `.deb`, is updated automatically on every release, and
+installs with an AUR helper:
 
 ```bash
 yay -S mooshieui-bin    # or: paru -S mooshieui-bin
