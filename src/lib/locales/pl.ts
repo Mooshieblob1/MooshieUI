@@ -2387,6 +2387,7 @@ const pl: Record<string, string> = {
   "updater.restart_now": "Uruchom ponownie",
   "updater.error": "Aktualizacja nie powiodła się: {error}",
   "updater.dismiss": "Zamknij",
+  "updater.package_manager_hint": "Zaktualizuj go menedżerem pakietów:",
   "updater.server_available": "MooshieUI v{version} jest dostępna -- wdróż ponownie, aby zaktualizować!",
   "updater.version_mismatch": "Aktualizacja mogła nie zostać zastosowana poprawnie. Oczekiwano v{expected}, ale uruchomiono v{current}. Spróbuj pobrać najnowszą wersję ręcznie.",
 
