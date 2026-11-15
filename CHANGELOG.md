@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v2.3.47
+
+### Setup
+- **Live PyTorch download progress**: setup no longer looks frozen at 50% while the 2 GB PyTorch wheel downloads. The status line shows how much has downloaded and the speed, the bar moves from 50% to 72%, and the last three installer lines show under the bar during install.
+- **Stall notice**: after 90 seconds with no new data the status says so, and the log names the usual causes (slow link, VPN, proxy, firewall, antivirus).
+- **Longer network timeouts**: setup gives uv a 120 second HTTP timeout and 6 retries (unless you set your own), so a slow link no longer restarts the whole download.
+- **Disk space check**: before a fresh PyTorch install, setup stops with a clear message when the install drive or uv's cache drive has under 6 GB free (2 GB for CPU and Metal).
+- **Failure hints**: network failures and full disks now come with a hint under uv's error.
+
+### Linux
+- **apt and dnf repos**: Debian, Ubuntu and Fedora users can add the signed MooshieUI repo once and get updates with their normal system updates. See `docs/LINUX.md`.
+- **Self-updates fixed for .deb and .rpm**: the in-app updater used to download the AppImage for these installs and then refuse it. It now gets the right package.
+- **Package-manager installs**: when MooshieUI was installed from the apt, dnf, zypper or AUR package, the update banner and Settings > About show the update command instead of a download button.
+- **AUR package coming soon**: `mooshieui-bin` is ready to publish once AUR account registration reopens. Arch users can use the AppImage meanwhile.
+
+---
+
 ## What's New in v2.3.46
 
 ### Image editor
