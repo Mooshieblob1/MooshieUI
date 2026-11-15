@@ -66,7 +66,9 @@ The repo metadata is signed with the key at
 [mooshieui.com/mooshieui.asc](https://mooshieui.com/mooshieui.asc), which is the
 same file as [`packaging/linux/mooshieui.asc`](../packaging/linux/mooshieui.asc)
 in this repository. Check its fingerprint with
-`gpg --show-keys /etc/apt/keyrings/mooshieui.asc`. The packages themselves are
+`gpg --show-keys /etc/apt/keyrings/mooshieui.asc`; it should be
+`1F82 986C 6CC1 D890 5E48  FE0D FF29 34B6 0954 B5D7`
+(MooshieUI Packages <blob@mooshieblob.com>). The packages themselves are
 the unmodified release files; the signed metadata carries their SHA-256.
 
 ## Uninstalling
