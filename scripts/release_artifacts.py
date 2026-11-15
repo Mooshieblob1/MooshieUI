@@ -22,7 +22,9 @@ def collect(source: Path, output: Path, tag: str, repo: str, macos: bool = False
     if macos:
         suffixes += (".dmg", ".app.tar.gz", ".app.tar.gz.sig")
     for file in source.rglob("*"):
-        if not file.is_file() or not file.name.endswith(suffixes):
+        # apt-* / rpm-*: signed package repo metadata from the linux-repo job.
+        repo_metadata = file.parent == source and file.name.startswith(("apt-", "rpm-"))
+        if not file.is_file() or not (file.name.endswith(suffixes) or repo_metadata):
             continue
         name = file.name
         # Tauri's Mac updater archive omits architecture and version. Rename
