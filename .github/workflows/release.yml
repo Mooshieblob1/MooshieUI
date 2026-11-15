@@ -403,6 +403,75 @@ jobs:
               release-files/*
           fi
 
+  # Pushes the mooshieui-bin PKGBUILD for this release to the AUR, so Arch
+  # users get it with `yay -S mooshieui-bin`. Skipped with a warning when the
+  # AUR_SSH_KEY secret is missing or the tag is a prerelease; never blocks the
+  # release itself, which is already published by now.
+  publish-aur:
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Check AUR prerequisites
+        id: gate
+        env:
+          HAS_KEY: ${{ secrets.AUR_SSH_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != 'true' ]; then
+            echo "::warning::AUR_SSH_KEY is not set; skipping the AUR update."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [[ ! "${TAG#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::warning::${TAG} is a prerelease; the AUR only gets stable versions."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and check the package
+        if: steps.gate.outputs.run == 'true'
+        run: bash scripts/aur-package.sh "${TAG#v}" "$RUNNER_TEMP/aur"
+
+      - name: Push to the AUR
+        if: steps.gate.outputs.run == 'true'
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          # Published at https://aur.archlinux.org (SSH fingerprints, Ed25519).
+          AUR_HOST_FINGERPRINT: SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4
+        run: |
+          key="$RUNNER_TEMP/aur_key"
+          hosts="$RUNNER_TEMP/aur_known_hosts"
+          # The key may have been pasted on Windows: drop carriage returns.
+          printf '%s\n' "$AUR_SSH_KEY" | tr -d '\r' > "$key"
+          chmod 600 "$key"
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$hosts" 2>/dev/null
+          fingerprint=$(ssh-keygen -lf "$hosts" | awk '{print $2}')
+          if [ "$fingerprint" != "$AUR_HOST_FINGERPRINT" ]; then
+            echo "::error::aur.archlinux.org offered host key $fingerprint, expected $AUR_HOST_FINGERPRINT"
+            exit 1
+          fi
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$hosts -o StrictHostKeyChecking=yes"
+          repo="$RUNNER_TEMP/aur-repo"
+          git clone ssh://aur@aur.archlinux.org/mooshieui-bin.git "$repo"
+          cp "$RUNNER_TEMP/aur/PKGBUILD" "$RUNNER_TEMP/aur/.SRCINFO" "$repo/"
+          cd "$repo"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "The AUR already has ${TAG#v}."
+            exit 0
+          fi
+          git -c user.name=Mooshieblob -c user.email=blob@mooshieblob.com commit -m "Update to ${TAG#v}"
+          git push origin HEAD:master
+          rm -f "$key"
+
   # -------------------------------------------------------------------------
   # Headless server binary (no webkit / Tauri deps required)
   # -------------------------------------------------------------------------
