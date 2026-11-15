@@ -26,7 +26,7 @@
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
-  import { checkForAppUpdate, isUpdateServerUnreachable, RELEASES_PAGE_URL } from "../../utils/updater.js";
+  import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL } from "../../utils/updater.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
@@ -1113,6 +1113,8 @@
   let updateState = $state<UpdateCheckState>("idle");
   let updateVersion = $state("");
   let updateError = $state("");
+  /** Set when apt, dnf, zypper or the AUR owns this install. */
+  let managedUpdateCommand = $state("");
   let updateDownloaded = $state(0);
   let updateTotal = $state(0);
   let browserUpdateMode = $state<BrowserUpdateMode>("local");
@@ -1163,6 +1165,7 @@
       if (update) {
         updateObj = update;
         updateVersion = update.version;
+        managedUpdateCommand = (await packageManagerUpdateCommand()) ?? "";
         updateState = "available";
       } else {
         updateState = "up-to-date";
@@ -4802,6 +4805,9 @@
                     {:else}
                       <p class="text-xs text-indigo-200/80">{locale.t('settings.about.redeploy_to_update')}</p>
                     {/if}
+                  {:else if managedUpdateCommand}
+                    <p class="text-xs text-indigo-200/80 mb-1">{locale.t('updater.package_manager_hint')}</p>
+                    <code class="block select-all rounded bg-black/30 px-2 py-1 font-mono text-xs text-indigo-100">{managedUpdateCommand}</code>
                   {:else}
                     <button
                       onclick={downloadAndInstallUpdate}

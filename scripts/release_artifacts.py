@@ -18,7 +18,7 @@ def collect(source: Path, output: Path, tag: str, repo: str, macos: bool = False
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise ValueError("Release output directory must be empty")
-    suffixes = (".deb", ".rpm", ".AppImage", ".AppImage.sig", ".exe", ".exe.sig", ".msi", ".msi.sig")
+    suffixes = (".deb", ".deb.sig", ".rpm", ".rpm.sig", ".AppImage", ".AppImage.sig", ".exe", ".exe.sig", ".msi", ".msi.sig")
     if macos:
         suffixes += (".dmg", ".app.tar.gz", ".app.tar.gz.sig")
     for file in source.rglob("*"):
@@ -42,6 +42,11 @@ def collect(source: Path, output: Path, tag: str, repo: str, macos: bool = False
 
     bundles = {
         "linux-x86_64": one(f"*_{version}_amd64.AppImage"),
+        # The updater looks for `{os}-{arch}-{bundle type}` before `{os}-{arch}`,
+        # so .deb and .rpm installs need their own entries or they download the
+        # AppImage and refuse it (InvalidUpdaterFormat).
+        "linux-x86_64-deb": one(f"*_{version}_amd64.deb"),
+        "linux-x86_64-rpm": one(f"*-{version}-1.x86_64.rpm"),
         "windows-x86_64": one(f"*_{version}_x64-setup.exe"),
     }
     if macos:

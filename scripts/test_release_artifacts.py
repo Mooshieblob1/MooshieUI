@@ -15,7 +15,13 @@ class ReleaseArtifactsTest(unittest.TestCase):
         self.source = Path(self.temp.name) / "source"
         self.source.mkdir()
         self.output = Path(self.temp.name) / "output"
-        for name in ("MooshieUI_2.3.1_amd64.AppImage", "MooshieUI_2.3.1_x64-setup.exe", "MooshieUI.app.tar.gz"):
+        for name in (
+            "MooshieUI_2.3.1_amd64.AppImage",
+            "MooshieUI_2.3.1_amd64.deb",
+            "MooshieUI-2.3.1-1.x86_64.rpm",
+            "MooshieUI_2.3.1_x64-setup.exe",
+            "MooshieUI.app.tar.gz",
+        ):
             (self.source / name).write_bytes(b"signed archive content")
             (self.source / (name + ".sig")).write_text("signature")
         (self.source / "MooshieUI_2.3.1_aarch64.dmg").write_bytes(b"dmg")
@@ -29,6 +35,19 @@ class ReleaseArtifactsTest(unittest.TestCase):
         self.assertTrue(result["platforms"]["darwin-aarch64"]["url"].endswith("MooshieUI_2.3.1_aarch64.app.tar.gz"))
         self.assertEqual((self.output / "MooshieUI_2.3.1_aarch64.app.tar.gz").read_bytes(), b"signed archive content")
         self.assertIn("latest.json", (self.output / "SHA256SUMS").read_text())
+
+    def test_deb_and_rpm_get_their_own_updater_entries(self):
+        platforms = self.collect(macos=False)["platforms"]
+        self.assertTrue(platforms["linux-x86_64"]["url"].endswith("MooshieUI_2.3.1_amd64.AppImage"))
+        self.assertTrue(platforms["linux-x86_64-deb"]["url"].endswith("MooshieUI_2.3.1_amd64.deb"))
+        self.assertTrue(platforms["linux-x86_64-rpm"]["url"].endswith("MooshieUI-2.3.1-1.x86_64.rpm"))
+        self.assertTrue((self.output / "MooshieUI_2.3.1_amd64.deb.sig").is_file())
+        self.assertTrue((self.output / "MooshieUI-2.3.1-1.x86_64.rpm.sig").is_file())
+
+    def test_missing_deb_signature_blocks_release(self):
+        (self.source / "MooshieUI_2.3.1_amd64.deb.sig").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.collect(macos=False)
 
     def test_unqualified_mac_assets_are_excluded(self):
         result = self.collect(macos=False)
