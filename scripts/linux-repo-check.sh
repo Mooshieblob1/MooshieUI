@@ -52,7 +52,9 @@ apt_opts=(-o "Dir::Etc::SourceList=$work/mooshieui.sources" -o Dir::Etc::SourceP
   -o "Dir::State::Lists=$work/apt-lists" -o "Dir::Cache=$work/apt-cache" -o Debug::NoLocking=1
   -o APT::Sandbox::User=root)
 sudo apt-get "${apt_opts[@]}" update
-sudo apt-get "${apt_opts[@]}" install --simulate --no-install-recommends mooshie-ui | grep "^Inst mooshie-ui "
+# Only this repo is configured, so check the candidate rather than a full
+# install, whose dependencies come from the distro's own repos.
+apt-cache "${apt_opts[@]}" policy mooshie-ui | grep "Candidate: ${version}"
 (cd "$work" && sudo apt-get "${apt_opts[@]}" download mooshie-ui)
 cmp "$work"/mooshie-ui_*_amd64.deb "$work/release/$deb"
 
