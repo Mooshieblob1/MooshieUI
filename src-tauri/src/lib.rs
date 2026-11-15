@@ -29,6 +29,8 @@ pub mod model_requests;
 pub mod notifications;
 pub mod novelai;
 pub mod output_owners;
+#[cfg(any(feature = "desktop", test))]
+pub mod package_manager;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
@@ -751,6 +753,7 @@ pub fn run() {
             commands::cloud::scene_upgrade_draft,
             commands::cloud::scene_exact_voice,
             commands::config::get_config,
+            commands::config::app_package_manager,
             commands::config::update_config,
             commands::mcp::get_mcp_status,
             commands::watermark::get_watermark_status,

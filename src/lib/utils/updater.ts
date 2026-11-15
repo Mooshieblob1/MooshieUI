@@ -1,4 +1,5 @@
 import type { Update } from "@tauri-apps/plugin-updater";
+import { getAppPackageManager } from "./api.js";
 
 /** GitHub releases page, offered when the in-app updater can't reach GitHub. */
 export const RELEASES_PAGE_URL = "https://github.com/Mooshieblob1/MooshieUI/releases/latest";
@@ -41,4 +42,29 @@ export function isUpdateServerUnreachable(error: unknown): boolean {
     text.includes("dns error") ||
     text.includes("connection")
   );
+}
+
+/** What to run to update an install the system package manager owns. */
+const PACKAGE_MANAGER_UPDATE_COMMANDS: Record<string, string> = {
+  apt: "sudo apt update && sudo apt upgrade",
+  dnf: "sudo dnf upgrade --refresh mooshieui",
+  zypper: "sudo zypper refresh && sudo zypper update mooshieui",
+  pacman: "yay -Syu mooshieui-bin",
+};
+
+let packageManagerCommand: Promise<string | null> | null = null;
+
+/**
+ * The update command for an install from the MooshieUI apt/rpm repo or the
+ * AUR, where the in-app updater must stay out of the package manager's way.
+ * Null when the app updates itself.
+ */
+export function packageManagerUpdateCommand(): Promise<string | null> {
+  packageManagerCommand ??= getAppPackageManager()
+    .then((manager) => (manager && PACKAGE_MANAGER_UPDATE_COMMANDS[manager]) || null)
+    .catch((e) => {
+      console.warn("[Updater] Could not tell whether a package manager owns this install:", e);
+      return null;
+    });
+  return packageManagerCommand;
 }
