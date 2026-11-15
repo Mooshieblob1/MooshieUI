@@ -49,6 +49,18 @@ class ReleaseArtifactsTest(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.collect(macos=False)
 
+    def test_linux_repo_metadata_is_published(self):
+        (self.source / "apt-InRelease").write_text("signed release")
+        (self.source / "rpm-repomd.xml").write_text("<repomd/>")
+        nested = self.source / "rpm"
+        nested.mkdir()
+        (nested / "rpm-stray.txt").write_text("not repo metadata")
+        self.collect(macos=False)
+        self.assertEqual((self.output / "apt-InRelease").read_text(), "signed release")
+        self.assertTrue((self.output / "rpm-repomd.xml").is_file())
+        self.assertFalse((self.output / "rpm-stray.txt").exists())
+        self.assertIn("apt-InRelease", (self.output / "SHA256SUMS").read_text())
+
     def test_unqualified_mac_assets_are_excluded(self):
         result = self.collect(macos=False)
         self.assertNotIn("darwin-aarch64", result["platforms"])
