@@ -826,6 +826,15 @@
           </div>
         {/if}
 
+        <!-- Latest installer output, so a long step visibly keeps going -->
+        {#if phase === "installing" && logLines.length > 0}
+          <div class="mt-3 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-left">
+            {#each logLines.slice(-3) as line}
+              <p class="text-[11px] text-neutral-500 font-mono truncate" title={line}>{line}</p>
+            {/each}
+          </div>
+        {/if}
+
         <p class="text-xs text-neutral-600 mt-4">
           {locale.t("setup.progress_dont_close")}
         </p>
