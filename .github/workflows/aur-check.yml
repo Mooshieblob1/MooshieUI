@@ -1,0 +1,32 @@
+name: AUR package check
+
+# Builds the mooshieui-bin PKGBUILD against the latest release in an Arch
+# container whenever the template or its script changes, so a broken package
+# is caught before a release tries to publish it.
+on:
+  pull_request:
+    paths:
+      - "packaging/aur/**"
+      - "scripts/aur-package.sh"
+      - ".github/workflows/aur-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  aur-package:
+    name: AUR package builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build mooshieui-bin for the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)
+          bash scripts/aur-package.sh "${tag#v}" "$RUNNER_TEMP/aur"
+          cat "$RUNNER_TEMP/aur/.SRCINFO"

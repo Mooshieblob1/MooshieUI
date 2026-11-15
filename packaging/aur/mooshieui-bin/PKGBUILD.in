@@ -1,0 +1,29 @@
+# Maintainer: Mooshieblob <blob@mooshieblob.com>
+#
+# Rendered by scripts/aur-package.sh on every release and pushed to the AUR by
+# the publish-aur job in .github/workflows/release.yml. Edit this template in
+# the MooshieUI repo, not the copy on the AUR.
+
+pkgname=mooshieui-bin
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Beginner-friendly AI image generation frontend for ComfyUI"
+arch=('x86_64')
+url="https://github.com/Mooshieblob1/MooshieUI"
+license=('AGPL-3.0-or-later')
+# git: first-run setup clones and updates ComfyUI with the system git.
+depends=('webkit2gtk-4.1' 'gtk3' 'git' 'hicolor-icon-theme')
+provides=('mooshieui' 'mooshie-ui')
+conflicts=('mooshieui' 'mooshie-ui')
+options=('!strip' '!debug')
+source=("MooshieUI_${pkgver}_amd64.deb::https://github.com/Mooshieblob1/MooshieUI/releases/download/v${pkgver}/MooshieUI_${pkgver}_amd64.deb")
+sha256sums=('@SHA256@')
+
+package() {
+  bsdtar -xf "${srcdir}"/data.tar.* -C "${pkgdir}" --no-same-owner
+  # Tells the app pacman owns this install, so it shows the update command
+  # instead of its own updater (src-tauri/src/package_manager.rs).
+  install -d "${pkgdir}/usr/share/mooshieui"
+  printf 'pacman\n' > "${pkgdir}/usr/share/mooshieui/package-manager"
+  chmod 644 "${pkgdir}/usr/share/mooshieui/package-manager"
+}
