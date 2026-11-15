@@ -340,7 +340,7 @@ jobs:
             '| Platform | File |' \
             '|----------|------|' \
             '| **Windows** | `_x64-setup.exe` |' \
-            '| **Linux** | `.AppImage`, `.deb` or `.rpm` |' \
+            '| **Linux** | `.AppImage`, `.deb` or `.rpm`, or apt, dnf and the AUR ([Linux guide](https://github.com/Mooshieblob1/MooshieUI/blob/main/docs/LINUX.md)) |' \
             '' \
             '---' \
             '' \
