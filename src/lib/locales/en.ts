@@ -2433,6 +2433,7 @@ const en: Record<string, string> = {
   "updater.restart_now": "Restart Now",
   "updater.error": "Update failed: {error}",
   "updater.dismiss": "Dismiss",
+  "updater.package_manager_hint": "Update it with your package manager:",
   "updater.server_available": "MooshieUI v{version} is available — please redeploy to update!",
   "updater.version_mismatch": "Update may not have applied correctly. Expected v{expected}, but running v{current}. Try downloading the latest version manually.",
 

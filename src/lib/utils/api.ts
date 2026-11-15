@@ -1396,6 +1396,15 @@ async function flushPendingConfigWrite(): Promise<void> {
   }
 }
 
+/**
+ * The Linux package manager that owns this desktop install ("apt", "dnf",
+ * "zypper" or "pacman"), or null when the in-app updater handles updates.
+ * Desktop only.
+ */
+export async function getAppPackageManager(): Promise<string | null> {
+  return ipcInvoke<string | null>("app_package_manager");
+}
+
 export async function getConfig(options?: { force?: boolean }): Promise<AppConfig> {
   const force = options?.force ?? false;
   if (!force && configCache) {
