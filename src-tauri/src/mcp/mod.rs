@@ -21,8 +21,10 @@
 //! stale copy of it must not switch the server off or roll the token back.
 
 pub mod expand;
+pub mod inputs;
 pub mod jobs;
 pub mod library;
+pub mod links;
 pub mod music;
 pub mod setups;
 pub mod tools;
@@ -34,7 +36,7 @@ use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -155,7 +157,7 @@ fn save_settings(settings: &McpSettings) -> Result<(), String> {
     std::fs::write(&path, text).map_err(|e| e.to_string())
 }
 
-fn current_settings() -> McpSettings {
+pub(crate) fn current_settings() -> McpSettings {
     SETTINGS.lock().unwrap().clone()
 }
 
@@ -206,7 +208,7 @@ fn public_host(public_url: &str) -> Option<String> {
 }
 
 /// Whether the request's `Host` header is the owner's public address.
-fn host_is_public(headers: &HeaderMap, public_url: &str) -> bool {
+pub(crate) fn host_is_public(headers: &HeaderMap, public_url: &str) -> bool {
     let (Some(expected), Some(host)) = (
         public_host(public_url),
         headers
@@ -389,6 +391,7 @@ fn router(state: Arc<AppState>) -> Router {
                 .get(method_not_allowed)
                 .delete(method_not_allowed),
         )
+        .route("/files/{expires}/{sig}/{kind}/{name}", get(links::serve))
         .with_state(state)
 }
 
@@ -523,12 +526,16 @@ async fn serve(
     };
     let params = message.get("params").cloned().unwrap_or(Value::Null);
 
-    let max_wait = if is_proxied(headers, public) {
-        PROXIED_MAX_WAIT
-    } else {
-        tools::MAX_WAIT
+    let proxied = is_proxied(headers, public);
+    let ctx = tools::CallContext {
+        max_wait: if proxied {
+            PROXIED_MAX_WAIT
+        } else {
+            tools::MAX_WAIT
+        },
+        proxied,
     };
-    let reply = match dispatch(state, method, &params, max_wait).await {
+    let reply = match dispatch(state, method, &params, &ctx).await {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
         Err((code, msg)) => rpc_error(id, code, &msg),
     };
@@ -548,7 +555,7 @@ async fn dispatch(
     state: &Arc<AppState>,
     method: &str,
     params: &Value,
-    max_wait: std::time::Duration,
+    ctx: &tools::CallContext,
 ) -> Result<Value, (i64, String)> {
     match method {
         "initialize" => {
@@ -576,7 +583,7 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or((-32602, "Missing tool name".to_string()))?;
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            tools::call(state, name, &args, max_wait)
+            tools::call(state, name, &args, ctx)
                 .await
                 .ok_or((-32602, format!("Unknown tool: {name}")))
         }
@@ -725,11 +732,15 @@ mod tests {
     #[tokio::test]
     async fn handshake_negotiates_a_known_version() {
         let state = Arc::new(AppState::new(crate::config::AppConfig::default()));
+        let ctx = tools::CallContext {
+            max_wait: tools::MAX_WAIT,
+            proxied: false,
+        };
         let init = dispatch(
             &state,
             "initialize",
             &json!({ "protocolVersion": "2025-03-26" }),
-            tools::MAX_WAIT,
+            &ctx,
         )
         .await
         .unwrap();
@@ -738,15 +749,13 @@ mod tests {
             &state,
             "initialize",
             &json!({ "protocolVersion": "1999-01-01" }),
-            tools::MAX_WAIT,
+            &ctx,
         )
         .await
         .unwrap();
         assert_eq!(init["protocolVersion"], PROTOCOL_VERSIONS[0]);
-        assert!(dispatch(&state, "nope", &json!({}), tools::MAX_WAIT)
-            .await
-            .is_err());
-        let listed = dispatch(&state, "tools/list", &json!({}), tools::MAX_WAIT)
+        assert!(dispatch(&state, "nope", &json!({}), &ctx).await.is_err());
+        let listed = dispatch(&state, "tools/list", &json!({}), &ctx)
             .await
             .unwrap();
         let names: Vec<&str> = listed["tools"]
@@ -756,5 +765,21 @@ mod tests {
             .filter_map(|t| t["name"].as_str())
             .collect();
         assert!(names.contains(&"generate_image") && names.contains(&"generate_music"));
+        for tool in [
+            "edit_image",
+            "upscale_image",
+            "list_boards",
+            "search_eagle",
+            "get_eagle_image",
+            "send_to_eagle",
+            "list_library",
+            "get_character",
+        ] {
+            assert!(names.contains(&tool), "{tool} missing");
+        }
+        // Every tool has an object schema.
+        for t in listed["tools"].as_array().unwrap() {
+            assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
+        }
     }
 }
