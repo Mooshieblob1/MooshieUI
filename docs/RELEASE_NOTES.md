@@ -1,3 +1,33 @@
+## What's New in v2.3.49
+
+### Comic pages
+- **Comic page builder**: a new Comic page builds a page panel by panel. Pick from 15 layouts (1 to 6 panels) or split and resize panels yourself, with portrait, landscape or square pages, a gutter slider and right-to-left reading order for manga.
+- **Two ways to generate**: "Each panel" makes one image per panel at the panel's own shape and crops them into the page. "Whole page" makes the page in a single NovelAI image (up to 6 panels).
+- **Continuity**: describe your cast and page setting once and they are added to every panel. After each panel the tagger flags changed hair, eyes or setting, with a redo button. "Check story" flags contradictions between panels and "Write prompts from beats" drafts panel prompts from one-line beats.
+- **Saving**: panel images go to the gallery as they finish, and "Save page" writes the assembled page with the panel prompts in its metadata.
+- **Cleaner comic lettering**: Prompt Enhance (NovelAI V5) no longer puts speaker names or page headings inside speech bubbles. The words go in the `Text:` block and the speaker is named in the prose.
+
+### Generation
+- **Continuous generation**: a repeat button next to the batch stepper runs Generate again and again, for a set number of runs or until stopped, with an optional delay between runs and a "Stop on error" option. Random seeds and wildcards reroll each run.
+- **Repeat-image warning (NovelAI)**: sending the exact same settings and seed as the last image asks for a second click first, so you don't spend Anlas on a duplicate by accident.
+- **Finish chime**: Settings > Notifications can play a short sound when an image is ready.
+
+### Prompts
+- **File wildcards**: `__name__` picks a line from a file in the wildcards folder. Text, YAML and JSON files work, in the Dynamic Prompts layout, so existing packs drop in unchanged. A fixed seed repeats its picks, and "In order" walks a list one line per request.
+- **Wildcards tab**: a new bottom panel tab to browse, edit, create and delete wildcard files, with click-to-insert tokens.
+- **Line comments**: `//` comments out the rest of a line and Ctrl+/ toggles comments on the selected lines. Comments are greyed out and never sent.
+- **Find and replace**: Ctrl+F and Ctrl+H open a find bar on the focused prompt box, with match case, next and previous, and Replace / Replace all.
+- **Related tags**: select a tag and press Related in the prompt toolbar to see tags that go with it, from Danbooru and from your own gallery. Click a chip to add it right after the selected tag.
+
+### NovelAI
+- **Saved keys**: name and save several NovelAI keys in Settings > NovelAI and switch between them. With two or more saved, an account picker appears on the Anlas line.
+- **Paid-through date**: the account panel shows when your subscription is paid through, and the Anlas line shows the days left.
+
+### Gallery
+- **Eagle export**: Settings > Connection > Eagle export sends images to Eagle, either automatically as they are saved or with an Eagle button in the gallery selection bar. Tags come from the prompt and the full prompt, negative and seed go in the annotation.
+
+---
+
 ## What's New in v2.3.48
 
 ### Prompt chunks and styles
