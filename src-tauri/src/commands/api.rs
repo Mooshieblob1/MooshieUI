@@ -1833,20 +1833,22 @@ pub fn save_to_gallery_inner(
     // If metadata provided, embed it using the format-appropriate mechanism.
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
-            // A PNG that still carries NovelAI's own metadata goes to disk
-            // untouched. NovelAI signs what it returns, and re-encoding to
+            // A PNG that still carries NovelAI's own metadata is never
+            // re-encoded. NovelAI signs what it returns, and re-encoding to
             // embed our copy of the parameters would strip its chunks and
             // overwrite the alpha bits its stealth payload lives in, leaving a
-            // file its own site no longer recognises. SQLite still gets the
-            // full map below, so the in-app settings restore is unaffected,
-            // and the reader picks NovelAI's chunks up on the way back in.
+            // file its own site no longer recognises. It only gains the
+            // MooshieUI marker chunk, spliced in before IEND. SQLite still
+            // gets the full map below, so the in-app settings restore is
+            // unaffected, and the reader picks NovelAI's chunks up on the way
+            // back in.
             crate::metadata::ImageFormat::Png
                 if crate::metadata::png_carries_novelai_metadata(bytes) =>
             {
                 log::info!(
-                    "save_to_gallery_inner: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                    "save_to_gallery_inner: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
                 );
-                bytes.to_vec()
+                crate::metadata::mark_novelai_png(bytes, meta)
             }
             crate::metadata::ImageFormat::Png => {
                 match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {

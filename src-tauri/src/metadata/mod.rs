@@ -386,12 +386,12 @@ pub fn embed_uuid_for_test(bytes: &[u8], json: &str) -> Vec<u8> {
 /// JXL carries metadata in an `xml ` box and has no stealth-alpha variant, so
 /// `mode` is ignored there.
 ///
-/// A PNG that still carries NovelAI's own chunks comes back untouched. Every
+/// A PNG that still carries NovelAI's own chunks is not re-encoded. Every
 /// export and clipboard route reaches this one function, and embedding here
 /// means a full decode and re-encode, which would drop those chunks and
-/// overwrite the stealth alpha that novelai.net reads. Preserving the bytes
-/// costs nothing: the metadata this call would have written says the same
-/// thing, and the app reads NovelAI's chunks back just as happily as its own.
+/// overwrite the stealth alpha that novelai.net reads. Such a PNG only gains
+/// the MooshieUI marker chunk ([`mark_novelai_png`]), spliced in before `IEND`
+/// without touching a byte NovelAI wrote, and a second call adds nothing.
 /// Once a local post-process has re-encoded the image the chunks are already
 /// gone, so that case falls through and is embedded as normal.
 pub fn embed_image_metadata(
@@ -401,8 +401,10 @@ pub fn embed_image_metadata(
 ) -> Result<Vec<u8>, String> {
     match detect_format(image_bytes) {
         ImageFormat::Png if png_carries_novelai_metadata(image_bytes) => {
-            log::info!("embed_image_metadata: preserving NovelAI PNG bytes verbatim");
-            Ok(image_bytes.to_vec())
+            log::info!(
+                "embed_image_metadata: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
+            );
+            Ok(mark_novelai_png(image_bytes, params))
         }
         ImageFormat::Png => embed_png_metadata(image_bytes, params, mode),
         ImageFormat::Jxl => embed_jxl_metadata(image_bytes, params),
@@ -585,7 +587,18 @@ pub fn encode_png_with_metadata_rgba8(
 
 /// Read metadata from PNG bytes.
 /// Tries stealth alpha first, then PNG text chunks (SwarmUI JSON → A1111 fallback).
+/// A NovelAI image also gets a `source` label; see [`label_novelai_source`].
 pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
+    let mut result = read_png_generation_metadata(image_bytes)?;
+    if let Some(params) = result.as_mut() {
+        label_novelai_source(image_bytes, params);
+    }
+    Ok(result)
+}
+
+fn read_png_generation_metadata(
+    image_bytes: &[u8],
+) -> Result<Option<HashMap<String, String>>, String> {
     // Try stealth alpha first
     if let Ok(Some(params)) = read_stealth_alpha(image_bytes) {
         return Ok(Some(params));
@@ -797,6 +810,169 @@ pub fn copy_png_text_chunks(source: &[u8], target: &[u8]) -> Option<Vec<u8>> {
     out.extend_from_slice(&text);
     out.extend_from_slice(&target[insert_at..]);
     Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// MooshieUI marker for NovelAI PNGs
+// ---------------------------------------------------------------------------
+
+/// Keyword of the text chunk that marks a NovelAI PNG as generated through
+/// MooshieUI.
+///
+/// Not `parameters`: this app's own reader and every A1111-style tool read that
+/// keyword first, so it would shadow NovelAI's chunks. Not `Software` either:
+/// NovelAI owns that one.
+pub const MOOSHIE_MARKER_KEYWORD: &str = "MooshieUI";
+
+/// The marker's payload. Field order is the order it is written in.
+#[derive(serde::Serialize)]
+struct NovelAiMarker<'a> {
+    software: &'a str,
+    version: &'a str,
+    backend: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    generated: String,
+    source: &'a str,
+}
+
+/// Compact marker JSON for a NovelAI image saved with `params`.
+///
+/// Deliberately small: no prompt or settings, since NovelAI's own chunks
+/// already carry those and a second copy could only drift from them.
+fn novelai_marker_json(params: &HashMap<String, String>) -> String {
+    let non_empty = |key: &str| {
+        params
+            .get(key)
+            .map(String::as_str)
+            .filter(|v| !v.is_empty())
+    };
+    let marker = NovelAiMarker {
+        software: "MooshieUI",
+        version: env!("CARGO_PKG_VERSION"),
+        backend: "novelai",
+        model: non_empty("model"),
+        generated: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        // The same value a re-encoded image carries as `mooshie_extra.source`.
+        // Only MCP saves set it; everything else is the app's own UI.
+        source: non_empty("mooshie_source").unwrap_or("ui"),
+    };
+    serde_json::to_string(&marker).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Does this PNG have a `tEXt`, `zTXt` or `iTXt` chunk with this keyword?
+///
+/// Walks the raw chunk list rather than asking the png crate, because the
+/// crate's header read stops at the first `IDAT` and the MooshieUI marker
+/// sits after it. `false` for anything that is not a sound PNG.
+pub fn png_has_text_keyword(bytes: &[u8], keyword: &str) -> bool {
+    let Some(spans) = png_chunk_spans(bytes) else {
+        return false;
+    };
+    spans.into_iter().any(|(kind, span)| {
+        if kind != *b"tEXt" && kind != *b"zTXt" && kind != *b"iTXt" {
+            return false;
+        }
+        // Skip the 4-byte length and 4-byte type; the keyword leads the data
+        // and is NUL-terminated in all three chunk types.
+        let data = &bytes[span.start + 8..span.end - 4];
+        data.split(|&b| b == 0).next() == Some(keyword.as_bytes()) && data.len() > keyword.len()
+    })
+}
+
+/// Splice one text chunk into a PNG just before `IEND`, without decoding it.
+///
+/// Every existing byte up to `IEND` is copied as is, so `IDAT` and every
+/// other chunk stay untouched: NovelAI's chunks and its stealth alpha survive.
+/// The chunk is `tEXt` when the text is Latin-1 and uncompressed `iTXt`
+/// otherwise, the same rule [`add_parameters_chunk`] uses.
+///
+/// `None` when the bytes are not a structurally sound PNG ending in `IEND`, or
+/// the keyword is not a valid PNG keyword.
+pub fn png_append_text_chunk(bytes: &[u8], keyword: &str, text: &str) -> Option<Vec<u8>> {
+    // PNG keywords: 1 to 79 printable Latin-1 characters.
+    if keyword.is_empty()
+        || keyword.len() > 79
+        || !keyword.bytes().all(|b| (0x20..=0x7e).contains(&b))
+    {
+        return None;
+    }
+    let (iend_kind, iend_span) = png_chunk_spans(bytes)?.pop()?;
+    if iend_kind != *b"IEND" {
+        return None;
+    }
+
+    let mut data = keyword.as_bytes().to_vec();
+    data.push(0);
+    let kind: &[u8; 4] = if text.chars().all(|c| (c as u32) < 0x100) {
+        data.extend(text.chars().map(|c| c as u8));
+        b"tEXt"
+    } else {
+        // Compression flag 0, compression method 0, then empty language tag
+        // and translated keyword, each NUL-terminated.
+        data.extend_from_slice(&[0, 0, 0, 0]);
+        data.extend_from_slice(text.as_bytes());
+        b"iTXt"
+    };
+    let len = u32::try_from(data.len()).ok()?;
+
+    let mut out = Vec::with_capacity(bytes.len() + data.len() + 12);
+    out.extend_from_slice(&bytes[..iend_span.start]);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(&data);
+    let mut crc = flate2::Crc::new();
+    crc.update(kind);
+    crc.update(&data);
+    out.extend_from_slice(&crc.sum().to_be_bytes());
+    out.extend_from_slice(&bytes[iend_span]);
+    Some(out)
+}
+
+/// Mark a NovelAI PNG as generated through MooshieUI, leaving everything
+/// NovelAI wrote intact.
+///
+/// This is what every NovelAI bypass returns instead of the verbatim bytes:
+/// the image keeps NovelAI's chunks and stealth alpha byte for byte, and gains
+/// one `MooshieUI` text chunk before `IEND`. Pixels are never touched,
+/// whatever the stealth mode setting.
+///
+/// Idempotent: export and clipboard routes run this again on bytes that are
+/// already marked, and a marked PNG comes back unchanged. Anything that cannot
+/// be spliced safely also comes back unchanged.
+pub fn mark_novelai_png(bytes: &[u8], params: &HashMap<String, String>) -> Vec<u8> {
+    if png_has_text_keyword(bytes, MOOSHIE_MARKER_KEYWORD) {
+        return bytes.to_vec();
+    }
+    match png_append_text_chunk(bytes, MOOSHIE_MARKER_KEYWORD, &novelai_marker_json(params)) {
+        Some(marked) => marked,
+        None => {
+            log::warn!("mark_novelai_png: not a sound PNG, keeping the bytes as they are");
+            bytes.to_vec()
+        }
+    }
+}
+
+/// Label where a NovelAI PNG came from, under the `source` key.
+///
+/// The settings still come from NovelAI's own chunks (or its stealth alpha);
+/// this only adds "MooshieUI (NovelAI)" when the MooshieUI marker is present
+/// and "NovelAI" when it is not. Images that carry this app's own `parameters`
+/// chunk are left alone: they are not NovelAI's bytes any more.
+fn label_novelai_source(bytes: &[u8], params: &mut HashMap<String, String>) {
+    if params.get("mooshie_backend").map(String::as_str) != Some("novelai")
+        || params.contains_key("source")
+        || png_has_text_keyword(bytes, "parameters")
+        || !png_carries_novelai_metadata(bytes)
+    {
+        return;
+    }
+    let label = if png_has_text_keyword(bytes, MOOSHIE_MARKER_KEYWORD) {
+        "MooshieUI (NovelAI)"
+    } else {
+        "NovelAI"
+    };
+    params.insert("source".to_string(), label.to_string());
 }
 
 // ---------------------------------------------------------------------------
@@ -2435,26 +2611,245 @@ mod tests {
         output
     }
 
-    /// NovelAI's own chunks are what novelai.net reads back on import, and a
-    /// re-encode drops every one of them. Embedding must therefore hand a
-    /// NovelAI PNG straight back rather than rewriting it.
-    #[test]
-    fn embedding_preserves_novelai_png_byte_for_byte() {
-        let png_bytes = make_novelai_png(8, 8);
-        assert!(png_carries_novelai_metadata(&png_bytes));
+    /// A NovelAI PNG the way novelai.net returns it: its five text chunks plus
+    /// a NovelAI-shaped stealth-alpha payload in the alpha LSBs.
+    fn make_novelai_stealth_png(width: u32, height: u32) -> Vec<u8> {
+        let mut rgba = vec![128u8; (width as usize) * (height as usize) * 4];
+        for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+            px[0] = (i % 251) as u8;
+            px[3] = 255;
+        }
+        let stealth = r#"{"Title":"AI generated image","Description":"1girl, standing","Software":"NovelAI","Source":"NovelAI Diffusion V4.5 4BDE2A90","Comment":"{\"prompt\": \"1girl, standing\", \"seed\": 577536437, \"steps\": 28, \"width\": 64, \"height\": 64}"}"#;
+        encode_stealth_alpha(&mut rgba, width, height, 4, stealth).unwrap();
 
+        let mut output = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut output, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            for (keyword, text) in [
+                ("Title", "AI generated image"),
+                ("Description", "1girl, standing"),
+                ("Software", "NovelAI"),
+                ("Source", "NovelAI Diffusion V4.5 4BDE2A90"),
+                (
+                    "Comment",
+                    "{\"prompt\": \"1girl, standing\", \"seed\": 577536437, \"steps\": 28, \"width\": 64, \"height\": 64}",
+                ),
+            ] {
+                encoder
+                    .add_text_chunk(keyword.to_string(), text.to_string())
+                    .unwrap();
+            }
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&rgba).unwrap();
+        }
+        output
+    }
+
+    fn nai_save_params() -> HashMap<String, String> {
         let mut params = HashMap::new();
         params.insert("positive_prompt".to_string(), "1girl, standing".to_string());
         params.insert("seed".to_string(), "577536437".to_string());
+        params.insert("model".to_string(), "nai-diffusion-4-5-full".to_string());
+        params.insert("mooshie_backend".to_string(), "novelai".to_string());
+        params
+    }
+
+    /// Every chunk of a PNG as (type, whole chunk bytes), in file order.
+    fn chunks_of(bytes: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
+        png_chunk_spans(bytes)
+            .unwrap()
+            .into_iter()
+            .map(|(kind, span)| (kind, bytes[span].to_vec()))
+            .collect()
+    }
+
+    /// Text of every chunk with this keyword (tEXt or uncompressed iTXt).
+    fn texts_with_keyword(bytes: &[u8], keyword: &str) -> Vec<String> {
+        chunks_of(bytes)
+            .into_iter()
+            .filter_map(|(kind, chunk)| {
+                let data = &chunk[8..chunk.len() - 4];
+                let (kw, rest) = data.split_at(data.iter().position(|&b| b == 0)?);
+                if kw != keyword.as_bytes() {
+                    return None;
+                }
+                let rest = &rest[1..];
+                match &kind {
+                    b"tEXt" => Some(rest.iter().map(|&b| b as char).collect()),
+                    b"iTXt" => {
+                        // flag, method, then two NUL-terminated strings.
+                        let mut pos = 2;
+                        for _ in 0..2 {
+                            pos += rest[pos..].iter().position(|&b| b == 0)? + 1;
+                        }
+                        String::from_utf8(rest[pos..].to_vec()).ok()
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// Fully decode a PNG with the png crate, which checks every CRC, and
+    /// return its pixels.
+    fn decode_pixels_checked(bytes: &[u8]) -> Vec<u8> {
+        let mut reader = png::Decoder::new(Cursor::new(bytes)).read_info().unwrap();
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        buf.truncate(info.buffer_size());
+        reader.finish().unwrap();
+        buf
+    }
+
+    /// Embedding into a NovelAI PNG must not touch a byte NovelAI wrote: it
+    /// only splices one MooshieUI chunk in before IEND, in every metadata
+    /// mode, so NovelAI's chunks, the IDAT data and the stealth payload all
+    /// survive and novelai.net still recognises the file.
+    #[test]
+    fn embedding_into_novelai_png_only_adds_the_marker_chunk() {
+        let original = make_novelai_stealth_png(64, 64);
+        assert!(png_carries_novelai_metadata(&original));
+        let original_stealth = read_stealth_alpha(&original).unwrap();
+        assert!(original_stealth.is_some(), "fixture has no stealth payload");
+        let original_chunks = chunks_of(&original);
+        let iend = original_chunks.last().unwrap().clone();
+        assert_eq!(&iend.0, b"IEND");
 
         for mode in [
             MetadataMode::TextChunk,
             MetadataMode::StealthAlpha,
             MetadataMode::Both,
         ] {
-            let embedded = embed_image_metadata(&png_bytes, &params, mode).unwrap();
-            assert_eq!(embedded, png_bytes, "NovelAI PNG was rewritten in {mode:?}");
+            let marked = embed_image_metadata(&original, &nai_save_params(), mode).unwrap();
+
+            // Still NovelAI's file as far as NovelAI is concerned.
+            assert!(png_carries_novelai_metadata(&marked), "{mode:?}");
+
+            // Every original chunk, IDAT included, byte-identical and in
+            // order; one new chunk sits between them and IEND.
+            let marked_chunks = chunks_of(&marked);
+            assert_eq!(marked_chunks.len(), original_chunks.len() + 1, "{mode:?}");
+            let (body, tail) = original_chunks.split_at(original_chunks.len() - 1);
+            assert_eq!(&marked_chunks[..body.len()], body, "{mode:?}");
+            assert_eq!(&marked_chunks[body.len() + 1], &tail[0], "{mode:?}");
+            assert_eq!(&marked_chunks[body.len()].0, b"tEXt", "{mode:?}");
+            assert_eq!(
+                marked[..marked.len() - iend.1.len() - marked_chunks[body.len()].1.len()],
+                original[..original.len() - iend.1.len()],
+                "{mode:?}"
+            );
+
+            // Pixels and the stealth payload decode exactly as before, and
+            // the png crate accepts every CRC, the new chunk's included.
+            assert_eq!(
+                decode_pixels_checked(&marked),
+                decode_pixels_checked(&original)
+            );
+            assert_eq!(
+                read_stealth_alpha(&marked).unwrap(),
+                original_stealth,
+                "{mode:?}"
+            );
+
+            // The marker itself: compact, no prompt, the agreed fields.
+            let texts = texts_with_keyword(&marked, MOOSHIE_MARKER_KEYWORD);
+            assert_eq!(texts.len(), 1, "{mode:?}");
+            assert!(!texts[0].contains('\n') && !texts[0].contains("1girl"));
+            let marker: serde_json::Value = serde_json::from_str(&texts[0]).unwrap();
+            assert_eq!(marker["software"], "MooshieUI");
+            assert_eq!(marker["version"], env!("CARGO_PKG_VERSION"));
+            assert_eq!(marker["backend"], "novelai");
+            assert_eq!(marker["model"], "nai-diffusion-4-5-full");
+            assert_eq!(marker["source"], "ui");
+            chrono::DateTime::parse_from_rfc3339(marker["generated"].as_str().unwrap())
+                .expect("generated is RFC 3339");
+            assert_eq!(marker.as_object().unwrap().len(), 6);
         }
+    }
+
+    /// Export and clipboard routes embed again on bytes that are already
+    /// marked; that must leave exactly one marker and change nothing.
+    #[test]
+    fn marking_a_novelai_png_twice_keeps_one_marker() {
+        let original = make_novelai_stealth_png(64, 64);
+        let once = embed_image_metadata(&original, &nai_save_params(), MetadataMode::Both).unwrap();
+        let twice = embed_image_metadata(&once, &nai_save_params(), MetadataMode::Both).unwrap();
+        assert_eq!(twice, once);
+        assert_eq!(texts_with_keyword(&twice, MOOSHIE_MARKER_KEYWORD).len(), 1);
+        assert_eq!(mark_novelai_png(&twice, &HashMap::new()), once);
+    }
+
+    /// The marker's `source` follows `mooshie_source`, and a model the save
+    /// did not record is left out rather than written empty.
+    #[test]
+    fn novelai_marker_records_the_mcp_source() {
+        let mut params = HashMap::new();
+        params.insert("mooshie_source".to_string(), "mcp".to_string());
+        params.insert("model".to_string(), String::new());
+        let marked = mark_novelai_png(&make_novelai_png(8, 8), &params);
+        let text = &texts_with_keyword(&marked, MOOSHIE_MARKER_KEYWORD)[0];
+        let marker: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(marker["source"], "mcp");
+        assert!(marker.get("model").is_none());
+    }
+
+    /// Text outside Latin-1 cannot go in tEXt, so the splice falls back to
+    /// uncompressed iTXt, and the result still passes the png crate's CRCs.
+    #[test]
+    fn appended_chunk_uses_itxt_for_non_latin1_text() {
+        let original = make_test_png(8, 8, false);
+        let spliced = png_append_text_chunk(&original, "MooshieUI", "{\"model\":\"桜\"}").unwrap();
+        let chunks = chunks_of(&spliced);
+        assert_eq!(&chunks[chunks.len() - 2].0, b"iTXt");
+        assert_eq!(
+            texts_with_keyword(&spliced, "MooshieUI"),
+            vec!["{\"model\":\"桜\"}".to_string()]
+        );
+        assert_eq!(
+            decode_pixels_checked(&spliced),
+            decode_pixels_checked(&original)
+        );
+
+        assert!(png_append_text_chunk(b"not a png", "MooshieUI", "x").is_none());
+        assert!(png_append_text_chunk(&original, "", "x").is_none());
+        let unmarked = b"not a png".to_vec();
+        assert_eq!(mark_novelai_png(&unmarked, &HashMap::new()), unmarked);
+    }
+
+    /// The reader keeps NovelAI's settings and only adds where the image came
+    /// from: "MooshieUI (NovelAI)" with the marker, "NovelAI" without.
+    #[test]
+    fn reader_labels_novelai_source_by_marker() {
+        let original = make_novelai_png(8, 8);
+        let plain = read_png_metadata(&original).unwrap().unwrap();
+        assert_eq!(plain.get("source").map(String::as_str), Some("NovelAI"));
+
+        let marked = mark_novelai_png(&original, &nai_save_params());
+        let params = read_png_metadata(&marked).unwrap().unwrap();
+        assert_eq!(
+            params.get("source").map(String::as_str),
+            Some("MooshieUI (NovelAI)")
+        );
+        assert_eq!(params.get("seed").map(String::as_str), Some("577536437"));
+        assert_eq!(
+            params.get("positive_prompt").map(String::as_str),
+            Some("1girl, standing")
+        );
+        let mut without_source = params.clone();
+        without_source.remove("source");
+        let mut plain_without_source = plain.clone();
+        plain_without_source.remove("source");
+        assert_eq!(without_source, plain_without_source);
+
+        // Same through the stealth-alpha path, which the reader tries first.
+        let stealth = mark_novelai_png(&make_novelai_stealth_png(64, 64), &nai_save_params());
+        let params = read_png_metadata(&stealth).unwrap().unwrap();
+        assert_eq!(
+            params.get("source").map(String::as_str),
+            Some("MooshieUI (NovelAI)")
+        );
     }
 
     /// The guard keys off NovelAI's chunks, so an image whose chunks a local
@@ -2467,11 +2862,28 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("seed".to_string(), "577536437".to_string());
 
-        let embedded = embed_image_metadata(&png_bytes, &params, MetadataMode::TextChunk).unwrap();
-        assert_ne!(embedded, png_bytes);
-        let decoder = png::Decoder::new(Cursor::new(embedded.as_slice()));
-        let reader = decoder.read_info().unwrap();
-        assert!(png_text_chunks(reader.info()).contains_key("parameters"));
+        for mode in [
+            MetadataMode::TextChunk,
+            MetadataMode::StealthAlpha,
+            MetadataMode::Both,
+        ] {
+            let embedded = embed_image_metadata(&png_bytes, &params, mode).unwrap();
+            assert_ne!(embedded, png_bytes);
+            // Exactly the full embed it always was, with no MooshieUI marker.
+            assert_eq!(
+                embedded,
+                embed_png_metadata(&png_bytes, &params, mode).unwrap(),
+                "{mode:?}"
+            );
+            assert!(!png_has_text_keyword(&embedded, MOOSHIE_MARKER_KEYWORD));
+            let params_back = read_png_metadata(&embedded).unwrap().unwrap();
+            assert!(!params_back.contains_key("source"));
+            if mode != MetadataMode::StealthAlpha {
+                let decoder = png::Decoder::new(Cursor::new(embedded.as_slice()));
+                let reader = decoder.read_info().unwrap();
+                assert!(png_text_chunks(reader.info()).contains_key("parameters"));
+            }
+        }
     }
 
     #[test]

@@ -2819,6 +2819,7 @@ const pl: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Odszumianie przy powiększaniu",
   "gallery.meta.date": "Data",
   "gallery.meta.generation_time": "Czas generowania",
+  "gallery.meta.source": "Źródło",
 
   // Gallery mode labels
   "gallery.mode.txt2img": "Tekst do obrazu",
