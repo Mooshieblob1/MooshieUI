@@ -525,6 +525,27 @@ class ProgressStore {
     return item;
   }
 
+  /**
+   * Prompt ids that ended in an execution error. Kept so a caller waiting on a
+   * prompt (continuous generation) can tell a failure from a finished image
+   * once the prompt leaves the queue. Not reactive: nothing renders from it.
+   */
+  private failedPromptIds = new Set<string>();
+
+  markFailed(promptId: string) {
+    this.failedPromptIds.add(promptId);
+    // Nobody may ever ask about most of these, so keep the set small.
+    if (this.failedPromptIds.size > 100) {
+      const oldest = this.failedPromptIds.values().next().value;
+      if (oldest !== undefined) this.failedPromptIds.delete(oldest);
+    }
+  }
+
+  /** True once if `promptId` failed, and forgets it. */
+  takeFailed(promptId: string): boolean {
+    return this.failedPromptIds.delete(promptId);
+  }
+
   /** Remove a specific prompt from the queue (e.g. on error). */
   removePrompt(promptId: string) {
     const wasActive = this.activePromptId === promptId;

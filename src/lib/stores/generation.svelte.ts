@@ -897,6 +897,15 @@ class GenerationStore {
   osNotificationsEnabled = $state(false);
   /** When true, OS notifications only fire when the app window is not focused. */
   osNotifyOnlyWhenUnfocused = $state(true);
+  /** Plays a short chime when a generation finishes. */
+  finishSound = $state(false);
+  /** Continuous generation: how many runs one Generate click starts. 1 is a
+   *  normal single run, 0 keeps going until stopped. */
+  repeatCount = $state(1);
+  /** Seconds to wait between continuous runs. */
+  repeatDelaySec = $state(0);
+  /** When true, a failed run ends a continuous run instead of moving on. */
+  repeatStopOnError = $state(true);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
@@ -3234,6 +3243,14 @@ class GenerationStore {
     }
     if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
     if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
+    if (saved.finishSound !== undefined) this.finishSound = saved.finishSound;
+    if (typeof saved.repeatCount === "number" && Number.isFinite(saved.repeatCount)) {
+      this.repeatCount = Math.max(0, Math.min(999, Math.round(saved.repeatCount)));
+    }
+    if (typeof saved.repeatDelaySec === "number" && Number.isFinite(saved.repeatDelaySec)) {
+      this.repeatDelaySec = Math.max(0, Math.min(3600, saved.repeatDelaySec));
+    }
+    if (saved.repeatStopOnError !== undefined) this.repeatStopOnError = saved.repeatStopOnError;
     if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
     if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
     if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
@@ -3393,6 +3410,10 @@ class GenerationStore {
         modelFamilyOverrides: this.modelFamilyOverrides,
         osNotificationsEnabled: this.osNotificationsEnabled,
         osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+        finishSound: this.finishSound,
+        repeatCount: this.repeatCount,
+        repeatDelaySec: this.repeatDelaySec,
+        repeatStopOnError: this.repeatStopOnError,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
         resolutionLocked: this.resolutionLocked,
@@ -3569,6 +3590,10 @@ class GenerationStore {
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       osNotificationsEnabled: this.osNotificationsEnabled,
       osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+      finishSound: this.finishSound,
+      repeatCount: this.repeatCount,
+      repeatDelaySec: this.repeatDelaySec,
+      repeatStopOnError: this.repeatStopOnError,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
       resolutionLocked: this.resolutionLocked,

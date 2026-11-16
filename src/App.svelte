@@ -126,6 +126,7 @@
   import { classifyGenerationError } from "./lib/utils/generationErrors.js";
   import { formatGenerationTime } from "./lib/utils/localeFormat.js";
   import { notifyOs, isWindowUnfocused } from "./lib/utils/osNotify.js";
+  import { playFinishChime } from "./lib/utils/finishChime.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -2221,6 +2222,7 @@
     } else {
       gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
     }
+    if (generation.finishSound) playFinishChime();
     showGenerationDoneToast(newImages);
 
     // An enhance, a set of variations or an upscale replaces what the lightbox
@@ -3319,6 +3321,7 @@
           locale.t("notifications.os.generation_error.body"),
         );
         if (data.prompt_id) {
+          progress.markFailed(data.prompt_id);
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
           promptLastActivity.delete(data.prompt_id);
@@ -3332,6 +3335,7 @@
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
+          for (const pending of progress.pendingPrompts) progress.markFailed(pending.promptId);
           pendingOutputImages.clear();
           pendingOutputFetches.clear();
           promptLastActivity.clear();
