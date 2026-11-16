@@ -19,6 +19,10 @@
  *
  * Like Artist Styles, presets live outside the prompt textbox — users see
  * badges, not tags — and survive reloads via localStorage.
+ *
+ * A preset can also carry a UC (undesired content): tags added to the
+ * negative prompt whenever the chunk is in play, whether activated or used
+ * inline in a positive prompt. A chunk may be UC only.
  */
 
 import {
@@ -45,6 +49,8 @@ export interface PromptPreset {
   name: string;
   /** Free-form prompt text. For wildcard mode, newlines split choices; commas keep tags grouped within a choice. */
   content: string;
+  /** UC (undesired content): added to the negative prompt whenever the chunk is used. Empty for none. */
+  negative: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -85,6 +91,7 @@ function sanitizePreset(raw: any): PromptPreset | null {
     id: raw.id,
     name: raw.name.trim() || locale.t("generation.presets.untitled"),
     content: typeof raw.content === "string" ? raw.content : "",
+    negative: typeof raw.negative === "string" ? raw.negative : "",
     createdAt: typeof raw.createdAt === "number" && raw.createdAt > 0 ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" && raw.updatedAt > 0 ? raw.updatedAt : now,
   };
@@ -140,6 +147,18 @@ function splitWildcardChoices(content: string): string[] {
     .split(/\r?\n/)
     .map((s) => s.trim().replace(/^,+|,+$/g, "").trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * A chunk's or style's UC as one comma-separated fragment: lines become
+ * commas, so a UC written one tag per line still reads as a tag list.
+ */
+export function ucFragment(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((s) => s.trim().replace(/^,+|,+$/g, "").trim())
+    .filter(Boolean)
+    .join(", ");
 }
 
 /**
@@ -369,6 +388,31 @@ class PromptPresetsStore {
   }
 
   /**
+   * The UC the given chunks add to the negative prompt, in the order given,
+   * each chunk once. Empty when none of them has one.
+   */
+  negativeFor(ids: Iterable<string>): string {
+    const byId = new Map(this.presets.map((p) => [p.id, p]));
+    const seen = new Set<string>();
+    const parts: string[] = [];
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const uc = ucFragment(byId.get(id)?.negative ?? "");
+      if (uc) parts.push(uc);
+    }
+    return parts.join(", ");
+  }
+
+  /**
+   * Ids of the chunks `resolve()` applies: every active one except those
+   * already used inline (`skipIds`). Their UC goes to the negative prompt.
+   */
+  activeIdsFor(skipIds?: ReadonlySet<string>): string[] {
+    return this.active.map((a) => a.id).filter((id) => !skipIds?.has(id) && this.getById(id));
+  }
+
+  /**
    * Map of slug → preset for inline chunk lookups. Both token spellings
    * normalise to this same slug, so one map covers both. Recomputed
    * each access so it stays in sync with renames; the list is small enough
@@ -476,12 +520,13 @@ class PromptPresetsStore {
   // Mutations
   // ---------------------------------------------------------------------------
 
-  create(name: string, content = ""): PromptPreset {
+  create(name: string, content = "", negative = ""): PromptPreset {
     const now = Date.now();
     const preset: PromptPreset = {
       id: genId(),
       name: name.trim() || locale.t("generation.presets.untitled"),
       content,
+      negative,
       createdAt: now,
       updatedAt: now,
     };
@@ -499,6 +544,7 @@ class PromptPresetsStore {
         ...p,
         name: typeof patch.name === "string" ? patch.name.trim() || p.name : p.name,
         content: typeof patch.content === "string" ? patch.content : p.content,
+        negative: typeof patch.negative === "string" ? patch.negative : p.negative,
         updatedAt: Date.now(),
       };
     });
@@ -542,19 +588,25 @@ class PromptPresetsStore {
   // Export / import (.txt)
   // ---------------------------------------------------------------------------
 
-  /** Render a preset as a .txt file (filename + contents). */
+  /**
+   * Render a preset as a .txt file (filename + contents). A UC follows the
+   * content after a `--- UC ---` line; without one the file is the content
+   * alone, as before.
+   */
   exportTxt(id: string): { filename: string; content: string } | null {
     const p = this.getById(id);
     if (!p) return null;
+    const uc = p.negative.trim();
     return {
       filename: `${sanitizeFilename(p.name)}.txt`,
-      content: p.content,
+      content: uc ? `${p.content.replace(/\s+$/, "")}\n${UC_SEPARATOR}\n${uc}\n` : p.content,
     };
   }
 
   /**
    * Import a preset from a plain .txt file. Filename (minus extension) becomes
-   * the preset name; file contents become the `content` field verbatim.
+   * the preset name; file contents become the `content` field verbatim, up
+   * to a `--- UC ---` line, after which the rest is the chunk's UC.
    *
    * If a preset with the same name already exists, a numeric suffix is added
    * (e.g. `cats (2)`). Returns the created preset and whether it was renamed.
@@ -562,8 +614,9 @@ class PromptPresetsStore {
   importTxt(filename: string, content: string): { preset: PromptPreset; renamed: boolean } {
     const baseName = stripExtension(filename).trim() || locale.t("generation.presets.imported");
     const { name, renamed } = this.uniqueName(baseName);
+    const { body, uc } = splitUcSection(content);
     const preset = this.create(name);
-    this.update(preset.id, { content });
+    this.update(preset.id, { content: body, negative: uc });
     return { preset: this.getById(preset.id) ?? preset, renamed };
   }
 
@@ -614,6 +667,19 @@ class PromptPresetsStore {
       console.error("prompt-presets: applyServerPrefs failed", e);
     }
   }
+}
+
+/** The line that starts a chunk's UC in an exported .txt. */
+const UC_SEPARATOR = "--- UC ---";
+
+/** Split an imported chunk file at its first `--- UC ---` line. */
+function splitUcSection(text: string): { body: string; uc: string } {
+  const match = /^[ \t]*-{3,}[ \t]*UC[ \t]*-{3,}[ \t]*$/im.exec(text);
+  if (!match) return { body: text, uc: "" };
+  return {
+    body: text.slice(0, match.index).replace(/\s+$/, ""),
+    uc: text.slice(match.index + match[0].length).trim(),
+  };
 }
 
 function stripExtension(filename: string): string {

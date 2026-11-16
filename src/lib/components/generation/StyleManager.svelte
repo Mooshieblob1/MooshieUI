@@ -315,6 +315,9 @@
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <p class="truncate text-sm text-neutral-100">{style.name}</p>
+                  {#if style.negative.trim()}
+                    <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: style.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+                  {/if}
                   {#if active}
                     <span class="shrink-0 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-indigo-300">{locale.t("styles.manager.active")}</span>
                   {/if}
@@ -410,15 +413,23 @@
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
                     <p class="truncate text-sm text-neutral-100">{preset.name}</p>
+                    {#if preset.negative.trim()}
+                      <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: preset.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+                    {/if}
                     {#if active && mode}
                       <span class="shrink-0 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-indigo-300">
                         {presetModeIcon(mode)} {presetModeLabel(mode)}
                       </span>
                     {/if}
                   </div>
-                  <p class="mt-0.5 truncate font-mono text-[11px] text-neutral-500">
-                    {preset.content || locale.t("common.empty")}
-                  </p>
+                  {#if preset.content || !preset.negative.trim()}
+                    <p class="mt-0.5 truncate font-mono text-[11px] text-neutral-500">
+                      {preset.content || locale.t("common.empty")}
+                    </p>
+                  {/if}
+                  {#if preset.negative.trim()}
+                    <p class="truncate font-mono text-[11px] text-red-300/70">{preset.negative.trim()}</p>
+                  {/if}
                   <p class="flex items-center gap-2 text-[10px] text-neutral-600">
                     <span>{choiceCount === 1 ? locale.t("styles.manager.wildcard_options", { count: String(choiceCount) }) : locale.t("styles.manager.wildcard_options_plural", { count: String(choiceCount) })}</span>
                     <button

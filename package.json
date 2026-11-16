@@ -2,7 +2,7 @@
   "name": "comfyui-desktop",
   "private": true,
   "license": "AGPL-3.0-only",
-  "version": "2.3.47",
+  "version": "2.3.48",
   "type": "module",
   "scripts": {
     "dev": "vite",

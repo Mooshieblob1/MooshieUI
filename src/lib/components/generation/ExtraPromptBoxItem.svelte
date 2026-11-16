@@ -75,7 +75,9 @@
     }
     const presetName =
       name.trim() || locale.t("generation.prompts.extra_box_default_name", { index: String(index) });
-    promptPresets.create(presetName, trimmed);
+    // A negative box becomes a chunk's UC, so the chunk keeps it negative.
+    if (side === "negative") promptPresets.create(presetName, "", trimmed);
+    else promptPresets.create(presetName, trimmed);
     gallery.showToast(
       locale.t("generation.prompts.extra_box_saved", { name: presetName }),
       "success",

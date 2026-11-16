@@ -3,6 +3,7 @@
   import { promptPresets, inlineChunkToken } from "../../stores/promptPresets.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
+  import InfoTip from "../ui/InfoTip.svelte";
 
   interface Props {
     presetId: string;
@@ -36,6 +37,23 @@
   $effect(() => {
     if (contentInitialized && preset && contentLocal !== preset.content) {
       promptPresets.update(preset.id, { content: contentLocal });
+    }
+  });
+
+  // Same one-shot mirror for the UC.
+  let negativeLocal = $state("");
+  let negativeInitialized = $state(false);
+
+  $effect(() => {
+    if (!negativeInitialized && preset) {
+      negativeLocal = preset.negative;
+      negativeInitialized = true;
+    }
+  });
+
+  $effect(() => {
+    if (negativeInitialized && preset && negativeLocal !== preset.negative) {
+      promptPresets.update(preset.id, { negative: negativeLocal });
     }
   });
 </script>
@@ -113,6 +131,19 @@
             <br />
             <span class="text-neutral-400">{locale.t("generation.presets.tip_label")}</span> {locale.t("generation.presets.autocomplete_tip")}
           </p>
+        </div>
+
+        <div>
+          <span class="mb-1 flex items-center text-[10px] uppercase tracking-wide text-red-300/80">
+            {locale.t("prompt_uc.label")}<InfoTip text={locale.t("prompt_uc.chunk_tip")} />
+          </span>
+          <PromptTextarea
+            bind:value={negativeLocal}
+            placeholder={locale.t("prompt_uc.placeholder")}
+            rows={3}
+            minHeight="min-h-16"
+            suggestLoraKeywords={false}
+          />
         </div>
       </div>
 
