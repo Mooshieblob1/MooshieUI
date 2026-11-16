@@ -6,6 +6,8 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { loraKeywords, normalizeKeyword } from "../../stores/loraKeywords.svelte.js";
+  import { loraTriggers } from "../../stores/loraTriggers.svelte.js";
+  import { triggerParts } from "../../utils/loraTriggerText.js";
   import {
     renderHighlightedPrompt,
     hasSchedulingTags,
@@ -796,14 +798,15 @@
     }, 200);
   }
 
-  // Words inserted into the prompt via an enabled LoRA's trigger-word chip,
+  // Words inserted into the prompt via an enabled LoRA's trigger-word chip or
+  // its custom trigger (each comma piece of it),
   // lowercased for case-insensitive matching against the raw prompt text.
   const activeLoraWords = $derived(
     highlightLoraWords
       ? new Set(
           generation.loras
             .filter((l) => l.enabled && l.name)
-            .flatMap((l) => l.insertedWords ?? [])
+            .flatMap((l) => [...(l.insertedWords ?? []), ...triggerParts(loraTriggers.get(l.name))])
             .map((w) => w.trim().toLowerCase())
             .filter(Boolean),
         )

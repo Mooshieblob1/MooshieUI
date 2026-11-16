@@ -1826,6 +1826,8 @@ const zhTw: Record<string, string> = {
   "lora.on": "開啟",
   "lora.view_civitai": "在 CivitAI 上檢視",
   "lora.add_to_prompt": "新增到提示詞：{word}",
+  "lora.custom_trigger_placeholder": "觸發詞",
+  "lora.custom_trigger_tip": "此 LoRA 的自訂觸發詞。開啟 LoRA 時加入提示詞，關閉時移除。可離線使用。",
   "lora.likes": "按讚",
 
   // ── 底部面板 ────────────────────────────────────────────

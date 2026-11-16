@@ -2191,6 +2191,8 @@ const en: Record<string, string> = {
   "lora.on": "ON",
   "lora.view_civitai": "View on CivitAI",
   "lora.add_to_prompt": "Add to prompt: {word}",
+  "lora.custom_trigger_placeholder": "Trigger words",
+  "lora.custom_trigger_tip": "Your own trigger for this LoRA. Goes into the prompt when the LoRA is on and comes out when it is off. Works offline.",
   "lora.likes": "Likes",
 
   // ── Checkpoint Gallery ──────────────────────────────────

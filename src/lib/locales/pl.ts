@@ -2145,6 +2145,8 @@ const pl: Record<string, string> = {
   "lora.on": "WŁ",
   "lora.view_civitai": "Zobacz na CivitAI",
   "lora.add_to_prompt": "Dodaj do promptu: {word}",
+  "lora.custom_trigger_placeholder": "Słowa wyzwalające",
+  "lora.custom_trigger_tip": "Własny wyzwalacz tej LoRA. Trafia do promptu, gdy LoRA jest włączona, i znika, gdy jest wyłączona. Działa offline.",
   "lora.likes": "Polubienia",
 
   // ── Checkpoint Gallery ──────────────────────────────────

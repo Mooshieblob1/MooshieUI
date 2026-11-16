@@ -1826,6 +1826,8 @@ const ko: Record<string, string> = {
   "lora.on": "켜짐",
   "lora.view_civitai": "CivitAI에서 보기",
   "lora.add_to_prompt": "프롬프트에 추가: {word}",
+  "lora.custom_trigger_placeholder": "트리거 단어",
+  "lora.custom_trigger_tip": "이 LoRA의 사용자 트리거. LoRA를 켜면 프롬프트에 들어가고 끄면 빠집니다. 오프라인에서도 작동합니다.",
   "lora.likes": "좋아요",
 
   // ── 하단 패널 ──────────────────────────────────────────
