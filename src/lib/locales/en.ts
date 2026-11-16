@@ -1012,6 +1012,16 @@ const en: Record<string, string> = {
   "generation.prompt.wrap_weaker": "Wrap selection with [] weighting",
   "generation.prompt.tokens": "tokens",
   "generation.prompt.tokens_tip": "Estimated CLIP tokens. The text encoder splits the prompt into 75-token chunks, so crossing a boundary can shift the result.",
+  "generation.prompt.find_placeholder": "Find",
+  "generation.prompt.find_none": "No matches",
+  "generation.prompt.find_case": "Match case",
+  "generation.prompt.find_prev": "Previous match (Shift+Enter)",
+  "generation.prompt.find_next": "Next match (Enter)",
+  "generation.prompt.find_replace_toggle": "Replace (Ctrl+H)",
+  "generation.prompt.find_close": "Close (Esc)",
+  "generation.prompt.replace_placeholder": "Replace with",
+  "generation.prompt.replace_one": "Replace",
+  "generation.prompt.replace_all": "Replace all",
 
   // Prompt chunks
   "generation.presets.edit_title": "Edit Prompt Chunk",

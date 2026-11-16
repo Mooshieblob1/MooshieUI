@@ -924,6 +924,16 @@ const ja: Record<string, string> = {
   "generation.prompt.wrap_weaker": "Wrap selection with [] weighting",
   "generation.prompt.tokens": "tokens",
   "generation.prompt.tokens_tip": "Estimated CLIP tokens. The text encoder splits the prompt into 75-token chunks, so crossing a boundary can shift the result.",
+  "generation.prompt.find_placeholder": "検索",
+  "generation.prompt.find_none": "一致なし",
+  "generation.prompt.find_case": "大文字と小文字を区別",
+  "generation.prompt.find_prev": "前の一致 (Shift+Enter)",
+  "generation.prompt.find_next": "次の一致 (Enter)",
+  "generation.prompt.find_replace_toggle": "置換 (Ctrl+H)",
+  "generation.prompt.find_close": "閉じる (Esc)",
+  "generation.prompt.replace_placeholder": "置換後",
+  "generation.prompt.replace_one": "置換",
+  "generation.prompt.replace_all": "すべて置換",
 
   // スタイルプリセット
   "generation.style.none": "なし",

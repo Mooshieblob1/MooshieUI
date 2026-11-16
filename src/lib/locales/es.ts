@@ -927,6 +927,16 @@ const es: Record<string, string> = {
   "generation.prompt.wrap_weaker": "Wrap selection with [] weighting",
   "generation.prompt.tokens": "tokens",
   "generation.prompt.tokens_tip": "Estimated CLIP tokens. The text encoder splits the prompt into 75-token chunks, so crossing a boundary can shift the result.",
+  "generation.prompt.find_placeholder": "Buscar",
+  "generation.prompt.find_none": "Sin resultados",
+  "generation.prompt.find_case": "Distinguir mayúsculas",
+  "generation.prompt.find_prev": "Coincidencia anterior (Mayús+Enter)",
+  "generation.prompt.find_next": "Siguiente coincidencia (Enter)",
+  "generation.prompt.find_replace_toggle": "Reemplazar (Ctrl+H)",
+  "generation.prompt.find_close": "Cerrar (Esc)",
+  "generation.prompt.replace_placeholder": "Reemplazar con",
+  "generation.prompt.replace_one": "Reemplazar",
+  "generation.prompt.replace_all": "Reemplazar todo",
 
   // Presets de prompt
   "generation.presets.edit_title": "Editar bloque de prompt",

@@ -14,6 +14,7 @@ import {
   sanitizePromptForSend,
 } from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
+import { stripPromptComments } from "../utils/promptComments.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
@@ -3734,18 +3735,20 @@ class GenerationStore {
   } {
     const inlineIds = new Set<string>();
     const characters = (this.novelaiSettings.characters ?? []).map((character) => {
-      const promptIds = promptPresets.inlinePresetIds(character.prompt);
+      const prompt = stripPromptComments(character.prompt);
+      const characterNegative = stripPromptComments(character.negative_prompt);
+      const promptIds = promptPresets.inlinePresetIds(prompt);
       for (const id of promptIds) inlineIds.add(id);
-      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+      for (const id of promptPresets.inlinePresetIds(characterNegative)) {
         inlineIds.add(id);
       }
       // A chunk used in this character's prompt brings its UC to this
       // character's UC, not the image's.
-      const negative = promptPresets.resolveInline(character.negative_prompt, { fixedChoices });
+      const negative = promptPresets.resolveInline(characterNegative, { fixedChoices });
       const uc = promptPresets.negativeFor(promptIds);
       return {
         ...character,
-        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
+        prompt: promptPresets.resolveInline(prompt, { fixedChoices }),
         negative_prompt: uc ? this.mergeIntoPrompt(negative, uc, "after") : negative,
       };
     });
@@ -3982,16 +3985,18 @@ class GenerationStore {
     // block), so its layout is preserved instead of folded into commas.
     const sanitizeOptions = { keepNewlines: this.isNovelAi };
     const ownPrompts = options.prompts ?? null;
+    // `//` comments come off each box before the boxes are joined, so a
+    // comment at the end of one box cannot swallow the next box's text.
     const effectivePositive = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.positive
-        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.positive)
+        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.negative
-        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.negative)
+        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
 
