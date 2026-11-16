@@ -57,6 +57,8 @@ pub async fn novelai_generate(
     // resolved here rather than inside the spawned task so a missing key is a
     // command error the caller shows inline.
     let credential = novelai::resolve_credential(state.inner(), None).await?;
+    // The desktop app is the owner, whose runs become MCP setups.
+    crate::mcp::setups::remember(&params);
 
     let prompt_id = novelai::new_prompt_id();
     let seed = params.seed;

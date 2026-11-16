@@ -35,7 +35,7 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 - **Gallery storage**: Gallery images are stored as PNG (the default), JPEG XL or WebP, per the output format setting. Display reads use `loadGalleryImageDisplay()` (transcodes to WebP), PNG export uses `loadGalleryImagePng()`. Never read gallery files directly.
 - **Custom URI schemes**: Tauri registers `thumbnail://` and `gallery://` protocols for loading images from the gallery directory.
 
-- **MCP server** (`src-tauri/src/mcp/`, [`docs/MCP.md`](docs/MCP.md)): opt-in, localhost-only, token-protected. It reuses the owner's last txt2img request per model and applies a few agent overrides. When adding or changing a feature, decide whether MCP has to follow: clear new per-image `GenerationParams` inputs in `setups::snapshot`, add assistant-controllable fields to `setups::Overrides` and the `generate_image` schema, consider a tool for new modes or gallery actions, and keep the `comfyui:*` events `mcp/jobs.rs` follows intact.
+- **MCP server** (`src-tauri/src/mcp/`, [`docs/MCP.md`](docs/MCP.md)): opt-in, localhost-only, token-protected. It reuses the owner's last request per model (local txt2img, NovelAI txt2img, local Image Edit) and applies a few agent overrides. When adding or changing a feature, decide whether MCP has to follow: clear new per-image `GenerationParams` inputs in `setups::snapshot`, add assistant-controllable fields to `setups::Overrides` and the `generate_image` schema, consider a tool for new modes or gallery actions, and keep the `comfyui:*` events `mcp/jobs.rs` follows intact.
 
 ## Release Process Gotchas
 

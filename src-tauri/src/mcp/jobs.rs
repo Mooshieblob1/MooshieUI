@@ -180,13 +180,26 @@ pub async fn cancel(state: &Arc<AppState>, job_id: &str) -> Result<Job, String> 
         j.error = Some("Cancelled".into());
     });
     if let Some(pid) = prompt_id {
-        state
-            .interrupt_prompt(Some(&pid))
-            .await
-            .map_err(|e| e.to_string())?;
+        stop_prompt(state, &pid).await?;
     }
     let job = tx.borrow().clone();
     Ok(job)
+}
+
+/// Stop one prompt. A NovelAI request that has not been handed to the local
+/// GPU is only dropped from the queue (the runner sees that and stops):
+/// interrupting with no known worker would stop every GPU, including
+/// generations started in the window.
+async fn stop_prompt(state: &Arc<AppState>, prompt_id: &str) -> Result<(), String> {
+    if prompt_id.starts_with("nai-") && state.prompt_queue.worker_of(prompt_id).is_none() {
+        state.prompt_queue.cancel_and_remove(prompt_id);
+        state.broadcast_queue_positions();
+        return Ok(());
+    }
+    state
+        .interrupt_prompt(Some(prompt_id))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Queue `params` and return a receiver that tracks the job.
@@ -238,19 +251,93 @@ enum Outcome {
     Cancelled,
 }
 
+/// How long a cached "is this an Opus account" answer is trusted.
+const OPUS_CHECK_TTL: Duration = Duration::from_secs(10 * 60);
+
+static OPUS_CHECK: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+
+/// Whether the owner's NovelAI key is on Opus, whose free window is the only
+/// thing MCP may generate in. Cached for a few minutes.
+async fn owner_has_opus(
+    state: &Arc<AppState>,
+    credential: &crate::novelai::NaiCredential,
+) -> Result<bool, String> {
+    if let Some((at, opus)) = *OPUS_CHECK.lock().unwrap() {
+        if at.elapsed() < OPUS_CHECK_TTL {
+            return Ok(opus);
+        }
+    }
+    let sub = crate::novelai::fetch_subscription(state, credential)
+        .await
+        .map_err(|e| format!("Could not check the NovelAI subscription: {e}"))?;
+    let opus = sub.is_opus();
+    *OPUS_CHECK.lock().unwrap() = Some((std::time::Instant::now(), opus));
+    Ok(opus)
+}
+
+/// Hand a NovelAI request to the same runner the Generate page uses. Returns
+/// the synthetic prompt id its events report under.
+async fn submit_novelai(
+    state: &Arc<AppState>,
+    params: &GenerationParams,
+) -> Result<String, String> {
+    super::setups::check_novelai_free_window(params)?;
+    crate::novelai::preflight(params).map_err(|e| e.to_string())?;
+    let credential = crate::novelai::resolve_credential(state, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !owner_has_opus(state, &credential).await? {
+        return Err("The NovelAI key in MooshieUI isn't on Opus, so every NovelAI image would cost Anlas. MCP only makes free NovelAI images; use a local model instead.".into());
+    }
+    let prompt_id = crate::novelai::new_prompt_id();
+    state.prompt_queue.insert(&prompt_id, None);
+    state.broadcast_queue_positions();
+    #[cfg(feature = "desktop")]
+    let app = state.app_handle.lock().await.clone();
+    let bg_state = Arc::clone(state);
+    let bg_params = params.clone();
+    let bg_prompt_id = prompt_id.clone();
+    tokio::spawn(async move {
+        let sink = crate::novelai::EventSink::new(
+            Arc::clone(&bg_state),
+            #[cfg(feature = "desktop")]
+            app,
+        );
+        let result = crate::novelai::run(
+            Arc::clone(&bg_state),
+            sink,
+            bg_prompt_id.clone(),
+            bg_params,
+            credential,
+        )
+        .await;
+        if let Err(err) = &result {
+            log::warn!("[mcp] NovelAI {bg_prompt_id} failed: {err}");
+        }
+        if !matches!(result, Ok(crate::novelai::RunOutcome::HandedOff)) {
+            bg_state.prompt_queue.cancel_and_remove(&bg_prompt_id);
+            bg_state.broadcast_queue_positions();
+        }
+    });
+    Ok(prompt_id)
+}
+
 async fn run(
     state: &Arc<AppState>,
     tx: &watch::Sender<Job>,
     mut params: GenerationParams,
 ) -> Result<(), String> {
     crate::temp_images::cleanup(300);
-    crate::templates::validate_generation_params(&params)?;
-    {
+    let novelai = params.novelai.is_some();
+    if !novelai {
+        crate::templates::validate_generation_params(&params)?;
         let config = state.config.read().await;
         crate::commands::api::validate_generation_loras(&config, &params.loras)
             .map_err(|e| e.to_string())?;
     }
-    let seed = if params.seed < 0 {
+    let seed = if novelai {
+        crate::novelai::resolve_seed(params.seed)
+    } else if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {
         params.seed
@@ -258,25 +345,29 @@ async fn run(
     params.seed = seed;
     tx.send_modify(|j| j.seed = seed.to_string());
 
-    let workflow = crate::templates::build_workflow(&params, seed, false);
-    crate::comfyui::process::mark_legacy_worker_idle(state).await;
-    state.free_llm_vram_for_generation().await;
-
     // Subscribed before submitting, so no event for this prompt is missed.
     let mut events = state.event_tx.subscribe();
-    let (worker_id, response) = state
-        .gpu_manager
-        .submit_prompt(workflow, &state.client_id, Duration::from_secs(300))
-        .await
-        .map_err(|e| e.to_string())?;
-    let prompt_id = response.prompt_id;
-    // Owner `None`: the MCP caller is the machine owner, like the desktop app.
-    state.prompt_queue.insert(&prompt_id, None);
-    state.prompt_queue.set_worker(&prompt_id, worker_id);
-    state.broadcast_queue_positions();
+    let prompt_id = if novelai {
+        submit_novelai(state, &params).await?
+    } else {
+        let workflow = crate::templates::build_workflow(&params, seed, false);
+        crate::comfyui::process::mark_legacy_worker_idle(state).await;
+        state.free_llm_vram_for_generation().await;
+        let (worker_id, response) = state
+            .gpu_manager
+            .submit_prompt(workflow, &state.client_id, Duration::from_secs(300))
+            .await
+            .map_err(|e| e.to_string())?;
+        let prompt_id = response.prompt_id;
+        // Owner `None`: the MCP caller is the machine owner, like the desktop app.
+        state.prompt_queue.insert(&prompt_id, None);
+        state.prompt_queue.set_worker(&prompt_id, worker_id);
+        state.broadcast_queue_positions();
+        prompt_id
+    };
     tx.send_modify(|j| j.comfy_prompt_id = Some(prompt_id.clone()));
     if cancelled(tx) {
-        let _ = state.interrupt_prompt(Some(&prompt_id)).await;
+        let _ = stop_prompt(state, &prompt_id).await;
         return Ok(());
     }
     tx.send_modify(|j| {
@@ -417,7 +508,7 @@ async fn save_outputs(
             &bytes,
             &format!("{prompt_id}_{i}.{ext}"),
             prompt_id,
-            Some("txt2img"),
+            Some(params.mode.as_str()),
             Some(&metadata),
             Some("both"),
             template.as_deref(),
@@ -425,7 +516,7 @@ async fn save_outputs(
         )?;
         let payload = serde_json::json!({
             "filename": filename,
-            "mode": "txt2img",
+            "mode": params.mode,
             "source": "mcp",
             // Admin connection only; see the SSE `_target_user` filter.
             "_target_user": null,
