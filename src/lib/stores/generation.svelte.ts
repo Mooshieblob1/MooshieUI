@@ -14,6 +14,7 @@ import {
   sanitizePromptForSend,
 } from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
+import { stripPromptComments } from "../utils/promptComments.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
@@ -903,6 +904,15 @@ class GenerationStore {
   osNotificationsEnabled = $state(false);
   /** When true, OS notifications only fire when the app window is not focused. */
   osNotifyOnlyWhenUnfocused = $state(true);
+  /** Plays a short chime when a generation finishes. */
+  finishSound = $state(false);
+  /** Continuous generation: how many runs one Generate click starts. 1 is a
+   *  normal single run, 0 keeps going until stopped. */
+  repeatCount = $state(1);
+  /** Seconds to wait between continuous runs. */
+  repeatDelaySec = $state(0);
+  /** When true, a failed run ends a continuous run instead of moving on. */
+  repeatStopOnError = $state(true);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
@@ -3240,6 +3250,14 @@ class GenerationStore {
     }
     if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
     if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
+    if (saved.finishSound !== undefined) this.finishSound = saved.finishSound;
+    if (typeof saved.repeatCount === "number" && Number.isFinite(saved.repeatCount)) {
+      this.repeatCount = Math.max(0, Math.min(999, Math.round(saved.repeatCount)));
+    }
+    if (typeof saved.repeatDelaySec === "number" && Number.isFinite(saved.repeatDelaySec)) {
+      this.repeatDelaySec = Math.max(0, Math.min(3600, saved.repeatDelaySec));
+    }
+    if (saved.repeatStopOnError !== undefined) this.repeatStopOnError = saved.repeatStopOnError;
     if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
     if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
     if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
@@ -3399,6 +3417,10 @@ class GenerationStore {
         modelFamilyOverrides: this.modelFamilyOverrides,
         osNotificationsEnabled: this.osNotificationsEnabled,
         osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+        finishSound: this.finishSound,
+        repeatCount: this.repeatCount,
+        repeatDelaySec: this.repeatDelaySec,
+        repeatStopOnError: this.repeatStopOnError,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
         resolutionLocked: this.resolutionLocked,
@@ -3575,6 +3597,10 @@ class GenerationStore {
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       osNotificationsEnabled: this.osNotificationsEnabled,
       osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+      finishSound: this.finishSound,
+      repeatCount: this.repeatCount,
+      repeatDelaySec: this.repeatDelaySec,
+      repeatStopOnError: this.repeatStopOnError,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
       resolutionLocked: this.resolutionLocked,
@@ -3708,18 +3734,20 @@ class GenerationStore {
   } {
     const inlineIds = new Set<string>();
     const characters = (this.novelaiSettings.characters ?? []).map((character) => {
-      const promptIds = promptPresets.inlinePresetIds(character.prompt);
+      const prompt = stripPromptComments(character.prompt);
+      const characterNegative = stripPromptComments(character.negative_prompt);
+      const promptIds = promptPresets.inlinePresetIds(prompt);
       for (const id of promptIds) inlineIds.add(id);
-      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+      for (const id of promptPresets.inlinePresetIds(characterNegative)) {
         inlineIds.add(id);
       }
       // A chunk used in this character's prompt brings its UC to this
       // character's UC, not the image's.
-      const negative = promptPresets.resolveInline(character.negative_prompt, { fixedChoices });
+      const negative = promptPresets.resolveInline(characterNegative, { fixedChoices });
       const uc = promptPresets.negativeFor(promptIds);
       return {
         ...character,
-        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
+        prompt: promptPresets.resolveInline(prompt, { fixedChoices }),
         negative_prompt: uc ? this.mergeIntoPrompt(negative, uc, "after") : negative,
       };
     });
@@ -3956,16 +3984,18 @@ class GenerationStore {
     // block), so its layout is preserved instead of folded into commas.
     const sanitizeOptions = { keepNewlines: this.isNovelAi };
     const ownPrompts = options.prompts ?? null;
+    // `//` comments come off each box before the boxes are joined, so a
+    // comment at the end of one box cannot swallow the next box's text.
     const effectivePositive = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.positive
-        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.positive)
+        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.negative
-        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.negative)
+        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
 

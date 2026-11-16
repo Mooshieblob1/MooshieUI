@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripPromptComments } from "../../utils/promptComments.js";
   /**
    * NovelAI prompt budget bar, drawn under each prompt box in NovelAI mode.
    *
@@ -28,10 +29,12 @@
   const shared = $derived(extras.length > 0);
   const tokens = $derived(
     estimatePromptTokens(
-      joinPromptBoxes([
-        side === "positive" ? generation.positivePrompt : generation.negativePrompt,
-        ...extras.map((b) => b.content),
-      ]),
+      joinPromptBoxes(
+        [
+          side === "positive" ? generation.positivePrompt : generation.negativePrompt,
+          ...extras.map((b) => b.content),
+        ].map(stripPromptComments),
+      ),
     ),
   );
   const ratio = $derived(Math.min(1, tokens / NOVELAI_TOKEN_LIMIT));

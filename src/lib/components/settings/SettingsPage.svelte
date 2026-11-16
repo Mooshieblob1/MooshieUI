@@ -28,6 +28,7 @@
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
   import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL } from "../../utils/updater.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
+  import { playFinishChime } from "../../utils/finishChime.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
@@ -3645,6 +3646,23 @@
               <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.notifications.os_unfocused_desc')}</p>
             </div>
             {/if}
+
+            <!-- Finish chime -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.finishSound}
+                  onchange={(e) => {
+                    generation.finishSound = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                    if (generation.finishSound) playFinishChime();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.finish_sound_label')}</span>
+              </label>
+            </div>
 
           </div>
         </section>

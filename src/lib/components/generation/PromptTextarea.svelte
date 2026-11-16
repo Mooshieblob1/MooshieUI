@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { on } from "svelte/events";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -29,6 +29,8 @@
     escapeEmphasisMarks,
   } from "../../utils/promptSyntaxEscape.js";
   import { CLIP_CHUNK_SIZE, estimatePromptTokens, promptTokenLimit } from "../../utils/promptTokens.js";
+  import { findCommentRanges, stripPromptComments, toggleLineComments } from "../../utils/promptComments.js";
+  import { findMatches, replaceAllMatches } from "../../utils/promptFind.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
   interface Props {
@@ -172,7 +174,101 @@
 
   // Estimated CLIP tokens for the current prompt, gauged against the 75-token
   // chunk boundary the text encoder splits on.
-  const tokenCount = $derived(estimatePromptTokens(value));
+  const tokenCount = $derived(estimatePromptTokens(stripPromptComments(value)));
+
+  // Find / replace (Ctrl+F, Ctrl+H) inside this box.
+  let findOpen = $state(false);
+  let replaceOpen = $state(false);
+  let findQuery = $state("");
+  let replaceText = $state("");
+  let findCaseSensitive = $state(false);
+  let findIndex = $state(0);
+  let findInputEl = $state<HTMLInputElement | null>(null);
+  const findRanges = $derived(findOpen ? findMatches(value, findQuery, findCaseSensitive) : []);
+  const currentFind = $derived(findRanges.length === 0 ? -1 : Math.min(findIndex, findRanges.length - 1));
+  const commentRanges = $derived(findCommentRanges(value));
+
+  function openFind(withReplace: boolean) {
+    if (!textareaEl) return;
+    const selected = value.substring(textareaEl.selectionStart, textareaEl.selectionEnd);
+    if (selected && !selected.includes("\n")) findQuery = selected;
+    findOpen = true;
+    replaceOpen = withReplace;
+    findIndex = 0;
+    // tick, not a frame: keys typed right after Ctrl+F must land in the find box.
+    void tick().then(() => {
+      findInputEl?.focus();
+      findInputEl?.select();
+    });
+  }
+
+  function closeFind() {
+    findOpen = false;
+    replaceOpen = false;
+    textareaEl?.focus();
+  }
+
+  function stepFind(delta: number) {
+    if (findRanges.length === 0) return;
+    findIndex = (currentFind + delta + findRanges.length) % findRanges.length;
+    revealFind();
+  }
+
+  /** Scroll the textarea so the current match is in view. */
+  function revealFind() {
+    requestAnimationFrame(() => {
+      const range = findRanges[currentFind];
+      if (!textareaEl || !range) return;
+      const lineHeight = 20;
+      const line = value.slice(0, range[0]).split("\n").length - 1;
+      const target = line * lineHeight;
+      if (target < textareaEl.scrollTop || target > textareaEl.scrollTop + textareaEl.clientHeight - lineHeight) {
+        textareaEl.scrollTop = Math.max(0, target - textareaEl.clientHeight / 2);
+        syncScroll();
+      }
+    });
+  }
+
+  function replaceCurrent() {
+    const range = findRanges[currentFind];
+    if (!range) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    value = value.slice(0, range[0]) + replaceText + value.slice(range[1]);
+    // The next match now sits where this one was, so the index stays.
+  }
+
+  function replaceAll() {
+    if (findRanges.length === 0) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    value = replaceAllMatches(value, findQuery, replaceText, findCaseSensitive);
+    findIndex = 0;
+  }
+
+  function handleFindKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFind();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      stepFind(e.shiftKey ? -1 : 1);
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "h")) {
+      e.preventDefault();
+      replaceOpen = e.key === "h" ? true : replaceOpen;
+    }
+  }
+
+  function handleReplaceKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFind();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if ((e.ctrlKey || e.metaKey) && e.altKey) replaceAll();
+      else replaceCurrent();
+    }
+  }
   const tokenLimit = $derived(promptTokenLimit(tokenCount));
   const tokenOverflow = $derived(tokenCount > CLIP_CHUNK_SIZE);
 
@@ -480,6 +576,31 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Ctrl+/ comments out (or back in) the lines the selection touches.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "/" || e.code === "Slash") && textareaEl) {
+      e.preventDefault();
+      undoStack = [...undoStack, value];
+      redoStack = [];
+      const result = toggleLineComments(value, textareaEl.selectionStart, textareaEl.selectionEnd);
+      value = result.value;
+      requestAnimationFrame(() => {
+        textareaEl?.setSelectionRange(result.selectionStart, result.selectionEnd);
+        syncSelectionRange();
+      });
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "f" || e.key === "h")) {
+      e.preventDefault();
+      openFind(e.key === "h");
+      return;
+    }
+    if (e.key === "Escape" && findOpen && !showSuggestions) {
+      e.preventDefault();
+      findOpen = false;
+      replaceOpen = false;
+      return;
+    }
+
     // Undo/redo for autocomplete: Ctrl+Z / Ctrl+Y
     if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
       if (undoStack.length > 0) {
@@ -626,12 +747,22 @@
 
   // Reactive: detect if current value has scheduling tags, inline preset tokens, or LoRA trigger words
   const showBackdrop = $derived(
-    hasSchedulingTags(value) || hasPresetTokens(value) || hasLoraWordInPrompt(value, activeLoraWords),
+    hasSchedulingTags(value) ||
+      hasPresetTokens(value) ||
+      hasLoraWordInPrompt(value, activeLoraWords) ||
+      commentRanges.length > 0 ||
+      findRanges.length > 0,
   );
 
   // Reactive: render highlighted HTML for the backdrop overlay
   const highlightedHtml = $derived(
-    showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs, activeLoraWords) : "",
+    showBackdrop
+      ? renderHighlightedPrompt(value, promptPresets.slugs, activeLoraWords, {
+          comments: commentRanges,
+          finds: findRanges,
+          currentFind,
+        })
+      : "",
   );
   const clickableSegments = $derived(
     tagAssist && autocomplete.clickableOverlayEnabled ? getPromptClickableSegments(value) : [],
@@ -1098,6 +1229,94 @@
       title={locale.t('generation.prompt.tokens_tip')}
     >{tokenCount}/{tokenLimit}</span>
   </div>
+  {#if findOpen}
+    <div class="mb-1 space-y-1 rounded-lg border border-neutral-700 bg-neutral-900 p-1.5" role="search">
+      <div class="flex items-center gap-1">
+        <input
+          bind:this={findInputEl}
+          bind:value={findQuery}
+          oninput={() => (findIndex = 0)}
+          onkeydown={handleFindKeydown}
+          placeholder={locale.t('generation.prompt.find_placeholder')}
+          aria-label={locale.t('generation.prompt.find_placeholder')}
+          class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
+        />
+        <span class="shrink-0 tabular-nums text-[10px] {findQuery && findRanges.length === 0 ? 'text-red-400' : 'text-neutral-500'}">
+          {findRanges.length === 0 ? (findQuery ? locale.t('generation.prompt.find_none') : "") : `${currentFind + 1}/${findRanges.length}`}
+        </span>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1.5 py-1 text-[10px] font-semibold {findCaseSensitive ? 'bg-indigo-500/20 text-indigo-200' : 'text-neutral-400 hover:text-neutral-100'}"
+          title={locale.t('generation.prompt.find_case')}
+          aria-label={locale.t('generation.prompt.find_case')}
+          aria-pressed={findCaseSensitive}
+          onclick={() => (findCaseSensitive = !findCaseSensitive)}
+        >Aa</button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100 disabled:opacity-30"
+          disabled={findRanges.length === 0}
+          title={locale.t('generation.prompt.find_prev')}
+          aria-label={locale.t('generation.prompt.find_prev')}
+          onclick={() => stepFind(-1)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100 disabled:opacity-30"
+          disabled={findRanges.length === 0}
+          title={locale.t('generation.prompt.find_next')}
+          aria-label={locale.t('generation.prompt.find_next')}
+          onclick={() => stepFind(1)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100"
+          title={locale.t('generation.prompt.find_replace_toggle')}
+          aria-label={locale.t('generation.prompt.find_replace_toggle')}
+          aria-expanded={replaceOpen}
+          onclick={() => (replaceOpen = !replaceOpen)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M4 10v10h10"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100"
+          title={locale.t('generation.prompt.find_close')}
+          aria-label={locale.t('generation.prompt.find_close')}
+          onclick={closeFind}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      {#if replaceOpen}
+        <div class="flex items-center gap-1">
+          <input
+            bind:value={replaceText}
+            onkeydown={handleReplaceKeydown}
+            placeholder={locale.t('generation.prompt.replace_placeholder')}
+            aria-label={locale.t('generation.prompt.replace_placeholder')}
+            class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-30"
+            disabled={findRanges.length === 0}
+            onclick={replaceCurrent}
+          >{locale.t('generation.prompt.replace_one')}</button>
+          <button
+            type="button"
+            class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-30"
+            disabled={findRanges.length === 0}
+            onclick={replaceAll}
+          >{locale.t('generation.prompt.replace_all')}</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
   <div class="relative">
     {#if showBackdrop}
       <div
