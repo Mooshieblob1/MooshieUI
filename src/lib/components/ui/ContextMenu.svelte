@@ -7,6 +7,10 @@
     action: () => void;
     separator?: boolean;
     destructive?: boolean;
+    /** Shown greyed out; clicking does nothing. */
+    disabled?: boolean;
+    /** Right-aligned hint, e.g. a keyboard shortcut. */
+    hint?: string;
   }
 
   interface Props {
@@ -88,8 +92,9 @@
         <div class="h-px bg-neutral-700 my-1"></div>
       {/if}
       <button
-        class="w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors {item.destructive ? 'text-red-400 hover:bg-red-500/10' : 'text-neutral-200 hover:bg-neutral-700'}"
-        onclick={() => { item.action(); onclose(); }}
+        class="w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 transition-colors {item.disabled ? 'text-neutral-500 cursor-default' : item.destructive ? 'text-red-400 hover:bg-red-500/10' : 'text-neutral-200 hover:bg-neutral-700'}"
+        onclick={() => { if (item.disabled) return; item.action(); onclose(); }}
+        disabled={item.disabled}
         role="menuitem"
       >
         {#if item.icon}
@@ -97,7 +102,10 @@
             {@render item.icon()}
           </span>
         {/if}
-        {item.label}
+        <span class="flex-1">{item.label}</span>
+        {#if item.hint}
+          <span class="text-xs text-neutral-500 tabular-nums">{item.hint}</span>
+        {/if}
       </button>
     {/each}
   </div>

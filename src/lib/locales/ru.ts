@@ -367,6 +367,8 @@ const ru: Record<string, string> = {
   "common.upload": "Загрузить",
   "common.paste": "Вставить",
   "common.copy": "Копировать",
+  "common.cut": "Вырезать",
+  "common.select_all": "Выделить всё",
   "common.copied": "Скопировано",
   "common.save": "Сохранить",
   "common.reset": "Сбросить",

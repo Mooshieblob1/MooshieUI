@@ -367,6 +367,8 @@ const ko: Record<string, string> = {
   "common.upload": "업로드",
   "common.paste": "붙여넣기",
   "common.copy": "복사",
+  "common.cut": "잘라내기",
+  "common.select_all": "모두 선택",
   "common.copied": "복사됨",
   "common.save": "저장",
   "common.reset": "초기화",

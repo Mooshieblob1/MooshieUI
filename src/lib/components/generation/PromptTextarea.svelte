@@ -35,6 +35,7 @@
   import { findTagCore } from "../../utils/promptTagAffixes.js";
   import { relatedTags, type RelatedTag, type RelatedTags } from "../../utils/api.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
+  import { readClipboardText, writeClipboardText } from "../../utils/clipboardText.js";
 
   interface Props {
     value: string;
@@ -932,40 +933,123 @@
     highlightGroups = groups;
   }
 
+  /**
+   * Press on a clickable tag. A plain click selects the whole tag (a second
+   * click on a selected tag places the caret instead), but pressing and
+   * dragging selects text like anywhere else in the box, and Shift extends
+   * the selection. The overlay sits above the textarea, so the drag is done
+   * here rather than by the browser.
+   */
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
     if (!textareaEl || !segment.clickable) return;
     // Right-click is handled via oncontextmenu; don't clobber the selection here.
     if (event.button !== 0) return;
 
+    event.preventDefault();
+    event.stopPropagation();
+    if (suggestionTimer !== null) {
+      clearTimeout(suggestionTimer);
+      suggestionTimer = null;
+    }
+    showSuggestions = false;
+    suggestions = [];
+    textareaEl.focus();
+
+    const textarea = textareaEl;
+    const pressCaret = caretAtPoint(event.clientX, event.clientY);
+    if (event.shiftKey && pressCaret >= 0) {
+      const anchor = textarea.selectionDirection === "backward" ? textarea.selectionEnd : textarea.selectionStart;
+      selectRange(anchor, pressCaret);
+      return;
+    }
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragging = false;
+    const onMove = (e: MouseEvent) => {
+      if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) < 4) return;
+      dragging = true;
+      const caret = caretAtPoint(e.clientX, e.clientY);
+      if (pressCaret >= 0 && caret >= 0) selectRange(pressCaret, caret);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (!dragging) clickSegment(segment, startX, startY);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  function selectRange(anchor: number, focus: number) {
+    if (!textareaEl) return;
+    if (focus < anchor) textareaEl.setSelectionRange(focus, anchor, "backward");
+    else textareaEl.setSelectionRange(anchor, focus, "forward");
+    syncSelectionRange();
+  }
+
+  function clickSegment(segment: PromptClickableSegment, clientX: number, clientY: number) {
+    if (!textareaEl) return;
     // Second click on an already-selected segment: place the caret at the exact
     // clicked character instead of re-selecting the whole segment. The first click
     // keeps the whole-segment select (the weight-button workflow).
     if (textareaEl.selectionStart === segment.start && textareaEl.selectionEnd === segment.end) {
-      const caret = getCaretFromPoint(segment, event.clientX, event.clientY);
+      const caret = getCaretFromPoint(segment, clientX, clientY);
       if (caret >= 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        textareaEl.focus();
         textareaEl.setSelectionRange(caret, caret);
         syncSelectionRange();
         return;
       }
       // Caret unresolved: fall through to whole-segment select (still usable).
     }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (suggestionTimer !== null) {
-      clearTimeout(suggestionTimer);
-      suggestionTimer = null;
-    }
-
-    showSuggestions = false;
-    suggestions = [];
-    textareaEl.focus();
     textareaEl.setSelectionRange(segment.start, segment.end);
     syncSelectionRange();
+  }
+
+  /**
+   * Viewport point to a caret offset anywhere in the text, measured on the
+   * click mirror like `getCaretFromPoint`. The mirror is never scrolled, so
+   * the point is moved by the textarea's scroll first. Lines run top to
+   * bottom, so a binary search finds the line and a short scan the column.
+   */
+  function caretAtPoint(clientX: number, clientY: number): number {
+    const node = mirrorTextNode();
+    if (!node || !textareaEl) return -1;
+    const x = clientX + textareaEl.scrollLeft;
+    const y = clientY + textareaEl.scrollTop;
+    const text = node.data;
+    const n = text.length;
+    if (n === 0) return 0;
+    const range = document.createRange();
+    const box = (i: number): DOMRect | null => {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      for (const r of range.getClientRects()) if (r.height > 0) return r;
+      return null;
+    };
+    // First character whose line ends below the point.
+    let lo = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      let j = mid;
+      let b: DOMRect | null = null;
+      while (j < n && !(b = box(j))) j++;
+      if (!b) hi = mid;
+      else if (b.bottom <= y) lo = j + 1;
+      else hi = mid;
+    }
+    if (lo >= n) return n;
+    let line: DOMRect | null = null;
+    for (let i = lo; i < n; i++) {
+      if (text[i] === "\n") return i;
+      const b = box(i);
+      if (!b) continue;
+      if (!line) line = b;
+      else if (b.top >= line.bottom) return i;
+      if (x < b.left + b.width / 2) return i;
+    }
+    return n;
   }
 
   /**
@@ -984,6 +1068,9 @@
   ): number {
     const node = mirrorTextNode();
     if (!node || segment.end > node.length) return -1;
+    // The mirror is never scrolled; move the point into its coordinates.
+    clientX += textareaEl?.scrollLeft ?? 0;
+    clientY += textareaEl?.scrollTop ?? 0;
     const range = document.createRange();
     let caret = -1;
     for (let i = segment.start; i < segment.end; i++) {
@@ -1001,28 +1088,102 @@
   }
 
   /**
-   * Right-click on a clickable tag span: if it maps to an unknown-tag spellcheck
-   * piece, open the suggestion menu; otherwise let the native context menu show.
+   * Right-click on a clickable tag. With nothing selected, the tag is selected
+   * so Copy has something to take; an unknown tag also gets its suggestions.
    */
   function handleClickableSegmentContextMenu(event: MouseEvent, segment: PromptClickableSegment) {
-    const piece = spellcheckPieces.find(
-      (p) => p.unknown && p.name !== null && p.start === segment.start && p.end === segment.end,
-    );
-    if (piece) openSpellMenu(event, piece);
+    if (!textareaEl) return;
+    if (textareaEl.selectionStart === textareaEl.selectionEnd) {
+      textareaEl.focus();
+      textareaEl.setSelectionRange(segment.start, segment.end);
+      syncSelectionRange();
+    }
+    const piece = spellcheckActive
+      ? spellcheckPieces.find(
+          (p) => p.unknown && p.name !== null && p.start === segment.start && p.end === segment.end,
+        )
+      : undefined;
+    openPromptMenu(event, piece ?? null);
   }
 
   /**
-   * Right-click anywhere in the textarea: covers underlined segments even when the
-   * clickable overlay is disabled. WebView2/Chromium moves the caret to the click
-   * point before `contextmenu` fires, so hit-test the caret against unknown pieces.
+   * Right-click anywhere in the textarea. WebView2/Chromium moves the caret to
+   * the click point before `contextmenu` fires (and keeps a selection the click
+   * lands inside), so a collapsed caret is hit-tested against unknown tags.
    */
   function handleTextareaContextMenu(event: MouseEvent) {
-    if (!textareaEl || !spellcheckActive) return;
+    if (!textareaEl) return;
     const caret = textareaEl.selectionStart;
-    const piece = spellcheckPieces.find(
-      (p) => p.unknown && p.name !== null && caret >= p.start && caret <= p.end,
+    const collapsed = caret === textareaEl.selectionEnd;
+    const piece = spellcheckActive && collapsed
+      ? spellcheckPieces.find((p) => p.unknown && p.name !== null && caret >= p.start && caret <= p.end)
+      : undefined;
+    openPromptMenu(event, piece ?? null);
+  }
+
+  /**
+   * The prompt box's own right-click menu: spelling suggestions for an
+   * unknown tag (when there is one under the click), then Cut, Copy, Paste and
+   * Select all. It replaces the native menu everywhere in the box, because the
+   * tag overlay is not part of the textarea and got no native menu at all.
+   */
+  function openPromptMenu(event: MouseEvent, piece: SpellcheckPiece | null) {
+    if (!textareaEl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items: ContextMenuItem[] = piece ? spellSuggestionItems(piece) : [];
+    const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318" : "Ctrl+";
+    const start = textareaEl.selectionStart;
+    const end = textareaEl.selectionEnd;
+    const hasSelection = end > start;
+    items.push(
+      {
+        label: locale.t("common.cut"),
+        hint: `${mod}X`,
+        disabled: !hasSelection,
+        separator: items.length > 0,
+        action: () => void cutSelection(start, end),
+      },
+      {
+        label: locale.t("common.copy"),
+        hint: `${mod}C`,
+        disabled: !hasSelection,
+        action: () => void writeClipboardText(value.slice(start, end)),
+      },
+      {
+        label: locale.t("common.paste"),
+        hint: `${mod}V`,
+        action: () => void pasteAt(start, end),
+      },
+      {
+        label: locale.t("common.select_all"),
+        hint: `${mod}A`,
+        action: () => {
+          textareaEl?.focus();
+          textareaEl?.setSelectionRange(0, value.length);
+          syncSelectionRange();
+        },
+      },
     );
-    if (piece) openSpellMenu(event, piece);
+    spellMenuItems = items;
+    spellMenuX = event.clientX;
+    spellMenuY = event.clientY;
+    spellMenuVisible = true;
+  }
+
+  async function cutSelection(start: number, end: number) {
+    if (end <= start) return;
+    if (await writeClipboardText(value.slice(start, end))) replaceRange(start, end, "");
+  }
+
+  async function pasteAt(start: number, end: number) {
+    const text = await readClipboardText();
+    if (text === null) {
+      // The webview would not hand the clipboard over; the shortcut still works.
+      textareaEl?.focus();
+      return;
+    }
+    replaceRange(start, end, text);
   }
 
   function replaceRange(start: number, end: number, replacement: string) {
@@ -1040,12 +1201,9 @@
     });
   }
 
-  function openSpellMenu(event: MouseEvent, piece: SpellcheckPiece) {
-    if (!textareaEl || !piece.name) return;
-    event.preventDefault();
-    event.stopPropagation();
-
-    // Select the offending tag so the replacement target is visible.
+  /** Suggestions for an unknown tag; selects the tag so the target is visible. */
+  function spellSuggestionItems(piece: SpellcheckPiece): ContextMenuItem[] {
+    if (!textareaEl || !piece.name) return [];
     textareaEl.focus();
     textareaEl.setSelectionRange(piece.start, piece.end);
     syncSelectionRange();
@@ -1055,25 +1213,22 @@
     const prefix = spellcheckDialect === "novelai" ? (piece.name.match(/^\s*(?:source|target|mutual)#\s*/i)?.[0] ?? "") : "";
     const suggestions = autocomplete.suggestSimilar(piece.name.slice(prefix.length));
     if (suggestions.length === 0) {
-      spellMenuItems = [
+      return [
         {
           label: locale.t("generation.prompt.spellcheck_no_suggestions"),
+          disabled: true,
           action: () => {},
         },
       ];
-    } else {
-      spellMenuItems = suggestions.map((tag) => ({
-        label: tag.n.replace(/_/g, " "),
-        // Keep the weight around the tag (`1.2::name::`, `{name}`) and swap the name only.
-        action: () => {
-          const core = findTagCore(value, piece.start, piece.end);
-          replaceRange(core.start, core.end, prefix.trim() + formatTagForPrompt(tag.n));
-        },
-      }));
     }
-    spellMenuX = event.clientX;
-    spellMenuY = event.clientY;
-    spellMenuVisible = true;
+    return suggestions.map((tag) => ({
+      label: tag.n.replace(/_/g, " "),
+      // Keep the weight around the tag (`1.2::name::`, `{name}`) and swap the name only.
+      action: () => {
+        const core = findTagCore(value, piece.start, piece.end);
+        replaceRange(core.start, core.end, prefix.trim() + formatTagForPrompt(tag.n));
+      },
+    }));
   }
 
   function syncScroll() {

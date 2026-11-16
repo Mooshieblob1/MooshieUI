@@ -367,6 +367,8 @@ const zh: Record<string, string> = {
   "common.upload": "上传",
   "common.paste": "粘贴",
   "common.copy": "复制",
+  "common.cut": "剪切",
+  "common.select_all": "全选",
   "common.copied": "已复制",
   "common.save": "保存",
   "common.reset": "重置",

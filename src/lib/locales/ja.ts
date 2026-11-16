@@ -367,6 +367,8 @@ const ja: Record<string, string> = {
   "common.upload": "アップロード",
   "common.paste": "貼り付け",
   "common.copy": "コピー",
+  "common.cut": "切り取り",
+  "common.select_all": "すべて選択",
   "common.copied": "コピー済み",
   "common.save": "保存",
   "common.reset": "リセット",
