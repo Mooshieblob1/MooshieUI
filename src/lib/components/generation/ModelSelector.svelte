@@ -9,6 +9,7 @@
   import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import LoraTriggerInput from "./LoraTriggerInput.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
@@ -1343,9 +1344,7 @@
   }
 
   function selectLora(index: number, name: string) {
-    generation.loras = generation.loras.map((l, i) =>
-      i === index ? { ...l, name } : l
-    );
+    generation.setLoraName(index, name);
     generation.saveSettings();
     showLoraDropdown = null;
     loraSearches = { ...loraSearches, [index]: "" };
@@ -2513,6 +2512,7 @@
                 (v) => { lora.strength_clip = v; },
               )}
             {/if}
+            <LoraTriggerInput name={lora.name} />
           </div>
         {/if}
       </div>

@@ -1850,6 +1850,8 @@ const ja: Record<string, string> = {
   "lora.on": "オン",
   "lora.view_civitai": "CivitAIで表示",
   "lora.add_to_prompt": "プロンプトに追加：{word}",
+  "lora.custom_trigger_placeholder": "トリガーワード",
+  "lora.custom_trigger_tip": "このLoRA用の自分のトリガー。LoRAをオンにするとプロンプトに入り、オフにすると外れます。オフラインでも使えます。",
   "lora.likes": "いいね",
 
   // ── 下部パネル ──────────────────────────────────────────

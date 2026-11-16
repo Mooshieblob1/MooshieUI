@@ -1893,6 +1893,8 @@ const es: Record<string, string> = {
   "lora.on": "ACT",
   "lora.view_civitai": "Ver en CivitAI",
   "lora.add_to_prompt": "Agregar al prompt: {word}",
+  "lora.custom_trigger_placeholder": "Palabras de activación",
+  "lora.custom_trigger_tip": "Tu propio activador para este LoRA. Se añade al prompt cuando el LoRA está activo y se quita cuando no. Funciona sin conexión.",
   "lora.likes": "Me gusta",
 
   // ── Panel inferior ──────────────────────────────────────

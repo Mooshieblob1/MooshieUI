@@ -1828,6 +1828,8 @@ const it: Record<string, string> = {
   "lora.on": "Attivo",
   "lora.view_civitai": "Visualizza su CivitAI",
   "lora.add_to_prompt": "Aggiungi al prompt: {word}",
+  "lora.custom_trigger_placeholder": "Parole trigger",
+  "lora.custom_trigger_tip": "Il tuo trigger per questo LoRA. Entra nel prompt quando il LoRA è attivo ed esce quando è spento. Funziona offline.",
   "lora.likes": "Mi piace",
 
   // ── Pannello inferiore ──────────────────────────────────
