@@ -652,6 +652,9 @@ const ADMIN_COMMANDS: &[&str] = &[
     "get_mcp_status",
     "set_mcp_settings",
     "regenerate_mcp_token",
+    // Eagle runs on the host: only the owner's library, only the owner's gallery
+    "eagle_status",
+    "send_to_eagle",
 ];
 
 /// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
@@ -4195,6 +4198,19 @@ async fn dispatch_command(
         }
 
         // --- Gallery write operations (per-user isolated in LAN mode) ---
+        "eagle_status" => crate::eagle::status(&state.http_client)
+            .await
+            .map(|v| serde_json::json!(v))
+            .map_err(|e| e.to_string()),
+        "send_to_eagle" => {
+            let filenames: Vec<String> = serde_json::from_value(args["filenames"].clone())
+                .map_err(|e| format!("Invalid filenames: {}", e))?;
+            let folder = state.config.read().await.eagle_folder_id.clone();
+            crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref())
+                .await
+                .map(|n| serde_json::json!(n))
+                .map_err(|e| e.to_string())
+        }
         "save_to_gallery" => {
             let filename = args["filename"]
                 .as_str()

@@ -14,7 +14,7 @@
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import { prepareOutputImageForEditMode } from "../../utils/editImagePreparation.js";
-  import { uploadImageBytes } from "../../utils/api.js";
+  import { uploadImageBytes, getConfig, sendToEagle } from "../../utils/api.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
   import { UPSCALE_FACTOR } from "../../utils/novelaiEnhance.js";
   import { isTauri } from "../../utils/ipc.js";
@@ -677,6 +677,43 @@
   // ---------------------------------------------------------------------------
 
   let exportProgress = $state<{ done: number; total: number } | null>(null);
+
+  /** Eagle export is switched on in Settings; read once when the gallery opens. */
+  let eagleEnabled = $state(false);
+  let eagleSending = $state(false);
+  if (isTauri) {
+    void getConfig()
+      .then((cfg) => { eagleEnabled = !!cfg.eagle_enabled; })
+      .catch(() => {});
+  }
+
+  async function bulkSendToEagle() {
+    if (eagleSending) return;
+    const images = selectedImages().filter((image) => !image.linked_folder);
+    if (images.length === 0) return;
+    eagleSending = true;
+    try {
+      const names: string[] = [];
+      for (const image of images) {
+        const name = await gallery.resolveGalleryFilename(image);
+        if (name) names.push(name);
+      }
+      if (names.length === 0) throw new Error("nothing saved to the gallery yet");
+      const sent = await sendToEagle(names);
+      const failed = images.length - sent;
+      gallery.showToast(
+        failed > 0
+          ? locale.t("gallery.bulk.toast_eagle_partial", { sent: String(sent), failed: String(failed) })
+          : locale.t("gallery.bulk.toast_eagle_sent", { count: String(sent) }),
+        failed > 0 ? "error" : "success",
+      );
+    } catch (e) {
+      console.error("Failed to send to Eagle:", e);
+      gallery.showToast(locale.t("gallery.bulk.toast_eagle_failed"), "error");
+    } finally {
+      eagleSending = false;
+    }
+  }
 
   async function bulkExport() {
     if (exportProgress) return;
@@ -1480,6 +1517,11 @@
           {#if isTauri}
             <button class="h-8 px-2.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-60 tabular-nums" title={locale.t("gallery.bulk.export_title")} disabled={!!exportProgress} onclick={bulkExport}>
               {exportProgress ? locale.t("gallery.bulk.exporting", { done: String(exportProgress.done), total: String(exportProgress.total) }) : locale.t("gallery.bulk.export")}
+            </button>
+          {/if}
+          {#if isTauri && eagleEnabled}
+            <button class="h-8 px-2.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 disabled:opacity-60" title={locale.t("gallery.bulk.eagle_title")} disabled={eagleSending} onclick={bulkSendToEagle}>
+              {eagleSending ? locale.t("gallery.bulk.eagle_sending") : locale.t("gallery.bulk.eagle")}
             </button>
           {/if}
           <button class="h-8 px-2.5 text-xs rounded bg-red-900/80 hover:bg-red-800 text-red-100" disabled={!!exportProgress} onclick={bulkDelete}>{locale.t("gallery.delete")}</button>

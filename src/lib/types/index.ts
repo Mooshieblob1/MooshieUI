@@ -725,6 +725,12 @@ export interface AppConfig {
   webhook_events: string[];
   webhook_include_sensitive: boolean;
   webhook_allow_private_targets: boolean;
+  /** Eagle export through its local API: "Send to Eagle" in the gallery. */
+  eagle_enabled?: boolean;
+  /** With Eagle export on, also send each image as it is saved. */
+  eagle_auto_send?: boolean;
+  /** Eagle folder id for sent images; empty means Eagle's inbox. */
+  eagle_folder_id?: string | null;
   theme_profile_id: string | null;
   theme_profiles: ThemeProfile[];
   /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
