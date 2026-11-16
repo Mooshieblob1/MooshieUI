@@ -283,6 +283,31 @@ export async function setNovelaiApiKey(apiKey: string): Promise<boolean> {
   return ipcInvoke("set_novelai_api_key", { apiKey });
 }
 
+/** A saved NovelAI key as the UI sees it: a name and a hint, never the key. */
+export interface NovelAiSavedKey {
+  label: string;
+  /** `…abcd`, or `env:NAME` for a variable reference. */
+  hint: string;
+  /** This is the key in use. */
+  active: boolean;
+}
+
+export async function listNovelaiKeys(): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("list_novelai_keys");
+}
+
+export async function saveNovelaiKey(label: string, apiKey: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("save_novelai_key", { label, apiKey });
+}
+
+export async function deleteNovelaiKey(label: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("delete_novelai_key", { label });
+}
+
+export async function useNovelaiKey(label: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("use_novelai_key", { label });
+}
+
 /**
  * Store a cloud voice or video provider key, or clear it with an empty string.
  * Returns whether a key is now configured. Like the NovelAI key, a named

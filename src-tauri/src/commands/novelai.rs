@@ -167,3 +167,44 @@ pub async fn set_novelai_api_key(
 
     Ok(configured)
 }
+
+/// The owner's saved NovelAI keys, without the keys themselves.
+#[tauri::command]
+pub async fn list_novelai_keys(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<crate::novelai_keys::KeySummary>, AppError> {
+    let current = state.config.read().await.novelai_api_key.clone();
+    crate::novelai_keys::list(current.as_deref()).map_err(AppError::Other)
+}
+
+/// Save a named NovelAI key for switching. Does not change the key in use.
+#[tauri::command]
+pub async fn save_novelai_key(
+    state: State<'_, Arc<AppState>>,
+    label: String,
+    api_key: String,
+) -> Result<Vec<crate::novelai_keys::KeySummary>, AppError> {
+    let current = state.config.read().await.novelai_api_key.clone();
+    crate::novelai_keys::save(&label, &api_key, current.as_deref()).map_err(AppError::Other)
+}
+
+/// Forget a saved key. The key in use stays as it is.
+#[tauri::command]
+pub async fn delete_novelai_key(
+    state: State<'_, Arc<AppState>>,
+    label: String,
+) -> Result<Vec<crate::novelai_keys::KeySummary>, AppError> {
+    let current = state.config.read().await.novelai_api_key.clone();
+    crate::novelai_keys::delete(&label, current.as_deref()).map_err(AppError::Other)
+}
+
+/// Switch to a saved key.
+#[tauri::command]
+pub async fn use_novelai_key(
+    state: State<'_, Arc<AppState>>,
+    label: String,
+) -> Result<Vec<crate::novelai_keys::KeySummary>, AppError> {
+    crate::novelai_keys::switch(state.inner(), &label)
+        .await
+        .map_err(AppError::Other)
+}

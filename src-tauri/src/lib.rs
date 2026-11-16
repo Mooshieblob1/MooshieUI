@@ -29,6 +29,7 @@ pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
 pub mod novelai;
+pub mod novelai_keys;
 pub mod output_owners;
 #[cfg(any(feature = "desktop", test))]
 pub mod package_manager;
@@ -734,6 +735,10 @@ pub fn run() {
             commands::novelai::novelai_generate,
             commands::novelai::novelai_subscription,
             commands::novelai::set_novelai_api_key,
+            commands::novelai::list_novelai_keys,
+            commands::novelai::save_novelai_key,
+            commands::novelai::delete_novelai_key,
+            commands::novelai::use_novelai_key,
             commands::cloud::set_cloud_api_key,
             commands::cloud::cloud_key_status,
             commands::config::api_key_env_status,
