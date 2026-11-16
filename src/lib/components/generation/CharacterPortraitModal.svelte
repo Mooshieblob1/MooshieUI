@@ -7,7 +7,10 @@
    * last time, or one the prompt assistant picks from memory or canon. Chunks,
    * Artist Styles and artist tags go on top and are remembered for the next
    * portrait. The UC of picked chunks and styles shows as red pills under the
-   * negative prompt, which is where it goes.
+   * negative prompt, which is where it goes. On NovelAI models with character
+   * prompts, the card's look, the expression and the card's UC go in a
+   * character prompt and character UC of their own, and the main prompt keeps
+   * the count, framing and style, the way Use lays a card out.
    */
   import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
@@ -25,6 +28,7 @@
     loadPortraitExtras,
     portraitPrompts,
     portraitStyle,
+    portraitUsesCharacterBox,
     savePortraitExtras,
   } from "../../utils/characterPortrait.js";
   import { memoryContext, usualExpression } from "../../utils/characterMemory.js";
@@ -41,12 +45,16 @@
   let { character, onclose }: Props = $props();
 
   // Mounted once per portrait, so the card is read once on purpose.
-  const initial = untrack(() => portraitPrompts(character));
+  // Whether the selected model takes character prompts, read once like the card.
+  const characterBox = untrack(() => portraitUsesCharacterBox());
+  const initial = untrack(() => portraitPrompts(character, characterBox));
   const style = untrack(() => portraitStyle(character));
   const remembered = loadPortraitExtras();
 
   let positive = $state(initial.positive);
   let negative = $state(initial.negative);
+  let characterPositive = $state(initial.character?.positive ?? "");
+  let characterNegative = $state(initial.character?.negative ?? "");
   let leftOut = $state<string[]>(initial.dropped);
   // The last portrait's, the card's own expression tags, or the usual one in memory.
   let expression = $state(
@@ -65,7 +73,7 @@
   const size = $derived(currentPortraitSize());
   const showNegative = $derived(!generation.disablesNegativePrompt);
   const canGenerate = $derived(
-    !submitting && positive.trim().length > 0 && generation.mode !== "video" && (!suggesting || expressionTyped),
+    !submitting && (positive.trim().length > 0 || characterPositive.trim().length > 0) && generation.mode !== "video" && (!suggesting || expressionTyped),
   );
 
   /**
@@ -104,14 +112,16 @@
     else expression = defaultExpression(style);
   });
 
-  /** Put a left-out part of the card's prompt back at the end of the prompt. */
+  /** Put a left-out part of the card's prompt back at the end of the prompt it came from. */
   function addBack(index: number) {
     const item = leftOut[index];
     if (item === undefined) return;
-    positive =
+    const put = (text: string) =>
       style === "tags"
-        ? `${positive.trim().replace(/[,\s]+$/, "")}, ${item}`
-        : `${positive.trim().replace(/[.\s]*$/, "")}, ${item}.`;
+        ? [text.trim().replace(/[,\s]+$/, ""), item].filter(Boolean).join(", ")
+        : `${text.trim().replace(/[.\s]*$/, "")}, ${item}.`;
+    if (characterBox) characterPositive = put(characterPositive);
+    else positive = put(positive);
     leftOut = leftOut.filter((_, i) => i !== index);
   }
 
@@ -146,9 +156,18 @@
     return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
   }
 
+  const edited = $derived(
+    positive !== initial.positive ||
+      negative !== initial.negative ||
+      characterPositive !== (initial.character?.positive ?? "") ||
+      characterNegative !== (initial.character?.negative ?? ""),
+  );
+
   function resetPrompts() {
     positive = initial.positive;
     negative = initial.negative;
+    characterPositive = initial.character?.positive ?? "";
+    characterNegative = initial.character?.negative ?? "";
     leftOut = initial.dropped;
   }
 
@@ -157,12 +176,20 @@
     submitting = true;
     const extras = { artists: artists.trim(), chunkIds, styleIds };
     try {
+      const mainNegative = showNegative ? negativeForExpression(negative, expression, style) : "";
       await generateCharacterPortrait(
         character,
-        {
-          positive: withExpression(positive, expression, style),
-          negative: showNegative ? negativeForExpression(negative, expression, style) : "",
-        },
+        characterBox
+          ? {
+              // The expression is the character's, so it goes in its box.
+              positive,
+              negative: mainNegative,
+              character: {
+                positive: withExpression(characterPositive, expression, style),
+                negative: showNegative ? characterNegative : "",
+              },
+            }
+          : { positive: withExpression(positive, expression, style), negative: mainNegative },
         extras,
       );
       savePortraitExtras(extras);
@@ -198,6 +225,22 @@
   aria-modal="true"
   aria-label={locale.t("characters.portrait.title", { name: character.name })}
 >
+  {#snippet leftOutChips()}
+    {#if leftOut.length > 0}
+      <div class="flex flex-wrap items-center gap-1" title={locale.t("characters.portrait.left_out_tip")}>
+        <span class="text-[10px] text-neutral-500">{locale.t("characters.portrait.left_out")}</span>
+        {#each leftOut as item, i (`${i}:${item}`)}
+          <button
+            type="button"
+            class="max-w-[14rem] truncate rounded-full border border-dashed border-neutral-700 px-2 py-px text-[10px] text-neutral-500 line-through hover:border-neutral-500 hover:text-neutral-200 hover:no-underline"
+            title={locale.t("characters.portrait.add_back", { tag: item })}
+            aria-label={locale.t("characters.portrait.add_back", { tag: item })}
+            onclick={() => addBack(i)}
+          >{item}</button>
+        {/each}
+      </div>
+    {/if}
+  {/snippet}
   <button
     type="button"
     class="absolute inset-0 h-full w-full cursor-default"
@@ -223,15 +266,19 @@
     <div class="min-h-0 flex-1 overflow-y-auto flex flex-col gap-3">
       <div class="flex flex-col gap-1">
         <div class="flex items-center justify-between gap-2">
-          <label for="character-portrait-prompt" class="text-xs font-medium text-neutral-300">
-            {locale.t("characters.portrait.prompt")}
+          <label
+            for="character-portrait-prompt"
+            class="text-xs font-medium text-neutral-300"
+            title={characterBox ? locale.t("characters.portrait.main_prompt_tip") : undefined}
+          >
+            {locale.t(characterBox ? "characters.portrait.main_prompt" : "characters.portrait.prompt")}
           </label>
           <button
             type="button"
             class="w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
             title={locale.t("characters.portrait.reset")}
             aria-label={locale.t("characters.portrait.reset")}
-            disabled={positive === initial.positive && negative === initial.negative}
+            disabled={!edited}
             onclick={resetPrompts}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
@@ -244,21 +291,31 @@
           spellcheck="false"
           class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-indigo-500"
         ></textarea>
-        {#if leftOut.length > 0}
-          <div class="flex flex-wrap items-center gap-1" title={locale.t("characters.portrait.left_out_tip")}>
-            <span class="text-[10px] text-neutral-500">{locale.t("characters.portrait.left_out")}</span>
-            {#each leftOut as item, i (`${i}:${item}`)}
-              <button
-                type="button"
-                class="max-w-[14rem] truncate rounded-full border border-dashed border-neutral-700 px-2 py-px text-[10px] text-neutral-500 line-through hover:border-neutral-500 hover:text-neutral-200 hover:no-underline"
-                title={locale.t("characters.portrait.add_back", { tag: item })}
-                aria-label={locale.t("characters.portrait.add_back", { tag: item })}
-                onclick={() => addBack(i)}
-              >{item}</button>
-            {/each}
-          </div>
+        {#if !characterBox}
+          {@render leftOutChips()}
         {/if}
       </div>
+
+      {#if characterBox}
+        <div class="flex flex-col gap-1">
+          <label
+            for="character-portrait-character"
+            class="text-xs font-medium text-neutral-300"
+            title={locale.t("characters.portrait.character_prompt_tip")}
+          >
+            {locale.t("characters.portrait.character_prompt")}
+          </label>
+          <textarea
+            id="character-portrait-character"
+            bind:value={characterPositive}
+            rows="3"
+            spellcheck="false"
+            placeholder={locale.t("generation.novelai.characters.prompt_placeholder")}
+            class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+          ></textarea>
+          {@render leftOutChips()}
+        </div>
+      {/if}
 
       <div class="flex flex-col gap-1">
         <div class="flex items-center justify-between gap-2">
@@ -298,7 +355,7 @@
       {#if showNegative}
         <div class="flex flex-col gap-1">
           <label for="character-portrait-negative" class="text-xs font-medium text-neutral-300">
-            {locale.t("characters.portrait.negative")}
+            {locale.t(characterBox ? "characters.portrait.main_negative" : "characters.portrait.negative")}
           </label>
           <textarea
             id="character-portrait-negative"
@@ -318,6 +375,21 @@
             </div>
           {/if}
         </div>
+        {#if characterBox}
+          <div class="flex flex-col gap-1">
+            <label for="character-portrait-character-negative" class="text-xs font-medium text-neutral-300">
+              {locale.t("characters.portrait.character_negative")}
+            </label>
+            <textarea
+              id="character-portrait-character-negative"
+              bind:value={characterNegative}
+              rows="2"
+              spellcheck="false"
+              placeholder={locale.t("generation.novelai.characters.negative_placeholder")}
+              class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-red-500/70"
+            ></textarea>
+          </div>
+        {/if}
       {/if}
 
       <div class="flex flex-col gap-1">

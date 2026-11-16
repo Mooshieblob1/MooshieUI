@@ -8,13 +8,16 @@
  * and the UC those chunks and styles carry goes on the negative prompt. The
  * generation goes through the normal queue with the user's model, sampler and
  * LoRAs, but nothing from the prompt area: no prompt boxes, character boxes,
- * active chunks or styles, references, regions or ControlNet.
+ * active chunks or styles, references, regions or ControlNet. On NovelAI
+ * models with character prompts, the character (look, expression and the
+ * card's UC) goes in one character box and the main prompt keeps the count,
+ * framing and style, as Use lays a card out.
  *
  * Lives in utils rather than a store because it reaches into `generation`,
  * `styles` and `promptPresets`, and `generation` imports those two. App.svelte
  * hands the finished image back through `applyCharacterPortrait`.
  */
-import { generation } from "../stores/generation.svelte.js";
+import { createNovelAiCharacter, generation } from "../stores/generation.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
 import { promptPresets } from "../stores/promptPresets.svelte.js";
@@ -31,6 +34,7 @@ import { classifyGenerationError } from "./generationErrors.js";
 import { submitGeneration } from "./generationSubmit.js";
 import { neckUpProse, neckUpTags } from "./portraitFilter.js";
 import { BLANK_FACE_GUARD, splitExpressionTags } from "./portraitExpression.js";
+import { splitCountTags } from "./portraitCharacterBox.js";
 
 /** Framing tags for tag-prompted models: one person, head and shoulders, facing the viewer. */
 export const PORTRAIT_FRAMING_TAGS =
@@ -48,33 +52,79 @@ function joinParts(parts: string[]): string {
   return parts.map(tidy).filter(Boolean).join(", ");
 }
 
+/** What a portrait starts from: the main prompt and UC, and on NovelAI V4+ the character box. */
+export interface PortraitPrompts {
+  positive: string;
+  negative: string;
+  /**
+   * The character's own prompt and UC, for a NovelAI character box. Null when
+   * the whole portrait goes in the main prompt.
+   */
+  character: { positive: string; negative: string } | null;
+  dropped: string[];
+  expression: string;
+}
+
+/**
+ * Does the selected model take character prompts? Then a portrait puts the
+ * character in a character box, the way Use does.
+ */
+export function portraitUsesCharacterBox(): boolean {
+  return generation.isNovelAi && !!generation.novelAiModel?.v4Prompt;
+}
+
 /**
  * The prompt and negative prompt a portrait starts from, written the way the
  * character's architecture is prompted: Danbooru tags, or a sentence. What a
  * neck-up portrait cannot show (legwear, shoes, poses, what they hold) is
  * left out of the card's prompt and listed in `dropped`. Expression tags the
  * card's prompt has come back as `expression`, for the dialog's own box.
+ *
+ * With `characterBox` (NovelAI V4+), the card's look and UC go in
+ * `character` and the main prompt keeps the count, framing and portrait UC.
  */
 export function portraitPrompts(
   character: Pick<SavedCharacter, "prompt" | "negative" | "architecture">,
-): { positive: string; negative: string; dropped: string[]; expression: string } {
+  characterBox = false,
+): PortraitPrompts {
   const avoid = tidy(character.negative);
   if (architecturePromptStyle(character.architecture) === "tags") {
     const look = neckUpTags(tidy(character.prompt));
     const face = splitExpressionTags(look.kept);
+    if (characterBox) {
+      const cast = splitCountTags(face.rest);
+      return {
+        positive: joinParts([cast.counts, "solo", PORTRAIT_FRAMING_TAGS]),
+        negative: PORTRAIT_AVOID_TAGS,
+        character: { positive: cast.look, negative: avoid },
+        dropped: look.dropped,
+        expression: face.expression,
+      };
+    }
     return {
       positive: joinParts(["solo", face.rest, PORTRAIT_FRAMING_TAGS]),
       negative: joinParts([avoid, PORTRAIT_AVOID_TAGS]),
+      character: null,
       dropped: look.dropped,
       expression: face.expression,
     };
   }
   const look = neckUpProse(tidy(character.prompt));
+  const framing =
+    "seen straight from the front and framed from the neck up, looking directly at the viewer against a plain background.";
+  if (characterBox) {
+    return {
+      positive: `A head-and-shoulders portrait of one person, ${framing}`,
+      negative: BLANK_FACE_GUARD.natural,
+      character: { positive: tidy(look.kept), negative: avoid },
+      dropped: look.dropped,
+      expression: "",
+    };
+  }
   return {
-    positive:
-      `A head-and-shoulders portrait of ${tidy(look.kept) || "the character"}, seen straight from the front ` +
-      "and framed from the neck up, looking directly at the viewer against a plain background.",
+    positive: `A head-and-shoulders portrait of ${tidy(look.kept) || "the character"}, ${framing}`,
     negative: joinParts([avoid, BLANK_FACE_GUARD.natural]),
+    character: null,
     dropped: look.dropped,
     expression: "",
   };
@@ -182,18 +232,27 @@ export function savePortraitExtras(extras: PortraitExtras): void {
  */
 export async function generateCharacterPortrait(
   character: SavedCharacter,
-  prompts: { positive: string; negative: string },
+  prompts: { positive: string; negative: string; character?: { positive: string; negative: string } | null },
   extras: PortraitExtras,
 ): Promise<void> {
   if (generation.mode === "video") throw new Error(locale.t("characters.portrait.no_video"));
   if (!generation.checkpoint) throw new Error(locale.t("generation.error_no_checkpoint"));
 
   const style = portraitStyle(character);
+  // The character box, while the selected model still takes one. When the
+  // model was switched since the dialog opened, or the box was emptied, the
+  // character goes back into the main prompt and its UC into the main UC.
+  const box = prompts.character?.positive.trim() && portraitUsesCharacterBox() ? prompts.character : null;
+  const boxNegative = !!box && !!generation.novelAiModel?.characterNegatives;
+  const mainPositive = box ? prompts.positive : joinParts([prompts.positive, prompts.character?.positive ?? ""]);
+  const mainNegative = boxNegative
+    ? prompts.negative
+    : joinParts([prompts.character?.negative ?? "", prompts.negative]);
   const chunks = extras.chunkIds
     .map((id) => promptPresets.getById(id))
     .filter((p): p is NonNullable<typeof p> => p !== null);
   const chunkTexts = chunks.map((p) => portraitChunkText(p.content, style));
-  const positive = joinParts([prompts.positive, ...portraitArtistTags(extras.artists), ...chunkTexts]);
+  const positive = joinParts([mainPositive, ...portraitArtistTags(extras.artists), ...chunkTexts]);
   if (!positive) throw new Error(locale.t("characters.portrait.empty_prompt"));
   const chosenStyles = styles.styles.filter((s) => extras.styleIds.includes(s.id));
   const styleFragment = fragmentForStyles(chosenStyles, generation.isNovelAi);
@@ -203,7 +262,7 @@ export async function generateCharacterPortrait(
   ]);
 
   const params = generation.toParams({
-    prompts: { positive, negative: prompts.negative.trim() },
+    prompts: { positive, negative: mainNegative.trim() },
     skipActiveStyles: true,
     extraPositive: styleFragment || undefined,
     extraNegative: uc || undefined,
@@ -228,7 +287,11 @@ export async function generateCharacterPortrait(
   if (params.novelai) {
     params.novelai = {
       ...params.novelai,
-      characters: [],
+      // The character in its own box, with its own UC; nothing from the
+      // character boxes the prompt area is set up with.
+      characters: box
+        ? [{ ...createNovelAiCharacter(), prompt: box.positive.trim(), negative_prompt: boxNegative ? box.negative.trim() : "" }]
+        : [],
       use_coords: false,
       vibes: [],
       director_references: [],

@@ -85,6 +85,11 @@ jobs:
           npx esbuild scripts/tests/galleryCharacters.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/galleryCharacters.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/galleryCharacters.test.mjs"
 
+      - name: Portrait character box tests
+        run: |
+          npx esbuild scripts/tests/portraitCharacterBox.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/portraitCharacterBox.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/portraitCharacterBox.test.mjs"
+
       - name: Image editor logic tests
         run: |
           npx esbuild scripts/tests/imageEditorOps.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/imageEditorOps.test.mjs" --log-level=warning
