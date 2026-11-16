@@ -35,6 +35,7 @@ pub mod output_owners;
 pub mod package_manager;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
+pub mod related_tags;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;
@@ -675,6 +676,7 @@ pub fn run() {
             commands::api::save_text_file,
             commands::api::embed_image_metadata_bytes,
             commands::api::save_to_gallery,
+            commands::api::related_tags,
             commands::api::eagle_status,
             commands::api::send_to_eagle,
             commands::api::save_to_gallery_bytes,

@@ -31,6 +31,8 @@
   import { CLIP_CHUNK_SIZE, estimatePromptTokens, promptTokenLimit } from "../../utils/promptTokens.js";
   import { findCommentRanges, stripPromptComments, toggleLineComments } from "../../utils/promptComments.js";
   import { findMatches, replaceAllMatches } from "../../utils/promptFind.js";
+  import { insertTagAfter, normalizePromptTag, promptTagSet } from "../../utils/relatedTags.js";
+  import { relatedTags, type RelatedTag, type RelatedTags } from "../../utils/api.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
   interface Props {
@@ -178,6 +180,58 @@
 
   // Find / replace (Ctrl+F, Ctrl+H) inside this box.
   let findOpen = $state(false);
+
+  // Related tags for the selected tag: Danbooru statistics and the gallery.
+  let relatedOpen = $state(false);
+  let relatedLoading = $state(false);
+  let relatedResult = $state<RelatedTags | null>(null);
+  let relatedError = $state<string | null>(null);
+  /** End of the tag the panel was opened for, where picked tags go. */
+  let relatedAnchor = 0;
+  const promptTags = $derived(relatedOpen ? promptTagSet(value) : new Set<string>());
+
+  async function openRelated() {
+    if (!textareaEl || !hasSelection) return;
+    const selected = value.substring(selectionStart, selectionEnd);
+    const tag = normalizePromptTag(selected.split(/[,\n]/)[0] ?? "");
+    relatedOpen = true;
+    relatedAnchor = selectionEnd;
+    relatedError = null;
+    if (!tag) {
+      relatedResult = null;
+      relatedError = locale.t("generation.prompt.related_pick_tag");
+      return;
+    }
+    if (relatedResult?.tag === tag) return;
+    relatedLoading = true;
+    relatedResult = null;
+    try {
+      relatedResult = await relatedTags(tag);
+    } catch (e) {
+      relatedError = e instanceof Error ? e.message : String(e);
+    } finally {
+      relatedLoading = false;
+    }
+  }
+
+  function addRelated(tag: RelatedTag) {
+    if (promptTags.has(tag.name)) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    const next = insertTagAfter(value, Math.min(relatedAnchor, value.length), formatTagForPrompt(tag.name));
+    value = next.value;
+    relatedAnchor = next.caret;
+    requestAnimationFrame(() => {
+      textareaEl?.focus();
+      textareaEl?.setSelectionRange(next.caret, next.caret);
+      syncSelectionRange();
+    });
+  }
+
+  /** Chip colour by Danbooru category, the autocomplete dropdown's hues. */
+  function relatedChipClass(category: number): string {
+    return `${CATEGORY_COLORS[category] ?? CATEGORY_COLORS[0]} border-neutral-700`;
+  }
   let replaceOpen = $state(false);
   let findQuery = $state("");
   let replaceText = $state("");
@@ -1221,6 +1275,16 @@
     >
       []
     </button>
+    <button
+      type="button"
+      disabled={!hasSelection}
+      class="shrink-0 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed {relatedOpen ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10' : 'border-neutral-700 bg-neutral-900 text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300'}"
+      title={hasSelection ? locale.t('generation.prompt.related_title') : locale.t('generation.prompt.weight_select_hint')}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => { void openRelated(); }}
+    >
+      {locale.t('generation.prompt.related')}
+    </button>
     {#if !hasSelection}
       <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
@@ -1229,6 +1293,53 @@
       title={locale.t('generation.prompt.tokens_tip')}
     >{tokenCount}/{tokenLimit}</span>
   </div>
+  {#if relatedOpen}
+    <div class="mb-1 rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-[11px]" role="region" aria-label={locale.t('generation.prompt.related_title')}>
+      <div class="mb-1.5 flex items-center gap-2">
+        <span class="text-neutral-400">{locale.t('generation.prompt.related_for')}</span>
+        {#if relatedResult}<span class="truncate font-medium text-neutral-200">{relatedResult.tag}</span>{/if}
+        {#if relatedLoading}<span class="text-neutral-500">{locale.t('generation.prompt.related_loading')}</span>{/if}
+        <button
+          type="button"
+          class="ml-auto rounded px-1.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+          aria-label={locale.t('generation.prompt.related_close')}
+          title={locale.t('generation.prompt.related_close')}
+          onmousedown={(e) => e.preventDefault()}
+          onclick={() => (relatedOpen = false)}
+        >&times;</button>
+      </div>
+      {#if relatedError}
+        <p class="text-amber-400">{relatedError}</p>
+      {/if}
+      {#if relatedResult}
+        {#each [
+          { key: 'danbooru', label: locale.t('generation.prompt.related_danbooru'), tags: relatedResult.danbooru, note: relatedResult.danbooru_error },
+          { key: 'gallery', label: locale.t('generation.prompt.related_gallery', { count: String(relatedResult.gallery_images) }), tags: relatedResult.gallery, note: null },
+        ] as section (section.key)}
+          <div class="mt-1">
+            <span class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{section.label}</span>
+            {#if section.tags.length > 0}
+              <div class="flex flex-wrap gap-1">
+                {#each section.tags as tag (tag.name)}
+                  {@const used = promptTags.has(tag.name)}
+                  <button
+                    type="button"
+                    class="rounded border bg-neutral-800/60 px-1.5 py-0.5 transition-colors {relatedChipClass(tag.category)} {used ? 'opacity-35 cursor-default' : 'hover:bg-neutral-700'}"
+                    title={used ? locale.t('generation.prompt.related_in_prompt') : locale.t('generation.prompt.related_add')}
+                    disabled={used}
+                    onmousedown={(e) => e.preventDefault()}
+                    onclick={() => addRelated(tag)}
+                  >{tag.name}{#if section.key === 'gallery'}<span class="ml-1 text-neutral-500">{tag.score}</span>{/if}</button>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-neutral-500">{section.note ?? locale.t('generation.prompt.related_none')}</p>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
+  {/if}
   {#if findOpen}
     <div class="mb-1 space-y-1 rounded-lg border border-neutral-700 bg-neutral-900 p-1.5" role="search">
       <div class="flex items-center gap-1">
