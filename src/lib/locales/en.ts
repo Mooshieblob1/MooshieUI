@@ -4977,5 +4977,11 @@ const en: Record<string, string> = {
   "editor.text.font": "Font",
   "editor.text.bold": "Bold",
   "editor.text.italic": "Italic",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "Undesired content. Added to the negative prompt whenever this chunk is used.",
+  "prompt_uc.style_tip": "Undesired content. Added to the negative prompt while this style is on.",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "UC from {name}: {tags}",
 };
 export default en;

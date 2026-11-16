@@ -5052,5 +5052,11 @@ const es: Record<string, string> = {
   "editor.text.font": "Fuente",
   "editor.text.bold": "Negrita",
   "editor.text.italic": "Cursiva",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "Contenido no deseado. Se añade al prompt negativo siempre que se usa este fragmento.",
+  "prompt_uc.style_tip": "Contenido no deseado. Se añade al prompt negativo mientras este estilo está activo.",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "UC de {name}: {tags}",
 };
 export default es;
