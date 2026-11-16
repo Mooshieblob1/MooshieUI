@@ -130,6 +130,20 @@
   import { notifyOs, isWindowUnfocused } from "./lib/utils/osNotify.js";
   import { playFinishChime } from "./lib/utils/finishChime.js";
   import {
+    BLOCK_FIELDS,
+    DEFAULT_FIELD_ORDER,
+    EMPTY_PREFS,
+    formatLoraWeight,
+    loraDisplayName,
+    moveField,
+    orderFields,
+    parseLoraField,
+    sanitizePrefs,
+    toggleField,
+    visibleFields,
+    type ImageInfoPrefs,
+  } from "./lib/utils/imageInfoFields.js";
+  import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
   } from "./lib/utils/comfyStartup.js";
@@ -1088,6 +1102,28 @@
   let metadataPanelCollapsed = $state(false);
   const METADATA_MIN_WIDTH = 260;
   const METADATA_MAX_WIDTH = 600;
+
+  // Image Info fields: which ones show and in what order. A per-device view
+  // preference, so localStorage rather than the synced prefs.
+  const IMAGE_INFO_FIELDS_KEY = "mooshieui.gallery.imageInfoFields.v1";
+  let imageInfoPrefs = $state<ImageInfoPrefs>(readImageInfoPrefs());
+  let imageInfoEditing = $state(false);
+  function readImageInfoPrefs(): ImageInfoPrefs {
+    try {
+      const raw = localStorage.getItem(IMAGE_INFO_FIELDS_KEY);
+      return raw ? sanitizePrefs(JSON.parse(raw)) : EMPTY_PREFS;
+    } catch {
+      return EMPTY_PREFS;
+    }
+  }
+  function setImageInfoPrefs(next: ImageInfoPrefs) {
+    imageInfoPrefs = next;
+    try { localStorage.setItem(IMAGE_INFO_FIELDS_KEY, JSON.stringify(next)); } catch {}
+  }
+  /** Every field the editor lists: the known ones plus whatever this image has. */
+  const imageInfoEditorFields = $derived(
+    orderFields([...DEFAULT_FIELD_ORDER, ...Object.keys(lightboxMetadata ?? {})], imageInfoPrefs),
+  );
   /** Dir picker shown when manualSaveMode is on and 2+ dirs are configured. */
   let dirPickerImage = $state<OutputImage | null>(null);
 
@@ -4235,6 +4271,15 @@
                   <span class="text-[10px] text-neutral-400">{locale.t("common.loading")}</span>
                 {/if}
                 <button
+                  class="p-1 rounded transition-colors {imageInfoEditing ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200'}"
+                  onclick={() => (imageInfoEditing = !imageInfoEditing)}
+                  aria-pressed={imageInfoEditing}
+                  title={locale.t("gallery.info_fields.edit")}
+                  aria-label={locale.t("gallery.info_fields.edit")}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                </button>
+                <button
                   class="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"
                   onclick={() => (metadataPanelCollapsed = true)}
                   title={locale.t("gallery.collapse_panel")}
@@ -4301,31 +4346,88 @@
               </div>
             {/if}
 
+            {#if imageInfoEditing}
+              <!-- Field picker: show/hide and reorder. Applies to every image. -->
+              <div class="mb-3 rounded-lg border border-neutral-700 bg-neutral-800/60 p-2">
+                <div class="mb-1.5 flex items-center justify-between gap-2">
+                  <span class="text-[10px] text-neutral-500 uppercase tracking-wider">{locale.t("gallery.info_fields.title")}</span>
+                  <button
+                    class="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:text-neutral-600"
+                    disabled={imageInfoPrefs.order.length === 0 && imageInfoPrefs.hidden.length === 0}
+                    onclick={() => setImageInfoPrefs(EMPTY_PREFS)}
+                  >{locale.t("common.reset")}</button>
+                </div>
+                <ul class="space-y-0.5">
+                  {#each imageInfoEditorFields as key, i (key)}
+                    {@const shown = !imageInfoPrefs.hidden.includes(key)}
+                    <li class="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-neutral-700/50">
+                      <label class="flex min-w-0 flex-1 items-center gap-1.5 cursor-pointer {shown ? 'text-neutral-200' : 'text-neutral-500'}">
+                        <input
+                          type="checkbox"
+                          class="accent-indigo-500"
+                          checked={shown}
+                          onchange={() => setImageInfoPrefs(toggleField(key, imageInfoPrefs))}
+                        />
+                        <span class="truncate">{metadataLabel(key)}</span>
+                      </label>
+                      <button
+                        class="p-0.5 rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                        disabled={i === 0}
+                        onclick={() => setImageInfoPrefs(moveField(imageInfoEditorFields, key, -1, imageInfoPrefs))}
+                        title={locale.t("gallery.info_fields.move_up")}
+                        aria-label={locale.t("gallery.info_fields.move_up")}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                      </button>
+                      <button
+                        class="p-0.5 rounded text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                        disabled={i === imageInfoEditorFields.length - 1}
+                        onclick={() => setImageInfoPrefs(moveField(imageInfoEditorFields, key, 1, imageInfoPrefs))}
+                        title={locale.t("gallery.info_fields.move_down")}
+                        aria-label={locale.t("gallery.info_fields.move_down")}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+
             {#if lightboxMetadata}
-              {@const promptKeys = ["positive_prompt", "negative_prompt"]}
-              {@const settingKeys = Object.keys(lightboxMetadata).filter((k) => !promptKeys.includes(k))}
-
-              <!-- Prompts -->
-              {#each promptKeys as key}
-                {#if lightboxMetadata[key]}
-                  <div class="mb-3">
-                    <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{metadataLabel(key)}</label>
-                    <p class="text-neutral-200 whitespace-pre-wrap wrap-break-word leading-relaxed">{lightboxMetadata[key]}</p>
-                  </div>
-                {/if}
-              {/each}
-
-              <!-- Settings grid -->
-              {#if settingKeys.length > 0}
-                <div class="border-t border-neutral-700/50 pt-2 mt-2 space-y-1.5">
-                  {#each settingKeys as key}
+              {@const fields = visibleFields(lightboxMetadata, imageInfoPrefs)}
+              <div class="space-y-1.5">
+                {#each fields as key, i (key)}
+                  {@const value = lightboxMetadata[key]}
+                  {#if BLOCK_FIELDS.has(key)}
+                    <div class="{i > 0 ? 'pt-1.5' : ''} pb-1.5">
+                      <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{metadataLabel(key)}</label>
+                      <p class="text-neutral-200 whitespace-pre-wrap wrap-break-word leading-relaxed">{value}</p>
+                    </div>
+                  {:else if key === "loras"}
+                    {@const loras = parseLoraField(value)}
                     <div class="flex justify-between gap-2">
                       <span class="text-neutral-500 shrink-0">{metadataLabel(key)}</span>
-                      <span class="text-neutral-200 text-right break-all">{lightboxMetadata[key]}</span>
+                      <ul class="min-w-0 space-y-1 text-right">
+                        {#each loras as lora, j (j)}
+                          {@const weight = formatLoraWeight(lora)}
+                          <li class="flex items-center justify-end gap-1.5">
+                            <span class="min-w-0 truncate text-neutral-200" title={lora.name}>{loraDisplayName(lora.name)}</span>
+                            {#if weight}
+                              <span class="shrink-0 rounded px-1.5 py-px font-mono text-[10px] tabular-nums {lora.model !== null && lora.model < 0 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}">{weight}</span>
+                            {/if}
+                          </li>
+                        {/each}
+                      </ul>
                     </div>
-                  {/each}
-                </div>
-              {/if}
+                  {:else}
+                    <div class="flex justify-between gap-2">
+                      <span class="text-neutral-500 shrink-0">{metadataLabel(key)}</span>
+                      <span class="text-neutral-200 text-right break-all">{value}</span>
+                    </div>
+                  {/if}
+                {/each}
+              </div>
             {:else if !loadingLightboxMetadata}
               <span class="text-neutral-500">{locale.t("gallery.no_metadata")}</span>
             {/if}
