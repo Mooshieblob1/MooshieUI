@@ -4,7 +4,8 @@
  * (and, on NovelAI, as the Precise Reference that Use attaches).
  *
  * The prompt is built here and shown in the portrait dialog, where it can be
- * edited. Chunks, Artist Styles and artist tags the user picks go on top. The
+ * edited. Chunks, Artist Styles and artist tags the user picks go on top,
+ * and the UC those chunks and styles carry goes on the negative prompt. The
  * generation goes through the normal queue with the user's model, sampler and
  * LoRAs, but nothing from the prompt area: no prompt boxes, character boxes,
  * active chunks or styles, references, regions or ControlNet.
@@ -22,7 +23,7 @@ import {
   savedCharacters,
   type SavedCharacter,
 } from "../stores/savedCharacters.svelte.js";
-import { fragmentForStyles, styles } from "../stores/styles.svelte.js";
+import { fragmentForStyles, negativeForStyles, styles } from "../stores/styles.svelte.js";
 import type { OutputImage } from "../types/index.js";
 import { userScopedKey } from "./ipc.js";
 import { currentImageToCharacterThumbnail } from "./characterThumbnail.js";
@@ -188,19 +189,24 @@ export async function generateCharacterPortrait(
   if (!generation.checkpoint) throw new Error(locale.t("generation.error_no_checkpoint"));
 
   const style = portraitStyle(character);
-  const chunkTexts = extras.chunkIds
+  const chunks = extras.chunkIds
     .map((id) => promptPresets.getById(id))
-    .filter((p): p is NonNullable<typeof p> => p !== null)
-    .map((p) => portraitChunkText(p.content, style));
+    .filter((p): p is NonNullable<typeof p> => p !== null);
+  const chunkTexts = chunks.map((p) => portraitChunkText(p.content, style));
   const positive = joinParts([prompts.positive, ...portraitArtistTags(extras.artists), ...chunkTexts]);
   if (!positive) throw new Error(locale.t("characters.portrait.empty_prompt"));
   const chosenStyles = styles.styles.filter((s) => extras.styleIds.includes(s.id));
   const styleFragment = fragmentForStyles(chosenStyles, generation.isNovelAi);
+  const uc = joinParts([
+    negativeForStyles(chosenStyles),
+    promptPresets.negativeFor(chunks.map((p) => p.id)),
+  ]);
 
   const params = generation.toParams({
     prompts: { positive, negative: prompts.negative.trim() },
     skipActiveStyles: true,
     extraPositive: styleFragment || undefined,
+    extraNegative: uc || undefined,
     includeConditioningRegions: false,
     outsidePausedRun: true,
     // A fresh face each time, so Generate again gives another take.

@@ -144,13 +144,21 @@
                 >
                   <span class="flex items-center gap-1.5">
                     <span class="truncate text-[11px] {active ? 'text-indigo-200' : 'text-neutral-200'}">{preset.name}</span>
+                    {#if preset.negative.trim()}
+                      <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: preset.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+                    {/if}
                     {#if active && mode}
                       <span class="shrink-0 font-mono text-[9px] text-indigo-300/80">{modeIcon(mode)}</span>
                     {/if}
                   </span>
-                  <span class="block truncate font-mono text-[10px] text-neutral-500">
-                    {preset.content || locale.t("common.empty")}
-                  </span>
+                  {#if preset.content || !preset.negative.trim()}
+                    <span class="block truncate font-mono text-[10px] text-neutral-500">
+                      {preset.content || locale.t("common.empty")}
+                    </span>
+                  {/if}
+                  {#if preset.negative.trim()}
+                    <span class="block truncate font-mono text-[10px] text-red-300/70">{preset.negative.trim()}</span>
+                  {/if}
                 </button>
                 {#if active && mode}
                   <button

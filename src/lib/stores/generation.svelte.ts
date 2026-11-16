@@ -279,7 +279,13 @@ export interface GenerationToParamsOptions {
    * Creator passes a fragment for an unsaved artist combination here.
    */
   extraPositive?: string;
-  /** Skip the active Artist Styles fragment (the Style Creator supplies its own). */
+  /**
+   * Extra negative tags merged after the UC of active styles and chunks: the
+   * UC of a style or chunk a caller applies itself (a style's thumbnail, a
+   * portrait's picked styles and chunks).
+   */
+  extraNegative?: string;
+  /** Skip the active Artist Styles fragment and its UC (the Style Creator supplies its own). */
   skipActiveStyles?: boolean;
   /**
    * Prompts for a picture of its own (a saved character's portrait), used
@@ -3702,14 +3708,19 @@ class GenerationStore {
   } {
     const inlineIds = new Set<string>();
     const characters = (this.novelaiSettings.characters ?? []).map((character) => {
-      for (const id of promptPresets.inlinePresetIds(character.prompt)) inlineIds.add(id);
+      const promptIds = promptPresets.inlinePresetIds(character.prompt);
+      for (const id of promptIds) inlineIds.add(id);
       for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
         inlineIds.add(id);
       }
+      // A chunk used in this character's prompt brings its UC to this
+      // character's UC, not the image's.
+      const negative = promptPresets.resolveInline(character.negative_prompt, { fixedChoices });
+      const uc = promptPresets.negativeFor(promptIds);
       return {
         ...character,
         prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
-        negative_prompt: promptPresets.resolveInline(character.negative_prompt, { fixedChoices }),
+        negative_prompt: uc ? this.mergeIntoPrompt(negative, uc, "after") : negative,
       };
     });
     return { characters, inlineIds };
@@ -4046,6 +4057,23 @@ class GenerationStore {
     }
     if (preset.append) {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
+    }
+
+    // UC carried by styles and chunks goes to the negative prompt: active
+    // styles, the chunks the pass above applied, and chunks used inline in
+    // the positive prompt. A chunk used only in the negative box is already
+    // negative text there, so its UC is not added again.
+    const chunkUcIds = [
+      ...(ownPrompts ? [] : promptPresets.activeIdsFor(inlinePresetIds)),
+      ...inlinePositiveIds,
+    ];
+    const ucParts = [
+      options.skipActiveStyles ? "" : styles.buildNegativeFragment(),
+      promptPresets.negativeFor(chunkUcIds),
+      options.extraNegative?.trim() ?? "",
+    ].filter(Boolean);
+    if (ucParts.length > 0) {
+      negativePrompt = this.mergeIntoPrompt(negativePrompt, ucParts.join(", "), "after");
     }
 
     // The Multiple-Angles LoRA wants its shot phrase first. Prepended as-is

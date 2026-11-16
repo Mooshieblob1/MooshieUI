@@ -10,7 +10,9 @@
  * Import/export: plain `.txt` files — filename (minus extension) becomes
  * the style name. Each non-blank, non-comment line is one artist in
  * `tag[:weight]` form (weight defaults to 1.0). `# ...` lines and blank
- * lines are ignored. An optional `overall:NNN` line sets the overall weight.
+ * lines are ignored. An optional `overall:NNN` line sets the overall weight,
+ * and `uc:` lines hold the style's UC (undesired content), which an active
+ * style adds to the negative prompt.
  */
 
 const STORAGE_KEY = "mooshieui.styles.v1";
@@ -40,6 +42,8 @@ export interface ArtistStyle {
   artists: StyleArtist[];
   /** Multiplier applied on top of each artist's individual weight. */
   overallWeight: number;
+  /** UC (undesired content): added to the negative prompt while the style is in use. Empty for none. */
+  negative: string;
   /** Base64 data URL. Omitted when the style has no thumbnail. */
   thumbnail: string | null;
   /**
@@ -91,6 +95,7 @@ function sanitizeStyle(raw: any): ArtistStyle | null {
     name: raw.name.trim() || locale.t("styles.untitled"),
     artists,
     overallWeight: clampWeight(raw.overallWeight, 1.0),
+    negative: typeof raw.negative === "string" ? raw.negative : "",
     thumbnail: typeof raw.thumbnail === "string" && raw.thumbnail.startsWith("data:") ? raw.thumbnail : null,
     thumbnailImage: typeof raw.thumbnailImage === "string" && raw.thumbnailImage ? raw.thumbnailImage : null,
     createdAt: typeof raw.createdAt === "number" && raw.createdAt > 0 ? raw.createdAt : now,
@@ -150,6 +155,26 @@ export function fragmentForStyles(
       // survives because the Rust translator strips it again on the way out.
       parts.push(w === 1 ? safeTag : `(${safeTag}:${w})`);
     }
+  }
+  return parts.join(", ");
+}
+
+/**
+ * The UC a list of styles adds to the negative prompt: each style's UC with
+ * its lines turned into commas, in order, the same text once.
+ */
+export function negativeForStyles(stylesList: Array<{ negative?: string }>): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  for (const style of stylesList) {
+    const uc = (style.negative ?? "")
+      .split(/\r?\n/)
+      .map((s) => s.trim().replace(/^,+|,+$/g, "").trim())
+      .filter(Boolean)
+      .join(", ");
+    if (!uc || seen.has(uc.toLowerCase())) continue;
+    seen.add(uc.toLowerCase());
+    parts.push(uc);
   }
   return parts.join(", ");
 }
@@ -278,6 +303,11 @@ class StylesStore {
     return fragmentForStyles(this.activeStyles, stripSigil);
   }
 
+  /** The UC every active style adds to the negative prompt, or "" for none. */
+  buildNegativeFragment(): string {
+    return negativeForStyles(this.activeStyles);
+  }
+
   // ---------------------------------------------------------------------------
   // Activation
   // ---------------------------------------------------------------------------
@@ -314,13 +344,14 @@ class StylesStore {
   // Mutations
   // ---------------------------------------------------------------------------
 
-  create(name: string, artists: StyleArtist[] = [], overallWeight = 1.0): ArtistStyle {
+  create(name: string, artists: StyleArtist[] = [], overallWeight = 1.0, negative = ""): ArtistStyle {
     const now = Date.now();
     const style: ArtistStyle = {
       id: genId(),
       name: name.trim() || locale.t("styles.untitled"),
       artists: artists.map((a) => ({ ...a, weight: clampWeight(a.weight, 1.0) })),
       overallWeight: clampWeight(overallWeight, 1.0),
+      negative,
       thumbnail: null,
       thumbnailImage: null,
       createdAt: now,
@@ -348,6 +379,7 @@ class StylesStore {
           typeof patch.overallWeight === "number"
             ? clampWeight(patch.overallWeight, s.overallWeight)
             : s.overallWeight,
+        negative: typeof patch.negative === "string" ? patch.negative : s.negative,
         thumbnail:
           patch.thumbnail === null
             ? null
@@ -457,6 +489,7 @@ class StylesStore {
    *
    *   # name (comment)
    *   overall:1.20
+   *   uc:lowres, blurry
    *   dairi:1.2
    *   greg rutkowski
    *   @illu_no16:0.8
@@ -468,6 +501,9 @@ class StylesStore {
     lines.push(`# ${style.name}`);
     if (style.overallWeight !== 1.0) {
       lines.push(`overall:${style.overallWeight.toFixed(2)}`);
+    }
+    for (const line of style.negative.split(/\r?\n/)) {
+      if (line.trim()) lines.push(`uc:${line.trim()}`);
     }
     for (const a of style.artists) {
       if (a.weight === 1.0) lines.push(a.tag);
@@ -485,6 +521,7 @@ class StylesStore {
    *
    *   - blank or `# …` — ignored (comment)
    *   - `overall:N`    — sets the overall weight
+   *   - `uc:text`      — a line of the style's UC (several lines add up)
    *   - `tag`          — artist with default weight 1.0
    *   - `tag:weight`   — artist with explicit weight (e.g. `dairi:1.2`)
    *
@@ -498,9 +535,15 @@ class StylesStore {
     const { name, renamed } = this.uniqueName(baseName);
     let overallWeight = 1.0;
     const artists: StyleArtist[] = [];
+    const ucLines: string[] = [];
     for (const rawLine of content.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) continue;
+      const ucMatch = line.match(/^uc\s*:\s*(.*)$/i);
+      if (ucMatch) {
+        if (ucMatch[1].trim()) ucLines.push(ucMatch[1].trim());
+        continue;
+      }
       const overallMatch = line.match(/^overall\s*[:=]\s*([0-9]*\.?[0-9]+)\s*$/i);
       if (overallMatch) {
         overallWeight = clampWeight(overallMatch[1]);
@@ -522,7 +565,7 @@ class StylesStore {
       if (!tag) continue;
       artists.push({ tag, weight });
     }
-    const style = this.create(name, artists, overallWeight);
+    const style = this.create(name, artists, overallWeight, ucLines.join("\n"));
     return { style, renamed };
   }
 
