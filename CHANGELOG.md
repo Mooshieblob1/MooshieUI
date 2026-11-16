@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v2.3.48
+
+### Prompt chunks and styles
+- **UC part for chunks and styles**: prompt chunks and artist styles can now carry UC tags that go to the negative prompt whenever they are used. This covers active chunks and styles, chunks used inline in a positive prompt (or in a NovelAI character's prompt, which sends them to that character's UC), style thumbnails, and the character Portrait maker, which shows picked UC as red pills under its negative box.
+- **UC in export and import**: UC round-trips through .txt export and import, and saving a negative prompt block as a chunk now stores it as the UC.
+
+---
+
 ## What's New in v2.3.47
 
 ### Setup
