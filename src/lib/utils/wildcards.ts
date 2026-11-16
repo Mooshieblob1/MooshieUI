@@ -79,6 +79,37 @@ function toTree(value: unknown): Tree | null {
   return null;
 }
 
+function parseFileTree(file: WildcardSource): Tree | null {
+  if (/\.txt$/i.test(file.path)) return parseTextLines(file.content);
+  if (/\.json$/i.test(file.path)) {
+    try {
+      return toTree(JSON.parse(file.content));
+    } catch {
+      return null;
+    }
+  }
+  if (/\.ya?ml$/i.test(file.path)) return toTree(parseSimpleYaml(file.content));
+  return null;
+}
+
+/**
+ * The names a file is best addressed by, with their option counts: its path
+ * for a list, or its key paths for a YAML/JSON map (the Dynamic Prompts way).
+ */
+export function wildcardNamesForFile(file: WildcardSource): Array<{ name: string; count: number }> {
+  const tree = parseFileTree(file);
+  if (tree === null) return [];
+  const table: WildcardTable = new Map();
+  if (tree && typeof tree === "object" && !Array.isArray(tree)) {
+    for (const [key, child] of Object.entries(tree)) addTree(table, key, child, true);
+  } else {
+    addTree(table, stripExtension(file.path), tree, true);
+  }
+  return [...table.entries()]
+    .map(([name, options]) => ({ name, count: options.length }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Build the lookup table from the files in the wildcards folder. */
 export function parseWildcardFiles(files: readonly WildcardSource[]): WildcardTable {
   const table: WildcardTable = new Map();
@@ -87,18 +118,7 @@ export function parseWildcardFiles(files: readonly WildcardSource[]): WildcardTa
   const bareKeys: Array<{ key: string; tree: Tree }> = [];
   for (const file of files) {
     const base = stripExtension(file.path);
-    let tree: Tree | null = null;
-    if (/\.txt$/i.test(file.path)) {
-      tree = parseTextLines(file.content);
-    } else if (/\.json$/i.test(file.path)) {
-      try {
-        tree = toTree(JSON.parse(file.content));
-      } catch {
-        tree = null;
-      }
-    } else if (/\.ya?ml$/i.test(file.path)) {
-      tree = toTree(parseSimpleYaml(file.content));
-    }
+    const tree = parseFileTree(file);
     if (tree === null) continue;
     addTree(table, base, tree, true);
     if (tree && typeof tree === "object" && !Array.isArray(tree)) {

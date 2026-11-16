@@ -59,9 +59,9 @@ fn resolve_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
             Component::Normal(part) => {
                 let part = part.to_string_lossy();
                 if part.starts_with('.')
-                    || part
-                        .chars()
-                        .any(|c| c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+                    || part.chars().any(|c| {
+                        c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                    })
                 {
                     return Err(AppError::Other("Invalid wildcard file name".into()));
                 }
@@ -206,10 +206,8 @@ mod tests {
     use super::*;
 
     fn temp_root(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "mooshie-wildcards-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mooshie-wildcards-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

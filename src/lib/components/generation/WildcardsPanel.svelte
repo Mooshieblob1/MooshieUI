@@ -5,7 +5,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { openDirectory } from "../../utils/api.js";
   import { isBrowserMode } from "../../utils/ipc.js";
-  import { parseWildcardFiles } from "../../utils/wildcards.js";
+  import { wildcardNamesForFile } from "../../utils/wildcards.js";
 
   let search = $state("");
   let selectedPath = $state<string | null>(null);
@@ -26,16 +26,7 @@
   const dirty = $derived(selected !== null && draft !== selected.content);
 
   /** The names this file provides, as the user would type them. */
-  const fileNames = $derived.by(() => {
-    if (!selected) return [] as Array<{ name: string; count: number }>;
-    const table = parseWildcardFiles([selected]);
-    const base = selected.path.replace(/\.(txt|ya?ml|json)$/i, "").toLowerCase();
-    let names = [...table.keys()];
-    // A YAML or JSON map is addressed by its keys alone; drop the file-path copies.
-    const bare = names.filter((n) => n !== base && !n.startsWith(`${base}/`));
-    if (bare.length > 0) names = bare;
-    return names.sort().map((name) => ({ name, count: table.get(name)?.length ?? 0 }));
-  });
+  const fileNames = $derived(selected ? wildcardNamesForFile(selected) : []);
 
   function select(path: string) {
     if (dirty && path !== selectedPath) {

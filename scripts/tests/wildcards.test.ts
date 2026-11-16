@@ -7,6 +7,7 @@ import {
   parseSimpleYaml,
   parseWildcardFiles,
   seededRandom,
+  wildcardNamesForFile,
 } from "../../src/lib/utils/wildcards.ts";
 
 const files = [
@@ -95,4 +96,12 @@ test("nested wildcards expand, and a self-reference stops at the depth limit", (
 
 test("NovelAI weight syntax and plain underscores are not tokens", () => {
   assert.deepEqual(findWildcardTokens("1.2::rain::, o_o, ^_^, snake_case_tag"), []);
+});
+
+test("a file lists the names it is typed as: path for lists, keys for maps", () => {
+  assert.deepEqual(wildcardNamesForFile(files[0]), [{ name: "colors", count: 3 }]);
+  assert.deepEqual(
+    wildcardNamesForFile({ path: "outfits.yaml", content: "outfits:\n  casual: [a, b]\n  formal: [c]\n" }).map((n) => n.name),
+    ["outfits", "outfits/casual", "outfits/formal"],
+  );
 });

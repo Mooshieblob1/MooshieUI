@@ -6690,13 +6690,22 @@ async fn dispatch_command(
             serde_json::to_value(listing).map_err(|e| e.to_string())
         }
         "save_wildcard" => {
-            let path = args.get("path").and_then(|v| v.as_str()).ok_or("Missing path")?;
-            let content = args.get("content").and_then(|v| v.as_str()).ok_or("Missing content")?;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing path")?;
+            let content = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing content")?;
             commands::wildcards::save(path, content).map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
         "delete_wildcard" => {
-            let path = args.get("path").and_then(|v| v.as_str()).ok_or("Missing path")?;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing path")?;
             commands::wildcards::delete(path).map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }

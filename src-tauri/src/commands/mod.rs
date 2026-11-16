@@ -24,10 +24,10 @@ pub mod splat;
 pub mod video_drafts;
 pub mod video_export;
 pub mod video_interpolate;
-pub mod wildcards;
 #[cfg(feature = "desktop")]
 pub mod watermark;
 #[cfg(feature = "desktop")]
 pub mod websocket;
+pub mod wildcards;
 #[cfg(feature = "desktop")]
 pub mod workflow;
