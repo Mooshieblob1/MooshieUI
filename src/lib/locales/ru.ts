@@ -1826,6 +1826,8 @@ const ru: Record<string, string> = {
   "lora.on": "Вкл",
   "lora.view_civitai": "Открыть на CivitAI",
   "lora.add_to_prompt": "Добавить в промпт: {word}",
+  "lora.custom_trigger_placeholder": "Триггер-слова",
+  "lora.custom_trigger_tip": "Ваш собственный триггер для этого LoRA. Добавляется в промпт, когда LoRA включён, и убирается, когда выключен. Работает офлайн.",
   "lora.likes": "Нравится",
 
   // ── Нижняя панель ───────────────────────────────────────

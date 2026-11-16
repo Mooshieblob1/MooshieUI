@@ -391,7 +391,7 @@ const LORA_WORD_COLOR = {
 /**
  * Highlight comma-delimited segments of `text` that exactly match a known
  * LoRA-inserted trigger word (case-insensitive). Only whole segments match —
- * the same "own comma segment" rule `removeInsertedWordsFromPrompt` uses —
+ * the same "own comma segment" rule `utils/loraTriggerText.ts` uses —
  * so a word that merely appears inside a longer hand-written phrase is left
  * alone. Escapes and emits the plain (non-matching) HTML itself, so callers
  * can use this in place of a bare `escapeHtml()` on leaf text runs.

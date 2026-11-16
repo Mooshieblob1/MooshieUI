@@ -1,5 +1,6 @@
 <script lang="ts">
   import { loraKeywords } from "../../stores/loraKeywords.svelte.js";
+  import LoraTriggerInput from "./LoraTriggerInput.svelte";
   import { civitaiModelPageUrl } from "../../utils/civitaiUrl.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
@@ -173,15 +174,8 @@
 
   function toggleLoraByName(filename: string) {
     const idx = generation.loras.findIndex((l) => l.name === filename);
-    if (idx >= 0) {
-      generation.toggleLora(idx);
-    } else {
-      // Add as new enabled LoRA
-      generation.loras = [
-        ...generation.loras,
-        { name: filename, strength_model: 1.0, strength_clip: 1.0, enabled: true },
-      ];
-    }
+    if (idx >= 0) generation.toggleLora(idx);
+    else generation.enableLoraByName(filename);
     generation.saveSettings();
   }
 
@@ -240,7 +234,7 @@
       presetError = locale.t("lora_presets.error.not_found");
       return;
     }
-    generation.loras = result.loras;
+    generation.setLoras(result.loras);
     generation.saveSettings();
     if (result.missingNames.length > 0) {
       presetError = locale.t("lora_presets.applied_missing", { names: result.missingNames.join(", ") });
@@ -485,10 +479,7 @@
   }
 
   function addTriggerWord(loraName: string, word: string) {
-    const current = generation.positivePrompt.trim();
-    if (current.includes(word)) return;
-    generation.positivePrompt = current ? `${current}, ${word}` : word;
-    generation.recordInsertedLoraWord(loraName, word);
+    generation.insertLoraWord(loraName, word);
     generation.saveSettings();
   }
 
@@ -957,6 +948,7 @@
                 {/if}
               </div>
             {/if}
+            <LoraTriggerInput name={loraName} />
           </div>
         </div>
     {/snippet}
