@@ -1414,6 +1414,19 @@ pub async fn embed_image_metadata_bytes(
     crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
 }
 
+/// Tags related to one prompt tag, from Danbooru and from the gallery.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn related_tags(
+    state: State<'_, Arc<AppState>>,
+    tag: String,
+) -> Result<crate::related_tags::RelatedTags, AppError> {
+    let dir = crate::config::gallery_dir();
+    crate::related_tags::lookup(&state.http_client, &tag, dir.as_deref())
+        .await
+        .map_err(AppError::Other)
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_to_gallery(

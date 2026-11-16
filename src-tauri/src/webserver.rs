@@ -4195,6 +4195,13 @@ async fn dispatch_command(
         }
 
         // --- Gallery write operations (per-user isolated in LAN mode) ---
+        "related_tags" => {
+            let tag = args["tag"].as_str().unwrap_or("");
+            let dir = user_gallery_dir(username);
+            let related =
+                crate::related_tags::lookup(&state.http_client, tag, dir.as_deref()).await?;
+            serde_json::to_value(related).map_err(|e| e.to_string())
+        }
         "save_to_gallery" => {
             let filename = args["filename"]
                 .as_str()
