@@ -889,7 +889,13 @@ class GenerationStore {
   styleRefClipVision = $state<string | null>(null);
   /** Anima character reference: optional second character (right side). */
   styleRefImage2 = $state<string | null>(null);
-  animaRefMethod = $state<"anima_ref_adapter" | "snapref">("anima_ref_adapter");
+  animaRefMethod = $state<"anima_ref_adapter" | "snapref" | "art_style">("anima_ref_adapter");
+  /** Anima art style: how far each block's channel statistics move towards the picture's (0 to 1). */
+  animaArtStyleMatch = $state(0.6);
+  /** Anima art style: leave the first quarter of the steps alone to keep the prompt's composition. */
+  animaArtStyleRestyle = $state(true);
+  /** Anima art style: area the picture is shrunk to first, in megapixels (0.5 to 4). */
+  animaArtStyleMegapixels = $state(1);
   snaprefAdapter = $state<string | null>(null);
   snaprefMode = $state<"Character & Style" | "Character">("Character & Style");
   snaprefFidelity = $state(1);
@@ -3261,7 +3267,13 @@ class GenerationStore {
     if (saved.styleRefReduxModel !== undefined) this.styleRefReduxModel = saved.styleRefReduxModel;
     if (saved.styleRefClipVision !== undefined) this.styleRefClipVision = saved.styleRefClipVision;
     if (saved.styleRefImage2 !== undefined) this.styleRefImage2 = saved.styleRefImage2;
-    this.animaRefMethod = saved.animaRefMethod === "snapref" ? "snapref" : "anima_ref_adapter";
+    this.animaRefMethod =
+      saved.animaRefMethod === "snapref" || saved.animaRefMethod === "art_style"
+        ? saved.animaRefMethod
+        : "anima_ref_adapter";
+    if (typeof saved.animaArtStyleMatch === "number") this.animaArtStyleMatch = Math.max(0, Math.min(1, saved.animaArtStyleMatch));
+    if (typeof saved.animaArtStyleRestyle === "boolean") this.animaArtStyleRestyle = saved.animaArtStyleRestyle;
+    if (typeof saved.animaArtStyleMegapixels === "number") this.animaArtStyleMegapixels = Math.max(0.5, Math.min(4, saved.animaArtStyleMegapixels));
     if (saved.snaprefAdapter !== undefined) this.snaprefAdapter = saved.snaprefAdapter;
     if (saved.snaprefMode === "Character" || saved.snaprefMode === "Character & Style") this.snaprefMode = saved.snaprefMode;
     if (typeof saved.snaprefFidelity === "number") this.snaprefFidelity = Math.max(0, Math.min(1, saved.snaprefFidelity));
@@ -3459,6 +3471,9 @@ class GenerationStore {
         styleRefClipVision: this.styleRefClipVision,
         styleRefImage2: this.styleRefImage2,
         animaRefMethod: this.animaRefMethod,
+        animaArtStyleMatch: this.animaArtStyleMatch,
+        animaArtStyleRestyle: this.animaArtStyleRestyle,
+        animaArtStyleMegapixels: this.animaArtStyleMegapixels,
         snaprefAdapter: this.snaprefAdapter,
         snaprefMode: this.snaprefMode,
         snaprefFidelity: this.snaprefFidelity,
@@ -3647,6 +3662,9 @@ class GenerationStore {
       styleRefClipVision: this.styleRefClipVision,
       styleRefImage2: this.styleRefImage2,
       animaRefMethod: this.animaRefMethod,
+      animaArtStyleMatch: this.animaArtStyleMatch,
+      animaArtStyleRestyle: this.animaArtStyleRestyle,
+      animaArtStyleMegapixels: this.animaArtStyleMegapixels,
       snaprefAdapter: this.snaprefAdapter,
       snaprefMode: this.snaprefMode,
       snaprefFidelity: this.snaprefFidelity,
@@ -4498,6 +4516,9 @@ class GenerationStore {
       style_ref_clip_vision: this.styleRefClipVision,
       style_ref_image_2: this.styleRefImage2,
       anima_ref_method: this.animaRefMethod,
+      anima_art_style_match: this.animaArtStyleMatch,
+      anima_art_style_restyle: this.animaArtStyleRestyle,
+      anima_art_style_megapixels: this.animaArtStyleMegapixels,
       snapref_adapter: this.snaprefAdapter,
       snapref_mode: this.snaprefMode,
       snapref_fidelity: this.snaprefFidelity,

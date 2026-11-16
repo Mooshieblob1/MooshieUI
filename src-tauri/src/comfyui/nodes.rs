@@ -314,6 +314,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieAnimaTeaCache",
     "MooshieSigmaTail",
     "MooshieResumeEdit",
+    "MooshieAnimaArtStyle",
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
@@ -406,6 +407,14 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         (
             "h3_upscaler.LICENSE",
             include_str!("../../../comfyui-nodes/h3_upscaler.LICENSE"),
+        ),
+        (
+            "anima_art_style.py",
+            include_str!("../../../comfyui-nodes/anima_art_style.py"),
+        ),
+        (
+            "anima_art_style.LICENSE",
+            include_str!("../../../comfyui-nodes/anima_art_style.LICENSE"),
         ),
         (
             "gguf_compat.py",

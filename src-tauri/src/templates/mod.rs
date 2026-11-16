@@ -303,6 +303,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             ));
         }
         style_ref::validate_snapref(params)?;
+        style_ref::validate_anima_art_style(params)?;
         if !style_ref::snapref_active(params)
             && params
                 .style_ref_image
@@ -323,7 +324,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // Anima character reference would be dropped without a word.
     if style_ref::anima_ref_active(params) && params.style_transfer_enabled {
         return Err(
-            "Style transfer and the Anima character reference cannot be used together. Disable one of them."
+            "Style transfer and the Anima Style Reference cannot be used together. Disable one of them."
                 .into(),
         );
     }
@@ -3080,12 +3081,58 @@ mod tests {
     }
 
     #[test]
+    fn anima_art_style_flows_through_the_image_pipeline_and_skips_teacache() {
+        for mode in ["txt2img", "img2img", "inpainting"] {
+            let mut params = anima_character_ref_params();
+            params.mode = mode.into();
+            params.input_image = Some("input.png".into());
+            params.mask_image = Some("mask.png".into());
+            params.style_ref_image = Some("style.png".into());
+            params.anima_ref_method = "art_style".into();
+            params.anima_art_style_match = 0.6;
+            params.anima_art_style_megapixels = 1.0;
+            params.anima_teacache_enabled = true;
+            assert!(validate_generation_params(&params).is_ok(), "{mode}");
+            let workflow = build_workflow(&params, 42, false);
+            let workflow = workflow.as_object().unwrap();
+            let styles = nodes_of_class(workflow, "MooshieAnimaArtStyle");
+            assert_eq!(styles.len(), 1, "{mode}");
+            assert!(nodes_of_class(workflow, "AnimaRefAdapter").is_empty());
+            assert!(nodes_of_class(workflow, "MooshieAnimaTeaCache").is_empty());
+            let picture = styles[0].1["inputs"]["image"][0].as_str().unwrap();
+            assert_eq!(workflow[picture]["inputs"]["image"], "style.png");
+            params.mode = "txt2img".into();
+            params.style_transfer_enabled = true;
+            params.style_reference_image = Some("style.png".into());
+            assert!(validate_generation_params(&params).is_err());
+        }
+    }
+
+    #[test]
+    fn anima_art_style_needs_a_picture_and_sane_settings() {
+        let mut params = anima_character_ref_params();
+        params.anima_ref_method = "art_style".into();
+        params.anima_art_style_match = 0.6;
+        params.anima_art_style_megapixels = 1.0;
+        params.style_ref_image = None;
+        assert!(validate_generation_params(&params).is_err());
+        params.style_ref_image = Some("style.png".into());
+        params.anima_art_style_megapixels = 8.0;
+        assert!(validate_generation_params(&params).is_err());
+        params.anima_art_style_megapixels = 1.0;
+        params.anima_art_style_match = f32::NAN;
+        assert!(validate_generation_params(&params).is_err());
+        params.anima_art_style_match = 0.0;
+        assert!(validate_generation_params(&params).is_ok());
+    }
+
+    #[test]
     fn anima_character_ref_rejects_style_transfer() {
         let mut params = anima_character_ref_params();
         params.style_transfer_enabled = true;
         params.style_reference_image = Some("style.png".to_string());
         let err = validate_generation_params(&params).unwrap_err();
-        assert!(err.contains("character reference"), "{err}");
+        assert!(err.contains("Anima Style Reference"), "{err}");
     }
 
     #[test]

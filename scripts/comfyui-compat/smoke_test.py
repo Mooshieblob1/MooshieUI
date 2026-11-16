@@ -60,6 +60,8 @@ NODE_FILE_MAP = [
     ("comfyui-nodes/h3_upscaler.py", "mooshie-nodes/h3_upscaler.py"),
     ("comfyui-nodes/h3_preview.py", "mooshie-nodes/h3_preview.py"),
     ("comfyui-nodes/h3_upscaler.LICENSE", "mooshie-nodes/h3_upscaler.LICENSE"),
+    ("comfyui-nodes/anima_art_style.py", "mooshie-nodes/anima_art_style.py"),
+    ("comfyui-nodes/anima_art_style.LICENSE", "mooshie-nodes/anima_art_style.LICENSE"),
     ("comfyui-nodes/gguf_compat.py", "mooshie-nodes/gguf_compat.py"),
     ("comfyui-nodes/skin_contrast_1x.safetensors", "mooshie-nodes/skin_contrast_1x.safetensors"),
     ("comfyui-nodes/skin_contrast_1x.LICENSE", "mooshie-nodes/skin_contrast_1x.LICENSE"),
