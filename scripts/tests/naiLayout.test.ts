@@ -148,3 +148,57 @@ test("serialising needs a base and tolerates an empty UC", () => {
   assert.equal(back.base, "1girl, beach");
   assert.equal(back.uc, "");
 });
+
+const SCRIPT_BASE = `2girls, high complexity, comic, border, multiple panels, hallway, english text, speech bubble
+
+A five panel comic page. In the first panel Draconia walks alone, saying "Hmph." In the second panel Ronnie shouts "Wait up!!" from the doorway.`;
+
+const scriptProblems = (text: string, base = SCRIPT_BASE) =>
+  validateNaiResponse(parse(`BASE:\n${base}\n\nText:\n${text}\n\nUC:\n`)).filter((p) =>
+    p.includes("comic script"),
+  );
+
+test("a Text: block written as a script, with speaker labels and page headings, is flagged", () => {
+  const problems = scriptProblems("Page 1\nDraconia: Hmph.\n\nPage 2\nRonnie: Wait up!!");
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /Draconia:, Ronnie:, Page 1/);
+});
+
+test("speaker labels alone are flagged", () => {
+  assert.equal(scriptProblems("Draconia: Hmph.\n\nRonnie: Wait up!!").length, 1);
+});
+
+test("a page or panel heading alone is flagged", () => {
+  assert.equal(scriptProblems("Panel 1\nHmph.\n\nWait up!!").length, 1);
+});
+
+test("one label naming a speaker from the prose is flagged in a speech bubble image", () => {
+  assert.equal(scriptProblems("Ronnie: Wait up!!").length, 1);
+});
+
+test("clean dialogue lettering passes", () => {
+  assert.deepEqual(scriptProblems("Hmph.\n\nWait up!!\n\nGotcha!!"), []);
+});
+
+test("a lone sign with a colon is not mistaken for a speaker label", () => {
+  const base = "1girl, high complexity, hallway, english text, sign\n\nA girl walks past a sign on the wall.";
+  assert.deepEqual(scriptProblems("Warning: wet floor", base), []);
+});
+
+test("Japanese speaker labels with a full-width colon are flagged", () => {
+  assert.equal(scriptProblems("ロニー：待って！\n\nドラコニア：ふん。").length, 1);
+});
+
+test("the rewrite prompt keeps dialogue attribution in prose and out of the Text: block", () => {
+  const system = naiRewriteSystemPrompt({
+    variant: "full",
+    ucPreset: 0,
+    characterCount: 0,
+    existing: null,
+    language: "en",
+    references: [],
+  });
+  assert.match(system, /The Text: block is not a script/);
+  assert.match(system, /One image is one comic page/);
+  assert.doesNotMatch(system, /write full pages: name the speaker in each panel/);
+});
