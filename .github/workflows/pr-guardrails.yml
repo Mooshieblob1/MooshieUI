@@ -61,6 +61,11 @@ jobs:
           npx esbuild scripts/tests/promptComments.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptComments.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptComments.test.mjs"
 
+      - name: Comic layout tests
+        run: |
+          npx esbuild scripts/tests/comicLayout.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/comicLayout.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/comicLayout.test.mjs"
+
       - name: NovelAI layout cleanup tests
         run: |
           npx esbuild scripts/tests/naiLayout.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiLayout.test.mjs" --log-level=warning

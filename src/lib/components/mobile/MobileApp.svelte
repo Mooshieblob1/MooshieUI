@@ -18,6 +18,7 @@
   import MusicBottomPlayer from "../music/MusicBottomPlayer.svelte";
   import Model3DPage from "../model3d/Model3DPage.svelte";
   import ScenePage from "../scene/ScenePage.svelte";
+  import ComicPage from "../comic/ComicPage.svelte";
   import GalleryPage from "../gallery/GalleryPage.svelte";
   import { ArtistGalleryPage } from "../../artist-gallery/index.js";
   import ModelHubPage from "../modelhub/ModelHubPage.svelte";
@@ -118,6 +119,8 @@
       <Model3DPage {userRole} />
     {:else if page === "scene"}
       <ScenePage onOpenSettings={() => go("settings")} />
+    {:else if page === "comic"}
+      <ComicPage onOpenGenerate={() => go("generate")} />
     {:else if page === "gallery"}
       <GalleryPage onSwitchToGenerate={() => (page = "generate")} {onMake3D} />
     {:else if page === "modelhub" && canUseModelhub}
