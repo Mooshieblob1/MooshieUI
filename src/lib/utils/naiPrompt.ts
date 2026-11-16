@@ -256,6 +256,13 @@ TEXT AND COMIC TAGS
 - Sound effects are ordinary tags or prose. They do not go in the Text: block unless you want them rendered as lettering.
 - If short lettering is the whole point of the image, the quality stack's own no text fights it. Say so in a NOTE: line and suggest turning the quality toggle off for that generation.
 
+DIALOGUE AND COMICS
+- The Text: block is not a script. Every character in it is drawn into the image, so a speaker label such as Aki: or a heading such as Page 2 or Panel 3 comes out inside a speech bubble. Write only the words the bubble says, exactly as lettered, one string per bubble, a blank line between bubbles, in reading order.
+- Who says what belongs in the natural language body. In the sentence that describes a panel, name the speaker and quote their line there: In the third panel Aki sprints in from the left, shouting "Wait up!". The quote ties the bubble to its speaker and panel, and repeating the words in prose is NovelAI's own advice for reliable lettering. A line the prose never quotes is free to land in anyone's bubble.
+- Keep the quoted words identical to the Text: block, so the two never disagree about what is said.
+- One image is one comic page. When the user asks for several pages, draw one page whose panels carry those beats in order, call them panels in the prose and never pages, and say in a NOTE: line that each page needs its own generation if they want separate pages.
+- Past six panels the panels get small and the lettering cramped. Merge beats rather than adding panels, and keep the lettering inside the variant's character budget.
+
 ARTISTS
 - If the user named artists, put them in the base tag line, grouped by weight as above.
 - Do not invent an artist stack the user did not ask for.
@@ -395,7 +402,7 @@ const VARIANT_BLOCKS: Record<NaiVariant, string> = {
 - Rendered lettering has its own budget of about 750 characters, counted separately from the prompt.
 - The natural language body can be rich and run to several paragraphs. Full rewards detail: interactions, panel structure and distinct silhouettes, not repeated aesthetics. Layout is the exception: state where people and objects are once, in short present-tense sentences, and spend the extra room on light, surfaces and mood.
 - Use high complexity for detailed work, and ultra complexity for ornate illustration and comics.
-- For comics, write full pages: name the speaker in each panel, and include sound effects.
+- For comics, write one full page of up to six panels: describe each panel in the prose, name the speaker of every line and quote it there, and include sound effects.
 - If the idea does not fit the budget, compress it in place. Do not suggest another model.`,
 };
 
@@ -477,7 +484,7 @@ First a tag line: the count, then series and character tags, then the V5 complex
 
 Then the natural language body, describing the scene as prose: who the focus is, what they are doing, the light, the surfaces, the depth. This is the part V5 was trained for, so write it properly rather than reciting the tag line back.
 
-Then, only if the image contains written words, a Text: sub-block: the literal word Text: on its own line, followed by the lettering to be rendered, written exactly as it should appear. A line break inside a string is a line break in the image. A blank line starts a separate string, which is how a second sign or a second speech bubble is written. Everything after Text: is treated as lettering, so it is always the last thing in BASE and nothing may follow it.
+Then, only if the image contains written words, a Text: sub-block: the literal word Text: on its own line, followed by the lettering to be rendered, written exactly as it should appear. Only the words themselves go here: no speaker names, no page or panel headings, no quotation marks around a line. A line break inside a string is a line break in the image. A blank line starts a separate string, which is how a second sign or a second speech bubble is written. Everything after Text: is treated as lettering, so it is always the last thing in BASE and nothing may follow it.
 
 Each CHAR block is comma separated tags grouped into sections, one section per line, in this order: identity, then body, then face and expression, then outfit head to toe as far as the framing and anything in front of them let it show, then pose and side of the frame. Identity starts with girl, boy or other, then the danbooru character tag if the user named one, then hair, eyes and distinguishing features: spelled out for an original or little known character, and only where they differ from canon for a character V5 already knows. A section with nothing to say is simply left out.
 
