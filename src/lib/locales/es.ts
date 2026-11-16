@@ -367,6 +367,8 @@ const es: Record<string, string> = {
   "common.upload": "Subir",
   "common.paste": "Pegar",
   "common.copy": "Copiar",
+  "common.cut": "Cortar",
+  "common.select_all": "Seleccionar todo",
   "common.copied": "Copiado",
   "common.save": "Guardar",
   "common.reset": "Restablecer",

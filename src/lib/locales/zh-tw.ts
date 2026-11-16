@@ -367,6 +367,8 @@ const zhTw: Record<string, string> = {
   "common.upload": "上傳",
   "common.paste": "貼上",
   "common.copy": "複製",
+  "common.cut": "剪下",
+  "common.select_all": "全選",
   "common.copied": "已複製",
   "common.save": "儲存",
   "common.reset": "重設",
