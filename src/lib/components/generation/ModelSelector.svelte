@@ -9,6 +9,7 @@
   import { connection } from "../../stores/connection.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import LoraTriggerInput from "./LoraTriggerInput.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
@@ -622,6 +623,13 @@
   // -100..100, so this is a UI range only.
   const LORA_STRENGTH_MIN = -10;
   const LORA_STRENGTH_MAX = 10;
+  // The slider itself covers the range people actually use, so a small drag
+  // is a small change (0.05 a notch over 0 to 2 instead of -10 to 10). It
+  // widens to whole numbers around a value typed in outside that range, and
+  // the number next to it still takes anything from -10 to 10.
+  const LORA_SLIDER_MIN = 0;
+  const LORA_SLIDER_MAX = 2;
+  const LORA_SLIDER_STEP = 0.05;
 
   let showArchitecturePicker = $state(false);
   let showModelInfo = $state(false);
@@ -1299,6 +1307,24 @@
     generation.loras.filter((l) => l.enabled && l.name).length
   );
 
+  // One slider for both LoRA strengths (the default) or separate model and
+  // CLIP sliders. A display preference, so it is kept per device rather than
+  // per generation tab.
+  const LORA_LINKED_KEY = "mooshieui.generation.loraLinkedStrength.v1";
+  let loraLinkedStrength = $state(readLoraLinked());
+  function readLoraLinked(): boolean {
+    try { return localStorage.getItem(LORA_LINKED_KEY) !== "false"; } catch { return true; }
+  }
+  $effect(() => {
+    const linked = String(loraLinkedStrength);
+    try { localStorage.setItem(LORA_LINKED_KEY, linked); } catch {}
+  });
+
+  function setLoraStrength(set: (v: number) => void, value: number) {
+    set(Math.round(value * 100) / 100);
+    generation.saveSettings();
+  }
+
   const LORAS_COLLAPSE_KEY = "mooshieui.generation.lorasCollapsed.v1";
   let lorasOpen = $state(localStorage.getItem(LORAS_COLLAPSE_KEY) !== "true");
   let lorasSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1318,9 +1344,7 @@
   }
 
   function selectLora(index: number, name: string) {
-    generation.loras = generation.loras.map((l, i) =>
-      i === index ? { ...l, name } : l
-    );
+    generation.setLoraName(index, name);
     generation.saveSettings();
     showLoraDropdown = null;
     loraSearches = { ...loraSearches, [index]: "" };
@@ -1783,6 +1807,33 @@
     return generation.checkpoint || locale.t('generation.model.select_checkpoint');
   });
 </script>
+
+{#snippet loraStrengthRow(label: string, tip: string, value: number, set: (v: number) => void)}
+  <div use:scrollCapture>
+    <div class="flex items-center justify-between text-xs mb-0.5">
+      <span class="text-neutral-500">{label}<InfoTip text={tip} /></span>
+      <EditableValue
+        {value}
+        min={LORA_STRENGTH_MIN}
+        max={LORA_STRENGTH_MAX}
+        step={0.01}
+        decimals={2}
+        onchange={(v) => setLoraStrength(set, v)}
+      />
+    </div>
+    <input
+      type="range"
+      {value}
+      oninput={(e) => setLoraStrength(set, Number((e.currentTarget as HTMLInputElement).value))}
+      ondblclick={() => setLoraStrength(set, 1)}
+      min={Math.min(LORA_SLIDER_MIN, Math.floor(value))}
+      max={Math.max(LORA_SLIDER_MAX, Math.ceil(value))}
+      step={LORA_SLIDER_STEP}
+      title={locale.t('generation.model.lora_strength_reset')}
+      class="w-full accent-indigo-500"
+    />
+  </div>
+{/snippet}
 
 {#snippet adultPill()}
   <span class="shrink-0 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-rose-300">{locale.t('generation.model.adult_badge')}</span>
@@ -2324,6 +2375,22 @@
         {/if}
       </div>
       <div class="flex items-center gap-2">
+        {#if generation.loras.length > 0}
+          <button
+            class="p-0.5 rounded transition-colors {loraLinkedStrength ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-500 hover:text-neutral-300'}"
+            onclick={() => (loraLinkedStrength = !loraLinkedStrength)}
+            role="switch"
+            aria-checked={loraLinkedStrength}
+            title={locale.t(loraLinkedStrength ? 'generation.model.lora_strength_split' : 'generation.model.lora_strength_link')}
+            aria-label={locale.t(loraLinkedStrength ? 'generation.model.lora_strength_split' : 'generation.model.lora_strength_link')}
+          >
+            {#if loraLinkedStrength}
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M5.17 11.75l-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></svg>
+            {/if}
+          </button>
+        {/if}
         <button
           onclick={() => {
             generation.addLora();
@@ -2420,59 +2487,32 @@
           </button>
         </div>
 
-        <!-- Strength sliders -->
+        <!-- Strength sliders. One slider drives both strengths unless the
+             user split them, or this LoRA already has two different values. -->
         {#if lora.name}
           <div class="space-y-1.5">
-            <div use:scrollCapture>
-              <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text={locale.t('generation.model.lora_strength_model_tip')} /></span>
-                <EditableValue
-                  value={lora.strength_model}
-                  min={LORA_STRENGTH_MIN}
-                  max={LORA_STRENGTH_MAX}
-                  step={0.01}
-                  decimals={2}
-                  onchange={(v) => {
-                    lora.strength_model = v;
-                    generation.saveSettings();
-                  }}
-                />
-              </div>
-              <input
-                type="range"
-                bind:value={lora.strength_model}
-                oninput={() => generation.saveSettings()}
-                min={LORA_STRENGTH_MIN}
-                max={LORA_STRENGTH_MAX}
-                step="0.05"
-                class="w-full accent-indigo-500"
-              />
-            </div>
-            <div use:scrollCapture>
-              <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text={locale.t('generation.model.lora_strength_clip_tip')} /></span>
-                <EditableValue
-                  value={lora.strength_clip}
-                  min={LORA_STRENGTH_MIN}
-                  max={LORA_STRENGTH_MAX}
-                  step={0.01}
-                  decimals={2}
-                  onchange={(v) => {
-                    lora.strength_clip = v;
-                    generation.saveSettings();
-                  }}
-                />
-              </div>
-              <input
-                type="range"
-                bind:value={lora.strength_clip}
-                oninput={() => generation.saveSettings()}
-                min={LORA_STRENGTH_MIN}
-                max={LORA_STRENGTH_MAX}
-                step="0.05"
-                class="w-full accent-indigo-500"
-              />
-            </div>
+            {#if loraLinkedStrength && lora.strength_model === lora.strength_clip}
+              {@render loraStrengthRow(
+                locale.t('generation.model.lora_strength'),
+                locale.t('generation.model.lora_strength_tip'),
+                lora.strength_model,
+                (v) => { lora.strength_model = v; lora.strength_clip = v; },
+              )}
+            {:else}
+              {@render loraStrengthRow(
+                locale.t('generation.model.lora_strength_model'),
+                locale.t('generation.model.lora_strength_model_tip'),
+                lora.strength_model,
+                (v) => { lora.strength_model = v; },
+              )}
+              {@render loraStrengthRow(
+                locale.t('generation.model.lora_strength_clip'),
+                locale.t('generation.model.lora_strength_clip_tip'),
+                lora.strength_clip,
+                (v) => { lora.strength_clip = v; },
+              )}
+            {/if}
+            <LoraTriggerInput name={lora.name} />
           </div>
         {/if}
       </div>
