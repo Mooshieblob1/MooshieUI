@@ -5058,5 +5058,11 @@ const ja: Record<string, string> = {
   "editor.text.font": "フォント",
   "editor.text.bold": "太字",
   "editor.text.italic": "斜体",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "除外したい要素。このチャンクを使うたびにネガティブプロンプトへ追加されます。",
+  "prompt_uc.style_tip": "除外したい要素。このスタイルが有効な間、ネガティブプロンプトへ追加されます。",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "{name} の UC: {tags}",
 };
 export default ja;

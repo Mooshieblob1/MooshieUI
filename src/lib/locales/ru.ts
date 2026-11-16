@@ -5033,5 +5033,11 @@ const ru: Record<string, string> = {
   "editor.text.font": "Шрифт",
   "editor.text.bold": "Полужирный",
   "editor.text.italic": "Курсив",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "Нежелательное содержимое. Добавляется в негативный промпт при каждом использовании этого фрагмента.",
+  "prompt_uc.style_tip": "Нежелательное содержимое. Добавляется в негативный промпт, пока этот стиль включён.",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "UC из {name}: {tags}",
 };
 export default ru;

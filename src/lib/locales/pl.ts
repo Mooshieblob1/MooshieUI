@@ -5072,5 +5072,11 @@ const pl: Record<string, string> = {
   "editor.text.font": "Czcionka",
   "editor.text.bold": "Pogrubienie",
   "editor.text.italic": "Kursywa",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "Niechciana treść. Dodawana do promptu negatywnego za każdym razem, gdy ten fragment jest użyty.",
+  "prompt_uc.style_tip": "Niechciana treść. Dodawana do promptu negatywnego, dopóki ten styl jest włączony.",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "UC z {name}: {tags}",
 };
 export default pl;

@@ -6,7 +6,8 @@
    * expression has its own box: the card's own expression tags, the one used
    * last time, or one the prompt assistant picks from memory or canon. Chunks,
    * Artist Styles and artist tags go on top and are remembered for the next
-   * portrait.
+   * portrait. The UC of picked chunks and styles shows as red pills under the
+   * negative prompt, which is where it goes.
    */
   import { untrack } from "svelte";
   import { portal } from "../../utils/portal.js";
@@ -131,6 +132,16 @@
     });
   });
 
+  /** UC the picked chunks and styles add to the negative prompt, by name. */
+  const pickedUc = $derived([
+    ...promptPresets.presets
+      .filter((p) => chunkIds.includes(p.id) && p.negative.trim())
+      .map((p) => ({ id: p.id, name: p.name, tags: p.negative.trim() })),
+    ...styles.styles
+      .filter((s) => styleIds.includes(s.id) && s.negative.trim())
+      .map((s) => ({ id: s.id, name: s.name, tags: s.negative.trim() })),
+  ]);
+
   function toggle(list: string[], id: string): string[] {
     return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
   }
@@ -175,7 +186,7 @@
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  const chipBase = "px-2 py-0.5 text-[11px] rounded-full border transition-colors max-w-[12rem] truncate";
+  const chipBase = "inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full border transition-colors max-w-[12rem]";
   const chipOn = "border-neutral-400 bg-neutral-700 text-neutral-50";
   const chipOff = "border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200";
 </script>
@@ -296,6 +307,16 @@
             spellcheck="false"
             class="w-full resize-y rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-100 focus:outline-none focus:border-red-500/70"
           ></textarea>
+          {#if pickedUc.length > 0}
+            <div class="flex flex-wrap items-center gap-1">
+              {#each pickedUc as uc (uc.id)}
+                <span
+                  class="max-w-[16rem] truncate rounded-full border border-red-500/50 bg-red-500/10 px-2 py-px text-[10px] text-red-300"
+                  title={locale.t("prompt_uc.from_title", { name: uc.name, tags: uc.tags })}
+                >{uc.tags.replace(/\s*\n\s*/g, ", ")}</span>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -326,9 +347,16 @@
                 type="button"
                 class="{chipBase} {chunkIds.includes(preset.id) ? chipOn : chipOff}"
                 aria-pressed={chunkIds.includes(preset.id)}
-                title={preset.content}
+                title={preset.negative.trim()
+                  ? `${preset.content}\n${locale.t("prompt_uc.pill_title", { tags: preset.negative.trim() })}`.trim()
+                  : preset.content}
                 onclick={() => { chunkIds = toggle(chunkIds, preset.id); }}
-              >{preset.name}</button>
+              >
+                <span class="truncate">{preset.name}</span>
+                {#if preset.negative.trim()}
+                  <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300">{locale.t("prompt_uc.label")}</span>
+                {/if}
+              </button>
             {/each}
           </div>
         </div>
@@ -343,9 +371,16 @@
                 type="button"
                 class="{chipBase} {styleIds.includes(style.id) ? chipOn : chipOff}"
                 aria-pressed={styleIds.includes(style.id)}
-                title={style.artists.map((a) => a.tag).join(", ")}
+                title={style.negative.trim()
+                  ? `${style.artists.map((a) => a.tag).join(", ")}\n${locale.t("prompt_uc.pill_title", { tags: style.negative.trim() })}`.trim()
+                  : style.artists.map((a) => a.tag).join(", ")}
                 onclick={() => { styleIds = toggle(styleIds, style.id); }}
-              >{style.name}</button>
+              >
+                <span class="truncate">{style.name}</span>
+                {#if style.negative.trim()}
+                  <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300">{locale.t("prompt_uc.label")}</span>
+                {/if}
+              </button>
             {/each}
           </div>
         </div>

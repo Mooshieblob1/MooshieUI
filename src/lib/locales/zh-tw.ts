@@ -5033,5 +5033,11 @@ const zhTw: Record<string, string> = {
   "editor.text.font": "字型",
   "editor.text.bold": "粗體",
   "editor.text.italic": "斜體",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "不想要的內容。每次使用此片段時都會加入負面提示詞。",
+  "prompt_uc.style_tip": "不想要的內容。此風格開啟時會加入負面提示詞。",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC：{tags}",
+  "prompt_uc.from_title": "來自 {name} 的 UC：{tags}",
 };
 export default zhTw;

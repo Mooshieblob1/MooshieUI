@@ -5035,5 +5035,11 @@ const de: Record<string, string> = {
   "editor.text.font": "Schriftart",
   "editor.text.bold": "Fett",
   "editor.text.italic": "Kursiv",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "Unerwünschter Inhalt. Wird dem negativen Prompt hinzugefügt, wann immer dieser Chunk verwendet wird.",
+  "prompt_uc.style_tip": "Unerwünschter Inhalt. Wird dem negativen Prompt hinzugefügt, solange dieser Stil aktiv ist.",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "UC aus {name}: {tags}",
 };
 export default de;

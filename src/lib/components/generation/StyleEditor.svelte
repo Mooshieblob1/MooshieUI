@@ -9,6 +9,8 @@
   import { progress } from "../../stores/progress.svelte.js";
   import { artistTagBodiesMatch, stripArtistSigil } from "../../utils/artistTag.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import InfoTip from "../ui/InfoTip.svelte";
+  import PromptTextarea from "./PromptTextarea.svelte";
 
   interface Props {
     styleId: string;
@@ -139,6 +141,15 @@
         weight: bakedArtistWeight(a, source.overallWeight),
       });
     }
+    // The source's UC lines this style lacks come along too.
+    const have = new Set(negativeLocal.split(/\r?\n/).map((l) => l.trim().toLowerCase()).filter(Boolean));
+    const added = source.negative
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !have.has(l.toLowerCase()));
+    if (added.length > 0) {
+      negativeLocal = [negativeLocal.replace(/\s+$/, ""), ...added].filter(Boolean).join("\n");
+    }
   }
 
   function updateArtistWeight(index: number, value: number) {
@@ -160,6 +171,24 @@
     if (!style) return;
     styles.update(style.id, { overallWeight: value });
   }
+
+  // Local mirror of the UC bound to PromptTextarea. The editor is mounted per
+  // style, so a one-shot initializer and a forward effect are enough.
+  let negativeLocal = $state("");
+  let negativeInitialized = $state(false);
+
+  $effect(() => {
+    if (!negativeInitialized && style) {
+      negativeLocal = style.negative;
+      negativeInitialized = true;
+    }
+  });
+
+  $effect(() => {
+    if (negativeInitialized && style && negativeLocal !== style.negative) {
+      styles.update(style.id, { negative: negativeLocal });
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // Thumbnail
@@ -333,6 +362,20 @@
             <p class="mt-0.5 text-[10px] text-neutral-500">{locale.t("styles.editor.overall_weight_desc")}</p>
           </div>
         </div>
+      </section>
+
+      <!-- UC: added to the negative prompt while the style is on -->
+      <section class="mb-5">
+        <span class="mb-1 flex items-center text-xs font-medium uppercase tracking-wide text-red-300/80">
+          {locale.t("prompt_uc.label")}<InfoTip text={locale.t("prompt_uc.style_tip")} />
+        </span>
+        <PromptTextarea
+          bind:value={negativeLocal}
+          placeholder={locale.t("prompt_uc.placeholder")}
+          rows={2}
+          minHeight="min-h-12"
+          suggestLoraKeywords={false}
+        />
       </section>
 
       <!-- Artists in this style -->

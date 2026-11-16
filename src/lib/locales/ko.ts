@@ -5033,5 +5033,11 @@ const ko: Record<string, string> = {
   "editor.text.font": "글꼴",
   "editor.text.bold": "굵게",
   "editor.text.italic": "기울임꼴",
+  "prompt_uc.label": "UC",
+  "prompt_uc.chunk_tip": "원치 않는 요소. 이 청크를 사용할 때마다 네거티브 프롬프트에 추가됩니다.",
+  "prompt_uc.style_tip": "원치 않는 요소. 이 스타일이 켜져 있는 동안 네거티브 프롬프트에 추가됩니다.",
+  "prompt_uc.placeholder": "lowres, blurry, bad hands",
+  "prompt_uc.pill_title": "UC: {tags}",
+  "prompt_uc.from_title": "{name}의 UC: {tags}",
 };
 export default ko;
