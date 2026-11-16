@@ -4,6 +4,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import MoodyMossCard from "./MoodyMossCard.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import {
@@ -16,14 +17,10 @@
     ANIMA_SAMPLING,
     BETA57_SCHEDULER,
     JUICE_SAMPLING,
-    MOODY_MOSS_HD_SCALE,
-    MOODY_MOSS_MODEL_ID,
     MOODY_MOSS_SAMPLING,
-    MOODY_MOSS_WORKFLOW_ID,
     NANOSAUR_SAMPLING,
     type SamplingRecommendation,
   } from "../../utils/samplingRecommendation.js";
-  import { civitaiModelPageUrl } from "../../utils/civitaiUrl.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { checkNodeAvailable, downloadModel, getWatermarkStatus, prepareWatermark } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -266,38 +263,6 @@
   const beta57Enabled = $derived(generation.scheduler === BETA57_SCHEDULER);
 
   let animaRecOpen = $state(true);
-  let moodyMossRecOpen = $state(true);
-
-  /**
-   * Size of the Moody Moss second pass. `LatentUpscaleBy` scales the Flux 2
-   * latent (1/16 of the image) and rounds, so the image grows in 16 px steps.
-   */
-  function moodyMossHdSize(px: number): number {
-    return Math.round(Math.floor(px / 16) * MOODY_MOSS_HD_SCALE) * 16;
-  }
-  const moodyMossOutput = $derived.by(() => {
-    const hd = generation.moodyMossHdActive;
-    let width = hd ? moodyMossHdSize(generation.width) : generation.width;
-    let height = hd ? moodyMossHdSize(generation.height) : generation.height;
-    // SeedVR2 and the plain resize scale by a fixed factor; a model upscale
-    // depends on the model, so its size is not guessed here.
-    const scaled =
-      generation.upscaleEnabled &&
-      (generation.upscaleMethod === "seedvr2" || generation.upscaleMethod === "algorithmic");
-    if (scaled) {
-      width = Math.round(width * generation.upscaleScale);
-      height = Math.round(height * generation.upscaleScale);
-    }
-    return { width, height, scaled };
-  });
-
-  /** SeedVR2 at 2x after the 1.5x pass: 832x1248 ends at 2496x3744, close to the workflow's 4K. */
-  function useMoodyMossSeedvr2() {
-    generation.upscaleEnabled = true;
-    generation.upscaleMethod = "seedvr2";
-    generation.upscaleScale = 2;
-    generation.saveSettings();
-  }
   let juiceRecOpen = $state(true);
   let nanosaurRecOpen = $state(true);
   let dmd2RecOpen = $state(false);
@@ -427,83 +392,7 @@
 
 <div class="space-y-3">
   {#if generation.isMoodyMossMix}
-    <div class="rounded-lg border border-indigo-700/50 bg-indigo-900/15 overflow-hidden">
-      <button
-        class="w-full flex items-center justify-between px-2.5 py-2 text-left"
-        onclick={() => (moodyMossRecOpen = !moodyMossRecOpen)}
-      >
-        <p class="text-xs text-indigo-300 font-medium">{locale.t('generation.sampler.moody_moss_recommended')}</p>
-        <svg class="w-3 h-3 text-indigo-400 shrink-0 transition-transform {moodyMossRecOpen ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      {#if moodyMossRecOpen}
-        <div class="flex items-start justify-between gap-2 px-2.5 pb-2.5">
-          <p class="text-[11px] text-neutral-300">{locale.t('generation.sampler.moody_moss_hint')}</p>
-          <button
-            class="shrink-0 px-2 py-1 text-[10px] rounded border border-indigo-500/70 text-indigo-200 hover:border-indigo-400 hover:text-indigo-100 transition-colors"
-            onclick={() => applyRecommendation(MOODY_MOSS_SAMPLING)}
-          >
-            {locale.t('common.apply')}
-          </button>
-        </div>
-        <div class="flex items-center justify-between gap-2 px-2.5 pb-2">
-          <label class="text-[11px] text-neutral-300">
-            {locale.t('generation.sampler.moody_moss_hd_toggle')}<InfoTip text={locale.t('generation.sampler.moody_moss_hd_tip')} />
-          </label>
-          <button
-            class="relative w-10 h-5 rounded-full transition-colors shrink-0 {generation.moodyMossHd
-              ? 'bg-indigo-600'
-              : 'bg-neutral-700'}"
-            onclick={() => {
-              generation.moodyMossHd = !generation.moodyMossHd;
-              generation.saveSettings();
-            }}
-            role="switch"
-            aria-checked={generation.moodyMossHd}
-            aria-label={locale.t('generation.sampler.moody_moss_hd_toggle')}
-          >
-            <span
-              class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {generation.moodyMossHd
-                ? 'translate-x-5'
-                : ''}"
-            ></span>
-          </button>
-        </div>
-        <div class="px-2.5 pb-2.5 space-y-1.5">
-          {#if generation.moodyMossHd && generation.mode !== "txt2img"}
-            <p class="text-[11px] text-amber-300/90">{locale.t('generation.sampler.moody_moss_hd_txt2img_only')}</p>
-          {/if}
-          <p class="text-[11px] text-neutral-400 tabular-nums">
-            {locale.t('generation.sampler.moody_moss_output', {
-              width: moodyMossOutput.width,
-              height: moodyMossOutput.height,
-            })}
-          </p>
-          {#if !(generation.upscaleEnabled && generation.upscaleMethod === "seedvr2")}
-            <button
-              class="px-2 py-1 text-[10px] rounded border border-neutral-600 text-neutral-300 hover:border-indigo-400 hover:text-indigo-100 transition-colors"
-              onclick={useMoodyMossSeedvr2}
-            >
-              {locale.t('generation.sampler.moody_moss_seedvr2')}
-            </button>
-          {/if}
-          <p class="text-[10px] text-neutral-500">
-            <a
-              href={civitaiModelPageUrl(MOODY_MOSS_MODEL_ID, true)}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="hover:text-indigo-300 underline decoration-dotted"
-            >{locale.t('generation.sampler.moody_moss_model_link')}</a>
-            ·
-            <a
-              href={civitaiModelPageUrl(MOODY_MOSS_WORKFLOW_ID, true)}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="hover:text-indigo-300 underline decoration-dotted"
-            >{locale.t('generation.sampler.moody_moss_workflow_link')}</a>
-          </p>
-        </div>
-      {/if}
-    </div>
+    <MoodyMossCard onApply={() => applyRecommendation(MOODY_MOSS_SAMPLING)} />
   {/if}
 
   {#if hasAnimaRecommendation}

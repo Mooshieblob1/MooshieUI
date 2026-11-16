@@ -5,6 +5,7 @@ pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
 pub mod mesh3d;
+pub mod moody_moss;
 pub mod music;
 pub mod rife;
 pub mod segment_detail;
@@ -966,6 +967,11 @@ pub fn build_workflow(
         return finish_workflow(result, params, seed);
     }
 
+    if moody_moss::area_detail_active(params) {
+        let result = moody_moss::build_area_detail(params, seed);
+        return finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed);
+    }
+
     let result = build_image_stage(params, seed);
     finish_workflow(result, params, seed)
 }
@@ -1412,6 +1418,14 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
     // feed into segment detection.
     let final_image = if !params.detail_segments.is_empty() && !intermediate {
         segment_detail::append_segment_chain(&mut result, params, final_image, seed)
+    } else {
+        final_image
+    };
+
+    // Moody Moss 4K HD finishing (face detail, skin contrast, SeedVR2 blend),
+    // last so SeedVR2 restores the fully detailed image.
+    let final_image = if !intermediate {
+        moody_moss::append_finish(&mut result, params, final_image, seed)
     } else {
         final_image
     };
@@ -2554,7 +2568,7 @@ mod tests {
             second["inputs"]["return_with_leftover_noise"],
             json!("disable")
         );
-        assert_eq!(second["inputs"]["noise_seed"], json!(42 + 72));
+        assert_eq!(second["inputs"]["noise_seed"], json!(42 + 69));
         assert_eq!(second["inputs"]["cfg"], json!(3.0));
 
         for key in ["model", "positive", "negative"] {

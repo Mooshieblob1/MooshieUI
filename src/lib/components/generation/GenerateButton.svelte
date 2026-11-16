@@ -27,6 +27,11 @@
   } from "../../utils/regionalChainGallery.js";
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
   import { ensureUpscalerInstalled } from "../../utils/upscalerInstall.js";
+  import {
+    downloadSizeGb,
+    missingMoodyMossFiles,
+    moodyMossRequiredFiles,
+  } from "../../utils/moodyMoss.js";
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
   import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
@@ -314,6 +319,23 @@
         const detector = generation.facefixDetector || "Anzhc Face seg 640 v4 y11n.pt";
         await ensureUltralyticsDetector(detector, "generation.downloading_facefix");
         generation.facefixDetector = detector;
+      }
+
+      // Moody Moss finishing steps load their own models (face detector,
+      // SeedVR2, the 4x blend upscaler); fetch the missing ones first.
+      if (generation.isMoodyMossMix && generation.mode === "txt2img") {
+        const missing = missingMoodyMossFiles(moodyMossRequiredFiles(generation.moodyMoss), models);
+        if (missing.length > 0) {
+          gallery.showToast(
+            locale.t("generation.sampler.moody_moss_downloading", { size: downloadSizeGb(missing) }),
+            "info",
+          );
+          for (const file of missing) {
+            await downloadModel(file.url, file.category, file.filename, undefined, file.sha256);
+          }
+          await models.refresh();
+        }
+        if (generation.moodyMoss.faceDetail) await ensureFacefixPythonDependency();
       }
 
       // Ensure YOLO detectors referenced by <segment:yolo-...> tags are ready

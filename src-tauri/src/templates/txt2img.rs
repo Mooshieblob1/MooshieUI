@@ -10,10 +10,10 @@ use crate::comfyui::types::GenerationParams;
 /// bicubic), as in the author's V3 workflow.
 pub const MOODY_MOSS_LATENT_SCALE: f64 = 1.5;
 
-/// Seed offset of the second Moody Moss pass. The workflow adds 72 to the
+/// Seed offset of the second Moody Moss pass. The V3 workflow adds 69 to the
 /// first pass's seed; the author notes MOSS gives better detail when the two
 /// seeds differ.
-pub const MOODY_MOSS_SECOND_SEED_OFFSET: u64 = 72;
+pub const MOODY_MOSS_SECOND_SEED_OFFSET: u64 = 69;
 
 /// Step layout of the two Moody Moss 4K HD passes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

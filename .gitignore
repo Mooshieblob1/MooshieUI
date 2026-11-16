@@ -51,6 +51,8 @@ src-tauri/gen/
 
 # Model files (downloaded at runtime)
 *.safetensors
+# Bundled CC0 weights the skin contrast node loads (comfyui-nodes/skin_contrast_1x.LICENSE)
+!comfyui-nodes/skin_contrast_1x.safetensors
 *.ckpt
 *.pt
 *.pth

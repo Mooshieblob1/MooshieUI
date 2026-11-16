@@ -38,6 +38,12 @@ import {
   type SamplingRecommendation,
 } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
+import {
+  MOODY_MOSS_FINISH_DEFAULTS,
+  moodyMossFinishPayload,
+  restoreMoodyMossSettings,
+  type MoodyMossSettings,
+} from "../utils/moodyMoss.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
@@ -766,6 +772,8 @@ class GenerationStore {
   /** Moody Moss 4K HD two-pass sampling for Moody Moss Mix (see
    *  `moodyMossHdActive`). On by default: it is the author's own workflow. */
   moodyMossHd = $state(true);
+  /** The rest of the Moody Moss workflow (detailers, skin contrast, SeedVR2 final). */
+  moodyMoss = $state<MoodyMossSettings>({ ...MOODY_MOSS_FINISH_DEFAULTS });
   smartGuidance = $state(false);
   /** RescaleCFG for v-pred models: rescales the guidance vector each step so
    *  v-pred checkpoints don't oversaturate/burn at normal CFG. Only sent to the
@@ -1274,6 +1282,11 @@ class GenerationStore {
   /** Whether the next generation runs the Moody Moss 4K HD two passes (txt2img only). */
   get moodyMossHdActive(): boolean {
     return this.isMoodyMossMix && this.moodyMossHd && this.mode === "txt2img";
+  }
+
+  /** Whether the next inpaint is the Moody Moss "Detail Anything" pass. */
+  get moodyMossAreaDetailActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMoss.areaDetail && this.mode === "inpainting";
   }
 
   /** True when auto quality tags use the Anima tag set for the selected model. */
@@ -3076,6 +3089,7 @@ class GenerationStore {
     if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
     if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
     if (saved.moodyMossHd !== undefined) this.moodyMossHd = saved.moodyMossHd;
+    if (saved.moodyMoss !== undefined) this.moodyMoss = restoreMoodyMossSettings(saved.moodyMoss);
     if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
     if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
     if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
@@ -3368,6 +3382,7 @@ class GenerationStore {
         savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
         moodyMossHd: this.moodyMossHd,
+        moodyMoss: $state.snapshot(this.moodyMoss),
         vpredRescaleCfg: this.vpredRescaleCfg,
         vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
         nagEnabled: this.nagEnabled,
@@ -3550,6 +3565,7 @@ class GenerationStore {
       savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
       moodyMossHd: this.moodyMossHd,
+      moodyMoss: $state.snapshot(this.moodyMoss),
       vpredRescaleCfg: this.vpredRescaleCfg,
       vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
       nagEnabled: this.nagEnabled,
@@ -4387,6 +4403,7 @@ class GenerationStore {
       save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
       moody_moss_hd: this.moodyMossHdActive,
+      moody_moss: this.isMoodyMossMix ? moodyMossFinishPayload(this.moodyMoss) : undefined,
       vpred_rescale_cfg: this.vpredRescaleCfg,
       vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,
       nag_enabled: this.nagEnabled,
