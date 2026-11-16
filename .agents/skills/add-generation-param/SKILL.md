@@ -59,7 +59,7 @@ pub new_param: Option<Type>,
 
 ## 7. MCP check — `src-tauri/src/mcp/setups.rs`
 
-The MCP server reuses the owner's last txt2img request per model (see `docs/MCP.md`). Decide which case the param is:
+The MCP server reuses the owner's last request per model (local txt2img, NovelAI txt2img, local Image Edit; see `docs/MCP.md`). Decide which case the param is:
 
 - **Points at one image** (ComfyUI input filename, mask, reference): clear it in `snapshot()`, or assistants re-send a stale file.
 - **Something an assistant should set** (like steps or size): add it to `Overrides`, `apply()` (with bounds) and the `generate_image` schema in `mcp/tools.rs`, plus a test.

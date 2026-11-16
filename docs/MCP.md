@@ -1,6 +1,6 @@
 # MCP server
 
-MooshieUI can run a [Model Context Protocol](https://modelcontextprotocol.io) server so AI assistants (Claude Code, Claude Desktop, Cursor, LM Studio and others) can generate images and music, check the queue and search the gallery.
+MooshieUI can run a [Model Context Protocol](https://modelcontextprotocol.io) server so AI assistants (Claude Code, Claude Desktop, Cursor, LM Studio, chat bots and others) can generate images (local models and NovelAI) and music, use your saved characters, styles, chunks and wildcards, check the queue and search the gallery.
 
 It is **off by default**. Turn it on in **Settings > AI assistants (MCP)**.
 
@@ -14,11 +14,33 @@ It is **off by default**. Turn it on in **Settings > AI assistants (MCP)**.
 
 ## Generation setups
 
-The frontend works out a model's family, loaders, text encoder and tuned defaults before every generation, and that can't be rebuilt from a filename on the backend. So the MCP server reuses what already works: each time the owner runs a plain txt2img generation, MooshieUI saves that request as the model's **setup** (in `mcp_setups.json`, without the prompt and without any input image). `generate_image` starts from a setup and changes only what the assistant asks for.
+The frontend works out a model's family, loaders, text encoder and tuned defaults before every generation, and that can't be rebuilt from a filename on the backend. So the MCP server reuses what already works: each time the owner runs a generation, MooshieUI saves that request as the model's **setup** (in `mcp_setups.json`, without the prompt and without any input image). `generate_image` starts from a setup and changes only what the assistant asks for.
 
-A model is usable over MCP once it has been used for one txt2img generation in MooshieUI. NovelAI, img2img, inpainting, Image Edit and video runs don't create setups.
+Three kinds of run make a setup, one per model each:
+
+- **txt2img on a local model.** Used by `generate_image`.
+- **txt2img on NovelAI**, keyed by the NovelAI model id (`nai-diffusion-4-5-full`, `nai-diffusion-5-full`, ...). It keeps the quality tags, UC preset, sampler, effort and the local post-process, and drops the character prompts, vibes and precise references (they belong to one image, and a vibe costs Anlas to encode).
+- **Image Edit on a local model.**
+
+A model is usable over MCP once it has been used for one such run in MooshieUI. NovelAI img2img, inpainting and upscale, local img2img and inpainting, and video runs don't create setups. Prompts are kept out of a setup, including the Moody Moss face and area detail prompts.
 
 Images generated over MCP are saved to the owner's gallery (with normal metadata, `mooshie_source: mcp`) and show up in an open MooshieUI window right away.
+
+### NovelAI costs nothing over MCP
+
+An assistant can't spend Anlas. A NovelAI request over MCP must fit the Opus free window (one image, at most 1 megapixel such as 832x1216 or 1024x1024, at most 28 steps), the key in Settings must be on Opus (checked every 10 minutes), the face pass is held to free crops, and setups never carry vibes. Anything else is refused with a message saying why. NovelAI runs one request at a time per account, so MCP jobs wait their turn behind the Generate page's. The key used is the one active in Settings.
+
+## Prompts: wildcards, characters, styles and chunks
+
+`generate_image` prompts work like the Generate page's:
+
+- `__name__` picks a line from a wildcard file in the wildcards folder (`.txt`, `.yaml`, `.json`, folders as `__folder/name__`, `*` globs), and `{a|b|c}` picks one choice (`{2$$a|b|c}`, weights `{3::a|b}` and nesting work too). Both are seeded by the job's seed, so a fixed seed repeats its picks. Wildcards set to "in order" in the editor pick at random over MCP, since their counters live in the window. Names that match no file are left in the prompt and listed in the result as `unknown_wildcards`.
+- `characters` adds saved characters by name, picking the card saved for the model's family (else one written the same way, tags or sentences). On NovelAI V4 and later each becomes its own character prompt with its UC in that box; elsewhere its prompt goes at the end of the prompt and its UC into the negative prompt.
+- `styles` appends a saved artist style's weighted artist tags and adds its UC.
+- `chunks` adds saved prompt chunks: `prepend`, `append` or `random` (one random line). The default is the mode the chunk is active with in MooshieUI, else `append`. Their UC is added too.
+- `use_active_styles: true` also adds the styles and chunks that are active in MooshieUI right now.
+
+`list_library` lists all four, and `get_character` returns a character's full card, memory files and portrait. The library is read from the owner's synced data and can't be changed over MCP.
 
 ## Music
 
@@ -32,14 +54,16 @@ Finished songs are copied out of ComfyUI into the `music` folder in the app data
 |------|--------------|
 | `get_status` | ComfyUI status and GPUs, queue length, the last five image and music jobs, and the saved setups. |
 | `list_models` | Installed checkpoints, diffusion models (with `has_setup`), LoRAs, or YuE2 music checkpoints. |
-| `generate_image` | txt2img from a setup. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
+| `generate_image` | txt2img from a setup, local or NovelAI. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`, `characters`, `styles`, `chunks`, `use_active_styles`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
 | `generate_music` | A YuE2 song from `style`, with optional `lyrics` (omit for instrumental), `duration_seconds` (1 to 360), `checkpoint`, `planning` (`full`, `melody`, `off`), `score` (ABC to follow), `steps` and `seed`. Waits up to 10 minutes, or returns a job id with `wait: false`. |
 | `get_job` | Status and results of an image or music job (gallery filenames and previews, or song file paths), optionally waiting for it. |
 | `cancel_generation` | Cancels one MCP job, or all of them. Never touches generations started in the window. |
 | `search_gallery` | Full-text search over prompt, negative prompt and model, or the newest images. Older images are indexed on demand, a few hundred per search. |
 | `get_image` | A preview of a gallery image (up to 2048 px) and its generation settings. |
+| `list_library` | Saved characters, artist styles, prompt chunks or wildcard files, by `kind`, with an optional name `filter`. |
+| `get_character` | One saved character: its prompt and UC per model family, memory files and portrait. |
 
-Sizes are snapped to multiples of 16 between 256 and 4096 px.
+Sizes are snapped to multiples of 16 between 256 and 4096 px (64 on NovelAI).
 
 ## Cloud apps (Claude custom connectors, ChatGPT)
 
@@ -99,8 +123,10 @@ claude mcp add --transport http mooshieui http://127.0.0.1:3210/mcp --header "Au
 Code lives in `src-tauri/src/mcp/`:
 
 - `mod.rs`: settings, listener lifecycle (`sync`), auth, JSON-RPC dispatch.
-- `setups.rs`: what a setup keeps (`snapshot`), what an assistant may change (`Overrides`, `apply`), and the saved metadata map.
-- `jobs.rs`: the job store, and image jobs: submits to the GPU manager, follows `comfyui:*` events on the broadcast channel, saves outputs to the gallery, emits `mcp:image_saved`.
+- `setups.rs`: what a setup keeps (`snapshot`), what an assistant may change (`Overrides`, `apply`), the NovelAI free-window check, and the saved metadata map.
+- `jobs.rs`: the job store, and image jobs: submits to the GPU manager (or to `novelai::run`, after the Opus check), follows `comfyui:*` events on the broadcast channel, saves outputs to the gallery, emits `mcp:image_saved`.
+- `expand.rs`: `__wildcard__` and `{a|b}` expansion, a port of `utils/wildcards.ts` and `utils/randomPrompt.ts`. Keep them in step.
+- `library.rs`: saved characters, styles and chunks from the owner's prefs, and how they go into a request (mirrors `toParams` and `savedCharacters.insert`).
 - `music.rs`: music jobs. Maps the tool arguments to `MusicParams` (`to_params`), then submits, polls and downloads through `commands::music` (`submit`, `status`, `audio`), the same functions the Music page calls.
 - `tools.rs`: tool schemas and handlers.
 - `tunnel.rs`: the optional Cloudflare quick tunnel. Pinned `cloudflared` per platform (`package`); bump `VERSION` and every hash together. It runs with `--http-host-header 127.0.0.1:<port>`, so tunnelled requests pass the local `Host` check. The state turns `running` only on a `Registered tunnel connection` line and drops back when the last connection goes (`connection_event`); the address alone does not mean the tunnel works.
