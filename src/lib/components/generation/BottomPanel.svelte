@@ -31,6 +31,7 @@
   import StyleManager from "./StyleManager.svelte";
   import StyleCreatorPanel from "./StyleCreatorPanel.svelte";
   import CharactersPanel from "./CharactersPanel.svelte";
+  import WildcardsPanel from "./WildcardsPanel.svelte";
   import { savedCharacters } from "../../stores/savedCharacters.svelte.js";
   import ScheduleBuilder from "./ScheduleBuilder.svelte";
   import VideoTimelinePanel from "../video/VideoTimelinePanel.svelte";
@@ -61,7 +62,7 @@
 
   let { onupscale, oninpaint, onrefine, oncontextmenu, collapsed = false, ontogglecollapse }: Props = $props();
 
-  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "characters" | "compare" | "artists" | "styles" | "style_creator" | "schedule" | "timeline" | "notes";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "wildcards" | "characters" | "compare" | "artists" | "styles" | "style_creator" | "schedule" | "timeline" | "notes";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
@@ -76,7 +77,7 @@
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
-  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "characters", "artists", "styles", "style_creator", "schedule", "compare", "notes"];
+  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "wildcards", "characters", "artists", "styles", "style_creator", "schedule", "compare", "notes"];
   // Video mode keeps only the tabs that mean something for H3: session output,
   // prompt history and notes. LoRAs and checkpoints do not apply to the H3
   // stack, and artists / artist styles / scheduling / compare are all booru-tag
@@ -108,6 +109,7 @@
     checkpoints: "bottom_panel.tab.checkpoints",
     images: "bottom_panel.tab.images",
     prompts: "bottom_panel.tab.prompts",
+    wildcards: "bottom_panel.tab.wildcards",
     characters: "bottom_panel.tab.characters",
     compare: "bottom_panel.tab.compare",
     artists: "bottom_panel.tab.artists",
@@ -573,6 +575,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         {:else if tab === "prompts"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        {:else if tab === "wildcards"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/><circle cx="15.5" cy="8.5" r="1"/><circle cx="8.5" cy="15.5" r="1"/></svg>
         {:else if tab === "characters"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         {:else if tab === "compare"}
@@ -795,6 +799,8 @@
           {/if}
         </div>
       {/if}
+    {:else if activeTab === "wildcards"}
+      <WildcardsPanel />
     {:else if activeTab === "characters"}
       <CharactersPanel />
     {:else if activeTab === "compare"}

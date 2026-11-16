@@ -6,6 +6,7 @@ pub mod comfyui;
 pub mod comfyui_version;
 pub mod commands;
 pub mod config;
+pub mod eagle;
 pub mod error;
 pub mod gallery_index;
 pub mod http_error;
@@ -28,9 +29,13 @@ pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
 pub mod novelai;
+pub mod novelai_keys;
 pub mod output_owners;
+#[cfg(any(feature = "desktop", test))]
+pub mod package_manager;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
+pub mod related_tags;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;
@@ -671,6 +676,9 @@ pub fn run() {
             commands::api::save_text_file,
             commands::api::embed_image_metadata_bytes,
             commands::api::save_to_gallery,
+            commands::api::related_tags,
+            commands::api::eagle_status,
+            commands::api::send_to_eagle,
             commands::api::save_to_gallery_bytes,
             commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
@@ -729,6 +737,10 @@ pub fn run() {
             commands::novelai::novelai_generate,
             commands::novelai::novelai_subscription,
             commands::novelai::set_novelai_api_key,
+            commands::novelai::list_novelai_keys,
+            commands::novelai::save_novelai_key,
+            commands::novelai::delete_novelai_key,
+            commands::novelai::use_novelai_key,
             commands::cloud::set_cloud_api_key,
             commands::cloud::cloud_key_status,
             commands::config::api_key_env_status,
@@ -751,6 +763,7 @@ pub fn run() {
             commands::cloud::scene_upgrade_draft,
             commands::cloud::scene_exact_voice,
             commands::config::get_config,
+            commands::config::app_package_manager,
             commands::config::update_config,
             commands::mcp::get_mcp_status,
             commands::watermark::get_watermark_status,
@@ -839,6 +852,9 @@ pub fn run() {
             commands::music::get_music_status,
             commands::music::load_music_audio,
             commands::music::save_music_audio,
+            commands::wildcards::list_wildcards,
+            commands::wildcards::save_wildcard,
+            commands::wildcards::delete_wildcard,
             commands::splat::get_splat_capabilities,
             commands::splat::generate_splat,
             commands::splat::get_splat_status,

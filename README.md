@@ -99,7 +99,7 @@ Controls depend on the selected backend and model. NovelAI offers the three stan
 
 ### Desktop (Windows, Linux, Apple Silicon macOS)
 
-1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases): the `.exe` installer for Windows, an `.AppImage`, `.deb` or `.rpm` for Linux, or the `_aarch64.dmg` for macOS 14 or later (see the [Mac guide](docs/MACOS.md)).
+1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases): the `.exe` installer for Windows, an `.AppImage`, `.deb` or `.rpm` for Linux (or install it with `apt`, `dnf` or the AUR, see the [Linux guide](docs/LINUX.md)), or the `_aarch64.dmg` for macOS 14 or later (see the [Mac guide](docs/MACOS.md)).
 2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected; Apple Metal on Mac) and installs MooshieUI's custom nodes - no Python or pip setup required. On Windows, it also installs an app-local copy of Git when a working Git installation cannot be found.
 3. Start generating; ComfyUI launches automatically.
 

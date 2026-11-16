@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripPromptComments } from "../../utils/promptComments.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -69,10 +70,9 @@
   const combinedPositiveTokens = $derived(
     generation.extraPositiveBoxes.length > 0
       ? estimatePromptTokens(
-          joinPromptBoxes([
-            generation.positivePrompt,
-            ...generation.extraPositiveBoxes.map((b) => b.content),
-          ]),
+          joinPromptBoxes(
+            [generation.positivePrompt, ...generation.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments),
+          ),
         )
       : 0,
   );
@@ -249,6 +249,9 @@
           <span class="leading-none">✦</span>
           <span class="max-w-28 truncate">{activeStyle.name}</span>
           <span class="font-mono text-[9px] text-indigo-300/80">×{locale.formatDecimal(activeStyle.overallWeight, 2)}</span>
+          {#if activeStyle.negative.trim()}
+            <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: activeStyle.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+          {/if}
         </button>
       {/each}
       {#each promptPresets.activeEntries as entry (entry.preset.id)}
@@ -264,6 +267,9 @@
           <span class="leading-none">⚡</span>
           <span class="max-w-28 truncate">{entry.preset.name}</span>
           <span class="font-mono text-[9px] text-indigo-300/80">{icon}</span>
+          {#if entry.preset.negative.trim()}
+            <span class="shrink-0 rounded-full border border-red-500/50 bg-red-500/10 px-1.5 py-px text-[9px] leading-none text-red-300" title={locale.t("prompt_uc.pill_title", { tags: entry.preset.negative.trim() })}>{locale.t("prompt_uc.label")}</span>
+          {/if}
         </button>
       {/each}
       {#each detectedArtists as hit (hit.slug)}

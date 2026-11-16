@@ -1,3 +1,74 @@
+## What's New in v2.3.49
+
+### Comic pages
+- **Comic page builder**: a new Comic page builds a page panel by panel. Pick from 15 layouts (1 to 6 panels) or split and resize panels yourself, with portrait, landscape or square pages, a gutter slider and right-to-left reading order for manga.
+- **Two ways to generate**: "Each panel" makes one image per panel at the panel's own shape and crops them into the page. "Whole page" makes the page in a single NovelAI image (up to 6 panels).
+- **Continuity**: describe your cast and page setting once and they are added to every panel. After each panel the tagger flags changed hair, eyes or setting, with a redo button. "Check story" flags contradictions between panels and "Write prompts from beats" drafts panel prompts from one-line beats.
+- **Saving**: panel images go to the gallery as they finish, and "Save page" writes the assembled page with the panel prompts in its metadata.
+- **Cleaner comic lettering**: Prompt Enhance (NovelAI V5) no longer puts speaker names or page headings inside speech bubbles. The words go in the `Text:` block and the speaker is named in the prose.
+
+### Generation
+- **Continuous generation**: a repeat button next to the batch stepper runs Generate again and again, for a set number of runs or until stopped, with an optional delay between runs and a "Stop on error" option. Random seeds and wildcards reroll each run.
+- **Repeat-image warning (NovelAI)**: sending the exact same settings and seed as the last image asks for a second click first, so you don't spend Anlas on a duplicate by accident.
+- **Finish chime**: Settings > Notifications can play a short sound when an image is ready.
+
+### Prompts
+- **File wildcards**: `__name__` picks a line from a file in the wildcards folder. Text, YAML and JSON files work, in the Dynamic Prompts layout, so existing packs drop in unchanged. A fixed seed repeats its picks, and "In order" walks a list one line per request.
+- **Wildcards tab**: a new bottom panel tab to browse, edit, create and delete wildcard files, with click-to-insert tokens.
+- **Line comments**: `//` comments out the rest of a line and Ctrl+/ toggles comments on the selected lines. Comments are greyed out and never sent.
+- **Find and replace**: Ctrl+F and Ctrl+H open a find bar on the focused prompt box, with match case, next and previous, and Replace / Replace all.
+- **Related tags**: select a tag and press Related in the prompt toolbar to see tags that go with it, from Danbooru and from your own gallery. Click a chip to add it right after the selected tag.
+
+### NovelAI
+- **Saved keys**: name and save several NovelAI keys in Settings > NovelAI and switch between them. With two or more saved, an account picker appears on the Anlas line.
+- **Paid-through date**: the account panel shows when your subscription is paid through, and the Anlas line shows the days left.
+
+### Gallery
+- **Eagle export**: Settings > Connection > Eagle export sends images to Eagle, either automatically as they are saved or with an Eagle button in the gallery selection bar. Tags come from the prompt and the full prompt, negative and seed go in the annotation.
+
+---
+
+## What's New in v2.3.48
+
+### Prompt chunks and styles
+- **UC part for chunks and styles**: prompt chunks and artist styles can now carry UC tags that go to the negative prompt whenever they are used. This covers active chunks and styles, chunks used inline in a positive prompt (or in a NovelAI character's prompt, which sends them to that character's UC), style thumbnails, and the character Portrait maker, which shows picked UC as red pills under its negative box.
+- **UC in export and import**: UC round-trips through .txt export and import, and saving a negative prompt block as a chunk now stores it as the UC.
+
+---
+
+## What's New in v2.3.47
+
+### Setup
+- **Live PyTorch download progress**: setup no longer looks frozen at 50% while the 2 GB PyTorch wheel downloads. The status line shows how much has downloaded and the speed, the bar moves from 50% to 72%, and the last three installer lines show under the bar during install.
+- **Stall notice**: after 90 seconds with no new data the status says so, and the log names the usual causes (slow link, VPN, proxy, firewall, antivirus).
+- **Longer network timeouts**: setup gives uv a 120 second HTTP timeout and 6 retries (unless you set your own), so a slow link no longer restarts the whole download.
+- **Disk space check**: before a fresh PyTorch install, setup stops with a clear message when the install drive or uv's cache drive has under 6 GB free (2 GB for CPU and Metal).
+- **Failure hints**: network failures and full disks now come with a hint under uv's error.
+
+### Linux
+- **apt and dnf repos**: Debian, Ubuntu and Fedora users can add the signed MooshieUI repo once and get updates with their normal system updates. See `docs/LINUX.md`.
+- **Self-updates fixed for .deb and .rpm**: the in-app updater used to download the AppImage for these installs and then refuse it. It now gets the right package.
+- **Package-manager installs**: when MooshieUI was installed from the apt, dnf, zypper or AUR package, the update banner and Settings > About show the update command instead of a download button.
+- **AUR package coming soon**: `mooshieui-bin` is ready to publish once AUR account registration reopens. Arch users can use the AppImage meanwhile.
+
+---
+
+## What's New in v2.3.46
+
+### Image editor
+- **Built-in image editor**: the Edit button on the generation preview opens a full-screen editor whose saves keep the image's generation metadata. Layout and shortcuts follow Photoshop: move, crop with aspect presets, rotate, flip, image size, brush, eraser, clone stamp, eyedropper, rectangular and lasso selections, text, and up to 16 layers with opacity, 15 blend modes and layer masks. Undo and redo go back 30 steps.
+- **Adjustments**: brightness, contrast, highlights, shadows, a tone curve, temperature, tint, saturation, vibrance, hue, sharpen, blur and vignette. They stay editable until you save, and can be saved as named presets.
+- **Saving never overwrites**: Save adds a new gallery item, and Save as file writes a PNG with the same metadata embedded. Closing with unsaved changes asks first.
+- **NovelAI images stay NovelAI images**: editing a NovelAI PNG keeps NovelAI's own PNG text chunks, so novelai.net still recognises the saved file.
+- **Preview buttons**: Edit now shows its label, and Save and Copy are icon buttons with tooltips.
+
+### Prompting
+- **Spellcheck stays out of prose**: the tag spellcheck no longer runs for natural-language models (Flux, Krea, Qwen and similar), and inside tag prompts it skips lines that read as sentences.
+- **NovelAI dialect**: in NovelAI mode the spellcheck knows V5 custom tags, quality toggle tokens, `artist:` tokens, `source#` / `target#` / `mutual#` prefixes, `-N::tag::` weights and the `Text:` block.
+- **Fewer false flags everywhere**: common quality, year and score tokens (`masterpiece`, `very aesthetic`, `year 2024`, `score_9_up`, ...) count as known, and `{{tag}}` nesting is checked as the tag inside.
+
+---
+
 ## What's New in v2.3.45
 
 ### NovelAI

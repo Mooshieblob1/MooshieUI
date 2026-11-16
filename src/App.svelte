@@ -9,6 +9,7 @@
   import MusicPage from "./lib/components/music/MusicPage.svelte";
   import Model3DPage from "./lib/components/model3d/Model3DPage.svelte";
   import ScenePage from "./lib/components/scene/ScenePage.svelte";
+  import ComicPage from "./lib/components/comic/ComicPage.svelte";
   import MusicBottomPlayer from "./lib/components/music/MusicBottomPlayer.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import GalleryPage from "./lib/components/gallery/GalleryPage.svelte";
@@ -34,6 +35,7 @@
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
+  import { wildcards } from "./lib/stores/wildcards.svelte.js";
   import { generationTabs } from "./lib/stores/generationTabs.svelte.js";
   import GenerationTabStrip from "./lib/components/generation/GenerationTabStrip.svelte";
   import { music } from "./lib/stores/music.svelte.js";
@@ -126,6 +128,7 @@
   import { classifyGenerationError } from "./lib/utils/generationErrors.js";
   import { formatGenerationTime } from "./lib/utils/localeFormat.js";
   import { notifyOs, isWindowUnfocused } from "./lib/utils/osNotify.js";
+  import { playFinishChime } from "./lib/utils/finishChime.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -249,7 +252,7 @@
   const FETCH_TIMEOUT_MS = 45_000;
   const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
   const GENERATION_DONE_TOAST_EXIT_MS = 220;
-  type PrimaryPage = "generate" | "music" | "model3d" | "scene" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
+  type PrimaryPage = "generate" | "music" | "model3d" | "scene" | "comic" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
   type GenerationDoneToast = {
     id: number;
     imageUrl: string;
@@ -2221,6 +2224,7 @@
     } else {
       gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
     }
+    if (generation.finishSound) playFinishChime();
     showGenerationDoneToast(newImages);
 
     // An enhance, a set of variations or an upscale replaces what the lightbox
@@ -2754,6 +2758,8 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    // Wildcard files are read once up front so `__name__` resolves on the first Generate.
+    void wildcards.load();
     // After the generation load, which restores the active tab's live settings.
     await generationTabs.load();
     void music.loadLibrary();
@@ -3319,6 +3325,7 @@
           locale.t("notifications.os.generation_error.body"),
         );
         if (data.prompt_id) {
+          progress.markFailed(data.prompt_id);
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
           promptLastActivity.delete(data.prompt_id);
@@ -3332,6 +3339,7 @@
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
+          for (const pending of progress.pendingPrompts) progress.markFailed(pending.promptId);
           pendingOutputImages.clear();
           pendingOutputFetches.clear();
           promptLastActivity.clear();
@@ -3849,6 +3857,15 @@
       </div>
     {/if}
     <button
+      class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'comic' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+      onclick={() => (currentPage = "comic")}
+      title={locale.t("nav.comic")}
+      aria-label={locale.t("nav.comic")}
+      aria-current={currentPage === "comic" ? "page" : undefined}
+    >
+      <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="1.5"/><path d="M3 10h18"/><path d="M12 10v11"/><path d="M9 3v7"/></svg>
+    </button>
+    <button
       class="touch-target mx-auto flex items-center justify-center rounded-lg transition-colors {currentPage === 'scene' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
       onclick={() => (currentPage = "scene")}
       title={locale.t("nav.scene")}
@@ -4089,6 +4106,8 @@
       <Model3DPage {userRole} />
     {:else if currentPage === "scene"}
       <ScenePage onOpenSettings={() => (currentPage = "settings")} />
+    {:else if currentPage === "comic"}
+      <ComicPage onOpenGenerate={() => (currentPage = "generate")} />
     {:else if currentPage === "gallery"}
       <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} onMake3D={model3d.enabled ? (image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; } : undefined} />
     {:else if currentPage === "modelhub"}

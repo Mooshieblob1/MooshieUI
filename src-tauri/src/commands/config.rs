@@ -20,6 +20,13 @@ pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<serde_json::V
     Ok(config_to_client_json(&config, true)?)
 }
 
+/// The Linux package manager that owns this install (`apt`, `dnf`, `zypper`,
+/// `pacman`), or `None` when the in-app updater should handle updates.
+#[tauri::command]
+pub fn app_package_manager() -> Result<Option<&'static str>, AppError> {
+    Ok(crate::package_manager::detect())
+}
+
 /// Which owner key fields read from an environment variable, and whether
 /// each variable is set. Names only, never values.
 #[tauri::command]

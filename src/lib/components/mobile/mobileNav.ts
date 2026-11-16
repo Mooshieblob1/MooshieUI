@@ -15,6 +15,7 @@ export type MobilePage =
   | "music"
   | "model3d"
   | "scene"
+  | "comic"
   | "gallery"
   | "modelhub"
   | "artists"
@@ -38,6 +39,7 @@ export function allDestinations(opts: MobileNavOptions): MobileNavId[] {
     "music",
     "artists",
     "characters",
+    "comic",
     "scene",
     ...(opts.showModel3d ? (["model3d"] as const) : []),
     ...(opts.showModelhub ? (["modelhub"] as const) : []),
@@ -57,6 +59,7 @@ const LABEL_KEYS: Record<MobileNavId, string> = {
   artists: "nav.artists",
   characters: "artist_gallery.tab_characters",
   scene: "nav.scene",
+  comic: "nav.comic",
   model3d: "nav.model3d_experimental",
   settings: "nav.settings",
 };

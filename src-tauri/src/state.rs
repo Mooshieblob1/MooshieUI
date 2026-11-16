@@ -1047,12 +1047,43 @@ impl AppState {
         );
     }
 
+    /// Hand an image the owner just saved to Eagle in the background. Only
+    /// files in the owner's own gallery folder are sent, so a LAN user's saves
+    /// (kept under `users/`) never land in the owner's Eagle library.
+    fn send_saved_image_to_eagle(&self, payload: &serde_json::Value, folder_id: Option<String>) {
+        let Some(name) = payload.get("filename").and_then(|v| v.as_str()) else {
+            return;
+        };
+        if name.contains(['/', '\\']) || name.contains("..") {
+            return;
+        }
+        let Some(path) = crate::config::gallery_dir().map(|dir| dir.join(name)) else {
+            return;
+        };
+        if !path.is_file() {
+            return;
+        }
+        let metadata = payload.get("metadata").cloned();
+        let client = self.http_client.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                crate::eagle::add_from_path(&client, &path, metadata.as_ref(), folder_id.as_deref())
+                    .await
+            {
+                log::warn!("Eagle export failed for {}: {}", path.display(), e);
+            }
+        });
+    }
+
     pub async fn dispatch_webhook_event(
         &self,
         event: &str,
         mut payload: serde_json::Value,
     ) -> Result<(), String> {
         let cfg = self.config.read().await.clone();
+        if event == "image_saved" && cfg.eagle_enabled && cfg.eagle_auto_send {
+            self.send_saved_image_to_eagle(&payload, cfg.eagle_folder_id.clone());
+        }
         let url = cfg.webhook_url.unwrap_or_default();
         if url.trim().is_empty() {
             return Ok(());

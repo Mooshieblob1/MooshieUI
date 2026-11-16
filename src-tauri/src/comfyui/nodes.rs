@@ -303,6 +303,8 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieFaceDetailer",
     "MooshieFaceDetect",
     "MooshieSegmentDetailer",
+    "MooshieMaskDetailer",
+    "MooshieSkinContrast",
     "MooshieSoftGuidance",
     "MooshieSmartGuidance",
     "MooshieCheckpointLoaderPath",
@@ -315,6 +317,9 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
+/// 1x skin contrast model for the Moody Moss workflow's skin pass (175 KB).
+const SKIN_CONTRAST_WEIGHTS: &[u8] =
+    include_bytes!("../../../comfyui-nodes/skin_contrast_1x.safetensors");
 // Python deps the mooshie-nodes package imports but ComfyUI does not ship.
 // `ultralytics` (YOLOv8) backs the face-detailer node. torch/torchvision are
 // already provided by ComfyUI's own requirements, so they are not repeated.
@@ -405,6 +410,16 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         (
             "gguf_compat.py",
             include_str!("../../../comfyui-nodes/gguf_compat.py"),
+        ),
+    ] {
+        std::fs::write(mooshie_dir.join(name), content).map_err(|e| e.to_string())?;
+    }
+    // Weights MooshieSkinContrast loads from its own folder (CC0-1.0).
+    for (name, content) in [
+        ("skin_contrast_1x.safetensors", SKIN_CONTRAST_WEIGHTS),
+        (
+            "skin_contrast_1x.LICENSE",
+            include_bytes!("../../../comfyui-nodes/skin_contrast_1x.LICENSE").as_slice(),
         ),
     ] {
         std::fs::write(mooshie_dir.join(name), content).map_err(|e| e.to_string())?;

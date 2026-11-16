@@ -4,7 +4,7 @@
   import { isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
   import { stopComfyui } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { checkForAppUpdate } from "../../utils/updater.js";
+  import { checkForAppUpdate, packageManagerUpdateCommand } from "../../utils/updater.js";
 
   // @ts-ignore — injected by Vite at build time
   const currentVersion: string = __APP_VERSION__ ?? "dev";
@@ -14,7 +14,7 @@
   }
   let { userRole = "user" }: Props = $props();
 
-  type UpdateState = "idle" | "available" | "server_available" | "downloading" | "ready" | "error" | "version_mismatch";
+  type UpdateState = "idle" | "available" | "managed" | "server_available" | "downloading" | "ready" | "error" | "version_mismatch";
 
   let updateState: UpdateState = $state("idle");
   let version = $state("");
@@ -23,6 +23,8 @@
   let errorMessage = $state("");
   let dismissed = $state(false);
   let expectedVersion = $state("");
+  /** Set when apt, dnf, zypper or the AUR owns this install. */
+  let managedCommand = $state("");
 
   let updateObj: Update | null = null;
 
@@ -105,7 +107,8 @@
         if (update) {
           updateObj = update;
           version = update.version;
-          updateState = "available";
+          managedCommand = (await packageManagerUpdateCommand()) ?? "";
+          updateState = managedCommand ? "managed" : "available";
           console.log(`[Updater] Update available: v${update.version} (current: v${currentVersion})`);
         } else {
           console.log("[Updater] No updates available");
@@ -178,6 +181,21 @@
         onclick={dismiss}
         class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
       >{locale.t('updater.later')}</button>
+
+    {:else if updateState === "managed"}
+      <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+      <span class="flex-1">
+        {locale.t('updater.available', { version })}
+        <span class="ml-2 opacity-80">{locale.t('updater.package_manager_hint')}</span>
+        <code class="ml-1 select-all rounded bg-black/30 px-1.5 py-0.5 font-mono text-xs">{managedCommand}</code>
+      </span>
+      <button
+        onclick={dismiss}
+        class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
+      >{locale.t('updater.dismiss')}</button>
 
     {:else if updateState === "server_available"}
       <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

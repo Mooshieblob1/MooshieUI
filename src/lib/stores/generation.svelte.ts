@@ -14,6 +14,7 @@ import {
   sanitizePromptForSend,
 } from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
+import { stripPromptComments } from "../utils/promptComments.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
@@ -29,10 +30,20 @@ import { locale } from "./locale.svelte.js";
 import {
   BETA57_SCHEDULER,
   GENERIC_SAMPLING,
+  MOODY_MOSS_BASE_SIZE,
+  MOODY_MOSS_NEGATIVE,
+  MOODY_MOSS_SAMPLING,
+  isMoodyMossFilename,
   recommendedSamplingFor,
   type SamplingRecommendation,
 } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
+import {
+  MOODY_MOSS_FINISH_DEFAULTS,
+  moodyMossFinishPayload,
+  restoreMoodyMossSettings,
+  type MoodyMossSettings,
+} from "../utils/moodyMoss.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
@@ -103,6 +114,7 @@ import type {
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
+import { wildcards } from "./wildcards.svelte.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
@@ -279,7 +291,13 @@ export interface GenerationToParamsOptions {
    * Creator passes a fragment for an unsaved artist combination here.
    */
   extraPositive?: string;
-  /** Skip the active Artist Styles fragment (the Style Creator supplies its own). */
+  /**
+   * Extra negative tags merged after the UC of active styles and chunks: the
+   * UC of a style or chunk a caller applies itself (a style's thumbnail, a
+   * portrait's picked styles and chunks).
+   */
+  extraNegative?: string;
+  /** Skip the active Artist Styles fragment and its UC (the Style Creator supplies its own). */
   skipActiveStyles?: boolean;
   /**
    * Prompts for a picture of its own (a saved character's portrait), used
@@ -751,6 +769,11 @@ class GenerationStore {
    * directly into the upscale/refine chain (SwarmUI "Refine Image" semantics).
    */
   refineOnly = $state(false);
+  /** Moody Moss 4K HD two-pass sampling for Moody Moss Mix (see
+   *  `moodyMossHdActive`). On by default: it is the author's own workflow. */
+  moodyMossHd = $state(true);
+  /** The rest of the Moody Moss workflow (detailers, skin contrast, SeedVR2 final). */
+  moodyMoss = $state<MoodyMossSettings>({ ...MOODY_MOSS_FINISH_DEFAULTS });
   smartGuidance = $state(false);
   /** RescaleCFG for v-pred models: rescales the guidance vector each step so
    *  v-pred checkpoints don't oversaturate/burn at normal CFG. Only sent to the
@@ -904,6 +927,15 @@ class GenerationStore {
   osNotificationsEnabled = $state(false);
   /** When true, OS notifications only fire when the app window is not focused. */
   osNotifyOnlyWhenUnfocused = $state(true);
+  /** Plays a short chime when a generation finishes. */
+  finishSound = $state(false);
+  /** Continuous generation: how many runs one Generate click starts. 1 is a
+   *  normal single run, 0 keeps going until stopped. */
+  repeatCount = $state(1);
+  /** Seconds to wait between continuous runs. */
+  repeatDelaySec = $state(0);
+  /** When true, a failed run ends a continuous run instead of moving on. */
+  repeatStopOnError = $state(true);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
@@ -1242,6 +1274,26 @@ class GenerationStore {
     if (!this.isAnima) return false;
     const filename = (this.useSplitModel ? this.diffusionModel : this.checkpoint) ?? "";
     return filename.toLowerCase().includes("light-lavender");
+  }
+
+  /**
+   * True for Moody Moss Mix (catlover1937), a MOSS-Image fine-tune whose
+   * author publishes a two-pass "Moody Moss 4K HD" ComfyUI workflow for it.
+   * Matched by filename, as the tensors are plain MOSS-Image.
+   */
+  get isMoodyMossMix(): boolean {
+    if (this.modelFamily !== "mossimage" && this.modelFamily !== "mossimagebase") return false;
+    return isMoodyMossFilename(this.useSplitModel ? this.diffusionModel : this.checkpoint);
+  }
+
+  /** Whether the next generation runs the Moody Moss 4K HD two passes (txt2img only). */
+  get moodyMossHdActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMossHd && this.mode === "txt2img";
+  }
+
+  /** Whether the next inpaint is the Moody Moss "Detail Anything" pass. */
+  get moodyMossAreaDetailActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMoss.areaDetail && this.mode === "inpainting";
   }
 
   /** True when auto quality tags use the Anima tag set for the selected model. */
@@ -2700,8 +2752,17 @@ class GenerationStore {
 
       // MOSS-Image SFT and Base: Comfy-Org's bundled templates (25 steps at
       // CFG 2.5, er_sde on simple, 1024x1024), with a real negative prompt.
+      // Moody Moss Mix follows its author's 4K HD workflow instead: Euler on
+      // simple at 25 steps and CFG 3, from a 2:3 base of about 1 MP that the
+      // second pass takes to 1.5x, and the workflow's negative prompt when
+      // the box is empty.
       case "mossimage":
       case "mossimagebase":
+        if (this.isMoodyMossMix) {
+          preset = { ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE };
+          if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
+          break;
+        }
         preset = {
           steps: 25,
           cfg: 2.5,
@@ -3034,6 +3095,8 @@ class GenerationStore {
     if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
     if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
     if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
+    if (saved.moodyMossHd !== undefined) this.moodyMossHd = saved.moodyMossHd;
+    if (saved.moodyMoss !== undefined) this.moodyMoss = restoreMoodyMossSettings(saved.moodyMoss);
     if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
     if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
     if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
@@ -3252,6 +3315,14 @@ class GenerationStore {
     }
     if (saved.osNotificationsEnabled !== undefined) this.osNotificationsEnabled = saved.osNotificationsEnabled;
     if (saved.osNotifyOnlyWhenUnfocused !== undefined) this.osNotifyOnlyWhenUnfocused = saved.osNotifyOnlyWhenUnfocused;
+    if (saved.finishSound !== undefined) this.finishSound = saved.finishSound;
+    if (typeof saved.repeatCount === "number" && Number.isFinite(saved.repeatCount)) {
+      this.repeatCount = Math.max(0, Math.min(999, Math.round(saved.repeatCount)));
+    }
+    if (typeof saved.repeatDelaySec === "number" && Number.isFinite(saved.repeatDelaySec)) {
+      this.repeatDelaySec = Math.max(0, Math.min(3600, saved.repeatDelaySec));
+    }
+    if (saved.repeatStopOnError !== undefined) this.repeatStopOnError = saved.repeatStopOnError;
     if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
     if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
     if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
@@ -3328,6 +3399,8 @@ class GenerationStore {
         refineOnly: this.refineOnly,
         savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
+        moodyMossHd: this.moodyMossHd,
+        moodyMoss: $state.snapshot(this.moodyMoss),
         vpredRescaleCfg: this.vpredRescaleCfg,
         vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
         nagEnabled: this.nagEnabled,
@@ -3416,6 +3489,10 @@ class GenerationStore {
         modelFamilyOverrides: this.modelFamilyOverrides,
         osNotificationsEnabled: this.osNotificationsEnabled,
         osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+        finishSound: this.finishSound,
+        repeatCount: this.repeatCount,
+        repeatDelaySec: this.repeatDelaySec,
+        repeatStopOnError: this.repeatStopOnError,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
         resolutionLocked: this.resolutionLocked,
@@ -3510,6 +3587,8 @@ class GenerationStore {
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
       savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
+      moodyMossHd: this.moodyMossHd,
+      moodyMoss: $state.snapshot(this.moodyMoss),
       vpredRescaleCfg: this.vpredRescaleCfg,
       vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
       nagEnabled: this.nagEnabled,
@@ -3597,6 +3676,10 @@ class GenerationStore {
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       osNotificationsEnabled: this.osNotificationsEnabled,
       osNotifyOnlyWhenUnfocused: this.osNotifyOnlyWhenUnfocused,
+      finishSound: this.finishSound,
+      repeatCount: this.repeatCount,
+      repeatDelaySec: this.repeatDelaySec,
+      repeatStopOnError: this.repeatStopOnError,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
       resolutionLocked: this.resolutionLocked,
@@ -3730,14 +3813,21 @@ class GenerationStore {
   } {
     const inlineIds = new Set<string>();
     const characters = (this.novelaiSettings.characters ?? []).map((character) => {
-      for (const id of promptPresets.inlinePresetIds(character.prompt)) inlineIds.add(id);
-      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+      const prompt = stripPromptComments(character.prompt);
+      const characterNegative = stripPromptComments(character.negative_prompt);
+      const promptIds = promptPresets.inlinePresetIds(prompt);
+      for (const id of promptIds) inlineIds.add(id);
+      for (const id of promptPresets.inlinePresetIds(characterNegative)) {
         inlineIds.add(id);
       }
+      // A chunk used in this character's prompt brings its UC to this
+      // character's UC, not the image's.
+      const negative = promptPresets.resolveInline(characterNegative, { fixedChoices });
+      const uc = promptPresets.negativeFor(promptIds);
       return {
         ...character,
-        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
-        negative_prompt: promptPresets.resolveInline(character.negative_prompt, { fixedChoices }),
+        prompt: promptPresets.resolveInline(prompt, { fixedChoices }),
+        negative_prompt: uc ? this.mergeIntoPrompt(negative, uc, "after") : negative,
       };
     });
     return { characters, inlineIds };
@@ -3973,16 +4063,18 @@ class GenerationStore {
     // block), so its layout is preserved instead of folded into commas.
     const sanitizeOptions = { keepNewlines: this.isNovelAi };
     const ownPrompts = options.prompts ?? null;
+    // `//` comments come off each box before the boxes are joined, so a
+    // comment at the end of one box cannot swallow the next box's text.
     const effectivePositive = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.positive
-        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.positive)
+        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.negative
-        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.negative)
+        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
 
@@ -4023,12 +4115,27 @@ class GenerationStore {
       !isNaN(numericSeed) && numericSeed !== -1
         ? numericSeed >>> 0
         : (Math.random() * 0x100000000) >>> 0;
-    const inlinePositive = hasPositiveRandom
-      ? expandRandomPrompt(inlinePositiveRaw, rngSeed)
-      : inlinePositiveRaw;
-    const inlineNegative = hasNegativeRandom
-      ? expandRandomPrompt(inlineNegativeRaw, rngSeed + 1)
-      : inlineNegativeRaw;
+    // `__name__` file wildcards: expanded before {a|b} (an option may hold
+    // alternation) and once more after it (an alternation may hold a wildcard).
+    wildcards.beginBuild();
+    const expandAll = (text: string, salt: number, randomize: boolean) => {
+      let out = wildcards.expand(text, rngSeed + salt).text;
+      if (randomize || hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt);
+      if (out.includes("__")) {
+        out = wildcards.expand(out, rngSeed + salt + 7).text;
+        if (hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt + 7);
+      }
+      return out;
+    };
+    const inlinePositive = expandAll(inlinePositiveRaw, 0, hasPositiveRandom);
+    const inlineNegative = expandAll(inlineNegativeRaw, 1, hasNegativeRandom);
+    novelAiCharacters.characters = novelAiCharacters.characters.map((character, i) => ({
+      ...character,
+      prompt: character.prompt.includes("__") ? wildcards.expand(character.prompt, rngSeed + 101 + i * 2).text : character.prompt,
+      negative_prompt: character.negative_prompt.includes("__")
+        ? wildcards.expand(character.negative_prompt, rngSeed + 102 + i * 2).text
+        : character.negative_prompt,
+    }));
 
     // Parse <segment:...> auto-refinement tags from the user-typed prompt before
     // system fragments (style presets, artist styles, preset appends, quality
@@ -4074,6 +4181,23 @@ class GenerationStore {
     }
     if (preset.append) {
       positivePrompt = this.mergeIntoPrompt(positivePrompt, preset.append, "after");
+    }
+
+    // UC carried by styles and chunks goes to the negative prompt: active
+    // styles, the chunks the pass above applied, and chunks used inline in
+    // the positive prompt. A chunk used only in the negative box is already
+    // negative text there, so its UC is not added again.
+    const chunkUcIds = [
+      ...(ownPrompts ? [] : promptPresets.activeIdsFor(inlinePresetIds)),
+      ...inlinePositiveIds,
+    ];
+    const ucParts = [
+      options.skipActiveStyles ? "" : styles.buildNegativeFragment(),
+      promptPresets.negativeFor(chunkUcIds),
+      options.extraNegative?.trim() ?? "",
+    ].filter(Boolean);
+    if (ucParts.length > 0) {
+      negativePrompt = this.mergeIntoPrompt(negativePrompt, ucParts.join(", "), "after");
     }
 
     // The Multiple-Angles LoRA wants its shot phrase first. Prepended as-is
@@ -4306,6 +4430,8 @@ class GenerationStore {
       refine_only: this.mode === "img2img" && this.upscaleEnabled && this.refineOnly,
       save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
+      moody_moss_hd: this.moodyMossHdActive,
+      moody_moss: this.isMoodyMossMix ? moodyMossFinishPayload(this.moodyMoss) : undefined,
       vpred_rescale_cfg: this.vpredRescaleCfg,
       vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,
       nag_enabled: this.nagEnabled,

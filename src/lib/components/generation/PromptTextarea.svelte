@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { on } from "svelte/events";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -29,6 +29,11 @@
     escapeEmphasisMarks,
   } from "../../utils/promptSyntaxEscape.js";
   import { CLIP_CHUNK_SIZE, estimatePromptTokens, promptTokenLimit } from "../../utils/promptTokens.js";
+  import { findCommentRanges, stripPromptComments, toggleLineComments } from "../../utils/promptComments.js";
+  import { findMatches, replaceAllMatches } from "../../utils/promptFind.js";
+  import { insertTagAfter, normalizePromptTag, promptTagSet } from "../../utils/relatedTags.js";
+  import { findTagCore } from "../../utils/promptTagAffixes.js";
+  import { relatedTags, type RelatedTag, type RelatedTags } from "../../utils/api.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
   interface Props {
@@ -172,7 +177,153 @@
 
   // Estimated CLIP tokens for the current prompt, gauged against the 75-token
   // chunk boundary the text encoder splits on.
-  const tokenCount = $derived(estimatePromptTokens(value));
+  const tokenCount = $derived(estimatePromptTokens(stripPromptComments(value)));
+
+  // Find / replace (Ctrl+F, Ctrl+H) inside this box.
+  let findOpen = $state(false);
+
+  // Related tags for the selected tag: Danbooru statistics and the gallery.
+  let relatedOpen = $state(false);
+  let relatedLoading = $state(false);
+  let relatedResult = $state<RelatedTags | null>(null);
+  let relatedError = $state<string | null>(null);
+  /** End of the tag the panel was opened for, where picked tags go. */
+  let relatedAnchor = 0;
+  const promptTags = $derived(relatedOpen ? promptTagSet(value) : new Set<string>());
+
+  async function openRelated() {
+    if (!textareaEl || !hasSelection) return;
+    const selected = value.substring(selectionStart, selectionEnd);
+    const tag = normalizePromptTag(selected.split(/[,\n]/)[0] ?? "");
+    relatedOpen = true;
+    relatedAnchor = selectionEnd;
+    relatedError = null;
+    if (!tag) {
+      relatedResult = null;
+      relatedError = locale.t("generation.prompt.related_pick_tag");
+      return;
+    }
+    if (relatedResult?.tag === tag) return;
+    relatedLoading = true;
+    relatedResult = null;
+    try {
+      relatedResult = await relatedTags(tag);
+    } catch (e) {
+      relatedError = e instanceof Error ? e.message : String(e);
+    } finally {
+      relatedLoading = false;
+    }
+  }
+
+  function addRelated(tag: RelatedTag) {
+    if (promptTags.has(tag.name)) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    const next = insertTagAfter(value, Math.min(relatedAnchor, value.length), formatTagForPrompt(tag.name));
+    value = next.value;
+    relatedAnchor = next.caret;
+    requestAnimationFrame(() => {
+      textareaEl?.focus();
+      textareaEl?.setSelectionRange(next.caret, next.caret);
+      syncSelectionRange();
+    });
+  }
+
+  /** Chip colour by Danbooru category, the autocomplete dropdown's hues. */
+  function relatedChipClass(category: number): string {
+    return `${CATEGORY_COLORS[category] ?? CATEGORY_COLORS[0]} border-neutral-700`;
+  }
+  let replaceOpen = $state(false);
+  let findQuery = $state("");
+  let replaceText = $state("");
+  let findCaseSensitive = $state(false);
+  let findIndex = $state(0);
+  let findInputEl = $state<HTMLInputElement | null>(null);
+  const findRanges = $derived(findOpen ? findMatches(value, findQuery, findCaseSensitive) : []);
+  const currentFind = $derived(findRanges.length === 0 ? -1 : Math.min(findIndex, findRanges.length - 1));
+  const commentRanges = $derived(findCommentRanges(value));
+
+  function openFind(withReplace: boolean) {
+    if (!textareaEl) return;
+    const selected = value.substring(textareaEl.selectionStart, textareaEl.selectionEnd);
+    if (selected && !selected.includes("\n")) findQuery = selected;
+    findOpen = true;
+    replaceOpen = withReplace;
+    findIndex = 0;
+    // tick, not a frame: keys typed right after Ctrl+F must land in the find box.
+    void tick().then(() => {
+      findInputEl?.focus();
+      findInputEl?.select();
+    });
+  }
+
+  function closeFind() {
+    findOpen = false;
+    replaceOpen = false;
+    textareaEl?.focus();
+  }
+
+  function stepFind(delta: number) {
+    if (findRanges.length === 0) return;
+    findIndex = (currentFind + delta + findRanges.length) % findRanges.length;
+    revealFind();
+  }
+
+  /** Scroll the textarea so the current match is in view. */
+  function revealFind() {
+    requestAnimationFrame(() => {
+      const range = findRanges[currentFind];
+      if (!textareaEl || !range) return;
+      const lineHeight = 20;
+      const line = value.slice(0, range[0]).split("\n").length - 1;
+      const target = line * lineHeight;
+      if (target < textareaEl.scrollTop || target > textareaEl.scrollTop + textareaEl.clientHeight - lineHeight) {
+        textareaEl.scrollTop = Math.max(0, target - textareaEl.clientHeight / 2);
+        syncScroll();
+      }
+    });
+  }
+
+  function replaceCurrent() {
+    const range = findRanges[currentFind];
+    if (!range) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    value = value.slice(0, range[0]) + replaceText + value.slice(range[1]);
+    // The next match now sits where this one was, so the index stays.
+  }
+
+  function replaceAll() {
+    if (findRanges.length === 0) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    value = replaceAllMatches(value, findQuery, replaceText, findCaseSensitive);
+    findIndex = 0;
+  }
+
+  function handleFindKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFind();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      stepFind(e.shiftKey ? -1 : 1);
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "h")) {
+      e.preventDefault();
+      replaceOpen = e.key === "h" ? true : replaceOpen;
+    }
+  }
+
+  function handleReplaceKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFind();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if ((e.ctrlKey || e.metaKey) && e.altKey) replaceAll();
+      else replaceCurrent();
+    }
+  }
   const tokenLimit = $derived(promptTokenLimit(tokenCount));
   const tokenOverflow = $derived(tokenCount > CLIP_CHUNK_SIZE);
 
@@ -208,6 +359,9 @@
     end: number;
     trimmedStart: number;
     trimmedEnd: number;
+    /** The tag name alone, inside any weight syntax around it (see findTagCore). */
+    coreStart: number;
+    coreEnd: number;
   } | null {
     if (!textareaEl) return null;
     const pos = textareaEl.selectionStart;
@@ -228,6 +382,8 @@
         end: inertRange.end,
         trimmedStart,
         trimmedEnd,
+        coreStart: trimmedStart,
+        coreEnd: trimmedEnd,
       };
     }
 
@@ -248,8 +404,9 @@
     const trimmedStart = start + leadingWhitespace;
     const trimmedEnd = Math.max(trimmedStart, end - trailingWhitespace);
     const fragment = text.substring(trimmedStart, trimmedEnd);
+    const core = findTagCore(text, trimmedStart, trimmedEnd);
 
-    return { fragment, start, end, trimmedStart, trimmedEnd };
+    return { fragment, start, end, trimmedStart, trimmedEnd, coreStart: core.start, coreEnd: core.end };
   }
 
   function updateSuggestions() {
@@ -261,14 +418,17 @@
     const result = getCurrentTagFragment();
     const pos = textareaEl?.selectionStart ?? 0;
 
-    if (!result || pos < result.trimmedStart) {
+    // The caret has to be on the tag name itself: inside a weight opener like
+    // `1.2::` there is nothing to complete yet, and past a closer like `::` or
+    // `}` the tag is finished, so Enter must not swap it for a suggestion.
+    if (!result || pos < result.coreStart || pos > result.coreEnd) {
       showSuggestions = false;
       suggestions = [];
       return;
     }
 
     // Search based on text from tag start to cursor position (supports mid-prompt editing)
-    let searchFragment = value.substring(result.trimmedStart, pos).replace(/\s+$/, "");
+    let searchFragment = value.substring(result.coreStart, pos).replace(/\s+$/, "");
 
     // Strip scheduling tag syntax so autocomplete works inside scheduling blocks
     // MooshieUI: <from:0.2>tag</from>, <to:0.8>tag</to>, <range:0.2:0.8>tag</range>
@@ -288,7 +448,7 @@
     // Skip only while typing an in-progress weight expression like `(tag:1.2`.
     // Anchoring to the caret (no closing paren, ending at the number) means a
     // completed `(tag:1.2)` followed by a fresh tag still autocompletes.
-    if (/^\([^)]*:\d[\d.]*$/.test(searchFragment)) {
+    if (/^\([^)]*:\d[\d.]*$/.test(value.substring(result.trimmedStart, pos).trimEnd())) {
       showSuggestions = false;
       suggestions = [];
       return;
@@ -352,9 +512,10 @@
     undoStack = [...undoStack, value];
     redoStack = [];
 
-    const before = value.substring(0, result.start);
-    const leadingWhitespace = value.substring(result.start, result.trimmedStart);
-    const trailingWhitespace = value.substring(result.trimmedEnd, result.end);
+    // Only the tag name is replaced. A weight opener before it and a closer
+    // after it (`-2::`, `::`, `{`, `}`, `:1.2)`) stay where they are.
+    const before = value.substring(0, result.coreStart);
+    const closing = value.substring(result.coreEnd, result.end);
     const after = value.substring(result.end);
     // LoRA keywords go in verbatim, the same as the LoRA gallery's trigger-word
     // chips: underscores and brackets can be part of the trigger token.
@@ -382,7 +543,7 @@
     const needsCommaSuffix = !/^\s*,/.test(after);
     const suffix = needsCommaSuffix ? ", " : "";
 
-    value = before + leadingWhitespace + tagText + trailingWhitespace + suffix + after;
+    value = before + tagText + closing + suffix + after;
 
     // Track it like a chip-inserted trigger word, so it is highlighted and
     // removed again when the LoRA is switched off. Only the positive prompt
@@ -395,7 +556,7 @@
     showSuggestions = false;
 
     // Set cursor position after the inserted tag (before trailing suffix)
-    const cursorPos = (before + leadingWhitespace + tagText + trailingWhitespace + suffix).length;
+    const cursorPos = (before + tagText + closing + suffix).length;
     requestAnimationFrame(() => {
       textareaEl?.focus();
       textareaEl?.setSelectionRange(cursorPos, cursorPos);
@@ -480,6 +641,31 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // Ctrl+/ comments out (or back in) the lines the selection touches.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "/" || e.code === "Slash") && textareaEl) {
+      e.preventDefault();
+      undoStack = [...undoStack, value];
+      redoStack = [];
+      const result = toggleLineComments(value, textareaEl.selectionStart, textareaEl.selectionEnd);
+      value = result.value;
+      requestAnimationFrame(() => {
+        textareaEl?.setSelectionRange(result.selectionStart, result.selectionEnd);
+        syncSelectionRange();
+      });
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "f" || e.key === "h")) {
+      e.preventDefault();
+      openFind(e.key === "h");
+      return;
+    }
+    if (e.key === "Escape" && findOpen && !showSuggestions) {
+      e.preventDefault();
+      findOpen = false;
+      replaceOpen = false;
+      return;
+    }
+
     // Undo/redo for autocomplete: Ctrl+Z / Ctrl+Y
     if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
       if (undoStack.length > 0) {
@@ -626,12 +812,22 @@
 
   // Reactive: detect if current value has scheduling tags, inline preset tokens, or LoRA trigger words
   const showBackdrop = $derived(
-    hasSchedulingTags(value) || hasPresetTokens(value) || hasLoraWordInPrompt(value, activeLoraWords),
+    hasSchedulingTags(value) ||
+      hasPresetTokens(value) ||
+      hasLoraWordInPrompt(value, activeLoraWords) ||
+      commentRanges.length > 0 ||
+      findRanges.length > 0,
   );
 
   // Reactive: render highlighted HTML for the backdrop overlay
   const highlightedHtml = $derived(
-    showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs, activeLoraWords) : "",
+    showBackdrop
+      ? renderHighlightedPrompt(value, promptPresets.slugs, activeLoraWords, {
+          comments: commentRanges,
+          finds: findRanges,
+          currentFind,
+        })
+      : "",
   );
   const clickableSegments = $derived(
     tagAssist && autocomplete.clickableOverlayEnabled ? getPromptClickableSegments(value) : [],
@@ -868,7 +1064,11 @@
     } else {
       spellMenuItems = suggestions.map((tag) => ({
         label: tag.n.replace(/_/g, " "),
-        action: () => replaceRange(piece.start, piece.end, prefix.trim() + formatTagForPrompt(tag.n)),
+        // Keep the weight around the tag (`1.2::name::`, `{name}`) and swap the name only.
+        action: () => {
+          const core = findTagCore(value, piece.start, piece.end);
+          replaceRange(core.start, core.end, prefix.trim() + formatTagForPrompt(tag.n));
+        },
       }));
     }
     spellMenuX = event.clientX;
@@ -1090,6 +1290,16 @@
     >
       []
     </button>
+    <button
+      type="button"
+      disabled={!hasSelection}
+      class="shrink-0 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed {relatedOpen ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10' : 'border-neutral-700 bg-neutral-900 text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300'}"
+      title={hasSelection ? locale.t('generation.prompt.related_title') : locale.t('generation.prompt.weight_select_hint')}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => { void openRelated(); }}
+    >
+      {locale.t('generation.prompt.related')}
+    </button>
     {#if !hasSelection}
       <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
@@ -1098,6 +1308,141 @@
       title={locale.t('generation.prompt.tokens_tip')}
     >{tokenCount}/{tokenLimit}</span>
   </div>
+  {#if relatedOpen}
+    <div class="mb-1 rounded-lg border border-neutral-700 bg-neutral-900 p-2 text-[11px]" role="region" aria-label={locale.t('generation.prompt.related_title')}>
+      <div class="mb-1.5 flex items-center gap-2">
+        <span class="text-neutral-400">{locale.t('generation.prompt.related_for')}</span>
+        {#if relatedResult}<span class="truncate font-medium text-neutral-200">{relatedResult.tag}</span>{/if}
+        {#if relatedLoading}<span class="text-neutral-500">{locale.t('generation.prompt.related_loading')}</span>{/if}
+        <button
+          type="button"
+          class="ml-auto rounded px-1.5 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+          aria-label={locale.t('generation.prompt.related_close')}
+          title={locale.t('generation.prompt.related_close')}
+          onmousedown={(e) => e.preventDefault()}
+          onclick={() => (relatedOpen = false)}
+        >&times;</button>
+      </div>
+      {#if relatedError}
+        <p class="text-amber-400">{relatedError}</p>
+      {/if}
+      {#if relatedResult}
+        {#each [
+          { key: 'danbooru', label: locale.t('generation.prompt.related_danbooru'), tags: relatedResult.danbooru, note: relatedResult.danbooru_error },
+          { key: 'gallery', label: locale.t('generation.prompt.related_gallery', { count: String(relatedResult.gallery_images) }), tags: relatedResult.gallery, note: null },
+        ] as section (section.key)}
+          <div class="mt-1">
+            <span class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{section.label}</span>
+            {#if section.tags.length > 0}
+              <div class="flex flex-wrap gap-1">
+                {#each section.tags as tag (tag.name)}
+                  {@const used = promptTags.has(tag.name)}
+                  <button
+                    type="button"
+                    class="rounded border bg-neutral-800/60 px-1.5 py-0.5 transition-colors {relatedChipClass(tag.category)} {used ? 'opacity-35 cursor-default' : 'hover:bg-neutral-700'}"
+                    title={used ? locale.t('generation.prompt.related_in_prompt') : locale.t('generation.prompt.related_add')}
+                    disabled={used}
+                    onmousedown={(e) => e.preventDefault()}
+                    onclick={() => addRelated(tag)}
+                  >{tag.name}{#if section.key === 'gallery'}<span class="ml-1 text-neutral-500">{tag.score}</span>{/if}</button>
+                {/each}
+              </div>
+            {:else}
+              <p class="text-neutral-500">{section.note ?? locale.t('generation.prompt.related_none')}</p>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
+  {/if}
+  {#if findOpen}
+    <div class="mb-1 space-y-1 rounded-lg border border-neutral-700 bg-neutral-900 p-1.5" role="search">
+      <div class="flex items-center gap-1">
+        <input
+          bind:this={findInputEl}
+          bind:value={findQuery}
+          oninput={() => (findIndex = 0)}
+          onkeydown={handleFindKeydown}
+          placeholder={locale.t('generation.prompt.find_placeholder')}
+          aria-label={locale.t('generation.prompt.find_placeholder')}
+          class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
+        />
+        <span class="shrink-0 tabular-nums text-[10px] {findQuery && findRanges.length === 0 ? 'text-red-400' : 'text-neutral-500'}">
+          {findRanges.length === 0 ? (findQuery ? locale.t('generation.prompt.find_none') : "") : `${currentFind + 1}/${findRanges.length}`}
+        </span>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1.5 py-1 text-[10px] font-semibold {findCaseSensitive ? 'bg-indigo-500/20 text-indigo-200' : 'text-neutral-400 hover:text-neutral-100'}"
+          title={locale.t('generation.prompt.find_case')}
+          aria-label={locale.t('generation.prompt.find_case')}
+          aria-pressed={findCaseSensitive}
+          onclick={() => (findCaseSensitive = !findCaseSensitive)}
+        >Aa</button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100 disabled:opacity-30"
+          disabled={findRanges.length === 0}
+          title={locale.t('generation.prompt.find_prev')}
+          aria-label={locale.t('generation.prompt.find_prev')}
+          onclick={() => stepFind(-1)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100 disabled:opacity-30"
+          disabled={findRanges.length === 0}
+          title={locale.t('generation.prompt.find_next')}
+          aria-label={locale.t('generation.prompt.find_next')}
+          onclick={() => stepFind(1)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100"
+          title={locale.t('generation.prompt.find_replace_toggle')}
+          aria-label={locale.t('generation.prompt.find_replace_toggle')}
+          aria-expanded={replaceOpen}
+          onclick={() => (replaceOpen = !replaceOpen)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M4 10v10h10"/></svg>
+        </button>
+        <button
+          type="button"
+          class="shrink-0 rounded px-1 py-1 text-neutral-400 hover:text-neutral-100"
+          title={locale.t('generation.prompt.find_close')}
+          aria-label={locale.t('generation.prompt.find_close')}
+          onclick={closeFind}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      {#if replaceOpen}
+        <div class="flex items-center gap-1">
+          <input
+            bind:value={replaceText}
+            onkeydown={handleReplaceKeydown}
+            placeholder={locale.t('generation.prompt.replace_placeholder')}
+            aria-label={locale.t('generation.prompt.replace_placeholder')}
+            class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-30"
+            disabled={findRanges.length === 0}
+            onclick={replaceCurrent}
+          >{locale.t('generation.prompt.replace_one')}</button>
+          <button
+            type="button"
+            class="shrink-0 rounded border border-neutral-700 px-2 py-1 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-30"
+            disabled={findRanges.length === 0}
+            onclick={replaceAll}
+          >{locale.t('generation.prompt.replace_all')}</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
   <div class="relative">
     {#if showBackdrop}
       <div

@@ -69,9 +69,34 @@ next to the prompt header.  Hover over it to see an example roll.  Click it
 to see a different roll.  The prompt box always shows the template; only the
 submitted (resolved) prompt changes each generation.
 
+## File wildcards
+
+`__name__` picks one line from a wildcard file in `<app data>/wildcards/`
+(the Wildcards tab in the bottom panel lists, edits and creates them, and its
+folder button opens the folder). The layout follows Dynamic Prompts, so packs
+made for it work as they are:
+
+| File | Typed as |
+|------|----------|
+| `colors.txt` (one option per line, `#` lines are comments) | `__colors__` |
+| `hair/styles.txt` | `__hair/styles__` |
+| `pack.yaml` or `pack.json` with `outfits: { casual: [...] }` | `__outfits/casual__` (also `__pack/outfits/casual__`) |
+
+- A map key alone (`__outfits__`) picks from every option under it, and `*`
+  matches across names (`__hair/*__`).
+- Options may contain more wildcards and `{a|b}` alternation.
+- Picks are seeded from the generation seed like alternation, so a fixed seed
+  repeats them. Brackets around a token (`[__hat__]`) stay around the pick.
+- **In order** (per name, in the Wildcards tab) takes the next line each time a
+  generation is sent instead of a random one, independent of the seed. With
+  continuous generation this walks a list once per run.
+- Unknown names are left as written. Expansion runs in `toParams()`, so the
+  gallery and MCP see the resolved prompt.
+
 ## Implementation notes
 
-- Expander: `src/lib/utils/randomPrompt.ts`
+- Expander: `src/lib/utils/randomPrompt.ts`; file wildcards: `src/lib/utils/wildcards.ts`,
+  `src/lib/stores/wildcards.svelte.ts`, `src-tauri/src/commands/wildcards.rs`
 - Called from `toParams()` in `src/lib/stores/generation.svelte.ts`, right
   after inline preset resolution and before scheduling / regional tag parsing.
 - PRNG: splitmix32 seeded from `(userSeed >>> 0)`.  When seed is -1 (random),

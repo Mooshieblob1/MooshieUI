@@ -424,6 +424,9 @@ export interface GenerationParams {
   /** RescaleCFG for v-pred models: rescale the guidance vector each step to
    *  stop oversaturation/burn. Applied only when is_vpred_model is true. */
   vpred_rescale_cfg?: boolean;
+  /** Moody Moss 4K HD two-pass txt2img (MOSS-Image only). */
+  moody_moss_hd?: boolean;
+  moody_moss?: import("../utils/moodyMoss.js").MoodyMossFinishPayload;
   /** RescaleCFG blend (0 = plain CFG, 0.7 = recommended, 1 = full rescale). */
   vpred_rescale_cfg_multiplier?: number;
   /** NAG (Normalized Attention Guidance): attention-level negative guidance.
@@ -730,6 +733,12 @@ export interface AppConfig {
   webhook_events: string[];
   webhook_include_sensitive: boolean;
   webhook_allow_private_targets: boolean;
+  /** Eagle export through its local API: "Send to Eagle" in the gallery. */
+  eagle_enabled?: boolean;
+  /** With Eagle export on, also send each image as it is saved. */
+  eagle_auto_send?: boolean;
+  /** Eagle folder id for sent images; empty means Eagle's inbox. */
+  eagle_folder_id?: string | null;
   theme_profile_id: string | null;
   theme_profiles: ThemeProfile[];
   /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */

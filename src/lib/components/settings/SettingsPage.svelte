@@ -1,7 +1,7 @@
 <script lang="ts">
   import { portal } from "../../utils/portal.js";
   import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, lanRequest, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, lanRequest, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel, addCustomInterrogatorModel, removeCustomInterrogatorModel, eagleStatus } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -24,10 +24,12 @@
   import McpServerPanel from "./McpServerPanel.svelte";
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
+  import NovelAiSavedKeys from "./NovelAiSavedKeys.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
-  import { checkForAppUpdate, isUpdateServerUnreachable, RELEASES_PAGE_URL } from "../../utils/updater.js";
+  import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL } from "../../utils/updater.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
+  import { playFinishChime } from "../../utils/finishChime.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
@@ -104,6 +106,20 @@
   const appVersion = getAppVersion();
 
   let config = $state<AppConfig | null>(null);
+  let eagleCheck = $state<{ ok: boolean; text: string } | null>(null);
+  let eagleChecking = $state(false);
+
+  async function testEagle() {
+    eagleChecking = true;
+    try {
+      const version = await eagleStatus();
+      eagleCheck = { ok: true, text: locale.t("settings.connection.eagle_ok", { version: version || "?" }) };
+    } catch {
+      eagleCheck = { ok: false, text: locale.t("settings.connection.eagle_unreachable") };
+    } finally {
+      eagleChecking = false;
+    }
+  }
   let showPromptAssistantSetup = $state(false);
   let loading = $state(true);
   let saving = $state(false);
@@ -1113,6 +1129,8 @@
   let updateState = $state<UpdateCheckState>("idle");
   let updateVersion = $state("");
   let updateError = $state("");
+  /** Set when apt, dnf, zypper or the AUR owns this install. */
+  let managedUpdateCommand = $state("");
   let updateDownloaded = $state(0);
   let updateTotal = $state(0);
   let browserUpdateMode = $state<BrowserUpdateMode>("local");
@@ -1163,6 +1181,7 @@
       if (update) {
         updateObj = update;
         updateVersion = update.version;
+        managedUpdateCommand = (await packageManagerUpdateCommand()) ?? "";
         updateState = "available";
       } else {
         updateState = "up-to-date";
@@ -2723,6 +2742,38 @@
               </div>
               <p class="text-xs text-neutral-500 mt-1">{locale.t("settings.connection.webhook_events")}</p>
             </div>
+            <div class="col-span-3 border-t border-neutral-800 pt-4">
+              <label class="inline-flex items-center gap-2 text-sm text-neutral-200">
+                <input type="checkbox" bind:checked={config.eagle_enabled} class="accent-indigo-500" />
+                {locale.t("settings.connection.eagle_enabled")}
+              </label>
+              <p class="text-xs text-neutral-500 mt-1">{locale.t("settings.connection.eagle_hint")}</p>
+              <label class="mt-2 inline-flex items-center gap-2 text-xs text-neutral-400">
+                <input type="checkbox" bind:checked={config.eagle_auto_send} disabled={!config.eagle_enabled} class="accent-indigo-500" />
+                {locale.t("settings.connection.eagle_auto_send")}
+              </label>
+              <div class="mt-2 flex flex-wrap items-end gap-2">
+                <div class="flex-1 min-w-48">
+                  <label class="block text-xs text-neutral-400 mb-1" for="eagle-folder-id">{locale.t("settings.connection.eagle_folder_id")}</label>
+                  <input
+                    id="eagle-folder-id"
+                    type="text"
+                    bind:value={config.eagle_folder_id}
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                    placeholder={locale.t("settings.connection.eagle_folder_placeholder")}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onclick={testEagle}
+                  disabled={eagleChecking}
+                  class="px-3 py-2 rounded-lg text-sm bg-neutral-800 border border-neutral-700 text-neutral-200 hover:bg-neutral-700 disabled:opacity-50 transition-colors"
+                >{locale.t("settings.connection.eagle_test")}</button>
+              </div>
+              {#if eagleCheck}
+                <p class="text-xs mt-1 {eagleCheck.ok ? 'text-emerald-400' : 'text-amber-400'}">{eagleCheck.text}</p>
+              {/if}
+            </div>
           </div>
           </div>
         </section>
@@ -3643,6 +3694,23 @@
             </div>
             {/if}
 
+            <!-- Finish chime -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.finishSound}
+                  onchange={(e) => {
+                    generation.finishSound = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                    if (generation.finishSound) playFinishChime();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.notifications.finish_sound_label')}</span>
+              </label>
+            </div>
+
           </div>
         </section>
         {/if}
@@ -4527,6 +4595,10 @@
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
             </div>
 
+            {#if isAdmin}
+              <NovelAiSavedKeys />
+            {/if}
+
             {#if novelai.apiKeyConfigured}
               <div class="border-t border-neutral-800 pt-3 space-y-2">
                 <div class="flex items-center justify-between gap-2">
@@ -4554,6 +4626,14 @@
                       ? locale.t('settings.novelai.opus_active')
                       : locale.t('settings.novelai.opus_inactive')}
                   </p>
+                  {#if novelai.paidThrough}
+                    <p class="text-[10px] text-neutral-400">
+                      {locale.t('settings.novelai.paid_through', {
+                        date: novelai.paidThrough.toLocaleDateString(locale.current, { year: 'numeric', month: 'short', day: 'numeric' }),
+                        days: String(novelai.daysPaidThrough ?? 0),
+                      })}
+                    </p>
+                  {/if}
 
                   {#if novelai.opusAllowance}
                     {@const allowance = novelai.opusAllowance}
@@ -4802,6 +4882,9 @@
                     {:else}
                       <p class="text-xs text-indigo-200/80">{locale.t('settings.about.redeploy_to_update')}</p>
                     {/if}
+                  {:else if managedUpdateCommand}
+                    <p class="text-xs text-indigo-200/80 mb-1">{locale.t('updater.package_manager_hint')}</p>
+                    <code class="block select-all rounded bg-black/30 px-2 py-1 font-mono text-xs text-indigo-100">{managedUpdateCommand}</code>
                   {:else}
                     <button
                       onclick={downloadAndInstallUpdate}

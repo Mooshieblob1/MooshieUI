@@ -283,6 +283,31 @@ export async function setNovelaiApiKey(apiKey: string): Promise<boolean> {
   return ipcInvoke("set_novelai_api_key", { apiKey });
 }
 
+/** A saved NovelAI key as the UI sees it: a name and a hint, never the key. */
+export interface NovelAiSavedKey {
+  label: string;
+  /** `…abcd`, or `env:NAME` for a variable reference. */
+  hint: string;
+  /** This is the key in use. */
+  active: boolean;
+}
+
+export async function listNovelaiKeys(): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("list_novelai_keys");
+}
+
+export async function saveNovelaiKey(label: string, apiKey: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("save_novelai_key", { label, apiKey });
+}
+
+export async function deleteNovelaiKey(label: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("delete_novelai_key", { label });
+}
+
+export async function useNovelaiKey(label: string): Promise<NovelAiSavedKey[]> {
+  return ipcInvoke("use_novelai_key", { label });
+}
+
 /**
  * Store a cloud voice or video provider key, or clear it with an empty string.
  * Returns whether a key is now configured. Like the NovelAI key, a named
@@ -823,6 +848,36 @@ export async function saveToGallery(
   watermark?: boolean,
 ): Promise<string> {
   return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode, watermark });
+}
+
+/** One related tag: Danbooru category, and cosine similarity or times used together. */
+export interface RelatedTag {
+  name: string;
+  category: number;
+  score: number;
+}
+
+export interface RelatedTags {
+  tag: string;
+  danbooru: RelatedTag[];
+  danbooru_error: string | null;
+  gallery: RelatedTag[];
+  gallery_images: number;
+}
+
+/** Tags related to one prompt tag, from Danbooru and from the gallery. */
+export async function relatedTags(tag: string): Promise<RelatedTags> {
+  return ipcInvoke("related_tags", { tag });
+}
+
+/** Eagle's version when it is running on this machine; rejects otherwise. */
+export async function eagleStatus(): Promise<string> {
+  return ipcInvoke("eagle_status");
+}
+
+/** Send gallery images to Eagle by file name. Resolves to how many Eagle added. */
+export async function sendToEagle(filenames: string[]): Promise<number> {
+  return ipcInvoke("send_to_eagle", { filenames });
 }
 
 export async function saveToGalleryBytes(
@@ -1394,6 +1449,15 @@ async function flushPendingConfigWrite(): Promise<void> {
     await ipcInvoke("update_config", { config: toSave });
     configCache = toSave;
   }
+}
+
+/**
+ * The Linux package manager that owns this desktop install ("apt", "dnf",
+ * "zypper" or "pacman"), or null when the in-app updater handles updates.
+ * Desktop only.
+ */
+export async function getAppPackageManager(): Promise<string | null> {
+  return ipcInvoke<string | null>("app_package_manager");
 }
 
 export async function getConfig(options?: { force?: boolean }): Promise<AppConfig> {
@@ -2002,3 +2066,23 @@ export const refineVideoDraft = (filename: string, steps: number, sigma: number)
 /** Regenerate pixel frames [startFrame, endFrame) of a retained draft, keeping its audio. */
 export const retakeVideoDraft = (filename: string, startFrame: number, endFrame: number, steps: number) =>
   ipcInvoke<{ prompt_id: string }>("retake_video_draft", { filename, startFrame, endFrame, steps });
+
+// --- Wildcard files (<app data>/wildcards) ---
+
+export interface WildcardListing {
+  dir: string;
+  files: Array<{ path: string; content: string }>;
+  truncated: boolean;
+}
+
+export async function listWildcards(): Promise<WildcardListing> {
+  return ipcInvoke("list_wildcards");
+}
+
+export async function saveWildcard(path: string, content: string): Promise<void> {
+  return ipcInvoke("save_wildcard", { path, content });
+}
+
+export async function deleteWildcard(path: string): Promise<void> {
+  return ipcInvoke("delete_wildcard", { path });
+}

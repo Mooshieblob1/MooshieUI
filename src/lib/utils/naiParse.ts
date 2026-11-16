@@ -578,6 +578,12 @@ export function validateNaiResponse(parsed: NaiParsedResponse): string[] {
     }
   }
 
+  const script = [
+    ["BASE", parsed.base] as const,
+    ...parsed.characters.map((box, i) => [`CHAR ${i + 1}`, box] as const),
+  ].flatMap(([label, field]) => scriptLetteringProblem(label, field, parsed.base));
+  problems.push(...script);
+
   problems.push(...outfitIsolationProblems(parsed));
 
   const negations = layoutProseProblems(parsed.base);
@@ -592,6 +598,53 @@ export function validateNaiResponse(parsed: NaiParsedResponse): string[] {
   }
 
   return problems;
+}
+
+/** A comic script's page or panel heading, which would be drawn as lettering. */
+const SCRIPT_HEADING = /^\s*(?:page|panel)\s*\d+\b/i;
+/**
+ * A line opened by a speaker label: one to three capitalised words (or a CJK
+ * name), an optional parenthetical such as (whispering), then a colon.
+ */
+const SPEAKER_LABEL =
+  /^\s*((?:\p{Lu}[\p{L}'’.-]*(?:\s+\p{Lu}[\p{L}'’.-]*){0,2})|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u30fb\u30fc]{1,8})\s*(?:[(（][^)）]*[)）]\s*)?[:：]\s*\S/u;
+
+/**
+ * A Text: block written as a comic script.
+ *
+ * Everything after Text: is drawn into the image, so `Ronnie: Wait up!` puts
+ * the name inside the bubble and `Page 2` gets a bubble of its own. Headings
+ * are never lettering. A speaker label is flagged when two or more lines carry
+ * one, or when a single one names someone the prose talks about in an image
+ * with speech bubbles; a lone `Warning: wet floor` sign is left alone.
+ */
+function scriptLetteringProblem(label: string, field: string, base: string): string[] {
+  const { tail } = splitTextBlock(field);
+  if (!tail) return [];
+  const lines = tail
+    .replace(/^\s*Text\s*:/i, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const headings = lines.filter((line) => SCRIPT_HEADING.test(line));
+  const speakers = lines
+    .map((line) => line.match(SPEAKER_LABEL)?.[1])
+    .filter((name): name is string => !!name && !SCRIPT_HEADING.test(name));
+  const baseHead = splitTextBlock(base).head;
+  const prose = baseHead.split("\n").filter(isProseLine).join(" ");
+  const bubbles = /(?:^|,)\s*\{*(?:speech|thought) bubbles?\}*\s*(?=,|$)/im.test(baseHead);
+  const named =
+    speakers.length === 1 &&
+    bubbles &&
+    new RegExp(`(^|[^\\p{L}])${escapeRegExp(speakers[0])}(?=$|[^\\p{L}])`, "iu").test(prose);
+  const labelled = speakers.length >= 2 || named;
+  if (headings.length === 0 && !labelled) return [];
+
+  const shown = labelled ? [...new Set(speakers)].slice(0, 2).map((name) => `${name}:`) : [];
+  const found = [...shown, ...headings.slice(0, 1)];
+  return [
+    `The Text: block in ${label} reads like a comic script (${found.join(", ")}). Everything after Text: is drawn into the image, so speaker labels and page or panel headings end up inside the speech bubbles. Keep only the spoken words there, one bubble per string with a blank line between them, in reading order. Say who speaks each line in the BASE prose instead, by quoting the line in the sentence that describes its panel, and call panels panels rather than pages.`,
+  ];
 }
 
 /**

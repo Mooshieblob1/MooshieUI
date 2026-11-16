@@ -1414,6 +1414,37 @@ pub async fn embed_image_metadata_bytes(
     crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
 }
 
+/// Tags related to one prompt tag, from Danbooru and from the gallery.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn related_tags(
+    state: State<'_, Arc<AppState>>,
+    tag: String,
+) -> Result<crate::related_tags::RelatedTags, AppError> {
+    let dir = crate::config::gallery_dir();
+    crate::related_tags::lookup(&state.http_client, &tag, dir.as_deref())
+        .await
+        .map_err(AppError::Other)
+}
+
+/// Eagle's version when it is running and reachable on this machine.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn eagle_status(state: State<'_, Arc<AppState>>) -> Result<String, AppError> {
+    crate::eagle::status(&state.http_client).await
+}
+
+/// Send gallery images to Eagle by file name. Returns how many Eagle added.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn send_to_eagle(
+    state: State<'_, Arc<AppState>>,
+    filenames: Vec<String>,
+) -> Result<usize, AppError> {
+    let folder = state.config.read().await.eagle_folder_id.clone();
+    crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref()).await
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_to_gallery(
@@ -4486,7 +4517,10 @@ fn moss_image_family_from_text(lower: &str) -> Option<&'static str> {
         "moss.image",
     ]
     .iter()
-    .any(|marker| lower.contains(marker));
+    .any(|marker| lower.contains(marker))
+        // Moody Moss Mix, a MOSS-Image SFT fine-tune whose files are named
+        // `Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors` and the like.
+        || (lower.contains("moody") && lower.contains("moss"));
     if !is_moss {
         return None;
     }
@@ -5214,10 +5248,20 @@ mod split_model_pairing_tests {
             ("MOSS-Image-SFT-8-steps-dmd.safetensors", "mossimage"),
             ("moss_image_base_int8_convrot.safetensors", "mossimagebase"),
             ("MOSS-Image-Base-Q8_0.gguf", "mossimagebase"),
+            (
+                "Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors",
+                "mossimage",
+            ),
+            (
+                "Moody-Moss-Mix-V2-25STEPS-CFG3_00001__clean-int8_convrot.safetensors",
+                "mossimage",
+            ),
         ] {
             assert_eq!(model_family_from_filename(name), Some(family), "{name}");
         }
         assert_eq!(model_family_from_base_model("MOSS-Image"), "mossimage");
+        // CivitAI's own base-model name, as Moody Moss Mix lists it.
+        assert_eq!(model_family_from_base_model("MOSS Image"), "mossimage");
         assert_eq!(
             model_family_from_base_model("MOSS-Image Base"),
             "mossimagebase"
