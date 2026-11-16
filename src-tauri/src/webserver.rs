@@ -637,6 +637,9 @@ const MODERATOR_COMMANDS: &[&str] = &[
 /// so granting it to a moderator would hand them the host account.
 const ADMIN_COMMANDS: &[&str] = &[
     "switch_to_app_mode",
+    // one shared folder on the host; other accounts can read it, not change it
+    "save_wildcard",
+    "delete_wildcard",
     "set_gallery_path",
     "import_image_directory",
     "open_directory",
@@ -6678,6 +6681,24 @@ async fn dispatch_command(
                     .map(|glb| serde_json::json!(glb))
                     .map_err(|e| e.to_string())
             }
+        }
+        "list_wildcards" => {
+            let listing = tokio::task::spawn_blocking(commands::wildcards::list)
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(listing).map_err(|e| e.to_string())
+        }
+        "save_wildcard" => {
+            let path = args.get("path").and_then(|v| v.as_str()).ok_or("Missing path")?;
+            let content = args.get("content").and_then(|v| v.as_str()).ok_or("Missing content")?;
+            commands::wildcards::save(path, content).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "delete_wildcard" => {
+            let path = args.get("path").and_then(|v| v.as_str()).ok_or("Missing path")?;
+            commands::wildcards::delete(path).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
         }
         "get_h3_upscaler_status" => Ok(commands::video_drafts::upscaler_status(&state).await),
         "install_h3_upscaler" => commands::video_drafts::install_upscaler(&state)
