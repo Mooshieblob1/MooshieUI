@@ -8,7 +8,14 @@
  *  - Stealth alpha-channel LSB encoding (SwarmUI and NovelAI)
  */
 
-import { parseNovelAiChunks, parseNovelAiStealthJson } from "./novelaiPngMetadata.js";
+import { isNovelAiChunks, parseNovelAiChunks, parseNovelAiStealthJson } from "./novelaiPngMetadata.js";
+
+/**
+ * Keyword of the chunk MooshieUI splices into a NovelAI PNG it generated,
+ * before IEND, leaving every byte NovelAI wrote alone. Mirrors the Rust
+ * `MOOSHIE_MARKER_KEYWORD`.
+ */
+const MOOSHIE_MARKER_KEYWORD = "MooshieUI";
 
 // ---------------------------------------------------------------------------
 // PNG chunk reader
@@ -381,6 +388,23 @@ function parseStealthPayload(text: string): Record<string, string> | null {
   return parseSwarmUIJson(text) ?? parseNovelAiStealthJson(text);
 }
 
+/**
+ * Label where a NovelAI PNG came from, under `source`: "MooshieUI (NovelAI)"
+ * with the MooshieUI marker chunk, "NovelAI" without. The settings themselves
+ * still come from NovelAI's chunks or stealth alpha. Mirrors the Rust
+ * `label_novelai_source`.
+ */
+function labelNovelAiSource(
+  buf: ArrayBuffer,
+  params: Record<string, string> | null,
+): Record<string, string> | null {
+  if (!params || params.mooshie_backend !== "novelai" || params.source) return params;
+  const chunks = readAllTextChunks(buf);
+  if ("parameters" in chunks || !isNovelAiChunks(chunks)) return params;
+  params.source = MOOSHIE_MARKER_KEYWORD in chunks ? "MooshieUI (NovelAI)" : "NovelAI";
+  return params;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -400,7 +424,7 @@ export async function readPngMetadataClientSide(
   //    copied straight off novelai.net gets past step 1 untouched. Desktop
   //    reads these in Rust; browser mode never reaches that reader.
   const novelAiResult = parseNovelAiChunks(readAllTextChunks(buf));
-  if (novelAiResult) return novelAiResult;
+  if (novelAiResult) return labelNovelAiSource(buf, novelAiResult);
 
   // 3. Try stealth alpha (requires pixel decoding via Canvas)
   try {
@@ -412,7 +436,7 @@ export async function readPngMetadataClientSide(
     ctx.drawImage(bitmap, 0, 0);
     const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
     bitmap.close();
-    return readStealthAlphaAsync(imageData.data, imageData.width, imageData.height);
+    return labelNovelAiSource(buf, await readStealthAlphaAsync(imageData.data, imageData.width, imageData.height));
   } catch {
     return null;
   }

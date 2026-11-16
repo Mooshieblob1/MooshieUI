@@ -2221,6 +2221,7 @@ const zhTw: Record<string, string> = {
   "gallery.meta.upscale_denoise": "放大去雜訊",
   "gallery.meta.date": "日期",
   "gallery.meta.generation_time": "生成時間",
+  "gallery.meta.source": "來源",
 
   "gallery.mode.txt2img": "文字生圖",
   "gallery.mode.img2img": "以圖生圖",

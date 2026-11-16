@@ -2221,6 +2221,7 @@ const ko: Record<string, string> = {
   "gallery.meta.upscale_denoise": "업스케일 디노이즈",
   "gallery.meta.date": "날짜",
   "gallery.meta.generation_time": "생성 시간",
+  "gallery.meta.source": "출처",
 
   "gallery.mode.txt2img": "텍스트에서 이미지",
   "gallery.mode.img2img": "이미지에서 이미지",
