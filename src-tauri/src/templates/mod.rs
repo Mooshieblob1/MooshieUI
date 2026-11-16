@@ -1141,7 +1141,49 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // read the schedule off the fully patched model the injects above built.
     inject_resume_stage(&mut result, params, seed);
 
+    // The patches above rewire only the main sampler, which for Moody Moss
+    // 4K HD is the second pass. The first pass must see the same model and
+    // conditioning.
+    if txt2img::moody_moss_hd_active(params) {
+        sync_moody_moss_first_pass(&mut result);
+    }
+
     result
+}
+
+/// Copy the main sampler's model and conditioning onto the Moody Moss first
+/// pass, found through the `LatentUpscaleBy` that feeds the main sampler.
+fn sync_moody_moss_first_pass(result: &mut WorkflowResult) {
+    let Some(main_inputs) = result
+        .workflow
+        .get(&result.sampler_id)
+        .and_then(|node| node.get("inputs"))
+        .cloned()
+    else {
+        return;
+    };
+    let linked_id = |value: &Value| value.get(0).and_then(Value::as_str).map(str::to_string);
+    let Some(upscale_id) = linked_id(&main_inputs["latent_image"]) else {
+        return;
+    };
+    let Some(first_id) = result
+        .workflow
+        .get(&upscale_id)
+        .filter(|node| node["class_type"] == "LatentUpscaleBy")
+        .and_then(|node| linked_id(&node["inputs"]["samples"]))
+    else {
+        return;
+    };
+    if let Some(first_inputs) = result
+        .workflow
+        .get_mut(&first_id)
+        .filter(|node| node["class_type"] == "KSamplerAdvanced")
+        .and_then(|node| node.get_mut("inputs"))
+    {
+        for key in ["model", "positive", "negative"] {
+            first_inputs[key] = main_inputs[key].clone();
+        }
+    }
 }
 
 /// Wire up what a resumed stage needs beyond KSamplerAdvanced's step range.
@@ -2435,6 +2477,147 @@ mod tests {
         );
         of("EmptyFlux2LatentImage");
         assert_eq!(of("KSampler")["inputs"]["cfg"], json!(2.5));
+    }
+
+    fn moody_moss_params(steps: u32) -> GenerationParams {
+        let mut value = serde_json::to_value(klein_int8_params("mossimage", false)).unwrap();
+        value["diffusion_model"] = json!("Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors");
+        value["clip_model"] = json!("qwen3.5_9b_w4a8_gptq.safetensors");
+        value["clip_type"] = json!("moss_image");
+        value["vae"] = json!("flux2-vae_small.safetensors");
+        value["steps"] = json!(steps);
+        value["cfg"] = json!(3.0);
+        value["sampler_name"] = json!("euler");
+        value["scheduler"] = json!("simple");
+        value["width"] = json!(832);
+        value["height"] = json!(1248);
+        value["moody_moss_hd"] = json!(true);
+        serde_json::from_value(value).unwrap()
+    }
+
+    fn nodes_of<'a>(workflow: &'a Value, class: &str) -> Vec<(&'a String, &'a Value)> {
+        workflow
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(_, n)| n["class_type"] == json!(class))
+            .collect()
+    }
+
+    /// Moody Moss 4K HD as the author's V3 workflow runs it at 25 steps:
+    /// KSamplerAdvanced 0-15 of 18 with leftover noise, LatentUpscaleBy
+    /// bicubic 1.5, KSamplerAdvanced 6-25 of 25 with fresh noise from seed+72.
+    #[test]
+    fn moody_moss_hd_samples_in_two_passes_around_a_latent_upscale() {
+        let mut params = moody_moss_params(25);
+        // Smart Guidance patches only the main sampler; the first pass must
+        // follow it.
+        params.smart_guidance = true;
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+
+        assert!(nodes_of(&workflow, "KSampler").is_empty(), "{workflow}");
+        let upscale = nodes_of(&workflow, "LatentUpscaleBy");
+        assert_eq!(upscale.len(), 1, "{workflow}");
+        let (upscale_id, upscale) = upscale[0];
+        assert_eq!(upscale["inputs"]["upscale_method"], json!("bicubic"));
+        assert_eq!(upscale["inputs"]["scale_by"], json!(1.5));
+
+        let first_id = upscale["inputs"]["samples"][0].as_str().unwrap();
+        let first = &workflow[first_id];
+        assert_eq!(first["class_type"], json!("KSamplerAdvanced"));
+        assert_eq!(first["inputs"]["steps"], json!(18));
+        assert_eq!(first["inputs"]["start_at_step"], json!(0));
+        assert_eq!(first["inputs"]["end_at_step"], json!(15));
+        assert_eq!(
+            first["inputs"]["return_with_leftover_noise"],
+            json!("enable")
+        );
+        assert_eq!(first["inputs"]["noise_seed"], json!(42));
+        let empty_id = first["inputs"]["latent_image"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[empty_id]["class_type"],
+            json!("EmptyFlux2LatentImage")
+        );
+
+        let second: Vec<_> = nodes_of(&workflow, "KSamplerAdvanced")
+            .into_iter()
+            .filter(|(id, _)| id.as_str() != first_id)
+            .collect();
+        assert_eq!(second.len(), 1, "{workflow}");
+        let (second_id, second) = second[0];
+        assert_eq!(second["inputs"]["latent_image"][0], json!(upscale_id));
+        assert_eq!(second["inputs"]["steps"], json!(25));
+        assert_eq!(second["inputs"]["start_at_step"], json!(6));
+        assert_eq!(second["inputs"]["add_noise"], json!("enable"));
+        assert_eq!(
+            second["inputs"]["return_with_leftover_noise"],
+            json!("disable")
+        );
+        assert_eq!(second["inputs"]["noise_seed"], json!(42 + 72));
+        assert_eq!(second["inputs"]["cfg"], json!(3.0));
+
+        for key in ["model", "positive", "negative"] {
+            assert_eq!(first["inputs"][key], second["inputs"][key], "{key}");
+        }
+        let model_id = second["inputs"]["model"][0].as_str().unwrap();
+        assert_eq!(
+            workflow[model_id]["class_type"],
+            json!("MooshieSmartGuidance")
+        );
+
+        // The second pass is the one decoded and saved.
+        let decode = nodes_of(&workflow, "VAEDecode");
+        assert_eq!(decode.len(), 1, "{workflow}");
+        assert_eq!(decode[0].1["inputs"]["samples"][0], json!(second_id));
+    }
+
+    #[test]
+    fn moody_moss_passes_keep_the_workflow_proportions() {
+        use super::txt2img::{moody_moss_passes, MoodyMossPasses};
+        assert_eq!(
+            moody_moss_passes(25),
+            MoodyMossPasses {
+                first_steps: 18,
+                first_end: 15,
+                second_start: 6
+            }
+        );
+        for steps in 0..=80 {
+            let p = moody_moss_passes(steps);
+            assert!(
+                p.first_end >= 1 && p.first_end < p.first_steps,
+                "{steps}: {p:?}"
+            );
+            assert!(p.second_start < steps.max(2), "{steps}: {p:?}");
+        }
+    }
+
+    /// The flag only reshapes MOSS-Image txt2img. Another model, another mode
+    /// or a paused run keeps its own sampler.
+    #[test]
+    fn moody_moss_hd_is_ignored_outside_moss_txt2img() {
+        let mut sdxl = moody_moss_params(25);
+        sdxl.model_architecture = "sdxl".to_string();
+        assert!(!txt2img::moody_moss_hd_active(&sdxl));
+
+        let mut img2img = moody_moss_params(25);
+        img2img.mode = "img2img".to_string();
+        assert!(!txt2img::moody_moss_hd_active(&img2img));
+
+        let mut off = moody_moss_params(25);
+        off.moody_moss_hd = false;
+        let workflow = build_workflow(&off, 42, false);
+        assert_eq!(nodes_of(&workflow, "KSampler").len(), 1, "{workflow}");
+        assert!(nodes_of(&workflow, "LatentUpscaleBy").is_empty());
+
+        let mut paused = moody_moss_params(25);
+        paused.pause_at_step = Some(10);
+        let workflow = build_workflow(&paused, 42, false);
+        assert!(
+            nodes_of(&workflow, "LatentUpscaleBy").is_empty(),
+            "{workflow}"
+        );
     }
 
     #[test]

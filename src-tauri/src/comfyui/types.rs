@@ -218,6 +218,13 @@ pub struct GenerationParams {
     /// Quality-only negative prompt for tiled upscale KSampler (reduces tile artifacts)
     #[serde(default)]
     pub upscale_negative_prompt: Option<String>,
+    /// Moody Moss 4K HD: sample txt2img in two passes the way the Moody Moss
+    /// Mix author's ComfyUI workflow does (a short first pass that stops with
+    /// noise left, a 1.5x latent upscale, then a detail pass on the full
+    /// schedule). Only honoured for MOSS-Image txt2img; see
+    /// `templates::txt2img::moody_moss_hd_active`.
+    #[serde(default)]
+    pub moody_moss_hd: bool,
     /// When true, use separate UNETLoader + CLIPLoader + VAELoader instead of CheckpointLoaderSimple
     #[serde(default)]
     pub use_split_model: bool,

@@ -116,6 +116,44 @@ export const MOSS_IMAGE_SAMPLING: SamplingRecommendation = {
 };
 
 /**
+ * Moody Moss Mix (catlover1937), a MOSS-Image fine-tune. Its "25STEPS CFG3"
+ * versions and the author's Moody Moss 4K HD ComfyUI workflow sample with
+ * Euler on the simple schedule, 25 steps at CFG 3.
+ */
+export const MOODY_MOSS_SAMPLING: SamplingRecommendation = {
+  steps: 25,
+  cfg: 3.0,
+  samplerName: "euler",
+  scheduler: "simple",
+};
+
+/** Base canvas of the 4K HD workflow (2:3, about 1 MP); the second pass is 1.5x. */
+export const MOODY_MOSS_BASE_SIZE = { width: 832, height: 1248 } as const;
+
+/** Latent upscale between the two 4K HD passes. Mirrors MOODY_MOSS_LATENT_SCALE in txt2img.rs. */
+export const MOODY_MOSS_HD_SCALE = 1.5;
+
+/** The negative prompt the 4K HD workflow ships with. */
+export const MOODY_MOSS_NEGATIVE =
+  "worst quality, low quality, bad anatomy, deformed hands, extra fingers, malformed limbs, distorted face, plastic skin, overly smooth skin, waxy skin, oversharpening, excessive skin retouching, blurry, jpeg artifacts, watermark";
+
+/** CivitAI model IDs, for the credit links (both pages are rated mature). */
+export const MOODY_MOSS_MODEL_ID = 3007871;
+export const MOODY_MOSS_WORKFLOW_ID = 3012555;
+
+/**
+ * True for a Moody Moss Mix file (`Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors`
+ * and the like). The V1 Turbo edition is left out: it is a few-step model and
+ * the 4K HD workflow is written for the 25-step ones. Its files are the only
+ * ones named `V1_` with no step count.
+ */
+export function isMoodyMossFilename(filename: string | null | undefined): boolean {
+  const name = (filename ?? "").toLowerCase();
+  if (!/moody[\s_-]*moss/.test(name)) return false;
+  return !name.includes("turbo") && !/moody[\s_-]*moss[\s_-]*mix[\s_-]*v1_/.test(name);
+}
+
+/**
  * A conservative middle for a model nothing is known about.
  *
  * Only the NovelAI local pass uses this: it has to put some sampler in the
@@ -149,7 +187,9 @@ export function recommendedSamplingFor(
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
   if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
   if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;
-  if (fam === "mossimage" || fam === "mossimagebase") return MOSS_IMAGE_SAMPLING;
+  if (fam === "mossimage" || fam === "mossimagebase") {
+    return isMoodyMossFilename(name) ? MOODY_MOSS_SAMPLING : MOSS_IMAGE_SAMPLING;
+  }
   if (fam === "anima" || name.includes("anima")) return ANIMA_SAMPLING;
   if (name.includes("nanosaur")) return NANOSAUR_SAMPLING;
   if (

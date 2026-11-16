@@ -6,6 +6,56 @@ use super::{
 };
 use crate::comfyui::types::GenerationParams;
 
+/// Latent upscale between the two Moody Moss 4K HD passes (`LatentUpscaleBy`,
+/// bicubic), as in the author's V3 workflow.
+pub const MOODY_MOSS_LATENT_SCALE: f64 = 1.5;
+
+/// Seed offset of the second Moody Moss pass. The workflow adds 72 to the
+/// first pass's seed; the author notes MOSS gives better detail when the two
+/// seeds differ.
+pub const MOODY_MOSS_SECOND_SEED_OFFSET: u64 = 72;
+
+/// Step layout of the two Moody Moss 4K HD passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MoodyMossPasses {
+    /// Length of the first pass's schedule.
+    pub first_steps: u32,
+    /// Step the first pass stops at, keeping the leftover noise.
+    pub first_end: u32,
+    /// Step of the full schedule the second pass starts from.
+    pub second_start: u32,
+}
+
+/// The author's workflow, at 25 steps, samples 15 of an 18-step schedule,
+/// then runs the 25-step schedule from step 6 on the upscaled latent. Other
+/// step counts keep those proportions.
+pub fn moody_moss_passes(steps: u32) -> MoodyMossPasses {
+    let steps = steps.max(2);
+    let scale = |part: u32| (steps * part + 12) / 25;
+    let first_steps = scale(18).max(2);
+    let first_end = scale(15).clamp(1, first_steps - 1);
+    let second_start = scale(6).min(steps - 1);
+    MoodyMossPasses {
+        first_steps,
+        first_end,
+        second_start,
+    }
+}
+
+/// Whether this request runs the Moody Moss 4K HD two-pass txt2img. The
+/// frontend only sets the flag for a Moody Moss Mix checkpoint; the checks
+/// here keep a stray flag from reshaping any other model or mode, and a
+/// paused run keeps its single-sampler stages.
+pub fn moody_moss_hd_active(params: &GenerationParams) -> bool {
+    params.moody_moss_hd
+        && params.mode == "txt2img"
+        && params.stage.is_none()
+        && matches!(
+            params.model_architecture.as_str(),
+            "mossimage" | "mossimagebase"
+        )
+}
+
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
     // A later stage of a paused run allocates its node IDs after the stages
@@ -166,6 +216,8 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         None
     };
 
+    let moody_passes = moody_moss_hd_active(params).then(|| moody_moss_passes(params.steps));
+
     let sampler_id = next_id.to_string();
     let sampler_node = if let Some(select_id) = sampler_select_id {
         json!({
@@ -180,6 +232,27 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "cfg": params.cfg,
                 "sampler": [select_id, 0],
                 "sigmas": ["0", 0]
+            }
+        })
+    } else if let Some(passes) = moody_passes {
+        // Moody Moss 4K HD first pass: part of a shorter schedule, stopping
+        // with the leftover noise still in the latent.
+        json!({
+            "class_type": "KSamplerAdvanced",
+            "inputs": {
+                "model": [model_source.0.clone(), model_source.1],
+                "positive": [pos_source.0.clone(), pos_source.1],
+                "negative": [neg_source.0.clone(), neg_source.1],
+                "latent_image": [latent_source.0, latent_source.1],
+                "add_noise": "enable",
+                "noise_seed": seed,
+                "steps": passes.first_steps,
+                "cfg": params.cfg,
+                "sampler_name": params.sampler_name,
+                "scheduler": params.scheduler,
+                "start_at_step": 0,
+                "end_at_step": passes.first_end,
+                "return_with_leftover_noise": "enable"
             }
         })
     } else if start_step == 0 && end_step.is_none() {
@@ -224,6 +297,55 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     };
     workflow.insert(sampler_id.clone(), sampler_node);
     next_id += 1;
+
+    // Moody Moss 4K HD: the node above is the short first pass, and a
+    // latent upscale plus a second pass on the full schedule produce the
+    // image. The second pass is what gets decoded, patched and refined, so it
+    // takes over `sampler_id`.
+    let sampler_id = if let Some(passes) = moody_passes {
+        let upscale_id = next_id.to_string();
+        workflow.insert(
+            upscale_id.clone(),
+            json!({
+                "class_type": "LatentUpscaleBy",
+                "inputs": {
+                    "samples": [sampler_id.clone(), 0],
+                    "upscale_method": "bicubic",
+                    "scale_by": MOODY_MOSS_LATENT_SCALE
+                }
+            }),
+        );
+        next_id += 1;
+
+        let second_id = next_id.to_string();
+        workflow.insert(
+            second_id.clone(),
+            json!({
+                "class_type": "KSamplerAdvanced",
+                "inputs": {
+                    "model": [model_source.0.clone(), model_source.1],
+                    "positive": [pos_source.0.clone(), pos_source.1],
+                    "negative": [neg_source.0.clone(), neg_source.1],
+                    "latent_image": [upscale_id, 0],
+                    // The workflow adds fresh noise on top of the leftover
+                    // noise, from a seed of its own.
+                    "add_noise": "enable",
+                    "noise_seed": super::offset_seed(seed, MOODY_MOSS_SECOND_SEED_OFFSET),
+                    "steps": params.steps,
+                    "cfg": params.cfg,
+                    "sampler_name": params.sampler_name,
+                    "scheduler": params.scheduler,
+                    "start_at_step": passes.second_start,
+                    "end_at_step": 10000,
+                    "return_with_leftover_noise": "disable"
+                }
+            }),
+        );
+        next_id += 1;
+        second_id
+    } else {
+        sampler_id
+    };
 
     // VAE Decode — VAEDecodeTiled for Mugen (Flux2VAE SDXL), VAEDecode otherwise
     let (decode_id, next_id) =
