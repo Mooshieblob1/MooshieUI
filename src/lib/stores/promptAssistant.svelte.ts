@@ -63,7 +63,7 @@ import {
   naiRewriteSystemPrompt,
   naiUserPrompt,
 } from "../utils/naiPrompt.js";
-import type { NaiPromptContext } from "../utils/naiPrompt.js";
+import type { NaiPromptContext, NaiVariant } from "../utils/naiPrompt.js";
 import { naiRecipeDirective } from "../utils/naiRecipes.js";
 import { assertAllowedRequest, naiRequestTexts, promptRequestTexts } from "../utils/contentSafety.js";
 import {
@@ -1069,7 +1069,15 @@ class PromptAssistantStore {
    * alone. A model that answers with something unusable has that recorded too,
    * so it is not asked again before every rewrite.
    */
-  private async ensureNaiSkill(ctx: NaiPromptContext, signal?: AbortSignal): Promise<string | null> {
+  /**
+   * The working notes the backend wrote for itself for V5 prompts, the same
+   * ones Enhance uses, so other V5 writers (the comic page) follow them too.
+   */
+  naiWorkingNotes(variant: NaiVariant, signal?: AbortSignal): Promise<string | null> {
+    return this.ensureNaiSkill({ variant }, signal);
+  }
+
+  private async ensureNaiSkill(ctx: Pick<NaiPromptContext, "variant">, signal?: AbortSignal): Promise<string | null> {
     const key = naiSkillKey(this.llmBackendId, ctx.variant);
     const cached = loadNaiSkill(key);
     if (cached !== null) return cached || null;

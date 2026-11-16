@@ -96,8 +96,10 @@ class ComicStore {
   storyChecking = $state(false);
   storyError = $state<string | null>(null);
   drafting = $state(false);
-  /** Panel prompts before the last draft, for undoing it. */
-  draftUndo = $state<Record<string, string> | null>(null);
+  /** The panel the Prompt Assistant is rewriting on its own, if any. */
+  enhancingId = $state<string | null>(null);
+  /** Panel prompts and dialogue before the last draft or panel rewrite, for undoing it. */
+  draftUndo = $state<Record<string, { prompt: string; dialogue: string }> | null>(null);
 
   private history: string[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;

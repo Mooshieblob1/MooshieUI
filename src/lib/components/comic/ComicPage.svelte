@@ -27,6 +27,7 @@
     checkPanel,
     checkStory,
     draftFromBeats,
+    enhancePanel,
     generateOneImage,
     generatePanels,
     previewPage,
@@ -35,6 +36,7 @@
     stopRun,
     undoDraft,
   } from "../../utils/comicRunner.js";
+  import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { portal } from "../../utils/portal.js";
 
   interface Props {
@@ -66,6 +68,8 @@
   const order = $derived(comic.order);
   const oneImage = $derived(comic.mode === "one_image");
   const tooManyForOneImage = $derived(oneImage && comic.enabledPanels.length > ONE_SHOT_MAX_PANELS);
+  /** On NovelAI V5 the Prompt Assistant writes panels by the V5 Enhance rules, dialogue included. */
+  const v5 = $derived(generation.isNovelAi && naiV5Variant(generation.checkpoint) !== null);
   const modelName = $derived((generation.checkpoint || "").split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "");
   const issueCount = $derived(
     Object.values(comic.results).reduce((n, r) => n + (r.issues?.length ?? 0), 0),
@@ -371,7 +375,7 @@
           <button
             class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-indigo-500 disabled:opacity-40"
             disabled={!promptAssistant.isAvailable || comic.drafting}
-            title={promptAssistant.isAvailable ? locale.t("comic.draft_title") : locale.t("comic.assistant_needed")}
+            title={promptAssistant.isAvailable ? locale.t(v5 ? "comic.draft_title_v5" : "comic.draft_title") : locale.t("comic.assistant_needed")}
             onclick={() => { void run(draftFromBeats); }}
           >{comic.drafting ? locale.t("comic.working") : locale.t("comic.draft")}</button>
           {#if comic.draftUndo}
@@ -507,6 +511,28 @@
                 value={panel.prompt}
                 oninput={(e) => comic.updatePanel(panel.id, { prompt: (e.currentTarget as HTMLTextAreaElement).value })}
               ></textarea>
+              <textarea
+                rows="2"
+                class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
+                placeholder={locale.t("comic.dialogue_placeholder")}
+                aria-label={locale.t("comic.dialogue")}
+                value={panel.dialogue}
+                oninput={(e) => comic.updatePanel(panel.id, { dialogue: (e.currentTarget as HTMLTextAreaElement).value })}
+              ></textarea>
+              {#if panel.dialogue.trim() && !generation.isNovelAi}
+                <p class="text-[10px] text-neutral-500">{locale.t("comic.dialogue_nai_only")}</p>
+              {/if}
+              <div class="flex flex-wrap items-center gap-1.5">
+                <button
+                  class="rounded border border-indigo-700/70 bg-indigo-900/30 px-2 py-0.5 text-[11px] text-indigo-200 hover:bg-indigo-800/40 disabled:opacity-40"
+                  disabled={!promptAssistant.isAvailable || comic.enhancingId !== null || comic.drafting}
+                  title={promptAssistant.isAvailable ? locale.t(v5 ? "comic.enhance_panel_title_v5" : "comic.enhance_panel_title") : locale.t("comic.assistant_needed")}
+                  onclick={() => { void run(() => enhancePanel(panel.id)); }}
+                >{comic.enhancingId === panel.id ? locale.t("comic.working") : locale.t("comic.enhance_panel")}</button>
+                {#if comic.draftUndo && comic.draftUndo[panel.id]}
+                  <button class="px-1 text-[11px] text-neutral-400 hover:text-neutral-200" onclick={undoDraft}>{locale.t("comic.undo_draft")}</button>
+                {/if}
+              </div>
               <textarea
                 rows="1"
                 class="w-full resize-y rounded border border-red-900/60 bg-neutral-950 px-2 py-1 text-red-200 placeholder-neutral-600 focus:border-red-500 focus:outline-none"

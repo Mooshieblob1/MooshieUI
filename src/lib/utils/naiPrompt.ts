@@ -683,3 +683,47 @@ Apply this instruction to it, and return the whole prompt again in the output fo
 
 ${instruction(prompt, references)}${referenceManifest(references)}`;
 }
+
+/**
+ * The comic page builder's panels, written by the same rules as the V5 rewrite.
+ *
+ * Each panel is generated as its own image and the app assembles the page, so
+ * this replaces the rewrite's one-image-is-one-page comic advice, its character
+ * boxes and its labelled output with one panel per entry in JSON. The cast's
+ * looks, the page style and the setting are added to every panel by the app,
+ * and the dialogue becomes the panel's Text: block, so the model writes neither.
+ */
+const COMIC_PANELS = `COMIC PANELS
+This request is not the usual rewrite. You are writing the panels of one comic page, and each panel is generated as its own image. The app draws the borders and assembles the page.
+- One panel is one image. Never write comic, multiple views, border, panel numbers or several panels into a panel's prompt.
+- There are no character boxes here. Counts, who is in the panel and where they stand go in the panel's own prompt, in its tag line and its prose.
+- The app adds the cast's appearance tags, the page style and the page setting to every panel. Do not repeat them. Name the cast by name in the prose so it is clear who does what.
+- A panel prompt is a tag line (count, complexity, shot and framing, pose, action, expression, key objects, background), a blank line, then a short natural language body: camera, who stands where, the action, the light and the mood. Keep it to what this one panel shows.
+- Dialogue goes in the panel's dialogue list, never in the prompt and never as a Text: block: the app letters it. One string per speech bubble, only the words, exactly as lettered, no speaker names and no quotation marks. At most two short bubbles per panel; panels are small.
+- In the prose, name the speaker of each line and quote the line there, word for word, so the bubble lands on the right person. Add speech bubble and the text tag for its language to the tag line when there is dialogue.
+- Keep the story beats in order and keep each panel's beat. Do not invent beats, characters or places the page does not have.
+- Budget per panel: well under a third of the variant's prompt budget, and the dialogue short enough to letter in a small panel.
+
+OUTPUT FORMAT
+Reply with JSON only, no markdown fences and no commentary:
+{"panels":[{"panel":<number>,"prompt":"<tag line>\\n\\n<natural language body>","dialogue":["<bubble>", "..."]}]}
+Use an empty dialogue list for a silent panel. Write a panel only when it has a beat or a prompt to work from.`;
+
+export interface NaiComicContext {
+  variant: NaiVariant;
+  rating?: ContentRating;
+  minorRule?: boolean;
+  language: NaiLanguage;
+}
+
+/** The system turn for writing a comic page's panels for V5. */
+export function naiComicSystemPrompt(ctx: NaiComicContext): string {
+  return [
+    SHARED_RULES,
+    naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
+    SHARED_RULES_TAIL,
+    `MODEL: V5 ${variantLabel(ctx.variant)}`,
+    naiLanguageDirective(ctx.language),
+    COMIC_PANELS,
+  ].join("\n\n");
+}

@@ -133,5 +133,34 @@ test("story and draft replies parse from chatty JSON", () => {
   ]);
   assert.deepEqual(parseStoryIssues("no json here", 3), []);
   const drafts = parseDraftPrompts('{"panels":[{"panel":1,"prompt":"close-up, hand"},{"panel":4,"prompt":"x"}]}', 3);
-  assert.deepEqual([...drafts.entries()], [[1, "close-up, hand"]]);
+  assert.deepEqual([...drafts.entries()], [[1, { prompt: "close-up, hand", dialogue: null }]]);
+  const v5 = parseDraftPrompts(
+    '{"panels":[{"panel":1,"prompt":"1girl, close-up\\n\\nAki grins and says \\"Ready?\\"","dialogue":["\\"Ready?\\""]},{"panel":2,"prompt":"1boy, from side\\n\\nText:\\nNo.\\n\\nNever."},{"panel":3,"prompt":"empty room","dialogue":[]}]}',
+    3,
+  );
+  assert.deepEqual(v5.get(1), { prompt: '1girl, close-up\n\nAki grins and says "Ready?"', dialogue: ["Ready?"] });
+  assert.deepEqual(v5.get(2), { prompt: "1boy, from side", dialogue: ["No.", "Never."] });
+  assert.deepEqual(v5.get(3), { prompt: "empty room", dialogue: [] });
+});
+
+test("dialogue is lettered last on NovelAI, with the tags it needs, and left out elsewhere", () => {
+  const cast = [{ id: "c1", name: "Aki", tags: "1girl, long black hair" }];
+  const page = { style: "manga", setting: "classroom", cast };
+  const panel = {
+    ...newPanel("p1"),
+    prompt: "close-up, smile\n\nAki leans in and asks \"Ready?\"",
+    cast: ["c1"],
+    dialogue: "Ready?\n\n  Let's go!  \n",
+  };
+  assert.equal(
+    panelPrompt(panel, page, true),
+    'manga, close-up, smile, 1girl, long black hair, classroom, speech bubble, english text\n\nAki leans in and asks "Ready?"\n\nText:\nReady?\n\nLet\'s go!',
+  );
+  assert.equal(panelPrompt(panel, page), 'manga, close-up, smile, 1girl, long black hair, classroom\n\nAki leans in and asks "Ready?"');
+  const own = { ...panel, prompt: "thought bubble, japanese text, close-up", dialogue: "どうしよう" };
+  assert.equal(panelPrompt(own, page, true), "manga, thought bubble, japanese text, close-up, 1girl, long black hair, classroom\n\nText:\nどうしよう");
+  assert.equal(
+    oneShotBasePrompt(page, 2, ["Hi.", "Bye."]),
+    "manga, comic, 2 panels, multiple views, classroom, speech bubble, english text\n\nText:\nHi.\n\nBye.",
+  );
 });
