@@ -95,6 +95,16 @@
   let applyMode = $state<LoraPresetApplyMode>("replace");
   let presetStatus = $state<string | null>(null);
   let presetError = $state<string | null>(null);
+  // LoRA Presets folds away (closed by default) so the LoRA list gets the room (#988).
+  const PRESETS_OPEN_KEY = "mooshieui.lora.presetsOpen.v1";
+  let presetsOpen = $state(readPresetsOpen());
+  function readPresetsOpen(): boolean {
+    try { return localStorage.getItem(PRESETS_OPEN_KEY) === "true"; } catch { return false; }
+  }
+  function togglePresetsOpen() {
+    presetsOpen = !presetsOpen;
+    try { localStorage.setItem(PRESETS_OPEN_KEY, String(presetsOpen)); } catch {}
+  }
   let loraInfoAccessBlocked = $state<string | null>(null);
 
   function isAccessDeniedError(message: string): boolean {
@@ -520,8 +530,23 @@
 
 <!-- Search + LoRA grid -->
 <div class="flex flex-col h-full">
-  <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 p-2 text-[11px] space-y-2">
-    <p class="text-neutral-400">{locale.t("lora_presets.title")}</p>
+  <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 {presetsOpen ? 'p-2' : 'px-2 py-1'} text-[11px] space-y-2 shrink-0">
+    <button
+      type="button"
+      class="flex w-full items-center justify-between gap-2 text-neutral-400 hover:text-neutral-200 transition-colors"
+      onclick={togglePresetsOpen}
+      aria-expanded={presetsOpen}
+      title={presetsOpen ? locale.t("common.collapse", { section: locale.t("lora_presets.title") }) : locale.t("common.expand", { section: locale.t("lora_presets.title") })}
+    >
+      <span>
+        {locale.t("lora_presets.title")}
+        {#if loraPresets.presets.length > 0}
+          <span class="ml-1 text-neutral-500 tabular-nums">{loraPresets.presets.length}</span>
+        {/if}
+      </span>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {presetsOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    {#if presetsOpen}
     <div class="flex items-center gap-2">
       <select
         bind:value={selectedPresetId}
@@ -581,6 +606,7 @@
     {/if}
     {#if presetError}
       <p class="text-amber-300">{presetError}</p>
+    {/if}
     {/if}
   </div>
 
