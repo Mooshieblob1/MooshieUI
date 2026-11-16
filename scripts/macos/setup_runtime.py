@@ -11,6 +11,7 @@ import importlib.util
 import json
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -78,12 +79,27 @@ def main():
             fields = package.group(1)
             name = re.search(r'name:\s*"([^"]+)"', fields).group(1)
             url = re.search(r'git_url:\s*"([^"]+)"', fields).group(1)
+            rev = re.search(r'git_rev:\s*"([^"]+)"', fields).group(1)
+            subdir = re.search(r'source_subdir:\s*Some\("([^"]+)"\)', fields)
             req_file = re.search(r'requirements_file:\s*"([^"]+)"', fields).group(1)
             classes = re.search(r'verify_nodes:\s*&\[(.*?)\]', fields, re.S).group(1)
             external_nodes.extend(re.findall(r'"([^"]+)"', classes))
             destination = comfy / "custom_nodes" / name
-            run("git", "clone", "--depth=1", url, destination)
-            external_revisions[name] = run("git", "-C", destination, "rev-parse", "HEAD", capture_output=True, text=True).stdout.strip()
+            # Same as clone_custom_node: the pinned commit, and only the
+            # package's subfolder (plus LICENSE) when it names one.
+            staging = comfy / "custom_nodes" / f".clone-{name}"
+            staging.mkdir()
+            run("git", "-C", staging, "init", "-q")
+            run("git", "-C", staging, "fetch", "--depth=1", url, rev)
+            run("git", "-C", staging, "checkout", "-q", "--detach", "FETCH_HEAD")
+            external_revisions[name] = run("git", "-C", staging, "rev-parse", "HEAD", capture_output=True, text=True).stdout.strip()
+            if subdir:
+                source = staging / subdir.group(1)
+                shutil.copy(staging / "LICENSE", source / "LICENSE")
+                source.rename(destination)
+                shutil.rmtree(staging)
+            else:
+                staging.rename(destination)
             if (destination / req_file).exists():
                 run(args.uv, "pip", "install", "--python", python, "-c", constraints, "-r", destination / req_file)
     extra_required = work / "external-nodes.json"
