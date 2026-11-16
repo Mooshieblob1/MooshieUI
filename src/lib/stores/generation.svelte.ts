@@ -104,6 +104,7 @@ import type {
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
+import { wildcards } from "./wildcards.svelte.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
@@ -4036,12 +4037,27 @@ class GenerationStore {
       !isNaN(numericSeed) && numericSeed !== -1
         ? numericSeed >>> 0
         : (Math.random() * 0x100000000) >>> 0;
-    const inlinePositive = hasPositiveRandom
-      ? expandRandomPrompt(inlinePositiveRaw, rngSeed)
-      : inlinePositiveRaw;
-    const inlineNegative = hasNegativeRandom
-      ? expandRandomPrompt(inlineNegativeRaw, rngSeed + 1)
-      : inlineNegativeRaw;
+    // `__name__` file wildcards: expanded before {a|b} (an option may hold
+    // alternation) and once more after it (an alternation may hold a wildcard).
+    wildcards.beginBuild();
+    const expandAll = (text: string, salt: number, randomize: boolean) => {
+      let out = wildcards.expand(text, rngSeed + salt).text;
+      if (randomize || hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt);
+      if (out.includes("__")) {
+        out = wildcards.expand(out, rngSeed + salt + 7).text;
+        if (hasRandomSyntax(out)) out = expandRandomPrompt(out, rngSeed + salt + 7);
+      }
+      return out;
+    };
+    const inlinePositive = expandAll(inlinePositiveRaw, 0, hasPositiveRandom);
+    const inlineNegative = expandAll(inlineNegativeRaw, 1, hasNegativeRandom);
+    novelAiCharacters.characters = novelAiCharacters.characters.map((character, i) => ({
+      ...character,
+      prompt: character.prompt.includes("__") ? wildcards.expand(character.prompt, rngSeed + 101 + i * 2).text : character.prompt,
+      negative_prompt: character.negative_prompt.includes("__")
+        ? wildcards.expand(character.negative_prompt, rngSeed + 102 + i * 2).text
+        : character.negative_prompt,
+    }));
 
     // Parse <segment:...> auto-refinement tags from the user-typed prompt before
     // system fragments (style presets, artist styles, preset appends, quality

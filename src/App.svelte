@@ -34,6 +34,7 @@
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
+  import { wildcards } from "./lib/stores/wildcards.svelte.js";
   import { generationTabs } from "./lib/stores/generationTabs.svelte.js";
   import GenerationTabStrip from "./lib/components/generation/GenerationTabStrip.svelte";
   import { music } from "./lib/stores/music.svelte.js";
@@ -2756,6 +2757,8 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    // Wildcard files are read once up front so `__name__` resolves on the first Generate.
+    void wildcards.load();
     // After the generation load, which restores the active tab's live settings.
     await generationTabs.load();
     void music.loadLibrary();

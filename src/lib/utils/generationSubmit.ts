@@ -2,6 +2,7 @@ import { generate, novelaiGenerate, type GenerateResponse } from "./api.js";
 import { isNovelAiModel } from "./novelaiModels.js";
 import { locale } from "../stores/locale.svelte.js";
 import { progress } from "../stores/progress.svelte.js";
+import { wildcards } from "../stores/wildcards.svelte.js";
 import type { GenerationParams } from "../types/index.js";
 
 /**
@@ -30,6 +31,8 @@ export async function requestGeneration(params: GenerationParams): Promise<Gener
     throw new Error(locale.t("generation.image_edit.wrong_model"));
   }
   const result = toNovelAi ? await novelaiGenerate(params) : await generate(params);
+  // In-order wildcards step only once a request built with them is accepted.
+  wildcards.commitAdvance();
   // The backend resolves seed "-1" to a concrete value; write it back so a
   // caller reusing the same params object keeps the resolved seed.
   params.seed = result.seed;
