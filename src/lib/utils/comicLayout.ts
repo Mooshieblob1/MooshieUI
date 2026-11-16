@@ -1,6 +1,8 @@
 // Comic page builder: the pure parts. Layouts, templates, reading order,
 // panel sizes, prompt assembly and the continuity comparison. No stores and no
 // DOM, so all of it is covered by scripts/tests/comicLayout.test.ts.
+// The MCP server's create_comic tool mirrors the layouts, sizes and prompt
+// rules in src-tauri/src/mcp/comic.rs; change them together.
 //
 // A layout is a binary split tree. A leaf is a panel; a split divides its box
 // into two at `ratio`, side by side ("row", a vertical divider) or stacked
@@ -275,10 +277,74 @@ export interface ComicPanel {
   cast: string[];
   /** Replaces the page setting for this panel when not blank (a flashback, a cut away). */
   setting: string;
+  /**
+   * What is said in the panel, one speech bubble per line, exactly as it should
+   * be lettered. Drawn only on NovelAI, which letters a prompt's Text: block.
+   */
+  dialogue: string;
 }
 
 export function newPanel(id: string): ComicPanel {
-  return { id, beat: "", prompt: "", negative: "", enabled: true, cast: [], setting: "" };
+  return { id, beat: "", prompt: "", negative: "", enabled: true, cast: [], setting: "", dialogue: "" };
+}
+
+/** A panel's speech bubbles: one per non-blank line. */
+export function dialogueLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/** The language tag NovelAI wants beside lettering, guessed from the script it is written in. */
+export function letteringLanguage(lines: string[]): string {
+  const all = lines.join("");
+  if (/[\u3040-\u30ff]/.test(all)) return "japanese text";
+  if (/[\uac00-\ud7af]/.test(all)) return "korean text";
+  if (/[\u4e00-\u9fff]/.test(all)) return "chinese text";
+  return "english text";
+}
+
+/**
+ * Tags lettering needs that `prompt` does not have yet: a bubble, and the text
+ * tag for its language. A prompt that already names a bubble or a text tag
+ * (the V5 rewrite writes both) keeps its own.
+ */
+export function letteringTags(prompt: string, lines: string[]): string {
+  if (lines.length === 0) return "";
+  const tags = splitTags(prompt);
+  const out: string[] = [];
+  if (!tags.some((t) => t.endsWith("bubble"))) out.push("speech bubble");
+  if (!tags.some((t) => /\btext$/.test(t) && t !== "text")) out.push(letteringLanguage(lines));
+  return out.join(", ");
+}
+
+/** The Text: block NovelAI letters: the words only, a blank line between bubbles. Always last. */
+export function textBlock(lines: string[]): string {
+  return lines.length > 0 ? `\n\nText:\n${lines.join("\n\n")}` : "";
+}
+
+/**
+ * Split a prompt into its tag line and the rest. A V5 prompt is a tag line, a
+ * blank line, then prose; the cast and setting tags belong on the tag line, not
+ * after the prose. A plain tag prompt is all tag line.
+ */
+export function splitTagLine(prompt: string): { tags: string; prose: string } {
+  const text = prompt.trim();
+  const gap = text.search(/\n\s*\n/);
+  if (gap < 0) return { tags: text, prose: "" };
+  return { tags: text.slice(0, gap).trim(), prose: text.slice(gap).trim() };
+}
+
+/**
+ * Take a Text: block off a prompt, for a model that wrote the lettering into
+ * the prompt instead of the dialogue field. Returns the prompt without it and
+ * the bubbles it held (a blank line or a new line between them).
+ */
+export function takeTextBlock(prompt: string): { prompt: string; lines: string[] } {
+  const m = /(^|\n)\s*Text:\s*(\n|$)/.exec(prompt);
+  if (!m) return { prompt: prompt.trim(), lines: [] };
+  return { prompt: prompt.slice(0, m.index).trim(), lines: dialogueLines(prompt.slice(m.index + m[0].length)) };
 }
 
 export function joinTags(...parts: string[]): string {
@@ -292,10 +358,28 @@ export function panelSetting(panel: ComicPanel, pageSetting: string): string {
   return panel.setting.trim() || pageSetting.trim();
 }
 
-/** Positive prompt for one panel generated on its own. */
-export function panelPrompt(panel: ComicPanel, page: { style: string; setting: string; cast: CastMember[] }): string {
+/**
+ * Positive prompt for one panel generated on its own. With `lettering` (NovelAI)
+ * the panel's dialogue is drawn: its tags join the tag line and a Text: block
+ * goes last, where NovelAI reads lettering from.
+ */
+export function panelPrompt(
+  panel: ComicPanel,
+  page: { style: string; setting: string; cast: CastMember[] },
+  lettering = false,
+): string {
   const cast = page.cast.filter((c) => panel.cast.includes(c.id));
-  return joinTags(page.style, panel.prompt, ...cast.map((c) => c.tags), panelSetting(panel, page.setting));
+  const { tags, prose } = splitTagLine(panel.prompt);
+  const lines = lettering ? dialogueLines(panel.dialogue ?? "") : [];
+  const line = joinTags(
+    page.style,
+    tags,
+    ...cast.map((c) => c.tags),
+    panelSetting(panel, page.setting),
+    letteringTags(panel.prompt, lines),
+  );
+  const body = [line, prose].filter(Boolean).join("\n\n");
+  return body ? body + textBlock(lines) : "";
 }
 
 /** Character prompt for one panel of a one-image NovelAI page. */
@@ -309,9 +393,13 @@ export function oneShotPanelPrompt(
   return joinTags(`panel ${number}`, panel.prompt, ...cast.map((c) => c.tags), own);
 }
 
-/** Base prompt for a one-image NovelAI page. */
-export function oneShotBasePrompt(page: { style: string; setting: string }, panels: number): string {
-  return joinTags(page.style, "comic", panels > 1 ? `${panels} panels, multiple views` : "", page.setting);
+/**
+ * Base prompt for a one-image NovelAI page. `dialogue` is every bubble on the
+ * page in reading order: NovelAI reads lettering from the base prompt only.
+ */
+export function oneShotBasePrompt(page: { style: string; setting: string }, panels: number, dialogue: string[] = []): string {
+  const base = joinTags(page.style, "comic", panels > 1 ? `${panels} panels, multiple views` : "", page.setting);
+  return joinTags(base, letteringTags(base, dialogue)) + textBlock(dialogue);
 }
 
 /** Panel centre for NovelAI's character position, rounded to two places, kept off the edges. */
@@ -406,8 +494,8 @@ export function continuityIssues(
 
 export const STORY_CHECK_SYSTEM = [
   "You check one comic page for continuity before it is drawn.",
-  "You get the page setting, the cast with their looks, and each panel in reading order with its story beat, prompt, cast and setting.",
-  "Find contradictions between panels: an object that appears or disappears without reason, a changed outfit or hairstyle, a time of day or place that jumps, a character present who was not in the scene, an action that does not follow from the panel before.",
+  "You get the page setting, the cast with their looks, and each panel in reading order with its story beat, prompt, dialogue, cast and setting.",
+  "Find contradictions between panels: an object that appears or disappears without reason, a changed outfit or hairstyle, a time of day or place that jumps, a character present who was not in the scene, an action that does not follow from the panel before, a line of dialogue that answers something nobody said.",
   "Do not comment on style, quality or word choice. If nothing is wrong, return an empty list.",
   'Reply with JSON only: {"issues":[{"panel":<number>,"issue":"<one short sentence>"}]}',
 ].join("\n");
@@ -419,6 +507,14 @@ export const DRAFT_SYSTEM = [
   "Do not repeat the cast's appearance tags or the page setting; they are added for you. Do not write dialogue.",
   'Reply with JSON only: {"panels":[{"panel":<number>,"prompt":"<tags>"}]}',
 ].join("\n");
+
+/**
+ * The user turn for rewriting one panel: the whole page for context, then
+ * which panel to rewrite. The answer has the same shape as a full draft.
+ */
+export function enhancePanelInstruction(number: number): string {
+  return `Rewrite panel ${number} only. Build on its beat and its current prompt, keep everything they say, and fill in framing, pose, expression and background where they are thin. Answer with that one panel in the same JSON shape.`;
+}
 
 export function storyBrief(
   ordered: ComicPanel[],
@@ -432,6 +528,7 @@ export function storyBrief(
         `Panel ${i + 1}:`,
         p.beat.trim() ? `  beat: ${p.beat.trim()}` : "",
         p.prompt.trim() ? `  prompt: ${p.prompt.trim()}` : "",
+        ...dialogueLines(p.dialogue ?? "").map((l) => `  says: "${l}"`),
         who ? `  cast: ${who}` : "",
         p.setting.trim() ? `  setting: ${p.setting.trim()}` : "",
       ]
@@ -473,15 +570,32 @@ export function parseStoryIssues(text: string, panelCount: number): Array<{ pane
     }));
 }
 
-export function parseDraftPrompts(text: string, panelCount: number): Map<number, string> {
-  const out = new Map<number, string>();
+export interface PanelDraft {
+  prompt: string;
+  /** The panel's bubbles, or null when the reply left the dialogue alone. */
+  dialogue: string[] | null;
+}
+
+export function parseDraftPrompts(text: string, panelCount: number): Map<number, PanelDraft> {
+  const out = new Map<number, PanelDraft>();
   const data = parseJsonReply(text) as { panels?: unknown } | null;
   if (!data || !Array.isArray(data.panels)) return out;
   for (const raw of data.panels) {
-    const p = raw as { panel?: unknown; prompt?: unknown };
+    const p = raw as { panel?: unknown; prompt?: unknown; dialogue?: unknown };
     if (!Number.isInteger(p.panel) || typeof p.prompt !== "string") continue;
     const n = p.panel as number;
-    if (n >= 1 && n <= panelCount && p.prompt.trim()) out.set(n, p.prompt.trim());
+    // A Text: block written into the prompt is lettering, not prompt.
+    const { prompt, lines } = takeTextBlock(p.prompt);
+    if (n < 1 || n > panelCount || !prompt) continue;
+    let dialogue: string[] | null = lines.length > 0 ? lines : null;
+    if (Array.isArray(p.dialogue)) {
+      dialogue = p.dialogue
+        .filter((l): l is string => typeof l === "string")
+        .flatMap((l) => dialogueLines(l.replace(/^\s*"|"\s*$/g, "")));
+    } else if (typeof p.dialogue === "string") {
+      dialogue = dialogueLines(p.dialogue);
+    }
+    out.set(n, { prompt, dialogue });
   }
   return out;
 }

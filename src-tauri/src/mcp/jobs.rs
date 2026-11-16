@@ -517,15 +517,7 @@ async fn save_outputs(
             template.as_deref(),
             crate::watermark::owner_choice(),
         )?;
-        let payload = serde_json::json!({
-            "filename": filename,
-            "mode": params.mode,
-            "source": "mcp",
-            // Admin connection only; see the SSE `_target_user` filter.
-            "_target_user": null,
-        });
-        state.broadcast("mcp:image_saved", payload.clone());
-        emit_to_window(state, "mcp:image_saved", payload).await;
+        announce_saved(state, &filename, &params.mode).await;
         saved.push(SavedImage {
             filename,
             width: out.width,
@@ -536,6 +528,20 @@ async fn save_outputs(
         return Err("The generated images expired before they could be saved".into());
     }
     Ok(saved)
+}
+
+/// Tell the open window (and the owner's browser session) about an image MCP
+/// saved, so the gallery shows it.
+pub async fn announce_saved(state: &Arc<AppState>, filename: &str, mode: &str) {
+    let payload = serde_json::json!({
+        "filename": filename,
+        "mode": mode,
+        "source": "mcp",
+        // Admin connection only; see the SSE `_target_user` filter.
+        "_target_user": null,
+    });
+    state.broadcast("mcp:image_saved", payload.clone());
+    emit_to_window(state, "mcp:image_saved", payload).await;
 }
 
 /// Desktop window events go through Tauri, not the SSE broadcast.

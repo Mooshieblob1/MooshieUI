@@ -20,6 +20,7 @@
 //! `AppConfig`: the Settings page saves the whole config object at once, and a
 //! stale copy of it must not switch the server off or roll the token back.
 
+pub mod comic;
 pub mod expand;
 pub mod inputs;
 pub mod jobs;

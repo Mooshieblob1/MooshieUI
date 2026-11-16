@@ -106,7 +106,7 @@ Rules for your answer:
 }
 
 /** The user turn describing the job the notes are for. */
-export function naiSkillAuthoringUser(ctx: NaiPromptContext): string {
+export function naiSkillAuthoringUser(ctx: Pick<NaiPromptContext, "variant">): string {
   const curated = ctx.variant === "curated";
   const shape = curated
     ? "a prompt of roughly 703 tokens, room enough to be specific but not to ramble"

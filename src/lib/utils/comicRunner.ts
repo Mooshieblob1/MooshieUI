@@ -8,6 +8,7 @@ import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
 import { progress } from "../stores/progress.svelte.js";
+import { promptAssistant } from "../stores/promptAssistant.svelte.js";
 import type { GenerationParams, OutputImage, TagResult } from "../types/index.js";
 import {
   callExternalLlm,
@@ -20,6 +21,8 @@ import {
 import {
   DRAFT_SYSTEM,
   ONE_SHOT_MAX_PANELS,
+  dialogueLines,
+  enhancePanelInstruction,
   STORY_CHECK_SYSTEM,
   continuityIssues,
   coverCrop,
@@ -38,7 +41,13 @@ import {
   splitTags,
   storyBrief,
   type ComicPanel,
+  type PanelDraft,
 } from "./comicLayout.js";
+import { assertAllowedRequest } from "./contentSafety.js";
+import { resolveNaiLanguage } from "./naiLanguage.js";
+import { NAI_MAX_TOKENS, naiComicSystemPrompt } from "./naiPrompt.js";
+import { naiSystemWithSkill } from "./naiSkill.js";
+import { naiV5Variant } from "./novelaiModels.js";
 import { loadOutputImageForGenerationInput } from "./galleryActions.js";
 import { submitGeneration } from "./generationSubmit.js";
 
@@ -131,7 +140,8 @@ async function generateOne(panel: ComicPanel): Promise<void> {
   if (!rect) return;
   const page = pageSize(comic.pageShape);
   const size = panelGenerationSize(rect, page, { width: generation.width, height: generation.height });
-  const positive = panelPrompt(panel, comic);
+  // NovelAI letters the panel's dialogue from a Text: block; other models get none.
+  const positive = panelPrompt(panel, comic, generation.isNovelAi);
   if (!positive) throw new Error(locale.t("comic.error_empty_prompt"));
   const params = baseParams(positive, panel.negative.trim(), size.width, size.height);
   if (params.novelai) {
@@ -238,7 +248,8 @@ export async function generateOneImage(): Promise<void> {
   const width = snap(Math.sqrt(pixels * aspect));
   const height = snap(Math.sqrt(pixels / aspect));
 
-  const params = baseParams(oneShotBasePrompt(comic, panels.length), "", width, height);
+  const dialogue = panels.flatMap((p) => dialogueLines(p.dialogue ?? ""));
+  const params = baseParams(oneShotBasePrompt(comic, panels.length, dialogue), "", width, height);
   if (!params.novelai) throw new Error(locale.t("comic.error_one_image_novelai"));
   params.novelai = {
     ...params.novelai,
@@ -396,22 +407,54 @@ export async function checkStory(): Promise<void> {
   }
 }
 
-/** Write each panel's prompt from its beat. Panels without a beat keep theirs. */
+/**
+ * Ask the Prompt Assistant (the backend Enhance uses) to write panels. On a
+ * NovelAI V5 model it writes them by the V5 Enhance rules, with the same
+ * working notes, and adds dialogue for NovelAI to letter; on anything else it
+ * writes tag prompts.
+ */
+async function askForPanels(ordered: ComicPanel[], instruction: string): Promise<Map<number, PanelDraft>> {
+  const brief = storyBrief(ordered, comic);
+  const said = ordered.flatMap((p) => [p.beat, p.prompt, p.dialogue ?? ""]).filter((t) => t.trim());
+  const rating = assertAllowedRequest([...said, comic.setting, ...comic.cast.map((c) => c.tags)]);
+  const variant = generation.isNovelAi ? naiV5Variant(generation.checkpoint) : null;
+  const user = instruction ? `${brief}\n\n${instruction}` : brief;
+  if (!variant) return parseDraftPrompts(await callExternalLlm(DRAFT_SYSTEM, user, 1500), ordered.length);
+  const notes = await promptAssistant.naiWorkingNotes(variant);
+  const system = naiSystemWithSkill(
+    naiComicSystemPrompt({
+      variant,
+      rating,
+      minorRule: generation.naiEnhanceMinorRule,
+      language: resolveNaiLanguage(generation.naiEnhanceLanguage, said.join("\n")),
+    }),
+    notes,
+  );
+  const budget = Math.min(8000, Math.max(NAI_MAX_TOKENS, 500 + 500 * ordered.length));
+  return parseDraftPrompts(await callExternalLlm(system, user, budget), ordered.length);
+}
+
+function applyDraft(panel: ComicPanel, draft: PanelDraft, undo: Record<string, { prompt: string; dialogue: string }>) {
+  undo[panel.id] = { prompt: panel.prompt, dialogue: panel.dialogue ?? "" };
+  comic.updatePanel(panel.id, {
+    prompt: draft.prompt,
+    ...(draft.dialogue ? { dialogue: draft.dialogue.join("\n") } : {}),
+  });
+}
+
+/** Write each panel's prompt (and on V5 its dialogue) from its beat. Panels without a beat keep theirs. */
 export async function draftFromBeats(): Promise<void> {
   const ordered = comic.enabledPanels;
   if (!ordered.some((p) => p.beat.trim())) throw new Error(locale.t("comic.error_no_beats"));
   comic.drafting = true;
   comic.storyError = null;
   try {
-    const reply = await callExternalLlm(DRAFT_SYSTEM, storyBrief(ordered, comic), 1500);
-    const drafts = parseDraftPrompts(reply, ordered.length);
+    const drafts = await askForPanels(ordered, "");
     if (drafts.size === 0) throw new Error(locale.t("comic.error_draft_unreadable"));
-    const undo: Record<string, string> = {};
+    const undo: Record<string, { prompt: string; dialogue: string }> = {};
     ordered.forEach((p, i) => {
-      const prompt = drafts.get(i + 1);
-      if (!prompt || !p.beat.trim()) return;
-      undo[p.id] = p.prompt;
-      comic.updatePanel(p.id, { prompt });
+      const draft = drafts.get(i + 1);
+      if (draft && p.beat.trim()) applyDraft(p, draft, undo);
     });
     comic.draftUndo = undo;
   } finally {
@@ -419,9 +462,28 @@ export async function draftFromBeats(): Promise<void> {
   }
 }
 
+/** Rewrite one panel's prompt (and on V5 its dialogue) with the rest of the page as context. */
+export async function enhancePanel(id: string): Promise<void> {
+  const ordered = comic.orderedPanels;
+  const index = ordered.findIndex((p) => p.id === id);
+  const panel = ordered[index];
+  if (!panel || comic.enhancingId) return;
+  if (!panel.beat.trim() && !panel.prompt.trim()) throw new Error(locale.t("comic.error_nothing_to_enhance"));
+  comic.enhancingId = id;
+  try {
+    const draft = (await askForPanels(ordered, enhancePanelInstruction(index + 1))).get(index + 1);
+    if (!draft) throw new Error(locale.t("comic.error_draft_unreadable"));
+    const undo: Record<string, { prompt: string; dialogue: string }> = {};
+    applyDraft(comic.panels[id] ?? panel, draft, undo);
+    comic.draftUndo = undo;
+  } finally {
+    comic.enhancingId = null;
+  }
+}
+
 export function undoDraft() {
   const undo = comic.draftUndo;
   if (!undo) return;
-  for (const [id, prompt] of Object.entries(undo)) comic.updatePanel(id, { prompt });
+  for (const [id, before] of Object.entries(undo)) comic.updatePanel(id, before);
   comic.draftUndo = null;
 }

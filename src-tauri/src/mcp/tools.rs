@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use super::jobs::{self, Job};
 use super::music::{self, MusicJob};
-use super::{expand, inputs, library, links, setups};
+use super::{comic, expand, inputs, library, links, setups};
 use crate::comfyui::types::GenerationParams;
 use crate::state::AppState;
 
@@ -134,9 +134,116 @@ pub fn definitions() -> Value {
             }
         }),
         json!({
+            "name": "create_comic",
+            "title": "Make a comic page",
+            "description": "Lay out a comic page, generate every panel and assemble the page, like the MooshieUI Comic page. Give one panels entry per panel in reading order. Each panel is generated on its own with the owner's setup for the model (NovelAI stays inside the free Opus window), then cropped into its box with gutters and black borders; panel images and the page are saved to the gallery. The cast's appearance tags, the page style and the setting are added to every panel, so a panel prompt only says what happens in it: framing, who (by count and name), pose, action, expression, background. On NovelAI each panel's dialogue is lettered in speech bubbles (a Text: block); other models draw no dialogue. For NovelAI V5 write each prompt as a tag line, a blank line, then one or two sentences of prose that name each speaker and quote their line word for word; put only the spoken words in dialogue, one string per bubble, at most two short bubbles per panel, no speaker names. mode one_image (NovelAI V4 or later, up to 6 panels) draws the whole page as one image with each panel as a positioned character prompt instead. A page takes minutes: this waits up to 10 minutes unless wait is false; then poll get_job. Use redo_comic_panels to remake panels you don't like.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["panels"],
+                "properties": {
+                    "layout": { "type": "string", "enum": ["full", "two_rows", "two_columns", "three_rows", "one_over_two", "two_over_one", "tall_left_two_right", "four_rows", "grid_2x2", "one_two_one", "one_one_two", "two_one_two", "one_two_two", "grid_2x3", "two_one_three"], "description": "Panel layout. The digits read top to bottom: one_two_one is 1 wide panel, 2 side by side, 1 wide (4 panels); grid_2x3 is 3 rows of 2. Default: a layout for the number of panels. Or use rows." },
+                    "rows": {
+                        "type": "array",
+                        "maxItems": 9,
+                        "description": "A custom layout instead of layout: rows top to bottom.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "height": { "type": "number", "description": "This row's share of the page height, relative to the others. Default 1." },
+                                "panels": { "type": "integer", "minimum": 1, "maximum": 9, "description": "Panels side by side in this row, equal widths. Default 1." },
+                                "widths": { "type": "array", "items": { "type": "number" }, "description": "Instead of panels: each panel's relative width, left to right." }
+                            }
+                        }
+                    },
+                    "panels": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 9,
+                        "description": "One entry per panel, in reading order.",
+                        "items": {
+                            "type": "object",
+                            "required": ["prompt"],
+                            "properties": {
+                                "prompt": { "type": "string", "description": "What this panel shows." },
+                                "dialogue": { "type": "array", "maxItems": 4, "items": { "type": "string" }, "description": "Speech bubbles, the words only, exactly as lettered. NovelAI only." },
+                                "cast": { "type": "array", "items": { "type": "string" }, "description": "Names from cast who are in this panel; their appearance tags are added." },
+                                "characters": { "type": "array", "maxItems": 6, "items": { "type": "string" }, "description": "Saved MooshieUI character names (list_library) in this panel." },
+                                "setting": { "type": "string", "description": "Replaces the page setting for this panel (a flashback, a cut away)." },
+                                "negative_prompt": { "type": "string" }
+                            }
+                        }
+                    },
+                    "cast": {
+                        "type": "array",
+                        "maxItems": 12,
+                        "description": "The page's characters, described once.",
+                        "items": {
+                            "type": "object",
+                            "required": ["name"],
+                            "properties": {
+                                "name": { "type": "string" },
+                                "tags": { "type": "string", "description": "Appearance tags: count, hair, eyes, outfit, e.g. 1girl, long black hair, red eyes, sailor uniform." }
+                            }
+                        }
+                    },
+                    "style": { "type": "string", "description": "Style tags for every panel, e.g. manga, monochrome, screentone." },
+                    "setting": { "type": "string", "description": "Location, time and light for every panel, e.g. classroom, sunset." },
+                    "page_shape": { "type": "string", "enum": ["portrait", "square", "landscape"], "description": "Default portrait (the ISO ratio of a manga page)." },
+                    "right_to_left": { "type": "boolean", "description": "Manga reading order: panels within a row read right to left. Default false." },
+                    "gutter": { "type": "integer", "minimum": 0, "maximum": 80, "description": "Space between panels in pixels on the 2048 px page. Default 24." },
+                    "mode": { "type": "string", "enum": ["panels", "one_image"], "description": "Default panels." },
+                    "model": { "type": "string", "description": "As in generate_image. Default: the most recently used one." },
+                    "negative_prompt": { "type": "string", "description": "Replaces the setup's negative prompt for every panel." },
+                    "styles": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Saved artist style names, added to every panel." },
+                    "chunks": { "type": "array", "maxItems": 30, "items": { "type": "string" }, "description": "Saved prompt chunk names, added to every panel." },
+                    "use_active_styles": { "type": "boolean", "description": "Also add the styles and chunks active in MooshieUI. Default false." },
+                    "seed": { "type": "integer", "description": "Panel n uses seed + n - 1. Omit for random." },
+                    "steps": { "type": "integer", "minimum": 1, "maximum": 150 },
+                    "cfg": { "type": "number", "minimum": 0, "maximum": 30 },
+                    "sampler": { "type": "string" },
+                    "scheduler": { "type": "string" },
+                    "wait": { "type": "boolean", "description": "Default true." },
+                    "include_images": { "type": "boolean", "description": "Return a preview of the finished page. Default true." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the returned download links work. Default 24." }
+                }
+            }
+        }),
+        json!({
+            "name": "redo_comic_panels",
+            "title": "Redo comic panels",
+            "description": "Make some panels of a finished create_comic page again, optionally with a new prompt or dialogue, keep the rest, and assemble a new page. Returns a new comic job.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": {
+                    "job_id": { "type": "string", "description": "The comic job (comic-...)." },
+                    "panels": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "description": "Panel numbers to generate again as they are, with a new seed." },
+                    "changes": {
+                        "type": "array",
+                        "description": "Panels to change and generate again.",
+                        "items": {
+                            "type": "object",
+                            "required": ["panel"],
+                            "properties": {
+                                "panel": { "type": "integer", "minimum": 1 },
+                                "prompt": { "type": "string" },
+                                "dialogue": { "type": "array", "items": { "type": "string" } },
+                                "setting": { "type": "string" },
+                                "negative_prompt": { "type": "string" }
+                            }
+                        }
+                    },
+                    "seed": { "type": "integer", "description": "Omit for random." },
+                    "wait": { "type": "boolean", "description": "Default true." },
+                    "include_images": { "type": "boolean", "description": "Default true." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168 }
+                }
+            }
+        }),
+        json!({
             "name": "get_job",
             "title": "Generation job",
-            "description": "Status and results of a generate_image or generate_music job.",
+            "description": "Status and results of a generate_image, create_comic or generate_music job.",
             "inputSchema": {
                 "type": "object",
                 "required": ["job_id"],
@@ -153,7 +260,7 @@ pub fn definitions() -> Value {
         json!({
             "name": "cancel_generation",
             "title": "Cancel generation",
-            "description": "Cancel a generate_image or generate_music job, or every unfinished one when job_id is omitted. Generations started in the MooshieUI window are not touched.",
+            "description": "Cancel a generate_image, create_comic or generate_music job, or every unfinished one when job_id is omitted. Generations started in the MooshieUI window are not touched.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "job_id": { "type": "string" } }
@@ -364,6 +471,8 @@ pub async fn call(
         "edit_image" => edit_image(state, args, ctx).await,
         "upscale_image" => upscale_image(state, args, ctx).await,
         "generate_music" => generate_music(state, args, max_wait).await,
+        "create_comic" => create_comic(state, args, ctx).await,
+        "redo_comic_panels" => redo_comic_panels(state, args, ctx).await,
         "get_job" => get_job(args, ctx).await,
         "cancel_generation" => cancel_generation(state, args).await,
         "search_gallery" => search_gallery(args, ctx).await,
@@ -435,12 +544,25 @@ async fn get_status(state: &Arc<AppState>) -> Result<Value, String> {
             })
         })
         .collect();
+    let recent_comics: Vec<Value> = comic::recent(5)
+        .iter()
+        .map(|j| {
+            json!({
+                "job_id": j.job_id,
+                "status": j.status,
+                "panels": j.panels.len(),
+                "page": j.page.as_ref().map(|p| &p.filename),
+                "error": j.error,
+            })
+        })
+        .collect();
     Ok(ok(vec![text(json!({
         "mooshieui_version": env!("CARGO_PKG_VERSION"),
         "comfyui": comfyui,
         "queue_length": state.prompt_queue.len(),
         "recent_jobs": recent,
         "recent_music_jobs": recent_music,
+        "recent_comic_jobs": recent_comics,
         "setups": setups,
         "note": if setups.is_empty() {
             "No saved setups yet: generate one txt2img image in MooshieUI with a model to make it usable here."
@@ -511,7 +633,7 @@ fn resolve_seed(params: &GenerationParams) -> i64 {
 /// Add saved characters, styles and chunks, then expand `__wildcards__` and
 /// `{a|b}` in every prompt, with the job's seed so it can be reproduced.
 /// Returns what was added and any wildcard names that matched no file.
-async fn finish_prompt(
+pub(super) async fn finish_prompt(
     params: &mut GenerationParams,
     args: &Value,
 ) -> Result<(Vec<String>, Vec<String>), String> {
@@ -800,6 +922,85 @@ async fn upscale_image(
     run_job(state, params, args, ctx, Vec::new(), Vec::new()).await
 }
 
+async fn create_comic(
+    state: &Arc<AppState>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let plan = comic::plan(args)?;
+    let rx = comic::start(state.clone(), plan, HashMap::new());
+    comic_answer(rx, args, ctx).await
+}
+
+async fn redo_comic_panels(
+    state: &Arc<AppState>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let (plan, kept) = comic::redo(args)?;
+    let rx = comic::start(state.clone(), plan, kept);
+    comic_answer(rx, args, ctx).await
+}
+
+async fn comic_answer(
+    rx: tokio::sync::watch::Receiver<comic::ComicJob>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let job = if args["wait"].as_bool() == Some(false) {
+        rx.borrow().clone()
+    } else {
+        jobs::wait(rx, ctx.max_wait).await
+    };
+    comic_result(&job, args, ctx).await
+}
+
+async fn comic_result(
+    job: &comic::ComicJob,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let hours = link_hours(args);
+    let mut v = serde_json::to_value(job).unwrap_or_default();
+    if !job.status.finished() {
+        let done = job.panels.iter().filter(|p| p.image.is_some()).count();
+        v["hint"] = json!(format!(
+            "Still working ({done} of {} panels done). Call get_job with this job_id (wait_seconds up to 600).",
+            job.panels.len()
+        ));
+    }
+    if let Some(panels) = v["panels"].as_array_mut() {
+        for p in panels.iter_mut() {
+            if let Some(url) = p["image"]
+                .as_str()
+                .and_then(|f| link(ctx, links::Kind::Gallery, f, hours))
+            {
+                p["url"] = json!(url);
+            }
+        }
+    }
+    if let Some(url) = job
+        .page
+        .as_ref()
+        .and_then(|p| link(ctx, links::Kind::Gallery, &p.filename, hours))
+    {
+        v["page"]["url"] = json!(url);
+    }
+    let mut content = vec![text(v)];
+    if args["include_images"].as_bool().unwrap_or(true) && job.status == jobs::JobStatus::Done {
+        if let Some(page) = &job.page {
+            match preview(&page.filename, 1024).await {
+                Ok((data, _, _)) => content.push(image_content(data)),
+                Err(e) => log::warn!("[mcp] preview of {} failed: {e}", page.filename),
+            }
+        }
+    }
+    Ok(json!({
+        "content": content,
+        "isError": job.status == jobs::JobStatus::Failed,
+    }))
+}
+
 async fn list_music_models(state: &Arc<AppState>) -> Result<Value, String> {
     let caps = crate::commands::music::capabilities(state)
         .await
@@ -930,6 +1131,12 @@ async fn job_result(job: &Job, args: &Value, ctx: &CallContext) -> Result<Value,
 async fn get_job(args: &Value, ctx: &CallContext) -> Result<Value, String> {
     let id = arg_str(args, "job_id").ok_or("job_id is required")?;
     let wait = Duration::from_secs(args["wait_seconds"].as_u64().unwrap_or(0)).min(ctx.max_wait);
+    if comic::is_comic_job(id) {
+        let rx = comic::get(id)
+            .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
+        let job = jobs::wait(rx, wait).await;
+        return comic_result(&job, args, ctx).await;
+    }
     if music::is_music_job(id) {
         let rx = music::get(id)
             .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
@@ -949,11 +1156,15 @@ async fn cancel_generation(state: &Arc<AppState>, args: &Value) -> Result<Value,
             .into_iter()
             .map(|j| j.job_id)
             .chain(music::active().into_iter().map(|j| j.job_id))
+            .chain(comic::active().into_iter().map(|j| j.job_id))
             .collect(),
     };
     let mut cancelled = Vec::new();
     for id in ids {
-        let (job_id, status) = if music::is_music_job(&id) {
+        let (job_id, status) = if comic::is_comic_job(&id) {
+            let job = comic::cancel(state, &id).await?;
+            (job.job_id, job.status)
+        } else if music::is_music_job(&id) {
             let job = music::cancel(state, &id).await?;
             (job.job_id, job.status)
         } else {

@@ -71,15 +71,27 @@ With [Eagle](https://eagle.cool) open on the MooshieUI machine, `search_eagle` s
 
 Finished songs are copied out of ComfyUI into the `music` folder in the app data folder, as `mcp_<date>_<time>_<seed>.flac` plus the ABC score YuE2 planned (`.abc`). The result gives the file paths; `include_audio: true` also embeds the FLAC (up to 16 MB) for clients that play MCP audio. Songs made over MCP don't appear in the Music page library, which is kept in the browser.
 
+## Comic pages
+
+`create_comic` does what the Comic page does. Pick a `layout` (the Comic page's templates, such as `one_over_two` or `grid_2x3`) or describe `rows`, then give one `panels` entry per panel in reading order. Describe the `cast` once with appearance tags and say which of them are in each panel; the page `style` and `setting` and the cast's looks are added to every panel, and a panel can replace the setting. Saved characters, styles and chunks work as in `generate_image`.
+
+Each panel is an ordinary generation on the owner's setup for the model, sized to its box (NovelAI panels stay inside the free window), so each panel lands in the gallery. The page is then assembled at 2048 px on the long edge, with gutters and a black border round every panel, and saved to the gallery too. `right_to_left` reads rows right to left, as in manga.
+
+On NovelAI each panel's `dialogue` is lettered in speech bubbles: the app adds `speech bubble` and the text tag for its language, and a `Text:` block last, as the Enhance V5 rules do. Other models draw no dialogue. `mode: one_image` (NovelAI V4 or later, up to six panels) draws the whole page as one image, each panel a character prompt placed at its centre.
+
+A page takes several minutes, so with `wait: false`, or after the tunnel's 75 second limit, poll `get_job` with the `comic-...` job id. `redo_comic_panels` remakes some panels of a finished page, with new prompts or dialogue if given, keeps the rest and builds a new page. Comics made over MCP don't appear on the Comic page, which is kept in the browser.
+
 ## Tools
 
 | Tool | What it does |
 |------|--------------|
-| `get_status` | ComfyUI status and GPUs, queue length, the last five image and music jobs, and the saved setups. |
+| `get_status` | ComfyUI status and GPUs, queue length, the last five image, comic and music jobs, and the saved setups. |
 | `list_models` | Installed checkpoints, diffusion models (with `has_setup`), LoRAs, upscale models, or YuE2 music checkpoints. |
 | `generate_image` | txt2img from a setup, local or NovelAI. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`, `characters`, `styles`, `chunks`, `use_active_styles`, `source_image` + `denoise` (img2img), `reference_images`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
 | `generate_music` | A YuE2 song from `style`, with optional `lyrics` (omit for instrumental), `duration_seconds` (1 to 360), `checkpoint`, `planning` (`full`, `melody`, `off`), `score` (ABC to follow), `steps` and `seed`. Waits up to 10 minutes, or returns a job id with `wait: false`. |
-| `get_job` | Status and results of an image or music job (gallery filenames and previews, or song file paths), optionally waiting for it. |
+| `create_comic` | A comic page: `layout` or `rows`, `panels` (prompt, `dialogue`, `cast`, `characters`, `setting`), `cast`, `style`, `setting`, `page_shape`, `right_to_left`, `gutter`, `mode` (`panels` or `one_image`) and the `generate_image` settings. Generates every panel, assembles the page and returns its preview and links. |
+| `redo_comic_panels` | Remakes `panels` (or `changes` with new prompts or dialogue) of a finished comic and assembles a new page. |
+| `get_job` | Status and results of an image, comic or music job (gallery filenames and previews, or song file paths), optionally waiting for it. |
 | `cancel_generation` | Cancels one MCP job, or all of them. Never touches generations started in the window. |
 | `search_gallery` | Full-text search over prompt, negative prompt and model, or the newest images, filtered by `board`, `favourites_only`, `min_rating`. Older images are indexed on demand, a few hundred per search. |
 | `get_image` | A preview of a gallery image (up to 2048 px), its generation settings, board, rating and download link. |
@@ -157,6 +169,7 @@ Code lives in `src-tauri/src/mcp/`:
 - `expand.rs`: `__wildcard__` and `{a|b}` expansion, a port of `utils/wildcards.ts` and `utils/randomPrompt.ts`. Keep them in step.
 - `library.rs`: saved characters, styles and chunks from the owner's prefs, and how they go into a request (mirrors `toParams` and `savedCharacters.insert`).
 - `music.rs`: music jobs. Maps the tool arguments to `MusicParams` (`to_params`), then submits, polls and downloads through `commands::music` (`submit`, `status`, `audio`), the same functions the Music page calls.
+- `comic.rs`: comic pages. A port of the Comic page's layouts, reading order, panel sizes, prompt assembly and lettering (`utils/comicLayout.ts`) and its page assembly (`utils/comicRunner.ts`). Keep them in step. Each panel runs as an image job.
 - `inputs.rs`: images an assistant passes in (gallery file or base64), uploaded to ComfyUI or sized for NovelAI.
 - `links.rs`: signed, expiring download links and the `GET /files/...` route that serves them.
 - `tools.rs`: tool schemas and handlers, including gallery boards (read from prefs) and the Eagle tools (`eagle.rs`).
