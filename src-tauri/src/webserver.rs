@@ -3722,6 +3722,11 @@ async fn dispatch_command(
             let credential = crate::novelai::resolve_credential(&state, username)
                 .await
                 .map_err(|e| e.to_string())?;
+            // The MCP server acts as the owner, so only the owner's runs
+            // become setups it can reuse.
+            if username.is_none() {
+                crate::mcp::setups::remember(&params);
+            }
 
             let prompt_id = crate::novelai::new_prompt_id();
             let seed = params.seed;

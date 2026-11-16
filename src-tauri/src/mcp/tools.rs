@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 
 use super::jobs::{self, Job};
 use super::music::{self, MusicJob};
-use super::setups;
+use super::{expand, library, setups};
+use crate::comfyui::types::GenerationParams;
 use crate::state::AppState;
 
 /// Longest a tool holds a request open before handing back a job id, for
@@ -29,15 +30,17 @@ const SEARCH_WINDOW: usize = 5000;
 const BACKFILL_PER_CALL: usize = 200;
 
 pub fn definitions() -> Value {
-    json!([
-        {
+    // One json! per tool: a single literal this size hits the macro
+    // recursion limit.
+    Value::Array(vec![
+        json!({
             "name": "get_status",
             "title": "MooshieUI status",
             "description": "Check whether ComfyUI is running, what is queued, recent image and music jobs, and which models have a saved generation setup (only those can be used by generate_image). Call this first.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true }
-        },
-        {
+        }),
+        json!({
             "name": "list_models",
             "title": "List models",
             "description": "List installed model files. Checkpoints and diffusion models marked has_setup can be passed to generate_image; LoRAs can be added to any generation. music lists the YuE2 checkpoints generate_music can use.",
@@ -50,30 +53,44 @@ pub fn definitions() -> Value {
                 }
             },
             "annotations": { "readOnlyHint": true }
-        },
-        {
+        }),
+        json!({
             "name": "generate_image",
             "title": "Generate image",
-            "description": "Generate images with MooshieUI (txt2img). Reuses the owner's last setup for the model (loaders, upscale, face fix, guidance); you change the prompt and any of the optional fields. Images are saved to the MooshieUI gallery and returned as previews. Waits up to 10 minutes for the result unless wait is false; then poll get_job (get_status lists recent job ids).",
+            "description": "Generate images with MooshieUI (txt2img), on a local model or NovelAI. Reuses the owner's last setup for the model (loaders, upscale, face fix, guidance; for NovelAI its quality tags, UC preset and sampler); you change the prompt and any of the optional fields. Prompts may use __name__ wildcards from the owner's wildcard files and {a|b|c} random choices (list_library kind wildcards). Saved characters, artist styles and prompt chunks can be added by name (list_library). NovelAI images must stay inside the free Opus window: at most 1 megapixel, 28 steps, one image. Images are saved to the MooshieUI gallery and returned as previews. Waits up to 10 minutes for the result unless wait is false; then poll get_job (get_status lists recent job ids).",
             "inputSchema": {
                 "type": "object",
                 "required": ["prompt"],
                 "properties": {
                     "prompt": { "type": "string", "description": "Positive prompt, in the style the model expects (tags for anime SDXL models, sentences for Flux and similar)." },
                     "negative_prompt": { "type": "string", "description": "Replaces the setup's negative prompt." },
-                    "model": { "type": "string", "description": "Model with a saved setup (see get_status). Default: the most recently used one." },
+                    "model": { "type": "string", "description": "Model with a saved setup (see get_status), a file name or a NovelAI model id such as nai-diffusion-4-5-full. Default: the most recently used one." },
+                    "characters": { "type": "array", "maxItems": 22, "items": { "type": "string" }, "description": "Saved character names (list_library). Each adds its prompt and UC; on NovelAI V4 and later it becomes its own character prompt." },
+                    "styles": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Saved artist style names (list_library kind styles): their weighted artist tags are appended and their UC added." },
+                    "chunks": {
+                        "type": "array",
+                        "maxItems": 30,
+                        "description": "Saved prompt chunk names (list_library kind chunks), or { name, mode } with mode prepend, append or random (one random line). Default: the mode the chunk is active with in MooshieUI, else append. Their UC is added.",
+                        "items": {
+                            "anyOf": [
+                                { "type": "string" },
+                                { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "mode": { "type": "string", "enum": ["prepend", "append", "random"] } } }
+                            ]
+                        }
+                    },
+                    "use_active_styles": { "type": "boolean", "description": "Also add the styles and chunks currently active in MooshieUI. Default false." },
                     "width": { "type": "integer", "minimum": 256, "maximum": 4096 },
                     "height": { "type": "integer", "minimum": 256, "maximum": 4096 },
                     "steps": { "type": "integer", "minimum": 1, "maximum": 150 },
                     "cfg": { "type": "number", "minimum": 0, "maximum": 30 },
                     "seed": { "type": "integer", "description": "Omit or -1 for random." },
                     "batch_size": { "type": "integer", "minimum": 1, "maximum": 8 },
-                    "sampler": { "type": "string", "description": "ComfyUI sampler name, e.g. euler_ancestral." },
-                    "scheduler": { "type": "string", "description": "ComfyUI scheduler name, e.g. karras." },
+                    "sampler": { "type": "string", "description": "ComfyUI sampler name, e.g. euler_ancestral. On NovelAI its own names, e.g. k_euler_ancestral." },
+                    "scheduler": { "type": "string", "description": "ComfyUI scheduler name, e.g. karras. On NovelAI its noise schedule, e.g. karras." },
                     "loras": {
                         "type": "array",
                         "maxItems": 10,
-                        "description": "Replaces the setup's LoRAs. [] removes them.",
+                        "description": "Replaces the setup's LoRAs. [] removes them. Not for NovelAI.",
                         "items": {
                             "type": "object",
                             "required": ["name"],
@@ -88,8 +105,8 @@ pub fn definitions() -> Value {
                     "include_images": { "type": "boolean", "description": "Return image previews. Default true." }
                 }
             }
-        },
-        {
+        }),
+        json!({
             "name": "generate_music",
             "title": "Generate music",
             "description": "Generate a song with YuE2 (the MooshieUI Music page backend). Describe the style; add lyrics for vocals or leave them out for instrumental music. The FLAC (and the ABC score YuE2 planned) is saved on the MooshieUI machine and its path returned. Songs take minutes: this waits up to 10 minutes unless wait is false; then poll get_job.",
@@ -109,8 +126,8 @@ pub fn definitions() -> Value {
                     "include_audio": { "type": "boolean", "description": "Embed the FLAC in the result (up to 16 MB). Default false." }
                 }
             }
-        },
-        {
+        }),
+        json!({
             "name": "get_job",
             "title": "Generation job",
             "description": "Status and results of a generate_image or generate_music job.",
@@ -125,8 +142,8 @@ pub fn definitions() -> Value {
                 }
             },
             "annotations": { "readOnlyHint": true }
-        },
-        {
+        }),
+        json!({
             "name": "cancel_generation",
             "title": "Cancel generation",
             "description": "Cancel a generate_image or generate_music job, or every unfinished one when job_id is omitted. Generations started in the MooshieUI window are not touched.",
@@ -135,8 +152,8 @@ pub fn definitions() -> Value {
                 "properties": { "job_id": { "type": "string" } }
             },
             "annotations": { "destructiveHint": false }
-        },
-        {
+        }),
+        json!({
             "name": "search_gallery",
             "title": "Search gallery",
             "description": "Find images in the MooshieUI gallery by words in their prompt, negative prompt or model name, or list the newest when query is empty.",
@@ -148,8 +165,8 @@ pub fn definitions() -> Value {
                 }
             },
             "annotations": { "readOnlyHint": true }
-        },
-        {
+        }),
+        json!({
             "name": "get_image",
             "title": "Get gallery image",
             "description": "Look at a gallery image and read its generation settings.",
@@ -162,7 +179,35 @@ pub fn definitions() -> Value {
                 }
             },
             "annotations": { "readOnlyHint": true }
-        }
+        }),
+        json!({
+            "name": "list_library",
+            "title": "List saved characters, styles, chunks and wildcards",
+            "description": "The owner's saved characters (with the model families each is written for), artist styles, prompt chunks (named prompt snippets with an optional UC) and wildcard files. Use the names in generate_image.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["characters", "styles", "chunks", "wildcards"], "description": "Default characters." },
+                    "filter": { "type": "string", "description": "Case-insensitive substring of the name." }
+                }
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "get_character",
+            "title": "Get saved character",
+            "description": "A saved character's full prompt and UC for each model family, its memory files (notes on who they are, for writing or roleplay) and its portrait.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": { "type": "string" },
+                    "architecture": { "type": "string", "description": "Which card to show first when the character has several, e.g. novelai, illustrious, flux. Default novelai." },
+                    "include_portrait": { "type": "boolean", "description": "Default true." }
+                }
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
     ])
 }
 
@@ -202,6 +247,8 @@ pub async fn call(
         "cancel_generation" => cancel_generation(state, args).await,
         "search_gallery" => search_gallery(args).await,
         "get_image" => get_image(args).await,
+        "list_library" => list_library(args).await,
+        "get_character" => get_character(args).await,
         _ => return None,
     };
     Some(result.unwrap_or_else(error))
@@ -319,6 +366,101 @@ async fn list_models(state: &Arc<AppState>, args: &Value) -> Result<Value, Strin
     }))]))
 }
 
+/// A seed for prompt expansion and the job: the agent's, or a fresh one
+/// (NovelAI seeds are 32-bit).
+fn resolve_seed(params: &GenerationParams) -> i64 {
+    if params.novelai.is_some() {
+        crate::novelai::resolve_seed(params.seed)
+    } else if params.seed < 0 {
+        (rand::random::<u64>() >> 1) as i64
+    } else {
+        params.seed
+    }
+}
+
+/// Add saved characters, styles and chunks, then expand `__wildcards__` and
+/// `{a|b}` in every prompt, with the job's seed so it can be reproduced.
+/// Returns what was added and any wildcard names that matched no file.
+async fn finish_prompt(
+    params: &mut GenerationParams,
+    args: &Value,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    params.seed = resolve_seed(params);
+    let seed = params.seed as u32;
+    let add = library::Additions::from_args(args)?;
+    let used = if add.is_empty() {
+        Vec::new()
+    } else {
+        let lib = library::Library::load().await;
+        library::apply(params, &lib, &add, seed)?
+    };
+    let nai_texts = params.novelai.as_ref().map(|n| {
+        n.characters
+            .iter()
+            .flat_map(|c| [c.prompt.as_str(), c.negative_prompt.as_str()])
+            .any(expand::needs_expansion)
+    });
+    let mut unknown = Vec::new();
+    if expand::needs_expansion(&params.positive_prompt)
+        || expand::needs_expansion(&params.negative_prompt)
+        || nai_texts == Some(true)
+    {
+        let table = tokio::task::spawn_blocking(expand::load_table)
+            .await
+            .map_err(|e| e.to_string())?;
+        params.positive_prompt =
+            expand::expand_prompt(&params.positive_prompt, &table, seed, 0, &mut unknown);
+        params.negative_prompt =
+            expand::expand_prompt(&params.negative_prompt, &table, seed, 1, &mut unknown);
+        if let Some(nai) = params.novelai.as_mut() {
+            for (i, c) in nai.characters.iter_mut().enumerate() {
+                let salt = 101 + (i as u32) * 2;
+                c.prompt = expand::expand_prompt(&c.prompt, &table, seed, salt, &mut unknown);
+                c.negative_prompt =
+                    expand::expand_prompt(&c.negative_prompt, &table, seed, salt + 1, &mut unknown);
+            }
+        }
+    }
+    Ok((used, unknown))
+}
+
+/// Start a job and answer the way every generating tool does.
+async fn run_job(
+    state: &Arc<AppState>,
+    params: GenerationParams,
+    args: &Value,
+    max_wait: Duration,
+    added: Vec<String>,
+    unknown: Vec<String>,
+) -> Result<Value, String> {
+    let rx = jobs::start(state.clone(), params);
+    let job = if args["wait"].as_bool() == Some(false) {
+        rx.borrow().clone()
+    } else {
+        jobs::wait(rx, max_wait).await
+    };
+    let mut result = job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await?;
+    let mut notes = serde_json::Map::new();
+    if !added.is_empty() {
+        notes.insert("added".into(), json!(added));
+    }
+    if !unknown.is_empty() {
+        notes.insert(
+            "unknown_wildcards".into(),
+            json!(unknown
+                .iter()
+                .map(|n| format!("__{n}__"))
+                .collect::<Vec<_>>()),
+        );
+    }
+    if !notes.is_empty() {
+        if let Some(content) = result["content"].as_array_mut() {
+            content.push(text(Value::Object(notes)));
+        }
+    }
+    Ok(result)
+}
+
 async fn generate_image(
     state: &Arc<AppState>,
     args: &Value,
@@ -326,15 +468,14 @@ async fn generate_image(
 ) -> Result<Value, String> {
     let overrides: setups::Overrides =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))?;
-    let setup = setups::find(&setups::list(), arg_str(args, "model"))?;
-    let params = setups::apply(&setup.params, &overrides)?;
-    let rx = jobs::start(state.clone(), params);
-    if args["wait"].as_bool() == Some(false) {
-        let job = rx.borrow().clone();
-        return Ok(ok(vec![text(job_json(&job))]));
-    }
-    let job = jobs::wait(rx, max_wait).await;
-    job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await
+    let setup = setups::find(
+        &setups::list(),
+        arg_str(args, "model"),
+        setups::Purpose::Generate,
+    )?;
+    let mut params = setups::apply(&setup.params, &overrides)?;
+    let (added, unknown) = finish_prompt(&mut params, args).await?;
+    run_job(state, params, args, max_wait, added, unknown).await
 }
 
 async fn list_music_models(state: &Arc<AppState>) -> Result<Value, String> {
@@ -474,6 +615,168 @@ async fn cancel_generation(state: &Arc<AppState>, args: &Value) -> Result<Value,
         cancelled.push(json!({ "job_id": job_id, "status": status }));
     }
     Ok(ok(vec![text(json!({ "jobs": cancelled }))]))
+}
+
+fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", s.chars().take(max).collect::<String>())
+    }
+}
+
+async fn list_library(args: &Value) -> Result<Value, String> {
+    let kind = arg_str(args, "kind").unwrap_or("characters");
+    let filter = arg_str(args, "filter").map(str::to_lowercase);
+    let keep = |name: &str| {
+        filter
+            .as_deref()
+            .is_none_or(|f| name.to_lowercase().contains(f))
+    };
+    if kind == "wildcards" {
+        let table = tokio::task::spawn_blocking(expand::load_table)
+            .await
+            .map_err(|e| e.to_string())?;
+        let items: Vec<Value> = table
+            .iter()
+            .filter(|(name, _)| keep(name))
+            .take(500)
+            .map(|(name, options)| {
+                json!({
+                    "token": format!("__{name}__"),
+                    "options": options.len(),
+                    "examples": options.iter().take(3).map(|o| clip(o, 60)).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        return Ok(ok(vec![text(json!({
+            "kind": "wildcards",
+            "total": table.len(),
+            "wildcards": items,
+            "note": "Write a token in any prompt; it is replaced by one random option.",
+        }))]));
+    }
+    let lib = library::Library::load().await;
+    let value = match kind {
+        "characters" => {
+            let mut by_name: Vec<(String, Vec<&library::Character>)> = Vec::new();
+            for c in &lib.characters {
+                if !keep(&c.name) {
+                    continue;
+                }
+                match by_name
+                    .iter_mut()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(c.name.trim()))
+                {
+                    Some((_, cards)) => cards.push(c),
+                    None => by_name.push((c.name.trim().to_string(), vec![c])),
+                }
+            }
+            json!({
+                "kind": "characters",
+                "characters": by_name.iter().map(|(name, cards)| json!({
+                    "name": name,
+                    "architectures": cards.iter().map(|c| c.architecture.as_str()).collect::<Vec<_>>(),
+                    "prompt": clip(&cards[0].prompt, 300),
+                    "has_portrait": cards.iter().any(|c| c.reference.is_some() || c.thumbnail.is_some()),
+                    "memory_files": cards.iter().flat_map(|c| c.memory.iter().map(|m| m.name.as_str())).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+                "note": "Pass names in generate_image's characters. get_character shows the full card, memory and portrait.",
+            })
+        }
+        "styles" => json!({
+            "kind": "styles",
+            "styles": lib.styles.iter().filter(|s| keep(&s.name)).map(|s| json!({
+                "name": s.name,
+                "artists": library::style_fragment(&[s], false),
+                "uc": s.negative,
+                "active": lib.active_style_ids.contains(&s.id),
+            })).collect::<Vec<_>>(),
+            "note": "Pass names in generate_image's styles, or use_active_styles: true for the ones active in MooshieUI.",
+        }),
+        "chunks" => json!({
+            "kind": "chunks",
+            "chunks": lib.chunks.iter().filter(|c| keep(&c.name)).map(|c| {
+                let mode = lib.active_chunks.iter().find(|(id, _)| id == &c.id).map(|(_, m)| match m {
+                    library::ChunkMode::Prepend => "prepend",
+                    library::ChunkMode::Append => "append",
+                    library::ChunkMode::Random => "random",
+                });
+                json!({
+                    "name": c.name,
+                    "content": clip(&c.content, 300),
+                    "uc": c.negative,
+                    "active_mode": mode,
+                })
+            }).collect::<Vec<_>>(),
+            "note": "Pass names (or { name, mode }) in generate_image's chunks. mode random picks one line.",
+        }),
+        other => {
+            return Err(format!(
+                "kind must be characters, styles, chunks or wildcards, not '{other}'"
+            ))
+        }
+    };
+    Ok(ok(vec![text(value)]))
+}
+
+/// Most memory text one get_character returns.
+const MAX_MEMORY_CHARS: usize = 24_000;
+
+/// An image content block from a `data:image/...;base64,` URL.
+fn data_url_content(url: &str) -> Option<Value> {
+    let rest = url.strip_prefix("data:")?;
+    let (mime, data) = rest.split_once(";base64,")?;
+    mime.starts_with("image/")
+        .then(|| json!({ "type": "image", "mimeType": mime, "data": data }))
+}
+
+async fn get_character(args: &Value) -> Result<Value, String> {
+    let name = arg_str(args, "name").ok_or("name is required")?;
+    let lib = library::Library::load().await;
+    let arch = arg_str(args, "architecture").unwrap_or(library::NOVELAI_ARCHITECTURE);
+    let card = library::find_character(&lib, name, arch)?;
+    let cards: Vec<&library::Character> = lib
+        .characters
+        .iter()
+        .filter(|c| c.name.trim().eq_ignore_ascii_case(card.name.trim()))
+        .collect();
+    // Variants share their parent's memory.
+    let memory_owner = card
+        .parent_id
+        .as_deref()
+        .and_then(|id| lib.characters.iter().find(|c| c.id == id))
+        .unwrap_or(card);
+    let mut budget = MAX_MEMORY_CHARS;
+    let memory: Vec<Value> = memory_owner
+        .memory
+        .iter()
+        .map(|m| {
+            let content = clip(&m.content, budget);
+            budget = budget.saturating_sub(content.chars().count());
+            json!({ "name": m.name, "content": content })
+        })
+        .collect();
+    let mut content = vec![text(json!({
+        "name": card.name,
+        "cards": cards.iter().map(|c| json!({
+            "architecture": c.architecture,
+            "prompt": c.prompt,
+            "uc": c.negative,
+            "expression": c.expression,
+        })).collect::<Vec<_>>(),
+        "memory": memory,
+    }))];
+    if args["include_portrait"].as_bool().unwrap_or(true) {
+        if let Some(img) = cards
+            .iter()
+            .find_map(|c| c.reference.as_deref().or(c.thumbnail.as_deref()))
+            .and_then(data_url_content)
+        {
+            content.push(img);
+        }
+    }
+    Ok(ok(content))
 }
 
 fn image_content(jpeg: Vec<u8>) -> Value {

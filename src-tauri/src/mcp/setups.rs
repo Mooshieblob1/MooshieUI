@@ -3,9 +3,13 @@
 //! The frontend works out a model's family, loaders, text encoder and tuned
 //! defaults before it sends `generate`, and none of that can be rebuilt from a
 //! filename on the Rust side. So the MCP server never builds a request from
-//! scratch: it remembers the last txt2img request the owner ran with each
-//! model and lets an agent change only what is safe to change (prompt, size,
-//! steps, CFG, seed, sampler, LoRAs).
+//! scratch: it remembers the last request the owner ran with each model and
+//! lets an agent change only what is safe to change (prompt, size, steps, CFG,
+//! seed, sampler, LoRAs).
+//!
+//! Three kinds are remembered, each per model: local txt2img, NovelAI txt2img
+//! (keyed by the NovelAI model id) and local Image Edit. img2img and upscale
+//! reuse the txt2img setup with the mode changed.
 //!
 //! Stored in `mcp_setups.json` in the app data directory, without the prompt
 //! and without any input image.
@@ -59,8 +63,19 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// The model a request runs, as the setup key.
+/// Mode of an Image Edit setup.
+pub const EDIT_MODE: &str = "image_edit";
+
+/// The model a request runs, as the setup key. NovelAI requests are keyed by
+/// the NovelAI model id.
 pub fn model_key(params: &GenerationParams) -> String {
+    if let Some(nai) = &params.novelai {
+        return if crate::novelai::models::is_novelai_model(&params.checkpoint) {
+            params.checkpoint.clone()
+        } else {
+            nai.model.clone()
+        };
+    }
     if params.use_split_model {
         params.diffusion_model.clone().unwrap_or_default()
     } else {
@@ -68,12 +83,26 @@ pub fn model_key(params: &GenerationParams) -> String {
     }
 }
 
-/// A request reduced to a reusable setup, or `None` when it is not one: only
-/// plain local txt2img qualifies. NovelAI, paused/resumed runs, and modes that
-/// need an input image are skipped.
+/// Whether a setup runs on NovelAI.
+pub fn is_novelai(params: &GenerationParams) -> bool {
+    params.novelai.is_some()
+}
+
+/// A request reduced to a reusable setup, or `None` when it is not one: plain
+/// txt2img (local or NovelAI) and local Image Edit qualify. Paused/resumed
+/// runs, NovelAI img2img/inpainting/upscale and every other mode are skipped.
 pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
-    if params.mode != "txt2img"
-        || params.novelai.is_some()
+    let mode_ok = match params.mode.as_str() {
+        "txt2img" => true,
+        EDIT_MODE => params.novelai.is_none(),
+        _ => false,
+    };
+    let nai_ok = params.novelai.as_ref().is_none_or(|nai| {
+        matches!(nai.action.as_str(), "" | "generate")
+            && !crate::novelai::is_upscale_request(params)
+    });
+    if !mode_ok
+        || !nai_ok
         || params.pause_at_step.is_some()
         || !params.resume_stages.is_empty()
         || model_key(params).trim().is_empty()
@@ -88,6 +117,13 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
     p.detail_segments.clear();
     p.positive_regions.clear();
     p.facefix_prompt_override = None;
+    p.upscale_positive_prompt = None;
+    p.upscale_negative_prompt = None;
+    if let Some(mm) = p.moody_moss.as_mut() {
+        mm.face_prompt.clear();
+        mm.area_prompt.clear();
+        mm.area_detail = false;
+    }
     // Inputs that point at one particular image (ComfyUI input files).
     p.input_image = None;
     p.mask_image = None;
@@ -100,6 +136,21 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
     p.edit_reference_images.clear();
     p.resume_edit_image = None;
     p.resume_edit_mask = None;
+    p.video_first_frame = None;
+    p.video_last_frame = None;
+    p.video_ref_images.clear();
+    p.refine_only = false;
+    if let Some(nai) = p.novelai.as_mut() {
+        // Character boxes are that image's cast; vibes and precise
+        // references are pictures (and a vibe costs Anlas to encode).
+        nai.characters.clear();
+        nai.vibes.clear();
+        nai.director_references.clear();
+        nai.local_positive_prompt = None;
+        nai.local_negative_prompt = None;
+        nai.face_detail.custom_prompt.clear();
+        nai.action = "generate".into();
+    }
     p.seed = -1;
     Some(p)
 }
@@ -111,7 +162,7 @@ pub fn remember(params: &GenerationParams) {
     };
     let model = model_key(&snap);
     let mut setups = SETUPS.lock().unwrap();
-    setups.retain(|s| s.model != model);
+    setups.retain(|s| !(s.model == model && s.params.mode == snap.mode));
     setups.insert(
         0,
         Setup {
@@ -142,13 +193,45 @@ fn file_stem(name: &str) -> String {
     stem.to_ascii_lowercase()
 }
 
+/// What a lookup is for: a txt2img setup (also used for img2img and upscale)
+/// or an Image Edit one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Generate,
+    Edit,
+}
+
+impl Purpose {
+    fn mode(self) -> &'static str {
+        match self {
+            Self::Generate => "txt2img",
+            Self::Edit => EDIT_MODE,
+        }
+    }
+
+    fn how_to_add(self, model: &str) -> String {
+        match self {
+            Self::Generate => {
+                format!("Generate one txt2img image with '{model}' in MooshieUI to add it.")
+            }
+            Self::Edit => format!("Run one Image Edit with '{model}' in MooshieUI to add it."),
+        }
+    }
+}
+
 /// Find a setup by model name. `None` picks the most recently used one. The
 /// name may be the exact filename, or its file name without folder or
 /// extension, case-insensitively; a unique substring also matches.
-pub fn find(setups: &[Setup], model: Option<&str>) -> Result<Setup, String> {
+pub fn find(all: &[Setup], model: Option<&str>, purpose: Purpose) -> Result<Setup, String> {
+    let setups: Vec<Setup> = all
+        .iter()
+        .filter(|s| s.params.mode == purpose.mode())
+        .cloned()
+        .collect();
     let Some(wanted) = model.map(str::trim).filter(|m| !m.is_empty()) else {
-        return setups.first().cloned().ok_or_else(|| {
-            "No saved generation setup yet. Generate one image in MooshieUI (txt2img) with the model you want, then try again.".to_string()
+        return setups.first().cloned().ok_or_else(|| match purpose {
+            Purpose::Generate => "No saved generation setup yet. Generate one image in MooshieUI (txt2img, local or NovelAI) with the model you want, then try again.".to_string(),
+            Purpose::Edit => "No saved Image Edit setup yet. Run one Image Edit in MooshieUI with an edit model (Qwen Image Edit, Flux Kontext, FLUX 3 Klein or Anima), then try again.".to_string(),
         });
     };
     let lower = wanted.to_ascii_lowercase();
@@ -172,12 +255,16 @@ pub fn find(setups: &[Setup], model: Option<&str>) -> Result<Setup, String> {
     match partial.as_slice() {
         [one] => Ok((*one).clone()),
         [] => Err(format!(
-            "No saved setup for '{wanted}'. Models with a setup: {}. Generate once with '{wanted}' in MooshieUI to add it.",
-            names(setups)
+            "No saved setup for '{wanted}'. Models with a setup: {}. {}",
+            names(&setups),
+            purpose.how_to_add(wanted)
         )),
         many => Err(format!(
             "'{wanted}' matches several models: {}. Use the full name.",
-            many.iter().map(|s| s.model.as_str()).collect::<Vec<_>>().join(", ")
+            many.iter()
+                .map(|s| s.model.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
@@ -227,6 +314,35 @@ fn snap_side(v: u32) -> u32 {
     (v.clamp(MIN_SIDE, MAX_SIDE) + 8) / 16 * 16
 }
 
+/// NovelAI takes multiples of 64 only.
+fn snap_side_nai(v: u32) -> u32 {
+    ((v.clamp(MIN_SIDE, MAX_SIDE) + 32) / 64 * 64).max(64)
+}
+
+/// The Opus free window: one image of at most a megapixel at 28 steps or
+/// fewer. MCP requests to NovelAI must stay inside it, so an assistant can
+/// never spend the owner's Anlas.
+pub fn check_novelai_free_window(p: &GenerationParams) -> Result<(), String> {
+    use crate::novelai::face_pass::{FREE_PIXELS, FREE_STEPS};
+    let pixels = u64::from(p.width) * u64::from(p.height);
+    if pixels > FREE_PIXELS {
+        return Err(format!(
+            "{}x{} is over NovelAI's free size (1 megapixel, e.g. 832x1216 or 1024x1024). MCP only makes free NovelAI images, so pick a smaller size.",
+            p.width, p.height
+        ));
+    }
+    if p.steps > FREE_STEPS {
+        return Err(format!(
+            "{} steps is over NovelAI's free limit of {FREE_STEPS}. MCP only makes free NovelAI images.",
+            p.steps
+        ));
+    }
+    if p.batch_size > 1 {
+        return Err("NovelAI only makes one free image per request, so batch_size must be 1. Call generate_image again for more.".into());
+    }
+    Ok(())
+}
+
 /// The request to run: `base` with the agent's changes applied.
 pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams, String> {
     let prompt = o.prompt.trim();
@@ -236,18 +352,22 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
     if prompt.chars().count() > 10_000 {
         return Err("prompt is too long (10000 characters at most)".into());
     }
+    let nai = is_novelai(base);
+    let snap: fn(u32) -> u32 = if nai { snap_side_nai } else { snap_side };
     let mut p = base.clone();
-    p.mode = "txt2img".into();
+    if p.mode != EDIT_MODE {
+        p.mode = "txt2img".into();
+    }
     p.denoise = 1.0;
     p.positive_prompt = prompt.to_string();
     if let Some(neg) = &o.negative_prompt {
         p.negative_prompt = neg.trim().to_string();
     }
     if let Some(w) = o.width {
-        p.width = snap_side(w);
+        p.width = snap(w);
     }
     if let Some(h) = o.height {
-        p.height = snap_side(h);
+        p.height = snap(h);
     }
     if let Some(steps) = o.steps {
         if !(1..=150).contains(&steps) {
@@ -268,23 +388,39 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
         }
         p.batch_size = n;
     }
-    if let Some(s) = o
+    let sampler = o
         .sampler
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        p.sampler_name = s.to_string();
-    }
-    if let Some(s) = o
+        .filter(|s| !s.is_empty());
+    let scheduler = o
         .scheduler
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        p.scheduler = s.to_string();
+        .filter(|s| !s.is_empty());
+    if let Some(block) = p.novelai.as_mut() {
+        // NovelAI names its own samplers (k_euler_ancestral, k_dpmpp_2m...)
+        // and schedules (karras, exponential...).
+        if let Some(s) = sampler {
+            block.sampler = s.to_string();
+        }
+        if let Some(s) = scheduler {
+            block.noise_schedule = s.to_string();
+        }
+    } else {
+        if let Some(s) = sampler {
+            p.sampler_name = s.to_string();
+        }
+        if let Some(s) = scheduler {
+            p.scheduler = s.to_string();
+        }
     }
     if let Some(loras) = &o.loras {
+        if nai && !loras.is_empty() {
+            return Err(
+                "NovelAI models don't take LoRAs. Leave loras out for a NovelAI model.".into(),
+            );
+        }
         if loras.len() > 10 {
             return Err("10 LoRAs at most".into());
         }
@@ -305,7 +441,16 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
                 strength_clip: clip,
             });
         }
-        p.loras = out;
+        if !nai {
+            p.loras = out;
+        }
+    }
+    if let Some(block) = p.novelai.as_mut() {
+        // Face crops shrunk into the free window, never paid ones.
+        block.face_detail.anlas_policy = "fit_free".into();
+    }
+    if nai {
+        check_novelai_free_window(&p)?;
     }
     Ok(p)
 }
@@ -407,6 +552,131 @@ mod tests {
         assert_eq!(snap.seed, -1);
     }
 
+    fn nai_base() -> GenerationParams {
+        let mut p = base();
+        p.checkpoint = "nai-diffusion-4-5-full".into();
+        p.width = 832;
+        p.height = 1216;
+        p.novelai = Some(crate::novelai::params::NovelAiParams {
+            model: "nai-diffusion-4-5-full".into(),
+            action: "generate".into(),
+            characters: vec![Default::default()],
+            ..Default::default()
+        });
+        p
+    }
+
+    #[test]
+    fn novelai_txt2img_is_remembered_without_its_cast() {
+        let mut p = nai_base();
+        if let Some(mm) = p.moody_moss.as_mut() {
+            mm.face_prompt = "x".into();
+        }
+        let snap = snapshot(&p).unwrap();
+        assert_eq!(model_key(&snap), "nai-diffusion-4-5-full");
+        assert!(snap.novelai.as_ref().unwrap().characters.is_empty());
+        let mut img2img = nai_base();
+        img2img.novelai.as_mut().unwrap().action = "img2img".into();
+        assert!(snapshot(&img2img).is_none());
+    }
+
+    #[test]
+    fn moody_moss_prompts_belong_to_one_image() {
+        let mut p = base();
+        p.moody_moss = Some(crate::comfyui::types::MoodyMossFinish {
+            face_detail: true,
+            face_prompt: "freckles".into(),
+            area_detail: true,
+            area_prompt: "hands".into(),
+            ..Default::default()
+        });
+        let snap = snapshot(&p).unwrap();
+        let mm = snap.moody_moss.unwrap();
+        assert!(mm.face_detail);
+        assert!(mm.face_prompt.is_empty());
+        assert!(mm.area_prompt.is_empty());
+        assert!(!mm.area_detail);
+    }
+
+    #[test]
+    fn image_edit_setups_are_kept_apart_from_txt2img() {
+        let mut edit = base();
+        edit.mode = EDIT_MODE.into();
+        edit.edit_reference_images = vec!["ref.png".into()];
+        let snap = snapshot(&edit).unwrap();
+        assert!(snap.edit_reference_images.is_empty());
+        let setups = vec![
+            Setup {
+                model: "a.safetensors".into(),
+                last_used_ms: 0,
+                params: snap,
+            },
+            setup("b.safetensors"),
+        ];
+        assert_eq!(
+            find(&setups, None, Purpose::Edit).unwrap().model,
+            "a.safetensors"
+        );
+        assert_eq!(
+            find(&setups, None, Purpose::Generate).unwrap().model,
+            "b.safetensors"
+        );
+        assert!(find(&setups, Some("b"), Purpose::Edit).is_err());
+    }
+
+    #[test]
+    fn novelai_stays_inside_the_free_window() {
+        let ok = |o: Overrides| apply(&nai_base(), &o);
+        let p = || Overrides {
+            prompt: "1girl".into(),
+            ..Default::default()
+        };
+        let r = ok(p()).unwrap();
+        assert_eq!(
+            r.novelai.as_ref().unwrap().face_detail.anlas_policy,
+            "fit_free"
+        );
+        assert!(ok(Overrides {
+            width: Some(1216),
+            height: Some(1216),
+            ..p()
+        })
+        .is_err());
+        assert!(ok(Overrides {
+            steps: Some(29),
+            ..p()
+        })
+        .is_err());
+        assert!(ok(Overrides {
+            batch_size: Some(2),
+            ..p()
+        })
+        .is_err());
+        assert!(ok(Overrides {
+            loras: Some(vec![LoraOverride {
+                name: "x".into(),
+                ..Default::default()
+            }]),
+            ..p()
+        })
+        .is_err());
+        // Sides snap to NovelAI's 64 px grid.
+        let r = ok(Overrides {
+            width: Some(1000),
+            height: Some(1000),
+            ..p()
+        })
+        .unwrap();
+        assert_eq!((r.width, r.height), (1024, 1024));
+        // Samplers go to the NovelAI block.
+        let r = ok(Overrides {
+            sampler: Some("k_dpmpp_2m".into()),
+            ..p()
+        })
+        .unwrap();
+        assert_eq!(r.novelai.unwrap().sampler, "k_dpmpp_2m");
+    }
+
     #[test]
     fn only_plain_txt2img_is_remembered() {
         let mut p = base();
@@ -435,23 +705,33 @@ mod tests {
             setup("anima_preview.safetensors"),
             setup("anima_final.safetensors"),
         ];
-        assert_eq!(find(&setups, None).unwrap().model, setups[0].model);
         assert_eq!(
-            find(&setups, Some("illustrious_v2")).unwrap().model,
+            find(&setups, None, Purpose::Generate).unwrap().model,
             setups[0].model
         );
         assert_eq!(
-            find(&setups, Some("ANIMA_FINAL.safetensors"))
+            find(&setups, Some("illustrious_v2"), Purpose::Generate)
+                .unwrap()
+                .model,
+            setups[0].model
+        );
+        assert_eq!(
+            find(&setups, Some("ANIMA_FINAL.safetensors"), Purpose::Generate)
                 .unwrap()
                 .model,
             setups[2].model
         );
-        assert_eq!(find(&setups, Some("illus")).unwrap().model, setups[0].model);
-        assert!(find(&setups, Some("anima"))
+        assert_eq!(
+            find(&setups, Some("illus"), Purpose::Generate)
+                .unwrap()
+                .model,
+            setups[0].model
+        );
+        assert!(find(&setups, Some("anima"), Purpose::Generate)
             .unwrap_err()
             .contains("several"));
-        assert!(find(&setups, Some("pony")).is_err());
-        assert!(find(&[], None).is_err());
+        assert!(find(&setups, Some("pony"), Purpose::Generate).is_err());
+        assert!(find(&[], None, Purpose::Generate).is_err());
     }
 
     #[test]
