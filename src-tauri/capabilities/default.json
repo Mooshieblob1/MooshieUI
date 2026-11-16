@@ -10,6 +10,8 @@
     "fs:default",
     "fs:allow-write-text-file",
     "clipboard-manager:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-read-image",
     "updater:default",

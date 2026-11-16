@@ -115,6 +115,8 @@ import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
 import { wildcards } from "./wildcards.svelte.js";
+import { loraTriggers } from "./loraTriggers.svelte.js";
+import { insertTrigger, removeTrigger } from "../utils/loraTriggerText.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
@@ -3081,6 +3083,11 @@ class GenerationStore {
         strength_model: l.strength_model ?? 1.0,
         strength_clip: l.strength_clip ?? 1.0,
         enabled: l.enabled ?? true,
+        // Kept so words inserted from trigger chips still leave the prompt
+        // when the LoRA is switched off after a restart.
+        insertedWords: Array.isArray(l.insertedWords)
+          ? l.insertedWords.filter((w: unknown): w is string => typeof w === "string" && w.trim() !== "")
+          : undefined,
       }));
     }
     if (saved.upscaleEnabled !== undefined) this.upscaleEnabled = saved.upscaleEnabled;
@@ -4610,30 +4617,97 @@ class GenerationStore {
   }
 
   removeLora(index: number) {
-    const removed = this.loras[index];
-    this.loras = this.loras.filter((_, i) => i !== index);
-    if (removed?.insertedWords?.length) {
-      this.removeInsertedWordsFromPrompt(removed.insertedWords);
-    }
+    this.setLoras(this.loras.filter((_, i) => i !== index));
   }
 
   /**
-   * Flip a LoRA on or off, taking its chip-inserted trigger words out of the
-   * prompt when it goes off and putting them back when it comes on again.
-   * Words that were no longer in the prompt when it went off (the user
-   * removed or edited them) stop being tracked, so they are not re-added.
+   * Flip a LoRA on or off. Its custom trigger and the trigger words inserted
+   * from its chips go into the prompt when it comes on and out when it goes
+   * off (see `setLoras`).
    */
   toggleLora(index: number) {
-    const target = this.loras[index];
-    if (!target) return;
-    let insertedWords = target.insertedWords;
-    if (insertedWords?.length) {
-      if (target.enabled) insertedWords = this.removeInsertedWordsFromPrompt(insertedWords);
-      else this.restoreInsertedWordsToPrompt(insertedWords);
-    }
-    this.loras = this.loras.map((l, i) =>
-      i === index ? { ...l, enabled: !l.enabled, insertedWords } : l
+    if (!this.loras[index]) return;
+    this.setLoras(this.loras.map((l, i) => (i === index ? { ...l, enabled: !l.enabled } : l)));
+  }
+
+  /** Point a LoRA row at another file, swapping the old file's trigger for the new one's. */
+  setLoraName(index: number, name: string) {
+    if (!this.loras[index]) return;
+    this.setLoras(
+      this.loras.map((l, i) => (i === index ? { ...l, name, insertedWords: undefined } : l)),
     );
+  }
+
+  /** Switch a LoRA on by file name, adding a row for it when there is none. */
+  enableLoraByName(name: string) {
+    if (!name) return;
+    const idx = this.loras.findIndex((l) => l.name === name);
+    if (idx >= 0) {
+      if (!this.loras[idx].enabled) this.toggleLora(idx);
+      return;
+    }
+    this.setLoras([...this.loras, { name, strength_model: 1.0, strength_clip: 1.0, enabled: true }]);
+  }
+
+  /**
+   * Replace the LoRA list the way a user action does, keeping the prompt in
+   * step: every LoRA that stops being active (switched off, removed, renamed
+   * away) has its custom trigger and its chip-inserted words taken out of the
+   * positive prompt, and every LoRA that becomes active gets them put in.
+   *
+   * Words a user edited or deleted are no longer found, so they stop being
+   * tracked and are not put back later. Restoring settings, presets of other
+   * features and metadata imports assign `loras` directly instead, because
+   * their prompt already says what it should.
+   */
+  setLoras(next: LoraEntry[]) {
+    const active = (list: LoraEntry[]) => {
+      const map = new Map<string, LoraEntry>();
+      for (const l of list) if (l.enabled && l.name && !map.has(l.name)) map.set(l.name, l);
+      return map;
+    };
+    const before = active(this.loras);
+    const after = active(next);
+    let prompt = this.positivePrompt;
+    const kept = new Map<string, string[]>();
+
+    for (const [name, lora] of before) {
+      if (after.has(name)) continue;
+      const trigger = loraTriggers.get(name);
+      if (trigger) prompt = removeTrigger(prompt, trigger);
+      const words: string[] = [];
+      for (const word of lora.insertedWords ?? []) {
+        const removed = removeTrigger(prompt, word);
+        if (removed !== prompt) words.push(word);
+        prompt = removed;
+      }
+      kept.set(name, words);
+    }
+    for (const [name, lora] of after) {
+      if (before.has(name)) continue;
+      for (const word of lora.insertedWords ?? []) prompt = insertTrigger(prompt, word);
+      const trigger = loraTriggers.get(name);
+      if (trigger) prompt = insertTrigger(prompt, trigger);
+    }
+
+    this.loras = next.map((l) => {
+      const words = kept.get(l.name);
+      if (!words || l.enabled) return l;
+      return { ...l, insertedWords: words.length ? words : undefined };
+    });
+    if (prompt !== this.positivePrompt) this.positivePrompt = prompt;
+  }
+
+  /**
+   * A LoRA's custom trigger was edited: if that LoRA is on, swap the old text
+   * in the prompt for the new one (or add it, when the old one is gone).
+   */
+  replaceLoraTrigger(name: string, oldTrigger: string, newTrigger: string) {
+    if (!this.loras.some((l) => l.enabled && l.name === name)) return;
+    let prompt = this.positivePrompt;
+    if (oldTrigger) prompt = removeTrigger(prompt, oldTrigger);
+    if (newTrigger) prompt = insertTrigger(prompt, newTrigger);
+    if (prompt !== this.positivePrompt) this.positivePrompt = prompt;
   }
 
   /** Record a trigger word inserted into the prompt via a LoRA's trigger-word chip, so it can be removed on deselect. */
@@ -4645,40 +4719,11 @@ class GenerationStore {
     );
   }
 
-  /**
-   * Strip trigger words previously inserted via addTriggerWord/recordInsertedLoraWord, removing each as its own comma-delimited segment so surrounding text is untouched.
-   * Returns the words actually found and removed.
-   */
-  private removeInsertedWordsFromPrompt(words: string[]): string[] {
-    let text = this.positivePrompt;
-    const removed: string[] = [];
-    for (const word of words) {
-      const trimmed = word.trim();
-      if (!trimmed) continue;
-      const segments = text.split(",");
-      const idx = segments.findIndex((s) => s.trim() === trimmed);
-      if (idx === -1) continue;
-      segments.splice(idx, 1);
-      text = segments.join(",").replace(/^\s*,\s*/, "").replace(/,\s*$/, "").trim();
-      removed.push(word);
-    }
-    if (text !== this.positivePrompt) {
-      this.positivePrompt = text;
-    }
-    return removed;
-  }
-
-  /** Append trigger words removed by removeInsertedWordsFromPrompt, each as its own comma-delimited segment, skipping any already in the prompt. */
-  private restoreInsertedWordsToPrompt(words: string[]) {
-    let text = this.positivePrompt.trim();
-    for (const word of words) {
-      const trimmed = word.trim();
-      if (!trimmed || text.split(",").some((s) => s.trim() === trimmed)) continue;
-      text = text ? `${text}, ${trimmed}` : trimmed;
-    }
-    if (text !== this.positivePrompt) {
-      this.positivePrompt = text;
-    }
+  /** Put a trigger-word chip's word into the prompt and remember it belongs to that LoRA. */
+  insertLoraWord(loraName: string, word: string) {
+    const prompt = insertTrigger(this.positivePrompt, word);
+    if (prompt !== this.positivePrompt) this.positivePrompt = prompt;
+    this.recordInsertedLoraWord(loraName, word);
   }
 
   /** Apply defaults if no checkpoint is selected yet (first run). */

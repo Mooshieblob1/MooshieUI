@@ -42,6 +42,11 @@ jobs:
           npx esbuild scripts/tests/contentSafety.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/contentSafety.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/contentSafety.test.mjs"
 
+      - name: LoRA trigger text tests
+        run: |
+          npx esbuild scripts/tests/loraTriggerText.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/loraTriggerText.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/loraTriggerText.test.mjs"
+
       - name: NovelAI outfit isolation tests
         run: |
           npx esbuild scripts/tests/naiOutfits.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiOutfits.test.mjs" --log-level=warning
@@ -51,6 +56,11 @@ jobs:
         run: |
           npx esbuild scripts/tests/promptSpellcheck.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptSpellcheck.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptSpellcheck.test.mjs"
+
+      - name: Image Info field order tests
+        run: |
+          npx esbuild scripts/tests/imageInfoFields.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/imageInfoFields.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/imageInfoFields.test.mjs"
 
       - name: Wildcard file tests
         run: |
