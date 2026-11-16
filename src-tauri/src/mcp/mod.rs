@@ -20,7 +20,9 @@
 //! `AppConfig`: the Settings page saves the whole config object at once, and a
 //! stale copy of it must not switch the server off or roll the token back.
 
+pub mod expand;
 pub mod jobs;
+pub mod library;
 pub mod music;
 pub mod setups;
 pub mod tools;
@@ -533,10 +535,12 @@ async fn serve(
     (StatusCode::OK, Json(reply)).into_response()
 }
 
-const INSTRUCTIONS: &str = "MooshieUI is a local image and music generator built on ComfyUI. \
-generate_image reuses the owner's last txt2img setup for a model (loaders, upscale, face fix, guidance), \
-so only models listed with a saved setup in get_status can be used; generating once with a model in \
-MooshieUI saves its setup. Images land in the MooshieUI gallery. generate_music makes songs with YuE2 \
+const INSTRUCTIONS: &str = "MooshieUI is a local image and music generator built on ComfyUI, with NovelAI support. \
+generate_image reuses the owner's last setup for a model (loaders, upscale, face fix, guidance; NovelAI quality tags \
+and UC preset), so only models listed with a saved setup in get_status can be used; generating once with a model in \
+MooshieUI saves its setup. NovelAI images over MCP are always free ones (Opus, at most 1 megapixel and 28 steps). \
+Prompts take __wildcards__ and {a|b} choices, and saved characters, artist styles and prompt chunks can be added by \
+name (list_library). Images land in the MooshieUI gallery. generate_music makes songs with YuE2 \
 (list_models category music shows whether it is installed) and saves FLAC files on the MooshieUI machine. \
 Check get_status first.";
 

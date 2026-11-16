@@ -16,7 +16,7 @@ See the [wiki comparison](https://github.com/Mooshieblob1/MooshieUI/wiki/Control
 | Flux.1 (flux1d, flux1s, flux1krea) | Flux Redux | None (core ComfyUI) |
 | SD1.5 (sd15) | IP-Adapter Plus | ComfyUI_IPAdapter_plus |
 | SDXL, Illustrious, Pony (sdxl, illustrious, pony) | IP-Adapter Plus | ComfyUI_IPAdapter_plus |
-| Anima (anima) | Anima Reference Adapter v2 (character reference) | ComfyUI-Anima-Ref-Adapter (installed automatically) |
+| Anima (anima) | Anima Reference Adapter v2 or SnapRef (character reference) | ComfyUI-Anima-Ref-Adapter or SnapRef |
 | All other families | Not supported | -- |
 
 Unsupported families show an explanatory hint in the panel. Generation with
@@ -98,6 +98,23 @@ model call per step), Colour correction (`apg`, `rescale`, `none`) and End
 switched off while it is on, and it cannot be combined with Anima Style
 Transfer.
 
+### Anima (SnapRef)
+
+Select **SnapRef** in the Anima Style Reference panel. The panel can download
+the pinned v1a or v2a adapter weights into ComfyUI's `models/loras/` directory;
+it also lists compatible installed weights. When no adapter has been selected,
+v2 is preferred if installed. Managed ComfyUI installs the pinned SnapRef node
+at launch. For a remote ComfyUI, install or update
+[SnapRef](https://github.com/ArcAnima/SnapRef) by placing its
+`comfyui_nodes/snapref` directory in `custom_nodes/snapref`, then restart
+ComfyUI. Its `SnapRefSimple` node must support eight reference inputs.
+
+Add one to eight images of the **same character**. Each image has a strength
+from 0 to 2 (default 1). Choose **Character & Style** or **Character** mode,
+and adjust fidelity from 0 to 1 (default 1). SnapRef works with txt2img,
+img2img and inpainting. Like the Anima Reference Adapter, it cannot be combined
+with Anima Style Transfer, and Anima TeaCache is disabled while it is active.
+
 ## Using the panel
 
 1. Open the Style Reference section in the Generation page sidebar.
@@ -122,7 +139,9 @@ ComfyUI nodes.
 - Workflow templates: `src-tauri/src/templates/style_ref.rs`
 - Generation params: `style_ref_enabled`, `style_ref_image`, `style_ref_strength`,
   `style_ref_weight_type`, `style_ref_start`, `style_ref_end`; Anima adds
-  `style_ref_image_2`, `anima_ref_guidance` and `anima_ref_correction`
+  `style_ref_image_2`, `anima_ref_guidance` and `anima_ref_correction`;
+  SnapRef uses `anima_ref_method`, `snapref_adapter`, `snapref_mode`,
+  `snapref_fidelity`, and `snapref_references`.
 - IP-Adapter lazy install follows the optional-node installation pattern:
   verified by checking for the `IPAdapterUnifiedLoader` class in the ComfyUI
   object info endpoint.
