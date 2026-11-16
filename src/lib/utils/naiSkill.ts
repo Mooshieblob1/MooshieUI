@@ -24,7 +24,7 @@ import { cachedSkillValue, readCachedSkill } from "./skillCache.js";
  * Bump to invalidate every cached skill at once, after changing the authoring
  * prompt or the V5 specification it is written against.
  */
-const SKILL_VERSION = 9;
+const SKILL_VERSION = 10;
 
 const CACHE_PREFIX = "mooshieui.naiskill.";
 

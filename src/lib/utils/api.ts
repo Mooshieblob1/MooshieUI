@@ -2021,3 +2021,23 @@ export const refineVideoDraft = (filename: string, steps: number, sigma: number)
 /** Regenerate pixel frames [startFrame, endFrame) of a retained draft, keeping its audio. */
 export const retakeVideoDraft = (filename: string, startFrame: number, endFrame: number, steps: number) =>
   ipcInvoke<{ prompt_id: string }>("retake_video_draft", { filename, startFrame, endFrame, steps });
+
+// --- Wildcard files (<app data>/wildcards) ---
+
+export interface WildcardListing {
+  dir: string;
+  files: Array<{ path: string; content: string }>;
+  truncated: boolean;
+}
+
+export async function listWildcards(): Promise<WildcardListing> {
+  return ipcInvoke("list_wildcards");
+}
+
+export async function saveWildcard(path: string, content: string): Promise<void> {
+  return ipcInvoke("save_wildcard", { path, content });
+}
+
+export async function deleteWildcard(path: string): Promise<void> {
+  return ipcInvoke("delete_wildcard", { path });
+}
