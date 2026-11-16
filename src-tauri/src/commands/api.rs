@@ -4517,7 +4517,10 @@ fn moss_image_family_from_text(lower: &str) -> Option<&'static str> {
         "moss.image",
     ]
     .iter()
-    .any(|marker| lower.contains(marker));
+    .any(|marker| lower.contains(marker))
+        // Moody Moss Mix, a MOSS-Image SFT fine-tune whose files are named
+        // `Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors` and the like.
+        || (lower.contains("moody") && lower.contains("moss"));
     if !is_moss {
         return None;
     }
@@ -5245,10 +5248,20 @@ mod split_model_pairing_tests {
             ("MOSS-Image-SFT-8-steps-dmd.safetensors", "mossimage"),
             ("moss_image_base_int8_convrot.safetensors", "mossimagebase"),
             ("MOSS-Image-Base-Q8_0.gguf", "mossimagebase"),
+            (
+                "Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors",
+                "mossimage",
+            ),
+            (
+                "Moody-Moss-Mix-V2-25STEPS-CFG3_00001__clean-int8_convrot.safetensors",
+                "mossimage",
+            ),
         ] {
             assert_eq!(model_family_from_filename(name), Some(family), "{name}");
         }
         assert_eq!(model_family_from_base_model("MOSS-Image"), "mossimage");
+        // CivitAI's own base-model name, as Moody Moss Mix lists it.
+        assert_eq!(model_family_from_base_model("MOSS Image"), "mossimage");
         assert_eq!(
             model_family_from_base_model("MOSS-Image Base"),
             "mossimagebase"

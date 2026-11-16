@@ -61,6 +61,8 @@ NODE_FILE_MAP = [
     ("comfyui-nodes/h3_preview.py", "mooshie-nodes/h3_preview.py"),
     ("comfyui-nodes/h3_upscaler.LICENSE", "mooshie-nodes/h3_upscaler.LICENSE"),
     ("comfyui-nodes/gguf_compat.py", "mooshie-nodes/gguf_compat.py"),
+    ("comfyui-nodes/skin_contrast_1x.safetensors", "mooshie-nodes/skin_contrast_1x.safetensors"),
+    ("comfyui-nodes/skin_contrast_1x.LICENSE", "mooshie-nodes/skin_contrast_1x.LICENSE"),
     ("comfyui-nodes/nodes_tiled_diffusion.py", "nodes_tiled_diffusion.py"),
     ("comfyui-nodes/nodes_guidance.py", "nodes_guidance.py"),
     ("comfyui-nodes/nodes_anima_teacache.py", "nodes_anima_teacache.py"),
@@ -109,6 +111,10 @@ REQUIRED_CORE_NODE_INPUTS = {
     "EmptyYuE2LatentAudio": ["seconds", "batch_size"],
     "VAEDecodeAudioTiled": ["samples", "vae", "tile_size", "overlap"],
     "ModelPatchLoader": ["name"],
+    # Moody Moss SeedVR2 finish (templates/moody_moss.rs).
+    "ImageScaleToMaxDimension": ["image", "upscale_method", "largest_size"],
+    "SeedVR2PostProcessing": ["images", "original_resized_images", "color_correction_method"],
+    "ImageBlend": ["image1", "image2", "blend_factor", "blend_mode"],
     "AnimaLLLiteApply": [
         "model",
         "model_patch",

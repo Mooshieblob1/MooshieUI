@@ -4,6 +4,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import MoodyMossCard from "./MoodyMossCard.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import {
@@ -16,6 +17,7 @@
     ANIMA_SAMPLING,
     BETA57_SCHEDULER,
     JUICE_SAMPLING,
+    MOODY_MOSS_SAMPLING,
     NANOSAUR_SAMPLING,
     type SamplingRecommendation,
   } from "../../utils/samplingRecommendation.js";
@@ -286,6 +288,12 @@
     if (dmd2Enabled) return { min: 1.0, max: 1.5, target: 1.0 };
     if (isKreaTurbo && kreaSteps < 8) return { min: KREA_TURBO_CFG, max: KREA_TURBO_CFG, target: KREA_TURBO_CFG };
     if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
+    // MOSS-Image runs at CFG 2.5 (Comfy-Org) and Moody Moss Mix at 3, both
+    // below the generic band, which would otherwise flag them and "fix" to 6.
+    if (generation.isMoodyMossMix) return { min: 2.5, max: 3.5, target: MOODY_MOSS_SAMPLING.cfg };
+    if (generation.modelFamily === "mossimage" || generation.modelFamily === "mossimagebase") {
+      return { min: 2.0, max: 3.5, target: 2.5 };
+    }
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
 
@@ -383,6 +391,10 @@
 </script>
 
 <div class="space-y-3">
+  {#if generation.isMoodyMossMix}
+    <MoodyMossCard onApply={() => applyRecommendation(MOODY_MOSS_SAMPLING)} />
+  {/if}
+
   {#if hasAnimaRecommendation}
     <div class="rounded-lg border border-indigo-700/50 bg-indigo-900/15 overflow-hidden">
       <button

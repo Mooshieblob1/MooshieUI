@@ -320,11 +320,8 @@ fn append_seedvr2_chain(
     params: &GenerationParams,
     seed: i64,
 ) -> (String, u32) {
-    let next_id = &mut result.next_id;
-    let workflow = &mut result.workflow;
-
-    let resize_id = next_id.to_string();
-    workflow.insert(
+    let resize_id = result.next_id.to_string();
+    result.workflow.insert(
         resize_id.clone(),
         json!({
             "class_type": "ImageScaleBy",
@@ -335,7 +332,38 @@ fn append_seedvr2_chain(
             }
         }),
     );
-    *next_id += 1;
+    result.next_id += 1;
+
+    seedvr2_restore(
+        result,
+        (resize_id, 0),
+        &Seedvr2Restore {
+            unet: SEEDVR2_UNET_FILE,
+            color_correction: "none",
+            seed: super::offset_seed(seed, 1),
+        },
+    )
+}
+
+/// What a SeedVR2 restoration pass loads and how it finishes.
+pub(super) struct Seedvr2Restore<'a> {
+    /// Diffusion model file in `diffusion_models/`.
+    pub unet: &'a str,
+    /// `SeedVR2PostProcessing.color_correction_method`.
+    pub color_correction: &'a str,
+    pub seed: u64,
+}
+
+/// SeedVR2 restoration of an image already resized to the output size.
+/// Returns the restored IMAGE at that size.
+pub(super) fn seedvr2_restore(
+    result: &mut WorkflowResult,
+    resized: (String, u32),
+    restore: &Seedvr2Restore,
+) -> (String, u32) {
+    let next_id = &mut result.next_id;
+    let workflow = &mut result.workflow;
+    let resize_id = resized.0;
 
     let preprocess_id = next_id.to_string();
     workflow.insert(
@@ -343,7 +371,7 @@ fn append_seedvr2_chain(
         json!({
             "class_type": "SeedVR2Preprocess",
             "inputs": {
-                "resized_images": [resize_id.clone(), 0]
+                "resized_images": [resize_id.clone(), resized.1]
             }
         }),
     );
@@ -355,7 +383,7 @@ fn append_seedvr2_chain(
         json!({
             "class_type": "UNETLoader",
             "inputs": {
-                "unet_name": SEEDVR2_UNET_FILE,
+                "unet_name": restore.unet,
                 "weight_dtype": "default"
             }
         }),
@@ -414,7 +442,7 @@ fn append_seedvr2_chain(
                 "positive": [conditioning_id.clone(), 0],
                 "negative": [conditioning_id, 1],
                 "latent_image": [encode_id, 0],
-                "seed": super::offset_seed(seed, 1),
+                "seed": restore.seed,
                 "steps": 1,
                 "cfg": 1.0,
                 "sampler_name": "euler",
@@ -449,8 +477,8 @@ fn append_seedvr2_chain(
             "class_type": "SeedVR2PostProcessing",
             "inputs": {
                 "images": [decode_id, 0],
-                "original_resized_images": [resize_id, 0],
-                "color_correction_method": "none"
+                "original_resized_images": [resize_id, resized.1],
+                "color_correction_method": restore.color_correction
             }
         }),
     );

@@ -218,6 +218,18 @@ pub struct GenerationParams {
     /// Quality-only negative prompt for tiled upscale KSampler (reduces tile artifacts)
     #[serde(default)]
     pub upscale_negative_prompt: Option<String>,
+    /// Moody Moss 4K HD: sample txt2img in two passes the way the Moody Moss
+    /// Mix author's ComfyUI workflow does (a short first pass that stops with
+    /// noise left, a 1.5x latent upscale, then a detail pass on the full
+    /// schedule). Only honoured for MOSS-Image txt2img; see
+    /// `templates::txt2img::moody_moss_hd_active`.
+    #[serde(default)]
+    pub moody_moss_hd: bool,
+    /// The rest of the Moody Moss 4K HD workflow: its face and area
+    /// detailers, skin contrast pass and SeedVR2 final. Sent only for a Moody
+    /// Moss Mix model; see `templates::moody_moss`.
+    #[serde(default)]
+    pub moody_moss: Option<MoodyMossFinish>,
     /// When true, use separate UNETLoader + CLIPLoader + VAELoader instead of CheckpointLoaderSimple
     #[serde(default)]
     pub use_split_model: bool,
@@ -561,6 +573,57 @@ pub struct GenerationParams {
 }
 
 /// One completed stage of a paused txt2img run.
+/// Finishing steps of the Moody Moss 4K HD workflow, rebuilt from core and
+/// MooshieUI nodes. Defaults are the workflow's own values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MoodyMossFinish {
+    /// Re-detail the most confident face (txt2img).
+    pub face_detail: bool,
+    /// Detailer prompt; empty reuses the main prompt.
+    pub face_prompt: String,
+    /// LoRAs for the face detailer only, on top of the bare model.
+    pub face_loras: Vec<LoraParam>,
+    pub face_denoise: f64,
+    /// "Detail Anything": re-detail the painted mask (inpainting).
+    pub area_detail: bool,
+    pub area_prompt: String,
+    pub area_loras: Vec<LoraParam>,
+    pub area_denoise: f64,
+    /// 1x skin contrast model blended over the image (txt2img).
+    pub skin_contrast: bool,
+    pub skin_contrast_strength: f64,
+    /// SeedVR2 restoration upscale blended with a 4x model upscale (txt2img).
+    pub seedvr2: bool,
+    /// Use the 7B SeedVR2 model instead of the 3B one.
+    pub seedvr2_7b: bool,
+    /// Share of the 4x model upscale in the final blend.
+    pub seedvr2_mix: f64,
+    /// Long edge of the final image in pixels.
+    pub long_edge: u32,
+}
+
+impl Default for MoodyMossFinish {
+    fn default() -> Self {
+        Self {
+            face_detail: false,
+            face_prompt: String::new(),
+            face_loras: Vec::new(),
+            face_denoise: 0.35,
+            area_detail: false,
+            area_prompt: String::new(),
+            area_loras: Vec::new(),
+            area_denoise: 0.45,
+            skin_contrast: false,
+            skin_contrast_strength: 0.2,
+            seedvr2: false,
+            seedvr2_7b: false,
+            seedvr2_mix: 0.4,
+            long_edge: 4096,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResumeStage {
     /// The exact parameters that stage was generated with (its own

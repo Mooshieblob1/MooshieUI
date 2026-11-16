@@ -30,10 +30,20 @@ import { locale } from "./locale.svelte.js";
 import {
   BETA57_SCHEDULER,
   GENERIC_SAMPLING,
+  MOODY_MOSS_BASE_SIZE,
+  MOODY_MOSS_NEGATIVE,
+  MOODY_MOSS_SAMPLING,
+  isMoodyMossFilename,
   recommendedSamplingFor,
   type SamplingRecommendation,
 } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA, h3TurboPreset } from "../utils/h3Models.js";
+import {
+  MOODY_MOSS_FINISH_DEFAULTS,
+  moodyMossFinishPayload,
+  restoreMoodyMossSettings,
+  type MoodyMossSettings,
+} from "../utils/moodyMoss.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
@@ -759,6 +769,11 @@ class GenerationStore {
    * directly into the upscale/refine chain (SwarmUI "Refine Image" semantics).
    */
   refineOnly = $state(false);
+  /** Moody Moss 4K HD two-pass sampling for Moody Moss Mix (see
+   *  `moodyMossHdActive`). On by default: it is the author's own workflow. */
+  moodyMossHd = $state(true);
+  /** The rest of the Moody Moss workflow (detailers, skin contrast, SeedVR2 final). */
+  moodyMoss = $state<MoodyMossSettings>({ ...MOODY_MOSS_FINISH_DEFAULTS });
   smartGuidance = $state(false);
   /** RescaleCFG for v-pred models: rescales the guidance vector each step so
    *  v-pred checkpoints don't oversaturate/burn at normal CFG. Only sent to the
@@ -1252,6 +1267,26 @@ class GenerationStore {
     if (!this.isAnima) return false;
     const filename = (this.useSplitModel ? this.diffusionModel : this.checkpoint) ?? "";
     return filename.toLowerCase().includes("light-lavender");
+  }
+
+  /**
+   * True for Moody Moss Mix (catlover1937), a MOSS-Image fine-tune whose
+   * author publishes a two-pass "Moody Moss 4K HD" ComfyUI workflow for it.
+   * Matched by filename, as the tensors are plain MOSS-Image.
+   */
+  get isMoodyMossMix(): boolean {
+    if (this.modelFamily !== "mossimage" && this.modelFamily !== "mossimagebase") return false;
+    return isMoodyMossFilename(this.useSplitModel ? this.diffusionModel : this.checkpoint);
+  }
+
+  /** Whether the next generation runs the Moody Moss 4K HD two passes (txt2img only). */
+  get moodyMossHdActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMossHd && this.mode === "txt2img";
+  }
+
+  /** Whether the next inpaint is the Moody Moss "Detail Anything" pass. */
+  get moodyMossAreaDetailActive(): boolean {
+    return this.isMoodyMossMix && this.moodyMoss.areaDetail && this.mode === "inpainting";
   }
 
   /** True when auto quality tags use the Anima tag set for the selected model. */
@@ -2710,8 +2745,17 @@ class GenerationStore {
 
       // MOSS-Image SFT and Base: Comfy-Org's bundled templates (25 steps at
       // CFG 2.5, er_sde on simple, 1024x1024), with a real negative prompt.
+      // Moody Moss Mix follows its author's 4K HD workflow instead: Euler on
+      // simple at 25 steps and CFG 3, from a 2:3 base of about 1 MP that the
+      // second pass takes to 1.5x, and the workflow's negative prompt when
+      // the box is empty.
       case "mossimage":
       case "mossimagebase":
+        if (this.isMoodyMossMix) {
+          preset = { ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE };
+          if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
+          break;
+        }
         preset = {
           steps: 25,
           cfg: 2.5,
@@ -3044,6 +3088,8 @@ class GenerationStore {
     if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
     if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
     if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
+    if (saved.moodyMossHd !== undefined) this.moodyMossHd = saved.moodyMossHd;
+    if (saved.moodyMoss !== undefined) this.moodyMoss = restoreMoodyMossSettings(saved.moodyMoss);
     if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
     if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
     if (saved.nagScale !== undefined) this.nagScale = saved.nagScale;
@@ -3335,6 +3381,8 @@ class GenerationStore {
         refineOnly: this.refineOnly,
         savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
+        moodyMossHd: this.moodyMossHd,
+        moodyMoss: $state.snapshot(this.moodyMoss),
         vpredRescaleCfg: this.vpredRescaleCfg,
         vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
         nagEnabled: this.nagEnabled,
@@ -3516,6 +3564,8 @@ class GenerationStore {
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
       savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
+      moodyMossHd: this.moodyMossHd,
+      moodyMoss: $state.snapshot(this.moodyMoss),
       vpredRescaleCfg: this.vpredRescaleCfg,
       vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
       nagEnabled: this.nagEnabled,
@@ -4352,6 +4402,8 @@ class GenerationStore {
       refine_only: this.mode === "img2img" && this.upscaleEnabled && this.refineOnly,
       save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
+      moody_moss_hd: this.moodyMossHdActive,
+      moody_moss: this.isMoodyMossMix ? moodyMossFinishPayload(this.moodyMoss) : undefined,
       vpred_rescale_cfg: this.vpredRescaleCfg,
       vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,
       nag_enabled: this.nagEnabled,
