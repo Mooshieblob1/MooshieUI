@@ -1,6 +1,6 @@
 # MCP server
 
-MooshieUI can run a [Model Context Protocol](https://modelcontextprotocol.io) server so AI assistants (Claude Code, Claude Desktop, Cursor, LM Studio, chat bots and others) can generate images (local models and NovelAI) and music, use your saved characters, styles, chunks and wildcards, check the queue and search the gallery.
+MooshieUI can run a [Model Context Protocol](https://modelcontextprotocol.io) server so AI assistants (Claude Code, Claude Desktop, Cursor, LM Studio, chat bots and others) can generate, edit and upscale images (local models and NovelAI) and make music, use your saved characters, styles, chunks and wildcards, check the queue, search the gallery and your Eagle library, and download full-size images.
 
 It is **off by default**. Turn it on in **Settings > AI assistants (MCP)**.
 
@@ -22,7 +22,7 @@ Three kinds of run make a setup, one per model each:
 - **txt2img on NovelAI**, keyed by the NovelAI model id (`nai-diffusion-4-5-full`, `nai-diffusion-5-full`, ...). It keeps the quality tags, UC preset, sampler, effort and the local post-process, and drops the character prompts, vibes and precise references (they belong to one image, and a vibe costs Anlas to encode).
 - **Image Edit on a local model.**
 
-A model is usable over MCP once it has been used for one such run in MooshieUI. NovelAI img2img, inpainting and upscale, local img2img and inpainting, and video runs don't create setups. Prompts are kept out of a setup, including the Moody Moss face and area detail prompts.
+A model is usable over MCP once it has been used for one such run in MooshieUI. `generate_image` with `source_image` (img2img) and `upscale_image` reuse the txt2img setup; `edit_image` needs an Image Edit one. NovelAI img2img, inpainting and upscale, local img2img and inpainting, and video runs don't create setups. Prompts are kept out of a setup, including the Moody Moss face and area detail prompts.
 
 Images generated over MCP are saved to the owner's gallery (with normal metadata, `mooshie_source: mcp`) and show up in an open MooshieUI window right away.
 
@@ -42,6 +42,29 @@ An assistant can't spend Anlas. A NovelAI request over MCP must fit the Opus fre
 
 `list_library` lists all four, and `get_character` returns a character's full card, memory files and portrait. The library is read from the owner's synced data and can't be changed over MCP.
 
+## Working from an existing image
+
+Tools that take an image accept a gallery filename or the picture itself as base64 or a data URL (for one the assistant got elsewhere, such as a chat). Every input is decoded and re-encoded as a plain PNG before ComfyUI or NovelAI sees it, up to 8192 px a side and 25 MB.
+
+- `generate_image` with `source_image` runs img2img (`denoise`, default 0.6). The size follows the source's aspect ratio at the setup's pixel count unless `width`/`height` are given. On NovelAI this is NovelAI img2img, still inside the free window.
+- `generate_image` with `reference_images` (one or two) turns on the model's style reference: the Anima Reference Adapter, Flux Redux or IP-Adapter, with the setup's reference settings. When the owner's Anima setup uses SnapRef, it takes up to 8 images of the same character instead, at strength 1. Local models only.
+- `edit_image` edits the first image with an instruction on an Image Edit model; more images are references.
+- `upscale_image` runs Refine: upscales by `scale` (1 to 4) and refines with the local model that made the image (or the one given), guided by the image's own prompt.
+
+## Download links
+
+Results that name an image carry a `url` that downloads the full-size file from the MooshieUI machine: `generate_image`, `edit_image`, `upscale_image`, `get_job`, `search_gallery`, `get_image`, and Eagle items in `search_eagle` and `get_eagle_image`. A chat bot can post the link or fetch the file. JPEG XL files are sent as PNG; other formats as they are, metadata included.
+
+- Over the tunnel or your own address the link uses that public address; for apps on this machine it is `http://127.0.0.1:<port>`.
+- A link is signed for that one file and expires after `link_hours` (default 24, at most 168). The signature is derived from the MCP token without revealing it, and **New token** in Settings voids every link handed out before.
+- Anyone holding a link can download that file until it expires.
+
+## Boards and Eagle
+
+`list_boards` lists the gallery boards, and `search_gallery` filters by `board`, `favourites_only` and `min_rating`; results say each image's board, favourite and rating. Boards are read from the owner's synced data and can't be changed over MCP.
+
+With [Eagle](https://eagle.cool) open on the MooshieUI machine, `search_eagle` searches its library by keyword, tags and folder (`list_folders: true` lists folders), `get_eagle_image` shows an item, and `send_to_eagle` adds gallery images the same way the gallery's Eagle export does (to the folder set in Settings, or `folder`).
+
 ## Music
 
 `generate_music` uses the same YuE2 backend as the Music page. It needs no setup: the backend builds the YuE2 graph itself from the style, lyrics, length and seed, with the Music page's defaults (full planning, 32 steps, 120 seconds). `list_models` with `category: music` says whether YuE2 is installed and lists its checkpoints.
@@ -53,13 +76,19 @@ Finished songs are copied out of ComfyUI into the `music` folder in the app data
 | Tool | What it does |
 |------|--------------|
 | `get_status` | ComfyUI status and GPUs, queue length, the last five image and music jobs, and the saved setups. |
-| `list_models` | Installed checkpoints, diffusion models (with `has_setup`), LoRAs, or YuE2 music checkpoints. |
-| `generate_image` | txt2img from a setup, local or NovelAI. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`, `characters`, `styles`, `chunks`, `use_active_styles`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
+| `list_models` | Installed checkpoints, diffusion models (with `has_setup`), LoRAs, upscale models, or YuE2 music checkpoints. |
+| `generate_image` | txt2img from a setup, local or NovelAI. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`, `characters`, `styles`, `chunks`, `use_active_styles`, `source_image` + `denoise` (img2img), `reference_images`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
 | `generate_music` | A YuE2 song from `style`, with optional `lyrics` (omit for instrumental), `duration_seconds` (1 to 360), `checkpoint`, `planning` (`full`, `melody`, `off`), `score` (ABC to follow), `steps` and `seed`. Waits up to 10 minutes, or returns a job id with `wait: false`. |
 | `get_job` | Status and results of an image or music job (gallery filenames and previews, or song file paths), optionally waiting for it. |
 | `cancel_generation` | Cancels one MCP job, or all of them. Never touches generations started in the window. |
-| `search_gallery` | Full-text search over prompt, negative prompt and model, or the newest images. Older images are indexed on demand, a few hundred per search. |
-| `get_image` | A preview of a gallery image (up to 2048 px) and its generation settings. |
+| `search_gallery` | Full-text search over prompt, negative prompt and model, or the newest images, filtered by `board`, `favourites_only`, `min_rating`. Older images are indexed on demand, a few hundred per search. |
+| `get_image` | A preview of a gallery image (up to 2048 px), its generation settings, board, rating and download link. |
+| `edit_image` | Image Edit from an Image Edit setup: `images` (first is edited, the rest are references) and an instruction `prompt`. |
+| `upscale_image` | Upscale and refine a gallery or base64 `image` by `scale` with a local model. |
+| `list_boards` | Gallery boards with image counts. |
+| `search_eagle` | Search the open Eagle library by `query`, `tags`, `folder`; or list its folders. |
+| `get_eagle_image` | A preview of an Eagle item with its tags, notes and download link. |
+| `send_to_eagle` | Add gallery images to Eagle. |
 | `list_library` | Saved characters, artist styles, prompt chunks or wildcard files, by `kind`, with an optional name `filter`. |
 | `get_character` | One saved character: its prompt and UC per model family, memory files and portrait. |
 
@@ -76,7 +105,7 @@ In Claude: **Settings > Connectors > Add custom connector**, paste the connector
 
 Cloudflare drops a request that gets no response within 100 seconds, so over a tunnel or proxy `generate_image`, `generate_music` and `get_job` wait at most 75 seconds, then return the job id; the assistant polls `get_job` for the rest.
 
-Results that point at files on the MooshieUI machine (gallery filenames, `generate_music`'s FLAC path) still work from a cloud app: images come back as previews, and `include_audio: true` returns the song itself.
+Results that point at files on the MooshieUI machine (gallery filenames, `generate_music`'s FLAC path) still work from a cloud app: images come back as previews plus a download link through the tunnel, and `include_audio: true` returns the song itself.
 
 ## Connecting
 
@@ -128,7 +157,9 @@ Code lives in `src-tauri/src/mcp/`:
 - `expand.rs`: `__wildcard__` and `{a|b}` expansion, a port of `utils/wildcards.ts` and `utils/randomPrompt.ts`. Keep them in step.
 - `library.rs`: saved characters, styles and chunks from the owner's prefs, and how they go into a request (mirrors `toParams` and `savedCharacters.insert`).
 - `music.rs`: music jobs. Maps the tool arguments to `MusicParams` (`to_params`), then submits, polls and downloads through `commands::music` (`submit`, `status`, `audio`), the same functions the Music page calls.
-- `tools.rs`: tool schemas and handlers.
+- `inputs.rs`: images an assistant passes in (gallery file or base64), uploaded to ComfyUI or sized for NovelAI.
+- `links.rs`: signed, expiring download links and the `GET /files/...` route that serves them.
+- `tools.rs`: tool schemas and handlers, including gallery boards (read from prefs) and the Eagle tools (`eagle.rs`).
 - `tunnel.rs`: the optional Cloudflare quick tunnel. Pinned `cloudflared` per platform (`package`); bump `VERSION` and every hash together. It runs with `--http-host-header 127.0.0.1:<port>`, so tunnelled requests pass the local `Host` check. The state turns `running` only on a `Registered tunnel connection` line and drops back when the last connection goes (`connection_event`); the address alone does not mean the tunnel works.
 
 When a feature changes, check whether the MCP surface needs to follow. See "MCP surface" in `CLAUDE.md`.
