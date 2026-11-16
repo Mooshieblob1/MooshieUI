@@ -1414,6 +1414,24 @@ pub async fn embed_image_metadata_bytes(
     crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
 }
 
+/// Eagle's version when it is running and reachable on this machine.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn eagle_status(state: State<'_, Arc<AppState>>) -> Result<String, AppError> {
+    crate::eagle::status(&state.http_client).await
+}
+
+/// Send gallery images to Eagle by file name. Returns how many Eagle added.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn send_to_eagle(
+    state: State<'_, Arc<AppState>>,
+    filenames: Vec<String>,
+) -> Result<usize, AppError> {
+    let folder = state.config.read().await.eagle_folder_id.clone();
+    crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref()).await
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_to_gallery(

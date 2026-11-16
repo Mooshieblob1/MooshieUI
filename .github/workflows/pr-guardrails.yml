@@ -52,6 +52,10 @@ jobs:
           npx esbuild scripts/tests/promptSpellcheck.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptSpellcheck.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptSpellcheck.test.mjs"
 
+      - name: Wildcard file tests
+        run: |
+          npx esbuild scripts/tests/wildcards.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/wildcards.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/wildcards.test.mjs"
       - name: Prompt comment and find tests
         run: |
           npx esbuild scripts/tests/promptComments.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptComments.test.mjs" --log-level=warning

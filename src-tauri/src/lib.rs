@@ -6,6 +6,7 @@ pub mod comfyui;
 pub mod comfyui_version;
 pub mod commands;
 pub mod config;
+pub mod eagle;
 pub mod error;
 pub mod gallery_index;
 pub mod http_error;
@@ -674,6 +675,8 @@ pub fn run() {
             commands::api::save_text_file,
             commands::api::embed_image_metadata_bytes,
             commands::api::save_to_gallery,
+            commands::api::eagle_status,
+            commands::api::send_to_eagle,
             commands::api::save_to_gallery_bytes,
             commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
@@ -847,6 +850,9 @@ pub fn run() {
             commands::music::get_music_status,
             commands::music::load_music_audio,
             commands::music::save_music_audio,
+            commands::wildcards::list_wildcards,
+            commands::wildcards::save_wildcard,
+            commands::wildcards::delete_wildcard,
             commands::splat::get_splat_capabilities,
             commands::splat::generate_splat,
             commands::splat::get_splat_status,

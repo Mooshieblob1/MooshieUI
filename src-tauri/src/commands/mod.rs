@@ -28,5 +28,6 @@ pub mod video_interpolate;
 pub mod watermark;
 #[cfg(feature = "desktop")]
 pub mod websocket;
+pub mod wildcards;
 #[cfg(feature = "desktop")]
 pub mod workflow;
