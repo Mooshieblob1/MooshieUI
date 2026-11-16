@@ -993,6 +993,16 @@ const pl: Record<string, string> = {
   "generation.prompt.wrap_weaker": "Owiń zaznaczenie wagowaniem []",
   "generation.prompt.tokens": "tokeny",
   "generation.prompt.tokens_tip": "Szacowana liczba tokenów CLIP. Koder tekstu dzieli prompt na fragmenty po 75 tokenów, więc przekroczenie granicy może zmienić wynik.",
+  "generation.prompt.find_placeholder": "Znajdź",
+  "generation.prompt.find_none": "Brak wyników",
+  "generation.prompt.find_case": "Uwzględnij wielkość liter",
+  "generation.prompt.find_prev": "Poprzedni wynik (Shift+Enter)",
+  "generation.prompt.find_next": "Następny wynik (Enter)",
+  "generation.prompt.find_replace_toggle": "Zamień (Ctrl+H)",
+  "generation.prompt.find_close": "Zamknij (Esc)",
+  "generation.prompt.replace_placeholder": "Zamień na",
+  "generation.prompt.replace_one": "Zamień",
+  "generation.prompt.replace_all": "Zamień wszystko",
 
   // Prompt chunks
   "generation.presets.edit_title": "Edytuj blok promptu",

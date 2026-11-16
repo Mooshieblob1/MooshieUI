@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripPromptComments } from "../../utils/promptComments.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -69,10 +70,9 @@
   const combinedPositiveTokens = $derived(
     generation.extraPositiveBoxes.length > 0
       ? estimatePromptTokens(
-          joinPromptBoxes([
-            generation.positivePrompt,
-            ...generation.extraPositiveBoxes.map((b) => b.content),
-          ]),
+          joinPromptBoxes(
+            [generation.positivePrompt, ...generation.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments),
+          ),
         )
       : 0,
   );

@@ -14,6 +14,7 @@ import {
   sanitizePromptForSend,
 } from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
+import { stripPromptComments } from "../utils/promptComments.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
@@ -3702,14 +3703,14 @@ class GenerationStore {
   } {
     const inlineIds = new Set<string>();
     const characters = (this.novelaiSettings.characters ?? []).map((character) => {
-      for (const id of promptPresets.inlinePresetIds(character.prompt)) inlineIds.add(id);
-      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+      for (const id of promptPresets.inlinePresetIds(stripPromptComments(character.prompt))) inlineIds.add(id);
+      for (const id of promptPresets.inlinePresetIds(stripPromptComments(character.negative_prompt))) {
         inlineIds.add(id);
       }
       return {
         ...character,
-        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
-        negative_prompt: promptPresets.resolveInline(character.negative_prompt, { fixedChoices }),
+        prompt: promptPresets.resolveInline(stripPromptComments(character.prompt), { fixedChoices }),
+        negative_prompt: promptPresets.resolveInline(stripPromptComments(character.negative_prompt), { fixedChoices }),
       };
     });
     return { characters, inlineIds };
@@ -3945,16 +3946,18 @@ class GenerationStore {
     // block), so its layout is preserved instead of folded into commas.
     const sanitizeOptions = { keepNewlines: this.isNovelAi };
     const ownPrompts = options.prompts ?? null;
+    // `//` comments come off each box before the boxes are joined, so a
+    // comment at the end of one box cannot swallow the next box's text.
     const effectivePositive = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.positive
-        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.positive)
+        : joinPromptBoxes([this.positivePrompt, ...this.extraPositiveBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
     const effectiveNegative = sanitizePromptForSend(
       ownPrompts
-        ? ownPrompts.negative
-        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)]),
+        ? stripPromptComments(ownPrompts.negative)
+        : joinPromptBoxes([this.negativePrompt, ...this.extraNegativeBoxes.map((b) => b.content)].map(stripPromptComments)),
       sanitizeOptions
     );
 
