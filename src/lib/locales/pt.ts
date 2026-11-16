@@ -2221,6 +2221,7 @@ const pt: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Ruído de Upscale",
   "gallery.meta.date": "Data",
   "gallery.meta.generation_time": "Tempo de Geração",
+  "gallery.meta.source": "Origem",
 
   "gallery.mode.txt2img": "Texto para Imagem",
   "gallery.mode.img2img": "Imagem para Imagem",

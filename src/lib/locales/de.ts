@@ -2242,6 +2242,7 @@ const de: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Upscaling-Entrauschen",
   "gallery.meta.date": "Datum",
   "gallery.meta.generation_time": "Erzeugungszeit",
+  "gallery.meta.source": "Quelle",
 
   "gallery.mode.txt2img": "Text zu Bild",
   "gallery.mode.img2img": "Bild zu Bild",

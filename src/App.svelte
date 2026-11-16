@@ -551,6 +551,7 @@
       upscale_denoise: "gallery.meta.upscale_denoise",
       date: "gallery.meta.date",
       generation_time: "gallery.meta.generation_time",
+      source: "gallery.meta.source",
     };
     const tKey = keyMap[key];
     return tKey ? locale.t(tKey) : key;

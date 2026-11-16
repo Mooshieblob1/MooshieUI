@@ -19,6 +19,36 @@ behavior also depends on the browser and the application receiving the paste.
 Importing a V5 image ignores its placeholder zero for undesired-content strength;
 a meaningful zero from older models can still be restored.
 
+### MooshieUI marker
+
+A NovelAI PNG generated through MooshieUI is never re-encoded, so it cannot get
+the usual `parameters` chunk or stealth payload. Instead every save, export and
+clipboard route splices one extra text chunk in just before `IEND`
+(`metadata::mark_novelai_png`), without decoding the image. Every byte NovelAI
+wrote, its text chunks, the `IDAT` data and the stealth alpha, stays identical,
+so novelai.net still recognises the file.
+
+- Keyword `MooshieUI`. Not `parameters`, which this app and A1111-style tools
+  read first and which would shadow NovelAI's chunks, and not `Software`, which
+  NovelAI owns.
+- `tEXt` when the value is Latin-1, otherwise uncompressed `iTXt`, the same rule
+  as the `parameters` writer.
+- Value: compact JSON with no prompt, for example
+  `{"software":"MooshieUI","version":"2.3.49","backend":"novelai","model":"nai-diffusion-4-5-full","generated":"2026-11-17T04:20:00+08:00","source":"ui"}`.
+  `model` is left out when the save did not record one; `source` is `mcp` for
+  images the MCP server saved and `ui` otherwise.
+- Idempotent: a PNG that already has a `MooshieUI` chunk comes back unchanged,
+  so repeated exports and copies never add a second one.
+- Chunk only, whatever the metadata mode: the marker never touches pixels.
+  The invisible watermark skips NovelAI PNGs for the same reason.
+
+On read, NovelAI's chunks (or its stealth payload) still supply every
+generation setting. The reader only adds a `source` entry, "MooshieUI
+(NovelAI)" when the marker is present and "NovelAI" when it is not, which the
+gallery's metadata panel shows as Source. A NovelAI image that was re-encoded
+by local post-processing is not affected: it carries the regular `parameters`
+payload with `mooshie_extra.software = "MooshieUI"`.
+
 These guarantees concern the preserved PNG path, not arbitrary re-encoding by
 external editors or messaging services. See [NovelAI backend](NOVELAI.md) for
 the integration and [Gallery and Metadata](https://github.com/Mooshieblob1/MooshieUI/wiki/Gallery-and-Metadata)
@@ -28,7 +58,7 @@ for user-facing import/export instructions.
 
 | Format | Container-native carrier | Top-level uuid XMP box | Written by |
 |--------|--------------------------|------------------------|------------|
-| PNG | iTXt / tEXt "parameters", optional stealth alpha | n/a | Rust |
+| PNG | iTXt / tEXt "parameters", optional stealth alpha (NovelAI PNGs: tEXt / iTXt "MooshieUI" marker only, see above) | n/a | Rust |
 | JXL | xml box | n/a | Rust |
 | WebP (still and animated) | RIFF EXIF UserComment, optional stealth alpha | n/a | Rust for stills, Pillow for animated |
 | MP4 | moov/udta/meta mdta key "comment" | yes | PyAV for the bytes, Rust for the box |

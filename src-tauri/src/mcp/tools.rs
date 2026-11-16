@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use super::jobs::{self, Job};
 use super::music::{self, MusicJob};
-use super::{expand, library, setups};
+use super::{expand, inputs, library, links, setups};
 use crate::comfyui::types::GenerationParams;
 use crate::state::AppState;
 
@@ -28,6 +28,8 @@ const PREVIEW_SIZE: u32 = 768;
 const SEARCH_WINDOW: usize = 5000;
 /// Files whose metadata a single search reads from disk at most.
 const BACKFILL_PER_CALL: usize = 200;
+/// Most reference images SnapRef takes (`style_ref::validate_snapref`).
+const MAX_SNAPREF_IMAGES: usize = 8;
 
 pub fn definitions() -> Value {
     // One json! per tool: a single literal this size hits the macro
@@ -47,7 +49,7 @@ pub fn definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "category": { "type": "string", "enum": ["checkpoints", "diffusion_models", "loras", "music"], "description": "Default checkpoints." },
+                    "category": { "type": "string", "enum": ["checkpoints", "diffusion_models", "loras", "upscale_models", "music"], "description": "Default checkpoints." },
                     "filter": { "type": "string", "description": "Case-insensitive substring to match." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Default 200." }
                 }
@@ -57,7 +59,7 @@ pub fn definitions() -> Value {
         json!({
             "name": "generate_image",
             "title": "Generate image",
-            "description": "Generate images with MooshieUI (txt2img), on a local model or NovelAI. Reuses the owner's last setup for the model (loaders, upscale, face fix, guidance; for NovelAI its quality tags, UC preset and sampler); you change the prompt and any of the optional fields. Prompts may use __name__ wildcards from the owner's wildcard files and {a|b|c} random choices (list_library kind wildcards). Saved characters, artist styles and prompt chunks can be added by name (list_library). NovelAI images must stay inside the free Opus window: at most 1 megapixel, 28 steps, one image. Images are saved to the MooshieUI gallery and returned as previews. Waits up to 10 minutes for the result unless wait is false; then poll get_job (get_status lists recent job ids).",
+            "description": "Generate images with MooshieUI (txt2img), on a local model or NovelAI. Reuses the owner's last setup for the model (loaders, upscale, face fix, guidance; for NovelAI its quality tags, UC preset and sampler); you change the prompt and any of the optional fields. Prompts may use __name__ wildcards from the owner's wildcard files and {a|b|c} random choices (list_library kind wildcards). Saved characters, artist styles and prompt chunks can be added by name (list_library). NovelAI images must stay inside the free Opus window: at most 1 megapixel, 28 steps, one image. Images are saved to the MooshieUI gallery and returned as previews, each with a url that downloads the full-size file. Waits up to 10 minutes for the result unless wait is false; then poll get_job (get_status lists recent job ids).",
             "inputSchema": {
                 "type": "object",
                 "required": ["prompt"],
@@ -79,6 +81,10 @@ pub fn definitions() -> Value {
                         }
                     },
                     "use_active_styles": { "type": "boolean", "description": "Also add the styles and chunks currently active in MooshieUI. Default false." },
+                    "source_image": { "type": "string", "description": "Turns this into img2img: a gallery filename, or the image as base64 or a data URL. The size follows the source's aspect ratio unless width/height are given. Works on NovelAI too (free window)." },
+                    "denoise": { "type": "number", "minimum": 0.05, "maximum": 1, "description": "With source_image: how much to change it. Default 0.6." },
+                    "reference_images": { "type": "array", "maxItems": 8, "items": { "type": "string" }, "description": "Local models only: one or two character/style reference images (gallery filenames or base64) for the model's style reference (Anima Reference Adapter, Flux Redux, IP-Adapter), using the setup's reference settings. When the owner's Anima setup uses SnapRef, up to 8 images of the same character." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the returned download links work. Default 24." },
                     "width": { "type": "integer", "minimum": 256, "maximum": 4096 },
                     "height": { "type": "integer", "minimum": 256, "maximum": 4096 },
                     "steps": { "type": "integer", "minimum": 1, "maximum": 150 },
@@ -138,6 +144,7 @@ pub fn definitions() -> Value {
                     "job_id": { "type": "string" },
                     "wait_seconds": { "type": "integer", "minimum": 0, "maximum": 600, "description": "Wait up to this long for the job to finish. Default 0." },
                     "include_images": { "type": "boolean", "description": "Image jobs: return previews. Default true." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "Image jobs: how long the download links work. Default 24." },
                     "include_audio": { "type": "boolean", "description": "Music jobs: embed the FLAC in the result (up to 16 MB). Default false; the file path is always returned." }
                 }
             },
@@ -156,12 +163,16 @@ pub fn definitions() -> Value {
         json!({
             "name": "search_gallery",
             "title": "Search gallery",
-            "description": "Find images in the MooshieUI gallery by words in their prompt, negative prompt or model name, or list the newest when query is empty.",
+            "description": "Find images in the MooshieUI gallery by words in their prompt, negative prompt or model name, or list the newest when query is empty. Filter by board, favourites or rating. Each result has a download link (url) for the full-size file.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Default 20." }
+                    "board": { "type": "string", "description": "Only images on this board (list_boards). Unsorted is images on none." },
+                    "favourites_only": { "type": "boolean" },
+                    "min_rating": { "type": "integer", "minimum": 0, "maximum": 5, "description": "Only images rated at least this many stars." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Default 20." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the download links work. Default 24." }
                 }
             },
             "annotations": { "readOnlyHint": true }
@@ -169,13 +180,14 @@ pub fn definitions() -> Value {
         json!({
             "name": "get_image",
             "title": "Get gallery image",
-            "description": "Look at a gallery image and read its generation settings.",
+            "description": "Look at a gallery image and read its generation settings, board, rating and a download link (url) for the full-size file.",
             "inputSchema": {
                 "type": "object",
                 "required": ["filename"],
                 "properties": {
                     "filename": { "type": "string", "description": "Gallery filename from search_gallery or generate_image." },
-                    "max_size": { "type": "integer", "minimum": 128, "maximum": 2048, "description": "Longest side of the returned preview. Default 1024." }
+                    "max_size": { "type": "integer", "minimum": 128, "maximum": 2048, "description": "Longest side of the returned preview. Default 1024." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the download link works. Default 24." }
                 }
             },
             "annotations": { "readOnlyHint": true }
@@ -208,6 +220,103 @@ pub fn definitions() -> Value {
             },
             "annotations": { "readOnlyHint": true }
         }),
+        json!({
+            "name": "edit_image",
+            "title": "Edit image",
+            "description": "Edit an image with an instruction using an Image Edit model (Qwen Image Edit, Flux Kontext, FLUX 3 Klein, Anima ReStyler). Reuses the owner's last Image Edit setup for the model (get_status lists setups with mode image_edit). The first image is edited; more images are references (Klein takes up to 10). Saved to the gallery like generate_image.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["images", "prompt"],
+                "properties": {
+                    "images": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" }, "description": "Gallery filenames or base64 images / data URLs." },
+                    "prompt": { "type": "string", "description": "The edit instruction, e.g. \"make her hair blue\"." },
+                    "negative_prompt": { "type": "string" },
+                    "model": { "type": "string", "description": "Edit model with a saved Image Edit setup. Default: the most recent one." },
+                    "width": { "type": "integer", "minimum": 256, "maximum": 4096 },
+                    "height": { "type": "integer", "minimum": 256, "maximum": 4096 },
+                    "steps": { "type": "integer", "minimum": 1, "maximum": 150 },
+                    "cfg": { "type": "number", "minimum": 0, "maximum": 30 },
+                    "seed": { "type": "integer" },
+                    "wait": { "type": "boolean", "description": "Default true." },
+                    "include_images": { "type": "boolean", "description": "Default true." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168 }
+                }
+            }
+        }),
+        json!({
+            "name": "upscale_image",
+            "title": "Upscale image",
+            "description": "Upscale a gallery image (or a base64 image) and refine it with a local model, the way MooshieUI's Refine does. Uses the setup of the model that made the image when it has one, else the given or most recent local setup, and the image's own prompt to guide the refine.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["image"],
+                "properties": {
+                    "image": { "type": "string", "description": "Gallery filename, or base64 / data URL." },
+                    "scale": { "type": "number", "minimum": 1, "maximum": 4, "description": "Default 2." },
+                    "denoise": { "type": "number", "minimum": 0.05, "maximum": 1, "description": "Refine strength. Default: the setup's upscale denoise." },
+                    "upscale_model": { "type": "string", "description": "Upscale model file (list_models category upscale_models). Default: the setup's." },
+                    "model": { "type": "string", "description": "Local model setup to refine with." },
+                    "prompt": { "type": "string", "description": "Replaces the image's own prompt for the refine pass." },
+                    "seed": { "type": "integer" },
+                    "wait": { "type": "boolean", "description": "Default true." },
+                    "include_images": { "type": "boolean", "description": "Default true." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168 }
+                }
+            }
+        }),
+        json!({
+            "name": "list_boards",
+            "title": "List gallery boards",
+            "description": "The owner's gallery boards with image counts, and how many images are favourited or rated.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "search_eagle",
+            "title": "Search Eagle library",
+            "description": "Search the owner's Eagle (eagle.cool) library, which must be open on the MooshieUI machine. Returns item ids, names, tags, notes and download links. list_folders: true lists the folders instead.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Keyword matched against names, tags and notes." },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "folder": { "type": "string", "description": "Folder name or id." },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Default 20." },
+                    "offset": { "type": "integer", "minimum": 0 },
+                    "list_folders": { "type": "boolean" },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168 }
+                }
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "get_eagle_image",
+            "title": "Get Eagle image",
+            "description": "Look at an Eagle item (preview up to 2048 px), with its tags, notes and a download link for the original.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {
+                    "id": { "type": "string", "description": "Item id from search_eagle." },
+                    "max_size": { "type": "integer", "minimum": 128, "maximum": 2048, "description": "Default 1024." },
+                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168 }
+                }
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "send_to_eagle",
+            "title": "Send to Eagle",
+            "description": "Add gallery images to the owner's Eagle library, with prompt tags and the prompt, negative and seed as the note. Goes to the folder set in MooshieUI's Settings unless folder is given.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["filenames"],
+                "properties": {
+                    "filenames": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string" } },
+                    "folder": { "type": "string", "description": "Eagle folder name or id." }
+                }
+            }
+        }),
     ])
 }
 
@@ -230,25 +339,41 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// Run a tool. `None` for an unknown tool name. Waiting tools give up after
-/// `max_wait` and return the job id.
+/// How a request reached the server.
+#[derive(Debug, Clone)]
+pub struct CallContext {
+    /// Waiting tools give up after this and return the job id.
+    pub max_wait: Duration,
+    /// Came through the tunnel or the owner's own address, so links must use
+    /// the public address.
+    pub proxied: bool,
+}
+
+/// Run a tool. `None` for an unknown tool name.
 pub async fn call(
     state: &Arc<AppState>,
     name: &str,
     args: &Value,
-    max_wait: Duration,
+    ctx: &CallContext,
 ) -> Option<Value> {
+    let max_wait = ctx.max_wait;
     let result = match name {
         "get_status" => get_status(state).await,
         "list_models" => list_models(state, args).await,
-        "generate_image" => generate_image(state, args, max_wait).await,
+        "generate_image" => generate_image(state, args, ctx).await,
+        "edit_image" => edit_image(state, args, ctx).await,
+        "upscale_image" => upscale_image(state, args, ctx).await,
         "generate_music" => generate_music(state, args, max_wait).await,
-        "get_job" => get_job(args, max_wait).await,
+        "get_job" => get_job(args, ctx).await,
         "cancel_generation" => cancel_generation(state, args).await,
-        "search_gallery" => search_gallery(args).await,
-        "get_image" => get_image(args).await,
+        "search_gallery" => search_gallery(args, ctx).await,
+        "get_image" => get_image(args, ctx).await,
+        "list_boards" => list_boards().await,
         "list_library" => list_library(args).await,
         "get_character" => get_character(args).await,
+        "search_eagle" => search_eagle(state, args, ctx).await,
+        "get_eagle_image" => get_eagle_image(state, args, ctx).await,
+        "send_to_eagle" => send_to_eagle(state, args).await,
         _ => return None,
     };
     Some(result.unwrap_or_else(error))
@@ -330,8 +455,13 @@ async fn list_models(state: &Arc<AppState>, args: &Value) -> Result<Value, Strin
     if category == "music" {
         return list_music_models(state).await;
     }
-    if !matches!(category, "checkpoints" | "diffusion_models" | "loras") {
-        return Err("category must be checkpoints, diffusion_models, loras or music".into());
+    if !matches!(
+        category,
+        "checkpoints" | "diffusion_models" | "loras" | "upscale_models"
+    ) {
+        return Err(
+            "category must be checkpoints, diffusion_models, loras, upscale_models or music".into(),
+        );
     }
     let filter = arg_str(args, "filter").map(str::to_ascii_lowercase);
     let limit = args["limit"].as_u64().unwrap_or(200).clamp(1, 1000) as usize;
@@ -352,7 +482,7 @@ async fn list_models(state: &Arc<AppState>, args: &Value) -> Result<Value, Strin
         .iter()
         .take(limit)
         .map(|m| {
-            if category == "loras" {
+            if matches!(category, "loras" | "upscale_models") {
                 json!({ "name": m })
             } else {
                 json!({ "name": m, "has_setup": with_setup.contains(m.as_str()) })
@@ -429,7 +559,7 @@ async fn run_job(
     state: &Arc<AppState>,
     params: GenerationParams,
     args: &Value,
-    max_wait: Duration,
+    ctx: &CallContext,
     added: Vec<String>,
     unknown: Vec<String>,
 ) -> Result<Value, String> {
@@ -437,9 +567,9 @@ async fn run_job(
     let job = if args["wait"].as_bool() == Some(false) {
         rx.borrow().clone()
     } else {
-        jobs::wait(rx, max_wait).await
+        jobs::wait(rx, ctx.max_wait).await
     };
-    let mut result = job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await?;
+    let mut result = job_result(&job, args, ctx).await?;
     let mut notes = serde_json::Map::new();
     if !added.is_empty() {
         notes.insert("added".into(), json!(added));
@@ -461,10 +591,73 @@ async fn run_job(
     Ok(result)
 }
 
+/// `denoise` from the arguments, checked.
+fn arg_denoise(args: &Value, default: f64) -> Result<f64, String> {
+    let d = args["denoise"].as_f64().unwrap_or(default);
+    if !(0.05..=1.0).contains(&d) {
+        return Err("denoise must be between 0.05 and 1".into());
+    }
+    Ok(d)
+}
+
+/// Images listed under `key`: gallery file names or base64 / data URLs.
+fn arg_images(args: &Value, key: &str, max: usize) -> Result<Vec<String>, String> {
+    let list: Vec<String> = match &args[key] {
+        Value::Null => Vec::new(),
+        Value::String(s) => vec![s.clone()],
+        Value::Array(items) => items
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{key} must be gallery file names or base64 images"))
+            })
+            .collect::<Result<_, _>>()?,
+        _ => return Err(format!("{key} must be a list")),
+    };
+    if list.len() > max {
+        return Err(format!("{key} takes {max} images at most"));
+    }
+    Ok(list)
+}
+
+/// Turn a txt2img request into img2img on `source_image`, sized like the
+/// source unless the agent gave a size.
+async fn apply_source_image(
+    state: &Arc<AppState>,
+    params: &mut GenerationParams,
+    args: &Value,
+    spec: &str,
+) -> Result<(), String> {
+    let src = inputs::load(spec).await?;
+    let nai = params.novelai.is_some();
+    if args["width"].is_null() && args["height"].is_null() {
+        let area = u64::from(params.width) * u64::from(params.height);
+        let (w, h) = inputs::fit_size(src.width(), src.height(), area, if nai { 64 } else { 16 });
+        params.width = w;
+        params.height = h;
+    }
+    let denoise = arg_denoise(args, 0.6)?;
+    if nai {
+        setups::check_novelai_free_window(params)?;
+        let data = inputs::base64_png_at(&src, params.width, params.height).await?;
+        let block = params.novelai.as_mut().expect("checked above");
+        block.action = "img2img".into();
+        block.strength = denoise;
+        params.mode = "img2img".into();
+        params.input_image = Some(data);
+    } else {
+        params.mode = "img2img".into();
+        params.denoise = denoise;
+        params.input_image = Some(inputs::upload(state, &src).await?);
+    }
+    Ok(())
+}
+
 async fn generate_image(
     state: &Arc<AppState>,
     args: &Value,
-    max_wait: Duration,
+    ctx: &CallContext,
 ) -> Result<Value, String> {
     let overrides: setups::Overrides =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))?;
@@ -474,8 +667,137 @@ async fn generate_image(
         setups::Purpose::Generate,
     )?;
     let mut params = setups::apply(&setup.params, &overrides)?;
+    if let Some(spec) = arg_str(args, "source_image") {
+        apply_source_image(state, &mut params, args, spec).await?;
+    }
+    let refs = arg_images(args, "reference_images", MAX_SNAPREF_IMAGES)?;
+    if !refs.is_empty() {
+        if params.novelai.is_some() {
+            return Err("reference_images work on local models only (NovelAI references cost Anlas). Use characters for a saved NovelAI character.".into());
+        }
+        params.style_ref_enabled = true;
+        let snapref = crate::templates::style_ref::snapref_active(&params);
+        if !snapref && refs.len() > 2 {
+            return Err("This setup's style reference takes one or two images (up to 8 only when the owner uses SnapRef on Anima).".into());
+        }
+        let mut names = Vec::new();
+        for spec in &refs {
+            names.push(inputs::upload(state, &inputs::load(spec).await?).await?);
+        }
+        if snapref {
+            params.snapref_references = names
+                .into_iter()
+                .map(|name| crate::comfyui::types::SnapRefReference {
+                    image: Some(name),
+                    strength: 1.0,
+                })
+                .collect();
+        } else {
+            params.style_ref_image = names.first().cloned();
+            params.style_ref_image_2 = names.get(1).cloned();
+        }
+    }
     let (added, unknown) = finish_prompt(&mut params, args).await?;
-    run_job(state, params, args, max_wait, added, unknown).await
+    run_job(state, params, args, ctx, added, unknown).await
+}
+
+async fn edit_image(
+    state: &Arc<AppState>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let images = arg_images(args, "images", 10)?;
+    if images.is_empty() {
+        return Err("images is required: the picture to edit first, then any references".into());
+    }
+    let mut overrides: setups::Overrides =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {e}"))?;
+    if overrides.prompt.trim().is_empty() {
+        overrides.prompt = arg_str(args, "instruction").unwrap_or("").to_string();
+    }
+    let setup = setups::find(
+        &setups::list(),
+        arg_str(args, "model"),
+        setups::Purpose::Edit,
+    )?;
+    let mut params = setups::apply(&setup.params, &overrides)?;
+    let mut uploaded = Vec::new();
+    let mut first_size = None;
+    for spec in &images {
+        let src = inputs::load(spec).await?;
+        first_size.get_or_insert((src.width(), src.height()));
+        uploaded.push(inputs::upload(state, &src).await?);
+    }
+    if let (Some((w, h)), true) = (
+        first_size,
+        args["width"].is_null() && args["height"].is_null(),
+    ) {
+        let area = u64::from(params.width) * u64::from(params.height);
+        (params.width, params.height) = inputs::fit_size(w, h, area, 16);
+    }
+    params.edit_reference_images = uploaded;
+    let (added, unknown) = finish_prompt(&mut params, args).await?;
+    run_job(state, params, args, ctx, added, unknown).await
+}
+
+async fn upscale_image(
+    state: &Arc<AppState>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let spec = arg_str(args, "image").ok_or("image is required")?;
+    let src = inputs::load(spec).await?;
+    let all = setups::list();
+    // The model that made the image, when it has a local setup; else the
+    // one asked for, else the most recent local one.
+    let local: Vec<setups::Setup> = all
+        .iter()
+        .filter(|s| !setups::is_novelai(&s.params))
+        .cloned()
+        .collect();
+    let made_with = src.metadata.get("model").map(String::as_str);
+    let setup = match arg_str(args, "model") {
+        Some(m) => setups::find(&local, Some(m), setups::Purpose::Generate)?,
+        None => made_with
+            .and_then(|m| setups::find(&local, Some(m), setups::Purpose::Generate).ok())
+            .map_or_else(|| setups::find(&local, None, setups::Purpose::Generate), Ok)?,
+    };
+    let scale = args["scale"].as_f64().unwrap_or(2.0);
+    if !(1.0..=4.0).contains(&scale) {
+        return Err("scale must be between 1 and 4".into());
+    }
+    let (w, h) = (src.width(), src.height());
+    if (f64::from(w.max(h)) * scale) > 8192.0 {
+        return Err(format!("{w}x{h} at {scale}x is over 8192 px on a side."));
+    }
+    let mut params = setup.params.clone();
+    params.mode = "img2img".into();
+    params.refine_only = true;
+    params.upscale_enabled = true;
+    params.upscale_scale = scale;
+    params.denoise = 1.0;
+    if !args["denoise"].is_null() {
+        params.upscale_denoise = arg_denoise(args, params.upscale_denoise)?;
+    }
+    if let Some(m) = arg_str(args, "upscale_model") {
+        params.upscale_method = "model".into();
+        params.upscale_model = Some(m.to_string());
+    }
+    params.width = w;
+    params.height = h;
+    params.batch_size = 1;
+    params.seed = args["seed"].as_i64().filter(|s| *s >= 0).unwrap_or(-1);
+    // The refine pass is guided by the image's own prompt when it has one.
+    params.positive_prompt = arg_str(args, "prompt")
+        .map(str::to_string)
+        .or_else(|| src.metadata.get("positive_prompt").cloned())
+        .unwrap_or_default();
+    if let Some(neg) = src.metadata.get("negative_prompt") {
+        params.negative_prompt = neg.clone();
+    }
+    params.input_image = Some(inputs::upload(state, &src).await?);
+    params.seed = resolve_seed(&params);
+    run_job(state, params, args, ctx, Vec::new(), Vec::new()).await
 }
 
 async fn list_music_models(state: &Arc<AppState>) -> Result<Value, String> {
@@ -563,8 +885,34 @@ fn job_json(job: &Job) -> Value {
     v
 }
 
-async fn job_result(job: &Job, include_images: bool) -> Result<Value, String> {
-    let mut content = vec![text(job_json(job))];
+/// How long links made for this call last.
+fn link_hours(args: &Value) -> u64 {
+    args["link_hours"]
+        .as_u64()
+        .unwrap_or(links::DEFAULT_HOURS)
+        .clamp(1, links::MAX_HOURS)
+}
+
+/// A download link for a gallery or Eagle file, when one can be made.
+fn link(ctx: &CallContext, kind: links::Kind, name: &str, hours: u64) -> Option<String> {
+    links::base_url(ctx.proxied).and_then(|base| links::make(&base, kind, name, hours))
+}
+
+async fn job_result(job: &Job, args: &Value, ctx: &CallContext) -> Result<Value, String> {
+    let include_images = args["include_images"].as_bool().unwrap_or(true);
+    let mut v = job_json(job);
+    let hours = link_hours(args);
+    if let Some(images) = v["images"].as_array_mut() {
+        for img in images.iter_mut() {
+            if let Some(url) = img["filename"]
+                .as_str()
+                .and_then(|f| link(ctx, links::Kind::Gallery, f, hours))
+            {
+                img["url"] = json!(url);
+            }
+        }
+    }
+    let mut content = vec![text(v)];
     if include_images && job.status == jobs::JobStatus::Done {
         for img in &job.images {
             match preview(&img.filename, PREVIEW_SIZE).await {
@@ -579,9 +927,9 @@ async fn job_result(job: &Job, include_images: bool) -> Result<Value, String> {
     }))
 }
 
-async fn get_job(args: &Value, max_wait: Duration) -> Result<Value, String> {
+async fn get_job(args: &Value, ctx: &CallContext) -> Result<Value, String> {
     let id = arg_str(args, "job_id").ok_or("job_id is required")?;
-    let wait = Duration::from_secs(args["wait_seconds"].as_u64().unwrap_or(0)).min(max_wait);
+    let wait = Duration::from_secs(args["wait_seconds"].as_u64().unwrap_or(0)).min(ctx.max_wait);
     if music::is_music_job(id) {
         let rx = music::get(id)
             .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
@@ -591,7 +939,7 @@ async fn get_job(args: &Value, max_wait: Duration) -> Result<Value, String> {
     let rx = jobs::get(id)
         .ok_or_else(|| format!("No job '{id}' (jobs are forgotten when MooshieUI restarts)"))?;
     let job = jobs::wait(rx, wait).await;
-    job_result(&job, args["include_images"].as_bool().unwrap_or(true)).await
+    job_result(&job, args, ctx).await
 }
 
 async fn cancel_generation(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
@@ -787,12 +1135,12 @@ fn image_content(jpeg: Vec<u8>) -> Value {
     })
 }
 
-fn gallery_dir() -> Result<PathBuf, String> {
+pub(super) fn gallery_dir() -> Result<PathBuf, String> {
     crate::config::gallery_dir().ok_or_else(|| "Cannot find gallery directory".to_string())
 }
 
 /// A gallery image file directly in `dir` (the owner's gallery), or an error.
-fn gallery_image_path(dir: &Path, filename: &str) -> Result<PathBuf, String> {
+pub(super) fn gallery_image_path(dir: &Path, filename: &str) -> Result<PathBuf, String> {
     crate::commands::api::validate_gallery_filename(filename)
         .map_err(|_| format!("Invalid filename '{filename}'"))?;
     if !is_image_file(filename) {
@@ -810,24 +1158,29 @@ fn is_image_file(name: &str) -> bool {
         && !name.to_ascii_lowercase().ends_with(".mp4")
 }
 
+/// A JPEG of `img` no larger than `max_size`, plus the original size.
+fn jpeg_preview(img: image::DynamicImage, max_size: u32) -> Result<(Vec<u8>, u32, u32), String> {
+    let (w, h) = (img.width(), img.height());
+    let thumb = if w.max(h) > max_size {
+        img.thumbnail(max_size, max_size)
+    } else {
+        img
+    };
+    let rgb = image::DynamicImage::ImageRgb8(thumb.to_rgb8());
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+        .encode_image(&rgb)
+        .map_err(|e| format!("JPEG encode failed: {e}"))?;
+    Ok((out, w, h))
+}
+
 /// A JPEG preview of a gallery image, plus the original size.
 async fn preview(filename: &str, max_size: u32) -> Result<(Vec<u8>, u32, u32), String> {
     let path = gallery_image_path(&gallery_dir()?, filename)?;
     tokio::task::spawn_blocking(move || {
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let img = crate::commands::api::decode_gallery_image(&bytes)?;
-        let (w, h) = (img.width(), img.height());
-        let thumb = if w.max(h) > max_size {
-            img.thumbnail(max_size, max_size)
-        } else {
-            img
-        };
-        let rgb = image::DynamicImage::ImageRgb8(thumb.to_rgb8());
-        let mut out = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
-            .encode_image(&rgb)
-            .map_err(|e| format!("JPEG encode failed: {e}"))?;
-        Ok((out, w, h))
+        jpeg_preview(img, max_size)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -852,7 +1205,7 @@ const METADATA_KEYS: &[&str] = &[
     "date",
 ];
 
-async fn get_image(args: &Value) -> Result<Value, String> {
+async fn get_image(args: &Value, ctx: &CallContext) -> Result<Value, String> {
     let filename = arg_str(args, "filename").ok_or("filename is required")?;
     let max_size = args["max_size"].as_u64().unwrap_or(1024).clamp(128, 2048) as u32;
     let (jpeg, width, height) = preview(filename, max_size).await?;
@@ -874,11 +1227,16 @@ async fn get_image(args: &Value) -> Result<Value, String> {
                 .map(|v| (k.to_string(), json!(v)))
         })
         .collect();
+    let marks = GalleryMarks::load().await;
     Ok(ok(vec![
         text(json!({
             "filename": filename,
             "width": width,
             "height": height,
+            "url": link(ctx, links::Kind::Gallery, filename, link_hours(args)),
+            "board": marks.board_of(filename),
+            "favourite": marks.favourites.contains(filename),
+            "rating": marks.ratings.get(filename),
             "settings": settings,
         })),
         image_content(jpeg),
@@ -947,28 +1305,215 @@ fn backfill(paths: &[PathBuf], budget: usize) -> usize {
     remaining
 }
 
-async fn search_gallery(args: &Value) -> Result<Value, String> {
+/// Boards, favourites and ratings the owner gave gallery images, from their
+/// synced prefs (keyed by gallery file name). Read only: the window's store
+/// would overwrite a change made here.
+#[derive(Debug, Default)]
+struct GalleryMarks {
+    boards: HashMap<String, String>,
+    custom_boards: Vec<String>,
+    favourites: HashSet<String>,
+    ratings: HashMap<String, u64>,
+}
+
+impl GalleryMarks {
+    fn from_value(v: Option<&Value>) -> Self {
+        let Some(v) = v else {
+            return Self::default();
+        };
+        let boards = v["boardAssignments"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, b)| b.as_str().map(|b| (k.clone(), b.to_string())))
+                    .filter(|(_, b)| !b.is_empty() && b != "Unsorted")
+                    .collect()
+            })
+            .unwrap_or_default();
+        let custom_boards = v["customBoards"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|b| b.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let favourites = v["favourites"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, f)| f.as_bool() == Some(true))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let ratings = v["ratings"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, r)| r.as_u64().filter(|r| *r > 0).map(|r| (k.clone(), r)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            boards,
+            custom_boards,
+            favourites,
+            ratings,
+        }
+    }
+
+    async fn load() -> Self {
+        let prefs = crate::user_prefs::load(crate::user_prefs::OWNER_KEY).await;
+        Self::from_value(prefs.as_ref().and_then(|p| p.gallery_boards.as_ref()))
+    }
+
+    fn board_of(&self, filename: &str) -> Option<&str> {
+        self.boards.get(filename).map(String::as_str)
+    }
+
+    /// Board names with how many images each holds, custom (empty) ones too.
+    fn board_counts(&self) -> Vec<(String, usize)> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for board in self.boards.values() {
+            match counts.iter_mut().find(|(b, _)| b == board) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((board.clone(), 1)),
+            }
+        }
+        for b in &self.custom_boards {
+            if !counts.iter().any(|(c, _)| c == b) {
+                counts.push((b.clone(), 0));
+            }
+        }
+        counts.sort_by_key(|a| a.0.to_lowercase());
+        counts
+    }
+
+    /// The board an agent named, matched case-insensitively.
+    fn resolve_board(&self, name: &str) -> Result<String, String> {
+        let wanted = name.trim();
+        if wanted.eq_ignore_ascii_case("unsorted") {
+            return Ok("Unsorted".into());
+        }
+        self.board_counts()
+            .into_iter()
+            .map(|(b, _)| b)
+            .find(|b| b.eq_ignore_ascii_case(wanted))
+            .ok_or_else(|| {
+                format!(
+                    "No board called '{wanted}'. Boards: {}.",
+                    self.board_counts()
+                        .iter()
+                        .map(|(b, _)| b.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+    }
+
+    /// Whether an image passes the board / favourite / rating filters.
+    fn keeps(&self, filename: &str, filter: &MarkFilter) -> bool {
+        if let Some(board) = &filter.board {
+            let own = self.board_of(filename).unwrap_or("Unsorted");
+            if own != board {
+                return false;
+            }
+        }
+        if filter.favourites_only && !self.favourites.contains(filename) {
+            return false;
+        }
+        if filter.min_rating > 0
+            && self.ratings.get(filename).copied().unwrap_or(0) < filter.min_rating
+        {
+            return false;
+        }
+        true
+    }
+}
+
+#[derive(Debug, Default)]
+struct MarkFilter {
+    board: Option<String>,
+    favourites_only: bool,
+    min_rating: u64,
+}
+
+impl MarkFilter {
+    fn active(&self) -> bool {
+        self.board.is_some() || self.favourites_only || self.min_rating > 0
+    }
+}
+
+async fn list_boards() -> Result<Value, String> {
+    let marks = GalleryMarks::load().await;
+    Ok(ok(vec![text(json!({
+        "boards": marks.board_counts().iter().map(|(b, n)| json!({ "name": b, "images": n })).collect::<Vec<_>>(),
+        "favourites": marks.favourites.len(),
+        "rated": marks.ratings.len(),
+        "note": "Pass a board name to search_gallery's board. Images on no board are in Unsorted.",
+    }))]))
+}
+
+async fn search_gallery(args: &Value, ctx: &CallContext) -> Result<Value, String> {
     let query = arg_str(args, "query").unwrap_or("").to_string();
     let limit = args["limit"].as_u64().unwrap_or(20).clamp(1, 100) as usize;
+    let marks = GalleryMarks::load().await;
+    let filter = MarkFilter {
+        board: arg_str(args, "board")
+            .map(|b| marks.resolve_board(b))
+            .transpose()?,
+        favourites_only: args["favourites_only"].as_bool().unwrap_or(false),
+        min_rating: args["min_rating"].as_u64().unwrap_or(0).min(5),
+    };
     let dir = gallery_dir()?;
+    let hours = link_hours(args);
+    let ctx = ctx.clone();
     tokio::task::spawn_blocking(move || {
+        let name_of = |p: &Path| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
         let files = gallery_images(&dir);
         let total = files.len();
+        let annotate = |mut v: Value, filename: &str| {
+            v["url"] = json!(link(&ctx, links::Kind::Gallery, filename, hours));
+            if let Some(b) = marks.board_of(filename) {
+                v["board"] = json!(b);
+            }
+            if marks.favourites.contains(filename) {
+                v["favourite"] = json!(true);
+            }
+            if let Some(r) = marks.ratings.get(filename) {
+                v["rating"] = json!(r);
+            }
+            v
+        };
         if query.is_empty() {
-            let newest: Vec<PathBuf> = files.into_iter().take(limit).map(|(p, _)| p).collect();
+            let newest: Vec<PathBuf> = files
+                .into_iter()
+                .map(|(p, _)| p)
+                .filter(|p| marks.keeps(&name_of(p), &filter))
+                .take(limit)
+                .collect();
             backfill(&newest, newest.len());
             let rows = crate::gallery_index::rows_for(&newest);
             let images: Vec<Value> = newest
                 .iter()
                 .map(|p| {
                     let key = p.to_string_lossy();
-                    match rows.get(key.as_ref()) {
+                    let filename = name_of(p);
+                    let v = match rows.get(key.as_ref()) {
                         Some(row) => json!(row),
-                        None => json!({ "filename": p.file_name().map(|n| n.to_string_lossy().into_owned()) }),
-                    }
+                        None => json!({ "filename": filename }),
+                    };
+                    annotate(v, &filename)
                 })
                 .collect();
-            return ok(vec![text(json!({ "total_images": total, "images": images }))]);
+            return ok(vec![text(
+                json!({ "total_images": total, "images": images }),
+            )]);
         }
         let window: Vec<PathBuf> = files
             .into_iter()
@@ -976,7 +1521,21 @@ async fn search_gallery(args: &Value) -> Result<Value, String> {
             .map(|(p, _)| p)
             .collect();
         let unindexed = backfill(&window, BACKFILL_PER_CALL);
-        let hits = crate::gallery_index::search(&dir, &query, limit);
+        // Filters apply after the text match, so ask the index for more.
+        let wanted = if filter.active() {
+            (limit * 20).min(2000)
+        } else {
+            limit
+        };
+        let hits: Vec<Value> = crate::gallery_index::search(&dir, &query, wanted)
+            .into_iter()
+            .filter(|row| marks.keeps(&row.filename, &filter))
+            .take(limit)
+            .map(|row| {
+                let filename = row.filename.clone();
+                annotate(json!(row), &filename)
+            })
+            .collect();
         let mut result = json!({ "total_images": total, "query": query, "images": hits });
         if unindexed > 0 {
             result["note"] = json!(format!(
@@ -987,4 +1546,190 @@ async fn search_gallery(args: &Value) -> Result<Value, String> {
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Eagle
+// ---------------------------------------------------------------------------
+
+/// An Eagle folder by id or by name (`Art/Portraits` or just `Portraits`).
+async fn eagle_folder_id(state: &Arc<AppState>, wanted: &str) -> Result<String, String> {
+    let folders = crate::eagle::folders(&state.http_client)
+        .await
+        .map_err(|e| e.to_string())?;
+    let w = wanted.trim();
+    folders
+        .iter()
+        .find(|(id, _)| id == w)
+        .or_else(|| folders.iter().find(|(_, n)| n.eq_ignore_ascii_case(w)))
+        .or_else(|| {
+            let hits: Vec<&(String, String)> = folders
+                .iter()
+                .filter(|(_, n)| {
+                    n.rsplit('/')
+                        .next()
+                        .is_some_and(|last| last.eq_ignore_ascii_case(w))
+                })
+                .collect();
+            (hits.len() == 1).then(|| hits[0])
+        })
+        .map(|(id, _)| id.clone())
+        .ok_or_else(|| format!("No Eagle folder called '{w}'"))
+}
+
+async fn search_eagle(
+    state: &Arc<AppState>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let client = &state.http_client;
+    if args["list_folders"].as_bool() == Some(true) {
+        let folders = crate::eagle::folders(client)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(ok(vec![text(json!({
+            "folders": folders.iter().map(|(id, name)| json!({ "id": id, "name": name })).collect::<Vec<_>>(),
+        }))]));
+    }
+    let mut q = crate::eagle::ItemQuery {
+        keyword: arg_str(args, "query").map(str::to_string),
+        tags: args["tags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        limit: args["limit"].as_u64().unwrap_or(20).clamp(1, 100) as usize,
+        offset: args["offset"].as_u64().unwrap_or(0) as usize,
+        ..Default::default()
+    };
+    if let Some(folder) = arg_str(args, "folder") {
+        q.folder_ids = vec![eagle_folder_id(state, folder).await?];
+    }
+    let items = crate::eagle::search_items(client, &q)
+        .await
+        .map_err(|e| e.to_string())?;
+    let hours = link_hours(args);
+    let images: Vec<Value> = items
+        .iter()
+        .map(|it| {
+            let id = it["id"].as_str().unwrap_or("");
+            json!({
+                "id": id,
+                "name": it["name"],
+                "ext": it["ext"],
+                "width": it["width"],
+                "height": it["height"],
+                "tags": it["tags"],
+                "annotation": it["annotation"].as_str().map(|a| clip(a, 400)),
+                "url": link(ctx, links::Kind::Eagle, id, hours),
+            })
+        })
+        .collect();
+    Ok(ok(vec![text(json!({
+        "images": images,
+        "note": "get_eagle_image shows one. The url downloads the original file.",
+    }))]))
+}
+
+async fn get_eagle_image(
+    state: &Arc<AppState>,
+    args: &Value,
+    ctx: &CallContext,
+) -> Result<Value, String> {
+    let id = arg_str(args, "id").ok_or("id is required")?.to_string();
+    let max_size = args["max_size"].as_u64().unwrap_or(1024).clamp(128, 2048) as u32;
+    let info = crate::eagle::item_info(&state.http_client, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let path = crate::eagle::item_file(&state.http_client, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (jpeg, w, h) = tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let img = crate::commands::api::decode_gallery_image(&bytes)?;
+        jpeg_preview(img, max_size)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(ok(vec![
+        text(json!({
+            "id": id,
+            "name": info["name"],
+            "width": w,
+            "height": h,
+            "tags": info["tags"],
+            "annotation": info["annotation"],
+            "url": link(ctx, links::Kind::Eagle, &id, link_hours(args)),
+        })),
+        image_content(jpeg),
+    ]))
+}
+
+async fn send_to_eagle(state: &Arc<AppState>, args: &Value) -> Result<Value, String> {
+    let filenames: Vec<String> = match &args["filenames"] {
+        Value::String(s) => vec![s.clone()],
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    if filenames.is_empty() || filenames.len() > 100 {
+        return Err("filenames needs 1 to 100 gallery file names".into());
+    }
+    let folder = match arg_str(args, "folder") {
+        Some(f) => Some(eagle_folder_id(state, f).await?),
+        None => state.config.read().await.eagle_folder_id.clone(),
+    };
+    let sent = crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ok(vec![text(json!({
+        "sent": sent,
+        "failed": filenames.len() - sent,
+    }))]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gallery_marks_filter_by_board_favourite_and_rating() {
+        let marks = GalleryMarks::from_value(Some(&json!({
+            "boardAssignments": { "a.png": "Cats", "b.png": "Dogs", "c.png": "Unsorted" },
+            "customBoards": ["Empty"],
+            "favourites": { "a.png": true },
+            "ratings": { "a.png": 5, "b.png": 2 },
+        })));
+        assert_eq!(
+            marks.board_counts(),
+            vec![("Cats".into(), 1), ("Dogs".into(), 1), ("Empty".into(), 0)]
+        );
+        assert_eq!(marks.resolve_board("cats").unwrap(), "Cats");
+        assert!(marks.resolve_board("birds").is_err());
+        let cats = MarkFilter {
+            board: Some("Cats".into()),
+            ..Default::default()
+        };
+        assert!(marks.keeps("a.png", &cats) && !marks.keeps("b.png", &cats));
+        let unsorted = MarkFilter {
+            board: Some("Unsorted".into()),
+            ..Default::default()
+        };
+        assert!(marks.keeps("c.png", &unsorted) && marks.keeps("z.png", &unsorted));
+        let fav = MarkFilter {
+            favourites_only: true,
+            ..Default::default()
+        };
+        assert!(marks.keeps("a.png", &fav) && !marks.keeps("b.png", &fav));
+        let rated = MarkFilter {
+            min_rating: 3,
+            ..Default::default()
+        };
+        assert!(marks.keeps("a.png", &rated) && !marks.keeps("b.png", &rated));
+    }
 }

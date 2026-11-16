@@ -162,6 +162,169 @@ fn indexed_metadata(row: &crate::gallery_index::IndexedImage) -> Value {
     })
 }
 
+/// Read Eagle's `{ status, data }` envelope.
+async fn get_data(client: &reqwest::Client, path_and_query: &str) -> Result<Value, AppError> {
+    let response = client
+        .get(format!("{EAGLE_API}{path_and_query}"))
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .map_err(|_| AppError::Other("Eagle is not running".into()))?;
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|_| AppError::Other("Eagle sent an unexpected reply".into()))?;
+    if body["status"] != "success" {
+        return Err(AppError::Other(format!(
+            "Eagle refused the request: {}",
+            body["data"].as_str().unwrap_or("unknown error")
+        )));
+    }
+    Ok(body["data"].clone())
+}
+
+fn query_value(v: &str) -> String {
+    percent_encoding::utf8_percent_encode(v, percent_encoding::NON_ALPHANUMERIC).to_string()
+}
+
+/// What a library search asks for.
+#[derive(Debug, Clone, Default)]
+pub struct ItemQuery {
+    pub keyword: Option<String>,
+    pub tags: Vec<String>,
+    pub folder_ids: Vec<String>,
+    pub ext: Option<String>,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+/// The `/api/item/list` path for a query, newest first. Pure, for tests.
+pub fn item_list_path(q: &ItemQuery) -> String {
+    let mut parts = vec![
+        format!("limit={}", q.limit.clamp(1, 200)),
+        format!("offset={}", q.offset),
+        "orderBy=-CREATEDATE".to_string(),
+    ];
+    if let Some(k) = q
+        .keyword
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        parts.push(format!("keyword={}", query_value(k)));
+    }
+    if !q.tags.is_empty() {
+        parts.push(format!("tags={}", query_value(&q.tags.join(","))));
+    }
+    if !q.folder_ids.is_empty() {
+        parts.push(format!("folders={}", query_value(&q.folder_ids.join(","))));
+    }
+    if let Some(ext) = q.ext.as_deref().filter(|e| !e.is_empty()) {
+        parts.push(format!("ext={}", query_value(ext)));
+    }
+    format!("/api/item/list?{}", parts.join("&"))
+}
+
+/// Items in the open Eagle library matching `q`.
+pub async fn search_items(client: &reqwest::Client, q: &ItemQuery) -> Result<Vec<Value>, AppError> {
+    let data = get_data(client, &item_list_path(q)).await?;
+    Ok(data.as_array().cloned().unwrap_or_default())
+}
+
+/// Every folder in the library, flattened, as `(id, path name)` pairs where
+/// the name holds the parent folders (`Art/Portraits`).
+pub async fn folders(client: &reqwest::Client) -> Result<Vec<(String, String)>, AppError> {
+    fn walk(nodes: &Value, prefix: &str, out: &mut Vec<(String, String)>) {
+        for node in nodes.as_array().into_iter().flatten() {
+            let (Some(id), Some(name)) = (node["id"].as_str(), node["name"].as_str()) else {
+                continue;
+            };
+            let full = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            out.push((id.to_string(), full.clone()));
+            walk(&node["children"], &full, out);
+        }
+    }
+    let data = get_data(client, "/api/folder/list").await?;
+    let mut out = Vec::new();
+    walk(&data, "", &mut out);
+    Ok(out)
+}
+
+/// One item's details.
+pub async fn item_info(client: &reqwest::Client, id: &str) -> Result<Value, AppError> {
+    validate_item_id(id)?;
+    get_data(client, &format!("/api/item/info?id={}", query_value(id))).await
+}
+
+/// Eagle item ids are short alphanumeric strings.
+fn validate_item_id(id: &str) -> Result<(), AppError> {
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(AppError::Other(format!("Invalid Eagle item id: {id}")));
+    }
+    Ok(())
+}
+
+/// The file behind an Eagle item, found next to the thumbnail Eagle reports
+/// (`<library>/images/<id>.info/<name>.<ext>`). Only image files in that
+/// item's own folder are returned.
+pub async fn item_file(client: &reqwest::Client, id: &str) -> Result<std::path::PathBuf, AppError> {
+    let info = item_info(client, id).await?;
+    let thumb = get_data(
+        client,
+        &format!("/api/item/thumbnail?id={}", query_value(id)),
+    )
+    .await?;
+    let thumb = thumb
+        .as_str()
+        .ok_or_else(|| AppError::Other("Eagle did not say where the item is".into()))?;
+    let thumb = percent_encoding::percent_decode_str(thumb)
+        .decode_utf8_lossy()
+        .into_owned();
+    let dir = Path::new(&thumb)
+        .parent()
+        .ok_or_else(|| AppError::Other("Eagle gave an unexpected item path".into()))?
+        .to_path_buf();
+    let dir_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if dir_name != format!("{id}.info") {
+        return Err(AppError::Other("Eagle gave an unexpected item path".into()));
+    }
+    let name = info["name"].as_str().unwrap_or("");
+    let ext = info["ext"].as_str().unwrap_or("").to_ascii_lowercase();
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "avif" | "jxl" | "bmp"
+    ) {
+        return Err(AppError::Other(format!(
+            "Eagle item {id} is not an image ({ext})"
+        )));
+    }
+    let original = dir.join(format!("{name}.{ext}"));
+    if !name.is_empty() && !name.contains(['/', '\\']) && original.is_file() {
+        return Ok(original);
+    }
+    // Some versions name the file differently; take the one image that is not the thumbnail.
+    let found = std::fs::read_dir(&dir)
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_file()
+                && p.extension()
+                    .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case(&ext))
+                && !p
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy().ends_with("_thumbnail"))
+        });
+    found.ok_or_else(|| AppError::Other(format!("Eagle item {id} has no file on disk")))
+}
+
 /// Prompt tags without weights or emphasis: `(red hair:1.2)`, `{{smile}}`,
 /// `1.2::rain::` and `[blurry]` all become their plain tag. Lines that read as
 /// prose (NovelAI V5) and the `Text:` block are left out.
@@ -215,6 +378,23 @@ pub fn prompt_tags(prompt: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn item_list_queries_are_encoded() {
+        let q = ItemQuery {
+            keyword: Some("red hair".into()),
+            tags: vec!["1girl".into(), "smile".into()],
+            folder_ids: vec!["ABC".into()],
+            limit: 500,
+            ..Default::default()
+        };
+        assert_eq!(
+            item_list_path(&q),
+            "/api/item/list?limit=200&offset=0&orderBy=-CREATEDATE&keyword=red%20hair&tags=1girl%2Csmile&folders=ABC"
+        );
+        assert!(validate_item_id("KBJ8Z60O88VMG").is_ok());
+        assert!(validate_item_id("../x").is_err());
+    }
 
     #[test]
     fn tags_drop_weights_emphasis_and_prose() {

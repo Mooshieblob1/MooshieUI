@@ -2221,6 +2221,7 @@ const it: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Denoising upscale",
   "gallery.meta.date": "Data",
   "gallery.meta.generation_time": "Tempo generazione",
+  "gallery.meta.source": "Origine",
 
   "gallery.mode.txt2img": "Testo a immagine",
   "gallery.mode.img2img": "Immagine a immagine",

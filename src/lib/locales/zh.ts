@@ -2221,6 +2221,7 @@ const zh: Record<string, string> = {
   "gallery.meta.upscale_denoise": "放大去噪",
   "gallery.meta.date": "日期",
   "gallery.meta.generation_time": "生成时间",
+  "gallery.meta.source": "来源",
 
   "gallery.mode.txt2img": "文生图",
   "gallery.mode.img2img": "图生图",
