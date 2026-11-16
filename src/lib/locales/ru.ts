@@ -2221,6 +2221,7 @@ const ru: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Шумоподавление увеличения",
   "gallery.meta.date": "Дата",
   "gallery.meta.generation_time": "Время генерации",
+  "gallery.meta.source": "Источник",
 
   "gallery.mode.txt2img": "Текст в изображение",
   "gallery.mode.img2img": "Изображение в изображение",

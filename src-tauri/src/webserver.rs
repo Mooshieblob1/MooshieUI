@@ -2440,16 +2440,34 @@ async fn embed_temp_metadata_handler(
     let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
     let detected_format = crate::metadata::detect_format(&bytes);
 
-    // A NovelAI PNG is handed back as-is. This endpoint exists so a browser
+    // A NovelAI PNG is never re-encoded. This endpoint exists so a browser
     // right-click "Copy Image" carries our metadata, but NovelAI's own chunks
     // and stealth alpha are worth more here: they are what its site reads, and
-    // the app reads them back too. Re-encoding would lose both.
+    // the app reads them back too. Re-encoding would lose both, so the image
+    // only gains the MooshieUI marker chunk, and an already marked one is
+    // handed back as-is.
     if matches!(detected_format, crate::metadata::ImageFormat::Png)
         && crate::metadata::png_carries_novelai_metadata(&bytes)
     {
-        log::info!("embed_temp_metadata: preserving NovelAI PNG bytes verbatim");
-        let json = serde_json::json!({ "tempFilename": temp_filename });
-        return axum::Json(json).into_response();
+        let marked = crate::metadata::mark_novelai_png(&bytes, &metadata);
+        if marked == bytes {
+            log::info!("embed_temp_metadata: NovelAI PNG already marked, keeping it");
+            let json = serde_json::json!({ "tempFilename": temp_filename });
+            return axum::Json(json).into_response();
+        }
+        log::info!(
+            "embed_temp_metadata: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
+        );
+        return match crate::temp_images::save(&marked, "png") {
+            Some(new_filename) => {
+                axum::Json(serde_json::json!({ "tempFilename": new_filename })).into_response()
+            }
+            None => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to save embedded image",
+            )
+                .into_response(),
+        };
     }
 
     let (embedded, out_ext) = match detected_format {
@@ -8348,17 +8366,17 @@ pub(crate) fn save_to_gallery_in_dir(
 
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
-            // Byte-for-byte counterpart of the guard in `save_to_gallery_inner`:
-            // a PNG that still carries NovelAI's own metadata goes to disk
-            // untouched, because re-encoding to embed our copy would strip its
-            // chunks and overwrite the alpha bits its stealth payload lives in.
+            // Counterpart of the guard in `save_to_gallery_inner`: a PNG that
+            // still carries NovelAI's own metadata is never re-encoded, because
+            // that would strip its chunks and overwrite the alpha bits its
+            // stealth payload lives in. It only gains the MooshieUI marker.
             crate::metadata::ImageFormat::Png
                 if crate::metadata::png_carries_novelai_metadata(bytes) =>
             {
                 log::info!(
-                    "save_to_gallery_in_dir: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                    "save_to_gallery_in_dir: keeping NovelAI PNG bytes, adding only the MooshieUI marker"
                 );
-                bytes.to_vec()
+                crate::metadata::mark_novelai_png(bytes, meta)
             }
             crate::metadata::ImageFormat::Png => {
                 crate::metadata::embed_png_metadata(bytes, meta, embed_mode)

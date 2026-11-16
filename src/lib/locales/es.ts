@@ -2287,6 +2287,7 @@ const es: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Eliminación de ruido de escalado",
   "gallery.meta.date": "Fecha",
   "gallery.meta.generation_time": "Tiempo de gen.",
+  "gallery.meta.source": "Origen",
 
   // Etiquetas de modo de galería
   "gallery.mode.txt2img": "Texto a imagen",

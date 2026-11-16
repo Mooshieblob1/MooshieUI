@@ -2244,6 +2244,7 @@ const fr: Record<string, string> = {
   "gallery.meta.upscale_denoise": "Débruitage d'upscale",
   "gallery.meta.date": "Date",
   "gallery.meta.generation_time": "Temps de génération",
+  "gallery.meta.source": "Source",
 
   // Labels des modes galerie
   "gallery.mode.txt2img": "Texte vers image",

@@ -139,6 +139,11 @@ jobs:
           npx esbuild scripts/tests/externalLink.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/externalLink.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/externalLink.test.mjs"
 
+      - name: PNG metadata reader tests
+        run: |
+          npx esbuild scripts/tests/pngMetadata.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/pngMetadata.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/pngMetadata.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 

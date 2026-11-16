@@ -2244,6 +2244,7 @@ const ja: Record<string, string> = {
   "gallery.meta.upscale_denoise": "アップスケールデノイズ",
   "gallery.meta.date": "日付",
   "gallery.meta.generation_time": "生成時間",
+  "gallery.meta.source": "作成元",
 
   // ギャラリーモードラベル
   "gallery.mode.txt2img": "テキストから画像",

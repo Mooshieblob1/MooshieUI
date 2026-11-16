@@ -397,7 +397,10 @@ async fn save_outputs(
 ) -> Result<Vec<SavedImage>, String> {
     let dir = crate::config::gallery_dir().ok_or("Cannot find gallery directory")?;
     let template = state.config.read().await.output_filename_template.clone();
-    let metadata: HashMap<String, String> = super::setups::image_metadata(params, seed);
+    let mut metadata: HashMap<String, String> = super::setups::image_metadata(params, seed);
+    // Lands in `mooshie_extra.source`, and in the MooshieUI marker a NovelAI
+    // PNG gets instead of a re-encode.
+    metadata.insert("mooshie_source".into(), "mcp".into());
     let mut saved = Vec::new();
     for (i, out) in outputs.iter().enumerate() {
         let Some(bytes) = crate::temp_images::load(&out.temp_filename) else {
