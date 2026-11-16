@@ -1634,6 +1634,13 @@ register_h3_draft_routes()
 from .h3_preview import NODE_CLASS_MAPPINGS as H3_PREVIEW_NODES
 NODE_CLASS_MAPPINGS.update(H3_PREVIEW_NODES)
 
+# Anima art style reference (vendored, Apache-2.0, see anima_art_style.LICENSE).
+from .anima_art_style import (
+    NODE_CLASS_MAPPINGS as ANIMA_ART_STYLE_NODES,
+    NODE_DISPLAY_NAME_MAPPINGS as ANIMA_ART_STYLE_NAMES,
+)
+NODE_CLASS_MAPPINGS.update(ANIMA_ART_STYLE_NODES)
+
 from .gguf_compat import install as install_gguf_compat
 install_gguf_compat()
 
@@ -1655,3 +1662,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieSaveVideo": "Mooshie Save Video",
     "MooshieLoadVideoPath": "Mooshie Load Video (Path)",
 }
+NODE_DISPLAY_NAME_MAPPINGS.update(ANIMA_ART_STYLE_NAMES)

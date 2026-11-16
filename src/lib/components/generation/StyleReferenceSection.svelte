@@ -53,6 +53,9 @@
   let downloadingModel = $state(animaRefLora.filename);
   let snaprefAvailable = $state<boolean | null>(null);
   const isSnapref = $derived(generation.styleRefIsAnima && generation.animaRefMethod === "snapref");
+  const isArtStyle = $derived(generation.styleRefIsAnima && generation.animaRefMethod === "art_style");
+  /** Anima Reference Adapter (the default method), which needs its own LoRA. */
+  const isRefAdapter = $derived(generation.styleRefIsAnima && !isSnapref && !isArtStyle);
   const snaprefWeights = $derived(models.loras.filter((name) => /snapref/i.test(name)));
   $effect(() => {
     if (!isSnapref || generation.snaprefAdapter || !snaprefWeights.length) return;
@@ -97,7 +100,7 @@
   const animaLoraInstalled = $derived(
     models.loras.some((m) => m.endsWith(animaRefLora.filename)),
   );
-  const slots = $derived(isSnapref ? generation.snaprefReferences.map((_, i) => i) : isAnima ? [0, 1] : [0]);
+  const slots = $derived(isSnapref ? generation.snaprefReferences.map((_, i) => i) : isRefAdapter ? [0, 1] : [0]);
 
   function slotImage(slot: number): string | null {
     if (isSnapref) return generation.snaprefReferences[slot]?.image ?? null;
@@ -132,8 +135,24 @@
     };
   }
 
-  function uploadName(name: string) {
-    return isSnapref ? `snapref_${crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`}_${name.split(/[\\/]/).pop()}` : name;
+  /** 53-bit cyrb53 hash of the picture's bytes (crypto.subtle is missing on plain-HTTP LAN pages). */
+  function contentHash(bytes: ArrayLike<number>): string {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < bytes.length; i++) {
+      h1 = Math.imul(h1 ^ bytes[i], 2654435761);
+      h2 = Math.imul(h2 ^ bytes[i], 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  }
+
+  // SnapRef pictures are named by their content: different pictures with the
+  // same file name (pasted images) don't overwrite each other, and uploading
+  // the same picture again reuses its file instead of adding a copy.
+  function uploadName(name: string, bytes: ArrayLike<number>) {
+    return isSnapref ? `snapref_${contentHash(bytes)}_${name.split(/[\\/]/).pop()}` : name;
   }
 
   function inputName(result: { name: string; subfolder: string }) {
@@ -242,13 +261,12 @@
   async function handleTauriDrop(path: string, slot: number) {
     if (uploadingSlot !== null) return;
     const write = imageWriter(slot);
-    const name = uploadName(path);
     uploadingSlot = slot;
     try {
       if (isSnapref) {
         const { readFile } = await import("@tauri-apps/plugin-fs");
         const bytes = await readFile(path);
-        const result = await uploadImageBytes(Array.from(bytes), name);
+        const result = await uploadImageBytes(Array.from(bytes), uploadName(path, bytes));
         write(inputName(result), URL.createObjectURL(new Blob([bytes])));
       } else {
         const result = await uploadImage(path);
@@ -263,12 +281,11 @@
   async function pasteImage(slot: number) {
     if (uploadingSlot !== null) return;
     const write = imageWriter(slot);
-    const name = uploadName("pasted_style_ref.png");
     uploadingSlot = slot;
     try {
       const bytes = await readClipboardImageSafe();
       if (!bytes?.length) return;
-      const result = await uploadImageBytes(bytes, name);
+      const result = await uploadImageBytes(bytes, uploadName("pasted_style_ref.png", bytes));
       write(inputName(result), URL.createObjectURL(new Blob([new Uint8Array(bytes)])));
     } catch (e) {
       installError = locale.t("generation.style_ref.upload_error");
@@ -291,12 +308,11 @@
 
   async function uploadFile(file: File, slot: number, write = imageWriter(slot)) {
     if (uploadingSlot !== null) return;
-    const name = uploadName(file.name);
     uploadingSlot = slot;
     installError = null;
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-      const result = await uploadImageBytes(bytes, name);
+      const result = await uploadImageBytes(bytes, uploadName(file.name, bytes));
       write(inputName(result), URL.createObjectURL(file));
     } catch (e) {
       installError = locale.t("generation.style_ref.upload_error");
@@ -319,6 +335,7 @@
   function slotLabel(slot: number): string {
     if (isSnapref) return locale.t("generation.style_ref.snapref_reference", { number: slot + 1 });
     if (!isAnima) return locale.t("generation.style_ref.image");
+    if (isArtStyle) return locale.t("generation.style_ref.art_style_picture");
     return slot === 0
       ? locale.t("generation.style_ref.anima_character")
       : locale.t("generation.style_ref.anima_second_character");
@@ -370,6 +387,7 @@
           <select class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-neutral-100 transition-colors focus:border-indigo-500 focus:outline-none" aria-label={locale.t("generation.style_ref.method")} bind:value={generation.animaRefMethod} onchange={() => generation.saveSettings()}>
             <option value="anima_ref_adapter">{locale.t("generation.style_ref.anima_mode")}</option>
             <option value="snapref">SnapRef</option>
+            <option value="art_style">{locale.t("generation.style_ref.art_style_mode")}</option>
           </select>
         </label>
       {/if}
@@ -416,13 +434,17 @@
         {isRedux
           ? locale.t("generation.style_ref.redux_mode")
           : isAnima
-            ? (isSnapref ? "SnapRef" : locale.t("generation.style_ref.anima_mode"))
+            ? (isSnapref
+              ? "SnapRef"
+              : isArtStyle
+                ? locale.t("generation.style_ref.art_style_mode")
+                : locale.t("generation.style_ref.anima_mode"))
             : locale.t("generation.style_ref.ipadapter_mode")}
-        {#if isAnima}<InfoTip text={locale.t(isSnapref ? "generation.style_ref.snapref_note" : "generation.style_ref.anima_note")} />{/if}
+        {#if isAnima}<InfoTip text={locale.t(isSnapref ? "generation.style_ref.snapref_note" : isArtStyle ? "generation.style_ref.art_style_note" : "generation.style_ref.anima_note")} />{/if}
       </div>
 
       {#if isAnima}
-        {#if !isSnapref && !animaLoraInstalled}
+        {#if isRefAdapter && !animaLoraInstalled}
           <div class="space-y-1">
             <button
               class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-100 transition-colors hover:border-indigo-500 disabled:opacity-50"
@@ -496,7 +518,7 @@
         {@const image = slotImage(slot)}
         <div>
           <div class="mb-1 text-neutral-400">
-            {slotLabel(slot)}{#if isAnima && !isSnapref && slot === 1}<InfoTip text={locale.t("generation.style_ref.anima_two_characters_tip")} />{/if}
+            {slotLabel(slot)}{#if isRefAdapter && slot === 1}<InfoTip text={locale.t("generation.style_ref.anima_two_characters_tip")} />{/if}
           </div>
           {#if image && previews[image]}
             <div class="relative mb-2">
@@ -543,7 +565,7 @@
             {#if uploadingSlot === slot}
               <span class="text-indigo-400">{locale.t("generation.style_ref.snapref_uploading")}</span>
             {:else}
-              {isAnima
+              {isAnima && !isArtStyle
                 ? locale.t("generation.style_ref.anima_drop_image")
                 : locale.t("generation.style_ref.drop_image")}
               <span class="cursor-pointer text-indigo-400 underline"
@@ -574,7 +596,68 @@
         }}>{locale.t("generation.style_ref.snapref_add")}</button>
       {/if}
 
-      {#if isAnima && !isSnapref}
+      {#if isArtStyle}
+        <!-- Art style: how far the statistics move -->
+        <div>
+          <div class="mb-1 text-neutral-400">
+            {locale.t("generation.style_ref.art_style_match")}
+            <InfoTip text={locale.t("generation.style_ref.art_style_match_tip")} />
+            <span class="ml-1 text-neutral-300">{generation.animaArtStyleMatch.toFixed(2)}</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={generation.animaArtStyleMatch}
+            oninput={(e) => {
+              generation.animaArtStyleMatch = parseFloat((e.target as HTMLInputElement).value);
+            }}
+            onchange={() => generation.saveSettings()}
+            class="w-full"
+            aria-label={locale.t("generation.style_ref.art_style_match")}
+          />
+        </div>
+
+        <!-- Art style: keep the prompt's composition -->
+        <label class="flex items-center gap-2 text-neutral-400">
+          <input
+            type="checkbox"
+            class="accent-indigo-500"
+            checked={generation.animaArtStyleRestyle}
+            onchange={(e) => {
+              generation.animaArtStyleRestyle = (e.target as HTMLInputElement).checked;
+              generation.saveSettings();
+            }}
+          />
+          {locale.t("generation.style_ref.art_style_restyle")}
+          <InfoTip text={locale.t("generation.style_ref.art_style_restyle_tip")} />
+        </label>
+
+        <!-- Art style: picture size -->
+        <div>
+          <div class="mb-1 text-neutral-400">
+            {locale.t("generation.style_ref.art_style_megapixels")}
+            <InfoTip text={locale.t("generation.style_ref.art_style_megapixels_tip")} />
+            <span class="ml-1 text-neutral-300">{generation.animaArtStyleMegapixels.toFixed(2)}</span>
+          </div>
+          <input
+            type="range"
+            min="0.5"
+            max="4"
+            step="0.05"
+            value={generation.animaArtStyleMegapixels}
+            oninput={(e) => {
+              generation.animaArtStyleMegapixels = parseFloat((e.target as HTMLInputElement).value);
+            }}
+            onchange={() => generation.saveSettings()}
+            class="w-full"
+            aria-label={locale.t("generation.style_ref.art_style_megapixels")}
+          />
+        </div>
+      {/if}
+
+      {#if isRefAdapter}
         <!-- Reference guidance -->
         <div>
           <div class="mb-1 text-neutral-400">

@@ -466,12 +466,20 @@ export interface GenerationParams {
   style_ref_clip_vision?: string | null;
   /** Anima character reference: second character, stitched right of style_ref_image. */
   style_ref_image_2?: string | null;
-  /** Anima character reference: AnimaRefAdapter ref_guidance (1 = no extra model call). */
-  anima_ref_method?: "anima_ref_adapter" | "snapref";
+  /** Anima Style Reference method (Reference Adapter, SnapRef or art style). */
+  anima_ref_method?: "anima_ref_adapter" | "snapref" | "art_style";
+  /** Anima art style: MooshieAnimaArtStyle stats_match (0 off, 0.6 default). */
+  anima_art_style_match?: number;
+  /** Anima art style: keep the prompt's composition (first quarter of steps untouched). */
+  anima_art_style_restyle?: boolean;
+  /** Anima art style: area the picture is shrunk to first, in megapixels. */
+  anima_art_style_megapixels?: number;
+  /** SnapRef: adapter weights file in models/loras. */
   snapref_adapter?: string | null;
   snapref_mode?: "Character & Style" | "Character";
   snapref_fidelity?: number;
   snapref_references?: { image: string | null; strength: number }[];
+  /** Anima character reference: AnimaRefAdapter ref_guidance (1 = no extra model call). */
   anima_ref_guidance?: number;
   /** Anima character reference: AnimaRefAdapter correction (apg, rescale, none). */
   anima_ref_correction?: string;
