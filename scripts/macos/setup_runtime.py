@@ -11,6 +11,7 @@ import importlib.util
 import json
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -81,9 +82,15 @@ def main():
             req_file = re.search(r'requirements_file:\s*"([^"]+)"', fields).group(1)
             classes = re.search(r'verify_nodes:\s*&\[(.*?)\]', fields, re.S).group(1)
             external_nodes.extend(re.findall(r'"([^"]+)"', classes))
+            subdir = re.search(r'source_subdir:\s*Some\("([^"]+)"\)', fields)
             destination = comfy / "custom_nodes" / name
-            run("git", "clone", "--depth=1", url, destination)
-            external_revisions[name] = run("git", "-C", destination, "rev-parse", "HEAD", capture_output=True, text=True).stdout.strip()
+            # A pack whose node lives in a subfolder of its repo (SnapRef) is
+            # installed as that subfolder, like clone_custom_node does.
+            checkout = work / "node-sources" / name if subdir else destination
+            run("git", "clone", "--depth=1", url, checkout)
+            external_revisions[name] = run("git", "-C", checkout, "rev-parse", "HEAD", capture_output=True, text=True).stdout.strip()
+            if subdir:
+                shutil.copytree(checkout / subdir.group(1), destination)
             if (destination / req_file).exists():
                 run(args.uv, "pip", "install", "--python", python, "-c", constraints, "-r", destination / req_file)
     extra_required = work / "external-nodes.json"
