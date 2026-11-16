@@ -850,6 +850,26 @@ export async function saveToGallery(
   return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode, watermark });
 }
 
+/** One related tag: Danbooru category, and cosine similarity or times used together. */
+export interface RelatedTag {
+  name: string;
+  category: number;
+  score: number;
+}
+
+export interface RelatedTags {
+  tag: string;
+  danbooru: RelatedTag[];
+  danbooru_error: string | null;
+  gallery: RelatedTag[];
+  gallery_images: number;
+}
+
+/** Tags related to one prompt tag, from Danbooru and from the gallery. */
+export async function relatedTags(tag: string): Promise<RelatedTags> {
+  return ipcInvoke("related_tags", { tag });
+}
+
 /** Eagle's version when it is running on this machine; rejects otherwise. */
 export async function eagleStatus(): Promise<string> {
   return ipcInvoke("eagle_status");
