@@ -32,6 +32,7 @@
   import { findCommentRanges, stripPromptComments, toggleLineComments } from "../../utils/promptComments.js";
   import { findMatches, replaceAllMatches } from "../../utils/promptFind.js";
   import { insertTagAfter, normalizePromptTag, promptTagSet } from "../../utils/relatedTags.js";
+  import { findTagCore } from "../../utils/promptTagAffixes.js";
   import { relatedTags, type RelatedTag, type RelatedTags } from "../../utils/api.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
@@ -358,6 +359,9 @@
     end: number;
     trimmedStart: number;
     trimmedEnd: number;
+    /** The tag name alone, inside any weight syntax around it (see findTagCore). */
+    coreStart: number;
+    coreEnd: number;
   } | null {
     if (!textareaEl) return null;
     const pos = textareaEl.selectionStart;
@@ -378,6 +382,8 @@
         end: inertRange.end,
         trimmedStart,
         trimmedEnd,
+        coreStart: trimmedStart,
+        coreEnd: trimmedEnd,
       };
     }
 
@@ -398,8 +404,9 @@
     const trimmedStart = start + leadingWhitespace;
     const trimmedEnd = Math.max(trimmedStart, end - trailingWhitespace);
     const fragment = text.substring(trimmedStart, trimmedEnd);
+    const core = findTagCore(text, trimmedStart, trimmedEnd);
 
-    return { fragment, start, end, trimmedStart, trimmedEnd };
+    return { fragment, start, end, trimmedStart, trimmedEnd, coreStart: core.start, coreEnd: core.end };
   }
 
   function updateSuggestions() {
@@ -411,14 +418,17 @@
     const result = getCurrentTagFragment();
     const pos = textareaEl?.selectionStart ?? 0;
 
-    if (!result || pos < result.trimmedStart) {
+    // The caret has to be on the tag name itself: inside a weight opener like
+    // `1.2::` there is nothing to complete yet, and past a closer like `::` or
+    // `}` the tag is finished, so Enter must not swap it for a suggestion.
+    if (!result || pos < result.coreStart || pos > result.coreEnd) {
       showSuggestions = false;
       suggestions = [];
       return;
     }
 
     // Search based on text from tag start to cursor position (supports mid-prompt editing)
-    let searchFragment = value.substring(result.trimmedStart, pos).replace(/\s+$/, "");
+    let searchFragment = value.substring(result.coreStart, pos).replace(/\s+$/, "");
 
     // Strip scheduling tag syntax so autocomplete works inside scheduling blocks
     // MooshieUI: <from:0.2>tag</from>, <to:0.8>tag</to>, <range:0.2:0.8>tag</range>
@@ -438,7 +448,7 @@
     // Skip only while typing an in-progress weight expression like `(tag:1.2`.
     // Anchoring to the caret (no closing paren, ending at the number) means a
     // completed `(tag:1.2)` followed by a fresh tag still autocompletes.
-    if (/^\([^)]*:\d[\d.]*$/.test(searchFragment)) {
+    if (/^\([^)]*:\d[\d.]*$/.test(value.substring(result.trimmedStart, pos).trimEnd())) {
       showSuggestions = false;
       suggestions = [];
       return;
@@ -502,9 +512,10 @@
     undoStack = [...undoStack, value];
     redoStack = [];
 
-    const before = value.substring(0, result.start);
-    const leadingWhitespace = value.substring(result.start, result.trimmedStart);
-    const trailingWhitespace = value.substring(result.trimmedEnd, result.end);
+    // Only the tag name is replaced. A weight opener before it and a closer
+    // after it (`-2::`, `::`, `{`, `}`, `:1.2)`) stay where they are.
+    const before = value.substring(0, result.coreStart);
+    const closing = value.substring(result.coreEnd, result.end);
     const after = value.substring(result.end);
     // LoRA keywords go in verbatim, the same as the LoRA gallery's trigger-word
     // chips: underscores and brackets can be part of the trigger token.
@@ -532,7 +543,7 @@
     const needsCommaSuffix = !/^\s*,/.test(after);
     const suffix = needsCommaSuffix ? ", " : "";
 
-    value = before + leadingWhitespace + tagText + trailingWhitespace + suffix + after;
+    value = before + tagText + closing + suffix + after;
 
     // Track it like a chip-inserted trigger word, so it is highlighted and
     // removed again when the LoRA is switched off. Only the positive prompt
@@ -545,7 +556,7 @@
     showSuggestions = false;
 
     // Set cursor position after the inserted tag (before trailing suffix)
-    const cursorPos = (before + leadingWhitespace + tagText + trailingWhitespace + suffix).length;
+    const cursorPos = (before + tagText + closing + suffix).length;
     requestAnimationFrame(() => {
       textareaEl?.focus();
       textareaEl?.setSelectionRange(cursorPos, cursorPos);
@@ -1053,7 +1064,11 @@
     } else {
       spellMenuItems = suggestions.map((tag) => ({
         label: tag.n.replace(/_/g, " "),
-        action: () => replaceRange(piece.start, piece.end, prefix.trim() + formatTagForPrompt(tag.n)),
+        // Keep the weight around the tag (`1.2::name::`, `{name}`) and swap the name only.
+        action: () => {
+          const core = findTagCore(value, piece.start, piece.end);
+          replaceRange(core.start, core.end, prefix.trim() + formatTagForPrompt(tag.n));
+        },
       }));
     }
     spellMenuX = event.clientX;
