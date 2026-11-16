@@ -204,6 +204,13 @@ pub struct AppConfig {
     pub webhook_include_sensitive: bool,
     /// Allow localhost/private webhook targets.
     pub webhook_allow_private_targets: bool,
+    /// Eagle (eagle.cool) export through its local API: shows "Send to Eagle"
+    /// in the gallery.
+    pub eagle_enabled: bool,
+    /// With Eagle export on, also send every image as it is saved.
+    pub eagle_auto_send: bool,
+    /// Eagle folder id the images go into. None puts them in Eagle's inbox.
+    pub eagle_folder_id: Option<String>,
     /// Active custom theme profile ID. Null = built-in palette only.
     pub theme_profile_id: Option<String>,
     /// User-defined custom theme profiles.
@@ -409,6 +416,9 @@ impl Default for AppConfig {
             webhook_events: vec!["image_saved".to_string()],
             webhook_include_sensitive: false,
             webhook_allow_private_targets: false,
+            eagle_enabled: false,
+            eagle_auto_send: true,
+            eagle_folder_id: None,
             theme_profile_id: None,
             theme_profiles: vec![],
             tls_cert_path: None,

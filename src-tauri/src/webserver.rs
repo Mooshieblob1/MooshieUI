@@ -652,6 +652,14 @@ const ADMIN_COMMANDS: &[&str] = &[
     "get_mcp_status",
     "set_mcp_settings",
     "regenerate_mcp_token",
+    // the owner's saved NovelAI keys (named accounts are refused in the arm too)
+    "list_novelai_keys",
+    "save_novelai_key",
+    "delete_novelai_key",
+    "use_novelai_key",
+    // Eagle runs on the host: only the owner's library, only the owner's gallery
+    "eagle_status",
+    "send_to_eagle",
 ];
 
 /// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
@@ -4024,6 +4032,24 @@ async fn dispatch_command(
             .map_err(|e| e.to_string())?;
             serde_json::to_value(ids).map_err(|e| e.to_string())
         }
+        "list_novelai_keys" | "save_novelai_key" | "delete_novelai_key" | "use_novelai_key" => {
+            if username.is_some() {
+                return Err("Saved NovelAI keys belong to the instance owner".to_string());
+            }
+            let label = args["label"].as_str().unwrap_or("");
+            let current = state.config.read().await.novelai_api_key.clone();
+            let list = match command {
+                "list_novelai_keys" => crate::novelai_keys::list(current.as_deref()),
+                "save_novelai_key" => crate::novelai_keys::save(
+                    label,
+                    args["apiKey"].as_str().unwrap_or(""),
+                    current.as_deref(),
+                ),
+                "delete_novelai_key" => crate::novelai_keys::delete(label, current.as_deref()),
+                _ => crate::novelai_keys::switch(&state, label).await,
+            }?;
+            serde_json::to_value(list).map_err(|e| e.to_string())
+        }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
             crate::key_source::check(&api_key)?;
@@ -4201,6 +4227,19 @@ async fn dispatch_command(
             let related =
                 crate::related_tags::lookup(&state.http_client, tag, dir.as_deref()).await?;
             serde_json::to_value(related).map_err(|e| e.to_string())
+        }
+        "eagle_status" => crate::eagle::status(&state.http_client)
+            .await
+            .map(|v| serde_json::json!(v))
+            .map_err(|e| e.to_string()),
+        "send_to_eagle" => {
+            let filenames: Vec<String> = serde_json::from_value(args["filenames"].clone())
+                .map_err(|e| format!("Invalid filenames: {}", e))?;
+            let folder = state.config.read().await.eagle_folder_id.clone();
+            crate::eagle::send_gallery_files(&state.http_client, &filenames, folder.as_deref())
+                .await
+                .map(|n| serde_json::json!(n))
+                .map_err(|e| e.to_string())
         }
         "save_to_gallery" => {
             let filename = args["filename"]
