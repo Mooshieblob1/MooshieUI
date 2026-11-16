@@ -11,8 +11,26 @@
   // Fetch once per key rather than on every mount: this sits above the generate
   // button, so it remounts every time the generation page is rebuilt.
   $effect(() => {
-    if (show) void novelai.ensureSubscription();
+    if (show) {
+      void novelai.ensureSubscription();
+      novelai.ensureSavedKeys();
+    }
   });
+
+  let switching = $state(false);
+  const activeKeyLabel = $derived(novelai.savedKeys.find((k) => k.active)?.label ?? "");
+
+  async function switchKey(label: string) {
+    if (!label || label === activeKeyLabel) return;
+    switching = true;
+    try {
+      await novelai.useNamedKey(label);
+    } catch (e) {
+      console.error("Failed to switch NovelAI key:", e);
+    } finally {
+      switching = false;
+    }
+  }
 
   // Anlas is spent the moment a NovelAI generation runs, so a balance that is
   // never re-read is a wrong balance. Refresh on the busy-to-idle edge.
@@ -52,6 +70,36 @@
         </span>
         <span class="font-mono {allowance.isLow ? 'text-amber-400' : 'text-neutral-300'}">{allowance.percent}%</span>
       </span>
+    {/if}
+    {#if novelai.daysPaidThrough !== null && novelai.paidThrough}
+      {@const paidText = locale.t('settings.novelai.paid_through', {
+        date: novelai.paidThrough.toLocaleDateString(locale.current, { year: 'numeric', month: 'short', day: 'numeric' }),
+        days: String(novelai.daysPaidThrough),
+      })}
+      <span class="text-neutral-600" aria-hidden="true">·</span>
+      <span
+        class="font-mono {novelai.daysPaidThrough <= 3 ? 'text-amber-400' : 'text-neutral-500'}"
+        title={paidText}
+        aria-label={paidText}
+      >{locale.t('settings.novelai.days_short', { days: String(novelai.daysPaidThrough) })}</span>
+    {/if}
+    {#if novelai.savedKeys.length > 1}
+      <!-- Quick account switch between the owner's saved keys. -->
+      <select
+        class="min-w-0 max-w-28 truncate rounded bg-neutral-800 border border-neutral-700 px-1 py-0.5 text-xs text-neutral-300 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+        title={locale.t('settings.novelai.switch_key')}
+        aria-label={locale.t('settings.novelai.switch_key')}
+        disabled={switching}
+        value={activeKeyLabel}
+        onchange={(e) => { void switchKey((e.currentTarget as HTMLSelectElement).value); }}
+      >
+        {#if !activeKeyLabel}
+          <option value="">{locale.t('settings.novelai.unsaved_key')}</option>
+        {/if}
+        {#each novelai.savedKeys as saved (saved.label)}
+          <option value={saved.label}>{saved.label}</option>
+        {/each}
+      </select>
     {/if}
     {#if novelai.subscriptionError}
       <!-- Stale or missing balance: an icon with the reason on hover, never the raw error text. -->

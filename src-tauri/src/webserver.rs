@@ -649,6 +649,11 @@ const ADMIN_COMMANDS: &[&str] = &[
     "get_mcp_status",
     "set_mcp_settings",
     "regenerate_mcp_token",
+    // the owner's saved NovelAI keys (named accounts are refused in the arm too)
+    "list_novelai_keys",
+    "save_novelai_key",
+    "delete_novelai_key",
+    "use_novelai_key",
 ];
 
 /// Node packs the UI offers to install on demand (IP-Adapter, ControlNet aux,
@@ -4020,6 +4025,24 @@ async fn dispatch_command(
             .await
             .map_err(|e| e.to_string())?;
             serde_json::to_value(ids).map_err(|e| e.to_string())
+        }
+        "list_novelai_keys" | "save_novelai_key" | "delete_novelai_key" | "use_novelai_key" => {
+            if username.is_some() {
+                return Err("Saved NovelAI keys belong to the instance owner".to_string());
+            }
+            let label = args["label"].as_str().unwrap_or("");
+            let current = state.config.read().await.novelai_api_key.clone();
+            let list = match command {
+                "list_novelai_keys" => crate::novelai_keys::list(current.as_deref()),
+                "save_novelai_key" => crate::novelai_keys::save(
+                    label,
+                    args["apiKey"].as_str().unwrap_or(""),
+                    current.as_deref(),
+                ),
+                "delete_novelai_key" => crate::novelai_keys::delete(label, current.as_deref()),
+                _ => crate::novelai_keys::switch(&state, label).await,
+            }?;
+            serde_json::to_value(list).map_err(|e| e.to_string())
         }
         "set_novelai_api_key" => {
             let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();

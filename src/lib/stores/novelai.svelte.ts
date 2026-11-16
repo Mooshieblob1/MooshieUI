@@ -1,9 +1,14 @@
 import type { NovelAiSubscription } from "../types/index.js";
 import {
+  deleteNovelaiKey,
   getCachedConfig,
   getConfig,
+  listNovelaiKeys,
   novelaiSubscription,
+  saveNovelaiKey,
   setNovelaiApiKey,
+  useNovelaiKey,
+  type NovelAiSavedKey,
 } from "../utils/api.js";
 
 /** How long a failed subscription fetch suppresses automatic retries. */
@@ -99,6 +104,67 @@ class NovelAiStore {
     return !!sub && sub.active && sub.tier >= 3;
   }
 
+  /**
+   * When the subscription is paid through: NovelAI's `expiresAt`, which is the
+   * next renewal for a renewing plan and the end date for a cancelled one.
+   * Null without an active subscription.
+   */
+  get paidThrough(): Date | null {
+    const sub = this.subscription;
+    if (!sub?.active || !sub.expiresAt) return null;
+    const date = new Date(sub.expiresAt * 1000);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  /** Whole days until `paidThrough`, never below 0. */
+  get daysPaidThrough(): number | null {
+    const date = this.paidThrough;
+    if (!date) return null;
+    return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86_400_000));
+  }
+
+  /**
+   * The owner's saved keys for switching accounts. Empty for named accounts,
+   * which the backend refuses: they keep one key each.
+   */
+  savedKeys = $state<NovelAiSavedKey[]>([]);
+  /** The backend answered the list, so this account may keep saved keys. */
+  savedKeysAvailable = $state(false);
+
+  async loadSavedKeys(): Promise<void> {
+    try {
+      this.savedKeys = await listNovelaiKeys();
+      this.savedKeysAvailable = true;
+    } catch {
+      this.savedKeys = [];
+      this.savedKeysAvailable = false;
+    }
+  }
+
+  private savedKeysRequested = false;
+
+  /** Load the saved keys once, for the quick switcher above Generate. */
+  ensureSavedKeys(): void {
+    if (this.savedKeysRequested) return;
+    this.savedKeysRequested = true;
+    void this.loadSavedKeys();
+  }
+
+  async saveNamedKey(label: string, key: string): Promise<void> {
+    this.savedKeys = await saveNovelaiKey(label, key);
+  }
+
+  async deleteNamedKey(label: string): Promise<void> {
+    this.savedKeys = await deleteNovelaiKey(label);
+  }
+
+  /** Switch to a saved key; the account record is fetched again for it. */
+  async useNamedKey(label: string): Promise<void> {
+    this.savedKeys = await useNovelaiKey(label);
+    this.apiKeyConfigured = true;
+    await this.afterKeyChange();
+  }
+
   /** What the Opus usage bar draws, or null when there is no bar to draw. */
   get opusAllowance() {
     return this.subscription?.opusAllowance ?? null;
@@ -161,6 +227,12 @@ class NovelAiStore {
    */
   async setApiKey(key: string): Promise<void> {
     this.apiKeyConfigured = await setNovelaiApiKey(key);
+    await this.afterKeyChange();
+    // The saved-key list marks which one is in use, and that just changed.
+    if (this.savedKeys.length > 0) void this.loadSavedKeys();
+  }
+
+  private async afterKeyChange(): Promise<void> {
     // The key lives outside the ordinary config write, so the cached config in
     // `utils/api.ts` still describes the pre-save state. `refresh()` reads that
     // cache on every ModelSelector and SettingsPage mount, so without a forced

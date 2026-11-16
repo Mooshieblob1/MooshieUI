@@ -24,6 +24,7 @@
   import McpServerPanel from "./McpServerPanel.svelte";
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
+  import NovelAiSavedKeys from "./NovelAiSavedKeys.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
   import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL } from "../../utils/updater.js";
@@ -4548,6 +4549,10 @@
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
             </div>
 
+            {#if isAdmin}
+              <NovelAiSavedKeys />
+            {/if}
+
             {#if novelai.apiKeyConfigured}
               <div class="border-t border-neutral-800 pt-3 space-y-2">
                 <div class="flex items-center justify-between gap-2">
@@ -4575,6 +4580,14 @@
                       ? locale.t('settings.novelai.opus_active')
                       : locale.t('settings.novelai.opus_inactive')}
                   </p>
+                  {#if novelai.paidThrough}
+                    <p class="text-[10px] text-neutral-400">
+                      {locale.t('settings.novelai.paid_through', {
+                        date: novelai.paidThrough.toLocaleDateString(locale.current, { year: 'numeric', month: 'short', day: 'numeric' }),
+                        days: String(novelai.daysPaidThrough ?? 0),
+                      })}
+                    </p>
+                  {/if}
 
                   {#if novelai.opusAllowance}
                     {@const allowance = novelai.opusAllowance}
