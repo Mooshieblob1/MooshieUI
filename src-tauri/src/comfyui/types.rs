@@ -507,8 +507,21 @@ pub struct GenerationParams {
     /// cheapest (no extra model call per step), higher pushes harder.
     #[serde(default = "default_anima_ref_guidance")]
     pub anima_ref_guidance: f32,
+    /// Anima Style Reference method: `anima_ref_adapter` (default, also when
+    /// empty), `snapref`, or `art_style` (MooshieAnimaArtStyle).
     #[serde(default)]
     pub anima_ref_method: String,
+    /// Anima art style: `MooshieAnimaArtStyle.stats_match`, how far each block's
+    /// channel statistics move towards the picture's (0 off, 0.6 default).
+    #[serde(default = "default_anima_art_style_match")]
+    pub anima_art_style_match: f32,
+    /// Anima art style: leave the first quarter of the steps alone so the
+    /// prompt keeps its own composition.
+    #[serde(default = "default_anima_art_style_restyle")]
+    pub anima_art_style_restyle: bool,
+    /// Anima art style: area the picture is shrunk to first, in megapixels.
+    #[serde(default = "default_anima_art_style_megapixels")]
+    pub anima_art_style_megapixels: f32,
     #[serde(default)]
     pub snapref_adapter: Option<String>,
     #[serde(default = "default_snapref_mode")]
@@ -756,6 +769,15 @@ fn default_snapref_mode() -> String {
     "Character & Style".into()
 }
 
+fn default_anima_art_style_match() -> f32 {
+    0.6
+}
+fn default_anima_art_style_megapixels() -> f32 {
+    1.0
+}
+fn default_anima_art_style_restyle() -> bool {
+    true
+}
 fn default_anima_ref_guidance() -> f32 {
     4.5
 }

@@ -16,7 +16,7 @@ See the [wiki comparison](https://github.com/Mooshieblob1/MooshieUI/wiki/Control
 | Flux.1 (flux1d, flux1s, flux1krea) | Flux Redux | None (core ComfyUI) |
 | SD1.5 (sd15) | IP-Adapter Plus | ComfyUI_IPAdapter_plus |
 | SDXL, Illustrious, Pony (sdxl, illustrious, pony) | IP-Adapter Plus | ComfyUI_IPAdapter_plus |
-| Anima (anima) | Anima Reference Adapter v2 or SnapRef (character reference) | ComfyUI-Anima-Ref-Adapter or SnapRef |
+| Anima (anima) | Anima Reference Adapter v2 or SnapRef (character reference), or Art style (style only) | ComfyUI-Anima-Ref-Adapter or SnapRef; Art style is bundled with MooshieUI |
 | All other families | Not supported | -- |
 
 Unsupported families show an explanatory hint in the panel. Generation with
@@ -115,6 +115,35 @@ and adjust fidelity from 0 to 1 (default 1). SnapRef works with txt2img,
 img2img and inpainting. Like the Anima Reference Adapter, it cannot be combined
 with Anima Style Transfer, and Anima TeaCache is disabled while it is active.
 
+### Anima (Art style)
+
+Select **Art style** in the Anima Style Reference panel to take a picture's
+palette, shading and texture without its subject or characters. It needs no
+weights and no extra download: the `MooshieAnimaArtStyle` node ships in the
+`mooshie-nodes` package. It is the training-free method from
+[BetaDoggo/SwarmUI-BrokeAnimaStyleReference](https://github.com/BetaDoggo/SwarmUI-BrokeAnimaStyleReference)
+(Apache-2.0, vendored as `comfyui-nodes/anima_art_style.py` with its licence
+next to it). At every step the style picture is noised to the current noise
+level and run through the model with a neutral caption, and after every
+transformer block each channel of the generated image moves part of the way
+towards the picture's mean and standard deviation (AdaIN inside the DiT).
+
+- **Style match** (0 to 1, default 0.6): how far the statistics move. Near 1
+  the image falls apart.
+- **Keep my composition** (default on): the first quarter of the steps run
+  without the picture, so the layout comes from the prompt. Off gives a
+  stronger style with a layout that drifts towards the picture's.
+- **Picture size** (0.5 to 4 megapixels, default 1): the picture is shrunk to
+  this area first, never enlarged. About the generated image's own size works
+  best.
+
+Describe the whole image in the prompt as usual. It costs one extra model pass
+per step on the positive prompt, works with txt2img, img2img and inpainting,
+and like the other Anima methods it turns Anima TeaCache off and cannot be
+combined with Anima Style Transfer. The method's author has mostly tested it
+on Anima turbo. For a remote ComfyUI, install the MooshieUI nodes with
+`comfyui-nodes/install.sh`.
+
 ## Using the panel
 
 1. Open the Style Reference section in the Generation page sidebar.
@@ -141,7 +170,9 @@ ComfyUI nodes.
   `style_ref_weight_type`, `style_ref_start`, `style_ref_end`; Anima adds
   `style_ref_image_2`, `anima_ref_guidance` and `anima_ref_correction`;
   SnapRef uses `anima_ref_method`, `snapref_adapter`, `snapref_mode`,
-  `snapref_fidelity`, and `snapref_references`.
+  `snapref_fidelity`, and `snapref_references`; Art style uses
+  `anima_ref_method` = `art_style`, `anima_art_style_match`,
+  `anima_art_style_restyle` and `anima_art_style_megapixels`.
 - IP-Adapter lazy install follows the optional-node installation pattern:
   verified by checking for the `IPAdapterUnifiedLoader` class in the ComfyUI
   object info endpoint.
