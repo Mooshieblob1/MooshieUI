@@ -825,6 +825,16 @@ export async function saveToGallery(
   return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode, watermark });
 }
 
+/** Eagle's version when it is running on this machine; rejects otherwise. */
+export async function eagleStatus(): Promise<string> {
+  return ipcInvoke("eagle_status");
+}
+
+/** Send gallery images to Eagle by file name. Resolves to how many Eagle added. */
+export async function sendToEagle(filenames: string[]): Promise<number> {
+  return ipcInvoke("send_to_eagle", { filenames });
+}
+
 export async function saveToGalleryBytes(
   imageBytes: number[],
   filename: string,
