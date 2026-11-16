@@ -10,6 +10,11 @@
 //! against a pinned SHA-256 of the executable before every start.
 //! `--http-host-header` makes every tunnelled request arrive with a local
 //! `Host`, so the server's DNS-rebinding check needs no exception for it.
+//!
+//! The tunnel only counts as running once `cloudflared` has registered a
+//! connection with Cloudflare's edge. It prints the address before that, and
+//! a VPN or firewall blocking port 7844 leaves that address answering with
+//! Error 1033, so Settings shows a "blocked" error instead of the address.
 
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -25,6 +30,9 @@ const DOWNLOAD_LIMIT: u64 = 128 * 1024 * 1024;
 const RESTART_DELAY: Duration = Duration::from_secs(15);
 /// Gives up on an address after this long without one.
 const START_TIMEOUT: Duration = Duration::from_secs(90);
+/// Reports a blocked connection after the address has had none this long.
+/// `cloudflared` tries QUIC first and falls back to HTTP/2, both on port 7844.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
 
 struct Package {
     /// Release asset name.
@@ -177,6 +185,52 @@ pub fn quick_tunnel_url(line: &str) -> Option<String> {
         .filter(|u| !u.starts_with("https://api.") && !u.starts_with("https://login."))
 }
 
+/// A connection change `cloudflared` logs, by connection index.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConnectionEvent {
+    Up(u8),
+    Down(u8),
+}
+
+/// Reads `Registered tunnel connection` and its counterparts. Cloudflare
+/// prints the quick tunnel address before any connection to its edge exists,
+/// so the address alone does not mean the tunnel works: until one registers,
+/// visitors get Error 1033.
+pub fn connection_event(line: &str) -> Option<ConnectionEvent> {
+    static INDEX: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\bconnIndex=(\d+)").unwrap());
+    let index = || {
+        INDEX
+            .captures(line)
+            .and_then(|c| c[1].parse().ok())
+            .unwrap_or(0)
+    };
+    if line.contains("Registered tunnel connection") {
+        Some(ConnectionEvent::Up(index()))
+    } else if line.contains("Unregistered tunnel connection")
+        || line.contains("Connection terminated")
+    {
+        Some(ConnectionEvent::Down(index()))
+    } else {
+        None
+    }
+}
+
+/// Shown when `cloudflared` has an address but cannot reach Cloudflare.
+fn unreachable_message(exe: &Path, last_error: Option<&str>) -> String {
+    let mut message = format!(
+        "cloudflared can't connect to Cloudflare, so the address doesn't work yet (Cloudflare Error 1033). \
+         Outbound port 7844 (UDP and TCP) looks blocked, usually by a VPN or firewall. \
+         Turn the VPN off, or exclude {} from it (split tunneling). It keeps retrying.",
+        exe.display()
+    );
+    if let Some(e) = last_error {
+        message.push_str(" Last error: ");
+        message.push_str(e);
+    }
+    message
+}
+
 async fn run(exe: &Path, port: u16) -> Result<(), String> {
     let origin = format!("127.0.0.1:{port}");
     let mut command = tokio::process::Command::new(exe);
@@ -202,30 +256,78 @@ async fn run(exe: &Path, port: u16) -> Result<(), String> {
     let mut lines = tokio::io::BufReader::new(stderr).lines();
     let started = tokio::time::Instant::now();
     let mut url: Option<String> = None;
-    let mut last_error = None;
+    let mut last_error: Option<String> = None;
+    // Connections to Cloudflare's edge that are up, by index.
+    let mut live = std::collections::BTreeSet::new();
+    // Since when the address has had no connection, and whether that has
+    // already been reported.
+    let mut down_since = started;
+    let mut reported = false;
     loop {
-        let next = if url.is_none() {
-            let left = START_TIMEOUT.saturating_sub(started.elapsed());
-            match tokio::time::timeout(left, lines.next_line()).await {
+        let deadline = if url.is_none() {
+            Some(started + START_TIMEOUT)
+        } else if live.is_empty() && !reported {
+            Some(down_since + CONNECT_TIMEOUT)
+        } else {
+            None
+        };
+        let next = match deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline, lines.next_line()).await {
                 Ok(line) => line,
-                Err(_) => return Err(last_error.unwrap_or_else(|| {
+                Err(_) if url.is_none() => return Err(last_error.unwrap_or_else(|| {
                     "Cloudflare did not hand out a tunnel address. Check the internet connection."
                         .to_string()
                 })),
-            }
-        } else {
-            lines.next_line().await
+                Err(_) => {
+                    let message = unreachable_message(exe, last_error.as_deref());
+                    log::warn!("MCP tunnel: {message}");
+                    set(TunnelState::Error, url.clone(), Some(message));
+                    reported = true;
+                    continue;
+                }
+            },
+            None => lines.next_line().await,
         };
         let Ok(Some(line)) = next else {
             break;
         };
         if url.is_none() {
             if let Some(found) = quick_tunnel_url(&line) {
-                log::info!("MCP tunnel running at {found}");
-                set(TunnelState::Running, Some(found.clone()), None);
+                log::info!("MCP tunnel got the address {found}, connecting to Cloudflare");
+                down_since = tokio::time::Instant::now();
                 url = Some(found);
+                if live.is_empty() {
+                    set(TunnelState::Starting, url.clone(), None);
+                } else {
+                    set(TunnelState::Running, url.clone(), None);
+                }
                 continue;
             }
+        }
+        match connection_event(&line) {
+            Some(ConnectionEvent::Up(index)) => {
+                let was_down = live.is_empty();
+                live.insert(index);
+                if was_down {
+                    if let Some(url) = &url {
+                        log::info!("MCP tunnel running at {url}");
+                        set(TunnelState::Running, Some(url.clone()), None);
+                    }
+                    reported = false;
+                }
+            }
+            Some(ConnectionEvent::Down(index)) => {
+                let lost = live.remove(&index) && live.is_empty();
+                if lost {
+                    log::warn!("MCP tunnel lost its connection to Cloudflare, reconnecting");
+                    down_since = tokio::time::Instant::now();
+                    reported = false;
+                    if url.is_some() {
+                        set(TunnelState::Starting, url.clone(), None);
+                    }
+                }
+            }
+            None => {}
         }
         if line.contains(" ERR ") {
             let message = line
@@ -424,6 +526,29 @@ mod tests {
             "https://evil.example/https://x.trycloudflare.com.evil.example",
         ] {
             assert_eq!(quick_tunnel_url(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn reads_connection_changes_from_cloudflared_output() {
+        assert_eq!(
+            connection_event("2026-11-16T19:43:57Z INF Registered tunnel connection connIndex=0 connection=0f1e event=0 ip=198.41.200.73 location=mel01 protocol=quic"),
+            Some(ConnectionEvent::Up(0))
+        );
+        assert_eq!(
+            connection_event("2026-11-16T19:50:00Z INF Unregistered tunnel connection connIndex=2 event=0 ip=198.41.200.73"),
+            Some(ConnectionEvent::Down(2))
+        );
+        assert_eq!(
+            connection_event("2026-11-16T19:41:10Z ERR Connection terminated error=\"timeout: no recent network activity\" connIndex=1"),
+            Some(ConnectionEvent::Down(1))
+        );
+        for line in [
+            "2026-11-16T19:41:00Z INF Registering tunnel connection connIndex=0 ip=198.41.200.73",
+            "2026-11-16T19:41:05Z ERR Failed to dial a quic connection error=\"timeout: no recent network activity\" connIndex=0",
+            "2026-11-16T19:41:00Z INF |  https://clever-mint-rocket-sky.trycloudflare.com  |",
+        ] {
+            assert_eq!(connection_event(line), None, "{line}");
         }
     }
 
