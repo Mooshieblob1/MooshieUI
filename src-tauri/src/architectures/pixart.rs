@@ -110,6 +110,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     negative_prompt: true,
     // Patch size 2 on an 8x VAE.
     resolution_multiple: 16,
+    controlnet: true,
     loader: None,
     text_encode: None,
 };
@@ -177,6 +178,7 @@ pub static ALPHA_SPEC: ArchitectureSpec = ArchitectureSpec {
     modes: MODES,
     negative_prompt: true,
     resolution_multiple: 16,
+    controlnet: true,
     loader: None,
     text_encode: None,
 };

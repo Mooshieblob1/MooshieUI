@@ -4641,9 +4641,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("hunyuan") {
         return "hunyuandit";
     }
-    if bm.contains("kolors") {
-        return "kolors";
-    }
     if bm.contains("mugen") {
         return "mugen";
     }
@@ -4813,9 +4810,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     }
     if name.contains("hunyuan") {
         return Some("hunyuandit");
-    }
-    if name.contains("kolors") {
-        return Some("kolors");
     }
     if name.contains("mugen") {
         return Some("mugen");
@@ -4994,7 +4988,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 30] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 29] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5021,7 +5015,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 30] = [
     "krea2",
     "auraflow",
     "hunyuandit",
-    "kolors",
     "mugen",
     "nanosaur",
     "unknown",
@@ -5266,6 +5259,83 @@ mod split_model_pairing_tests {
             architecture_class("mossimage"),
             architecture_class("mossimagebase")
         );
+    }
+
+    #[test]
+    fn kolors_pairs_with_chatglm3_and_its_vae() {
+        // Kolors is a registered architecture (architectures/kolors.rs); the
+        // pairing functions consult it before their hand-written arms.
+        assert!(family_requires_separate_clip("kolors"));
+        let encoders = list(&[
+            "kolors_chatglm3.fp16-00001-of-00003.safetensors",
+            "kolors_chatglm3.fp16-00002-of-00003.safetensors",
+            "kolors_chatglm3.fp16-00003-of-00003.safetensors",
+            "qwen_3_4b.safetensors",
+        ]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "kolors", &encoders),
+            Some((
+                Some("kolors_chatglm3.fp16-00001-of-00003.safetensors".to_string()),
+                "kolors"
+            ))
+        );
+        // Strict: no ChatGLM3 on disk means no encoder, not a wrong one.
+        assert_eq!(
+            recommended_clip_from_available(
+                "diffusion_models",
+                "kolors",
+                &list(&["qwen_3_4b.safetensors"])
+            ),
+            Some((None, "kolors"))
+        );
+        assert_eq!(
+            recommended_vae_from_available(
+                "diffusion_models",
+                "kolors",
+                &list(&[
+                    "ae.safetensors",
+                    "sdxl_vae.safetensors",
+                    "kolors_vae_fp16.safetensors"
+                ])
+            ),
+            Some("kolors_vae_fp16.safetensors".to_string())
+        );
+        assert_eq!(
+            model_family_from_filename("Kolors-Realistic_v2.safetensors"),
+            Some("kolors")
+        );
+    }
+
+    #[test]
+    fn kolors_unets_are_recognised_by_their_text_projection() {
+        let mut diffusers: Vec<String> = (0..12)
+            .map(|i| format!("down_blocks.{}.resnets.0.conv1.weight", i % 3))
+            .chain((0..12).map(|i| format!("up_blocks.{}.resnets.0.conv1.weight", i % 3)))
+            .collect();
+        diffusers.push("encoder_hid_proj.weight".into());
+        diffusers.push("encoder_hid_proj.bias".into());
+        diffusers.push("conv_in.weight".into());
+        let names: Vec<&str> = diffusers.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("kolors")
+        );
+        assert_eq!(
+            infer_model_kind_from_key_names(&names),
+            Some("diffusion_model")
+        );
+
+        let ldm: Vec<String> = (0..12)
+            .map(|i| format!("model.diffusion_model.input_blocks.{i}.0.weight"))
+            .chain(["model.diffusion_model.label_emb.0.0.weight".to_string()])
+            .chain(["model.diffusion_model.encoder_hid_proj.weight".to_string()])
+            .collect();
+        let names: Vec<&str> = ldm.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("kolors")
+        );
+        assert_eq!(family_from_architecture("kolors"), Some("kolors"));
     }
 
     #[test]
@@ -7411,7 +7481,12 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some(if alpha { "pixart_alpha" } else { "pixart" }.to_string());
     }
 
-    // Kolors: ChatGLM-based text encoder
+    // Kolors: an SDXL UNet plus the ChatGLM3 text projection (encoder_hid_proj),
+    // in diffusers or ldm layout. Checked before the SDXL UNet test below,
+    // which it would otherwise pass.
+    if starts_with("encoder_hid_proj.") {
+        return Some("kolors".to_string());
+    }
     if contains("chatglm") {
         return Some("kolors".to_string());
     }
@@ -7519,6 +7594,11 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
     if DIFFUSION_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("diffusion_model");
     }
+    // A diffusers-layout Kolors UNet (Kwai-Kolors' `unet/` weights) has no
+    // container prefix; its ChatGLM3 projection is what marks it.
+    if has_tree("down_blocks.") && names.contains(&"encoder_hid_proj.weight") {
+        return Some("diffusion_model");
+    }
     let is_llm = has_tree(LLM_LAYER_PREFIX) && names.iter().any(|k| LLM_EMBEDDING_KEYS.contains(k));
     if is_llm || TEXT_ENCODER_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("text_encoder");
@@ -7623,7 +7703,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
         "hunyuandit" => Some("hunyuandit"),
-        "kolors" => Some("kolors"),
         _ => None,
     }
 }

@@ -201,6 +201,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     // CFG 1, positive conditioning only.
     negative_prompt: false,
     resolution_multiple: SIZE_STEP,
+    controlnet: true,
     loader: None,
     text_encode: None,
 };
@@ -270,6 +271,7 @@ pub static LAYER_SPEC: ArchitectureSpec = ArchitectureSpec {
     // The unconditional side is the image with an empty prompt.
     negative_prompt: false,
     resolution_multiple: SIZE_STEP,
+    controlnet: true,
     loader: None,
     text_encode: None,
 };

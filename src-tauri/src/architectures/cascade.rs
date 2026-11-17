@@ -111,6 +111,8 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
             ..ModeSpec::generic("img2img")
         },
     ],
+    // Refused in `templates::cascade::validate` too: stage B has no ControlNet path.
+    controlnet: false,
     negative_prompt: true,
     resolution_multiple: 8,
     loader: None,
