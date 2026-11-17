@@ -141,7 +141,11 @@ const BASE: ArchitectureSpec = ArchitectureSpec {
     id: "flux1",
     label: "Flux.1",
     families: &[],
-    split_only: true,
+    // Comfy-Org and many fine-tunes ship all-in-one Flux.1 checkpoints (T5,
+    // CLIP-L and VAE baked in) that load through CheckpointLoaderSimple, so
+    // a checkpoint load must stay allowed. Bare diffusion models are still
+    // found by their tensor keys and loaded split.
+    split_only: false,
     prompt_style: PromptStyle::Natural,
     tensor_architecture: None,
     text_encoder: Some(TEXT_ENCODER),
@@ -153,6 +157,8 @@ const BASE: ArchitectureSpec = ArchitectureSpec {
     int8_fast_model_type: None,
     modes: GENERIC_MODES,
     negative_prompt: true,
+    // Flux.1 ControlNets (Union Pro, XLabs, InstantX) load as before.
+    controlnet: true,
     resolution_multiple: 16,
     loader: Some(load),
     text_encode: None,
