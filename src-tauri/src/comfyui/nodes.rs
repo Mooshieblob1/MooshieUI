@@ -29,6 +29,9 @@ struct RequiredCustomNodePackage {
     requirements_file: &'static str,
 }
 
+/// comfyui-krea2edit v2.0.0 (Krea 2 Identity / General Edit).
+pub const KREA2_EDIT_PACK_REV: &str = "13ef60f20828949becada815d3cbc371eb5ccaab";
+
 const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "snapref",
@@ -83,7 +86,7 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "comfyui-krea2edit",
         git_url: "https://github.com/lbouaraba/comfyui-krea2edit.git",
-        git_rev: "13ef60f20828949becada815d3cbc371eb5ccaab",
+        git_rev: KREA2_EDIT_PACK_REV,
         source_subdir: None,
         verify_nodes: &["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
         requirements_file: "requirements.txt",
@@ -859,7 +862,10 @@ pub async fn verify_architecture_nodes_for_generation(
     base_url: &str,
     params: &GenerationParams,
 ) -> Result<(), String> {
-    for (class, fix) in crate::architectures::required_node_classes(params) {
+    let required = crate::architectures::required_node_classes(params)
+        .into_iter()
+        .chain(crate::templates::krea2_edit::required_node_classes(params));
+    for (class, fix) in required {
         if !object_info_has_node_class(client, base_url, class).await? {
             return Err(fix);
         }

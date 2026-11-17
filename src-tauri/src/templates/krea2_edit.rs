@@ -91,6 +91,32 @@ fn ref_boost(params: &GenerationParams, method: Method) -> f64 {
         .unwrap_or_else(|| method.default_ref_boost())
 }
 
+/// Node classes a Krea 2 Identity/General Edit needs from comfyui-krea2edit,
+/// with the fix to show when the pack has not loaded (an external ComfyUI, or
+/// a failed install). Empty for every other request: Krea 2 txt2img and the
+/// Style Reference recipe use core nodes only.
+pub fn required_node_classes(params: &GenerationParams) -> Vec<(&'static str, String)> {
+    if params.mode != "image_edit"
+        || params.model_architecture != "krea2"
+        || method(params) == Method::Style
+    {
+        return Vec::new();
+    }
+    ["Krea2EditModelPatch", "Krea2EditGroundedEncode"]
+        .into_iter()
+        .map(|class| {
+            (
+                class,
+                format!(
+                    "Krea 2 {} needs the comfyui-krea2edit custom nodes, which have not loaded. Restart managed ComfyUI so MooshieUI can install them, or install https://github.com/lbouaraba/comfyui-krea2edit at {} on the remote server.",
+                    method(params).label(),
+                    crate::comfyui::nodes::KREA2_EDIT_PACK_REV
+                ),
+            )
+        })
+        .collect()
+}
+
 fn reference_images(params: &GenerationParams) -> Vec<&str> {
     let mut refs: Vec<&str> = params
         .edit_reference_images
@@ -543,6 +569,16 @@ mod tests {
         assert_eq!(neg["class_type"], "FluxKontextMultiReferenceLatentMethod");
         let neg_text = &r.workflow[&link(&neg["inputs"]["conditioning"])];
         assert_eq!(neg_text["inputs"]["prompt"], "blurry");
+    }
+
+    #[test]
+    fn only_identity_and_general_edit_need_the_pack() {
+        assert_eq!(required_node_classes(&params("identity", 1, 1.0)).len(), 2);
+        assert_eq!(required_node_classes(&params("general", 1, 1.0)).len(), 2);
+        assert!(required_node_classes(&params("style", 1, 1.0)).is_empty());
+        let mut txt = params("identity", 1, 1.0);
+        txt.mode = "txt2img".into();
+        assert!(required_node_classes(&txt).is_empty());
     }
 
     #[test]
