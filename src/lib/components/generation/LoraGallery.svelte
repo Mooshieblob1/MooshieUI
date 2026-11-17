@@ -138,7 +138,7 @@
   const availableLoras = $derived(
     videoMode
       ? h3UserLoraChoices(models.h3VideoLoras, generation.videoTurboEnabled ? generation.videoTurboLora : null)
-      : models.imageLoras,
+      : models.imageLorasFor(generation.modelFamily),
   );
   const activeStack = $derived(videoMode ? generation.videoLoras : generation.loras);
 

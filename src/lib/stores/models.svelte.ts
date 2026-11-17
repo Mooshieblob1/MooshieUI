@@ -43,9 +43,13 @@ class ModelsStore {
     this.schedulers = [];
   }
 
-  /** LoRAs for the image model: everything except the H3 video LoRAs. */
-  get imageLoras(): string[] {
-    if (this.h3VideoLoras.length === 0) return this.loras;
+  /**
+   * LoRAs for the image model: everything except the H3 video LoRAs. MiniMax-H3-Image
+   * shares the H3 DiT, so its LoRAs (pDMD 2-step among them) can't be told apart
+   * from video ones and it keeps the whole list.
+   */
+  imageLorasFor(family: string): string[] {
+    if (this.h3VideoLoras.length === 0 || family.startsWith("minimaxh3image")) return this.loras;
     const video = new Set(this.h3VideoLoras);
     return this.loras.filter((name) => !video.has(name));
   }

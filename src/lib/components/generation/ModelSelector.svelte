@@ -1504,7 +1504,7 @@
   function filteredLorasForIndex(index: number) {
     const search = loraSearches[index] ?? "";
     // MiniMax H3 video LoRAs live in the video panel's own stack.
-    return models.imageLoras.filter((l) =>
+    return models.imageLorasFor(generation.modelFamily).filter((l) =>
       l.toLowerCase().includes(search.toLowerCase())
     );
   }
