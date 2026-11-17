@@ -314,3 +314,23 @@ export function h3TierForDiffusionModel(filename: string | null | undefined): Ex
   if (name.includes("bf16") || name.includes("fp16")) return "bf16";
   return null;
 }
+
+function loraBasename(name: string): string {
+  return (name.split(/[\\/]/).pop() ?? name).toLowerCase();
+}
+
+/**
+ * Acceleration adapters the sampling-mode picker loads on its own (every Turbo
+ * preset's file, plus the Turbo LoRA picked in the custom tier). The backend
+ * skips them in the user's LoRA list, so the pickers leave them out too.
+ */
+export function isH3AccelerationAdapter(name: string, turboLora?: string | null): boolean {
+  const base = loraBasename(name);
+  if (H3_TURBO_PRESETS.some((preset) => preset.file.filename.toLowerCase() === base)) return true;
+  return !!turboLora && loraBasename(turboLora) === base;
+}
+
+/** H3 video LoRAs a user can stack: detected H3 LoRAs minus acceleration adapters. */
+export function h3UserLoraChoices(h3VideoLoras: readonly string[], turboLora?: string | null): string[] {
+  return h3VideoLoras.filter((name) => !isH3AccelerationAdapter(name, turboLora));
+}

@@ -1143,6 +1143,8 @@ export interface ModelSpec {
   model_kind?: string;
   /** How `model_kind` was determined: `"tensor_keys"`, `"gguf"`, or `"family"`. */
   model_kind_source?: string;
+  /** `"true"` when the file carries a VAE but no text encoders (Stability's SD3 release files). */
+  baked_vae?: string;
   /** "true" when `architecture` came from tensor-key inference, not the file. */
   architecture_inferred?: string;
   /** Comma-joined names of the `modelspec.*` fields actually declared in the file. */
@@ -1184,6 +1186,15 @@ export type ModelKind = "checkpoint" | "diffusion_model" | "text_encoder" | "vae
 
 export async function detectModelKind(category: string, filename: string): Promise<ModelKind | null> {
   return ipcInvoke("detect_model_kind", { category, filename });
+}
+
+/**
+ * Which of these LoRA filenames are MiniMax H3 video LoRAs, from their headers
+ * (names alone with a remote ComfyUI). Never hashed, cheap enough to run on
+ * every model refresh.
+ */
+export async function detectH3VideoLoras(filenames: string[]): Promise<string[]> {
+  return ipcInvoke("detect_h3_video_loras", { filenames });
 }
 
 export interface LoraCivitaiImage {

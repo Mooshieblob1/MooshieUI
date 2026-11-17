@@ -6,6 +6,7 @@ import { locale } from "../stores/locale.svelte.js";
 import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
+import { parseLoraField } from "./imageInfoFields.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import { NAI_EFFORT_HIGH, NAI_EFFORT_MEDIUM, novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
@@ -366,6 +367,18 @@ function applyDimensions(meta: Record<string, string>): boolean {
 }
 
 function applyModel(meta: Record<string, string>): boolean {
+  // A video's `model` is the H3 DiT and its `loras` are H3 LoRAs: neither
+  // belongs in the image model's fields, so they go to the video LoRA stack.
+  if (meta.mode === "video") {
+    if (!meta.loras) return false;
+    generation.videoLoras = parseLoraField(meta.loras).map((l) => ({
+      name: l.name,
+      strength_model: l.model ?? 1.0,
+      strength_clip: l.model ?? 1.0,
+      enabled: true,
+    }));
+    return generation.videoLoras.length > 0;
+  }
   let applied = false;
   if (meta.model) { generation.checkpoint = meta.model; applied = true; }
   if (meta.vae) { generation.vae = meta.vae; applied = true; }

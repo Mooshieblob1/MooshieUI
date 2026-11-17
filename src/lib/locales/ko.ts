@@ -1181,6 +1181,7 @@ const ko: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "이미지 1이 편집할 이미지입니다. 인물을 이미지 2로 추가하면 그 인물을 넣을 수 있습니다(\"두 번째 이미지의 인물을 테이블에 앉혀 줘\"). 2 MP 이하로 유지하세요.",
   "generation.image_edit.krea2_style_note": "스타일 이미지는 한두 장을 쓰고, 프롬프트에는 새 이미지를 설명하세요.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
+  "generation.image_edit.registered_note": "{model}은(는) 참조 이미지를 최대 {n}장까지 사용합니다. 바꿀 부분만 쓰고, 추가 이미지마다 용도를 적으세요(예: \"이미지 2의 옷\").",
   "generation.image_edit.camera.title": "카메라 앵글",
   "generation.image_edit.camera.tip": "참조 이미지를 다른 각도에서 다시 촬영합니다. 프롬프트 앞에 샷 설명을 추가하고, 설치되어 있으면 Multiple-Angles LoRA(Qwen Image Edit 2511로 학습)도 적용합니다.",
   "generation.image_edit.camera.direction": "방향",
@@ -1203,6 +1204,7 @@ const ko: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler는 참조 이미지의 캐릭터를 Anima 스타일로 다시 그립니다. 출력 크기는 참조 이미지와 동일합니다. Anima Edit LoRA가 필요합니다 (Civitai 다운로드, API 키 또는 VPN이 필요할 수 있음).",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRA 다운로드 (350 MB)",
+  "generation.image_edit.required_download": "{file} 다운로드",
   "generation.image_edit.reference_strength": "참조 강도",
   "generation.image_edit.reference_strength_tip":
     "출력이 참조 이미지를 얼마나 따를지 정합니다. 1.0은 구도와 디테일을 유지하며, 낮추면(0.5-0.8 권장) 프롬프트와 스타일이 이미지를 더 크게 바꿉니다.",
@@ -1247,6 +1249,12 @@ const ko: Record<string, string> = {
   "generation.video.ref_required": "참조 이미지를 최소 한 장 추가하세요.",
   "generation.video.rife": "프레임 보간",
   "generation.video.rife_tip": "샘플링 후 중간 프레임을 생성하여 클립 길이를 바꾸지 않고 재생이 더 부드럽게 보이도록 합니다.",
+  "generation.video.loras": "LoRA",
+  "generation.video.loras_tip": "MiniMax H3용 LoRA(스타일, 캐릭터, 카메라 움직임 등)입니다. Turbo보다 먼저 H3 모델에 적용되며 리테이크와 2x 리파인에서도 켜져 있습니다. H3용 LoRA만 표시되며, Model Hub에서는 기본 모델 \"MiniMax H3\" 아래에 있습니다.",
+  "generation.video.loras_add": "+ LoRA 추가",
+  "generation.video.loras_none": "MiniMax H3용 LoRA가 없습니다",
+  "generation.video.loras_select": "H3용 LoRA 선택",
+  "generation.video.loras_not_found": "{name} (찾을 수 없음)",
   "generation.video.rife_on_hint": "출력은 {fps} fps로 재생됩니다.",
   "generation.video.rife_off_hint": "출력은 모델 기본값인 {fps} fps로 재생됩니다.",
   "generation.video.rife_install_hint": "켜면 보간 노드와 20MB 체크포인트를 설치한 뒤 ComfyUI를 다시 시작합니다.",
@@ -1842,6 +1850,7 @@ const ko: Record<string, string> = {
   // ── LoRA 갤러리 ─────────────────────────────────────────
   "lora.search_placeholder": "LoRA 검색...",
   "lora.no_loras": "LoRA가 없습니다 — ComfyUI 모델 폴더를 확인하세요",
+  "lora.no_h3_loras": "MiniMax H3용 LoRA가 없습니다. Model Hub에서는 기본 모델 \"MiniMax H3\" 아래에 있습니다.",
   "lora.no_results": "\"{query}\"와 일치하는 LoRA 없음",
   "lora.not_on_civitai": "CivitAI에 없음",
   "lora.next_image": "다음 이미지",

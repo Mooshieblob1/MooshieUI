@@ -38,13 +38,16 @@ mod flux2_klein;
 mod kolors;
 mod ming_image;
 mod minimax_h3_image;
+mod moss_image;
 mod pixart;
 mod qwen_image_21;
+pub mod sd3;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
     &qwen_image_21::SPEC,
     &minimax_h3_image::SPEC,
+    &moss_image::SPEC,
     &ming_image::SPEC,
     &ming_image::LAYER_SPEC,
     // PixArt Alpha before Sigma: its filename markers are the narrower ones.
@@ -58,6 +61,7 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &cascade::SPEC,
     &wan::SPEC,
     &kolors::SPEC,
+    &sd3::SPEC,
 ];
 
 /// How prompts for a family are written.

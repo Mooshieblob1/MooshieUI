@@ -1181,6 +1181,7 @@ const ru: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "Изображение 1 редактируется. Добавьте человека как изображение 2, чтобы поместить его туда («посади человека со второго изображения за стол»). Не больше 2 МП.",
   "generation.image_edit.krea2_style_note": "Используйте одно или два изображения стиля; промпт описывает новое изображение.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein принимает до 10 референсных изображений. Называйте их в промпте по порядку (первое изображение, второе изображение) и описывайте весь результат, а не только изменение.",
+  "generation.image_edit.registered_note": "{model} принимает до {n} референсных изображений. Опишите только изменение и укажите, зачем нужно каждое дополнительное изображение (например, \"наряд с изображения 2\").",
   "generation.image_edit.camera.title": "Ракурс камеры",
   "generation.image_edit.camera.tip": "Переснимает референс с другого ракурса. Добавляет описание кадра в начало промпта и LoRA Multiple-Angles, если она установлена (обучена на Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Направление",
@@ -1203,6 +1204,7 @@ const ru: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler перерисовывает персонажа с референсного изображения в стиле Anima. Размер результата совпадает с референсом. Требуется LoRA Anima Edit (загрузка с Civitai; может понадобиться API-ключ или VPN).",
   "generation.image_edit.anima_lora_download": "Скачать Anima Edit LoRA (350 МБ)",
+  "generation.image_edit.required_download": "Скачать {file}",
   "generation.image_edit.reference_strength": "Сила референса",
   "generation.image_edit.reference_strength_tip":
     "Насколько результат следует референсному изображению. 1.0 сохраняет композицию и детали; уменьшите (попробуйте 0.5-0.8), чтобы промпт и стиль сильнее меняли изображение.",
@@ -1247,6 +1249,12 @@ const ru: Record<string, string> = {
   "generation.video.ref_required": "Добавьте хотя бы одно референсное изображение.",
   "generation.video.rife": "Интерполяция кадров",
   "generation.video.rife_tip": "Создаёт промежуточные кадры после семплирования, чтобы воспроизведение выглядело плавнее без изменения длины клипа.",
+  "generation.video.loras": "LoRA",
+  "generation.video.loras_tip": "Ваши LoRA для MiniMax H3 (стиль, персонаж, движение камеры и т. д.). Они подключаются к модели H3 до Turbo и остаются включёнными при пересъёмке фрагментов и уточнении 2x. В списке только LoRA для H3; в Model Hub они находятся под базовой моделью \"MiniMax H3\".",
+  "generation.video.loras_add": "+ Добавить LoRA",
+  "generation.video.loras_none": "LoRA для MiniMax H3 не найдены",
+  "generation.video.loras_select": "Выберите LoRA для H3",
+  "generation.video.loras_not_found": "{name} (не найдено)",
   "generation.video.rife_on_hint": "Результат воспроизводится с частотой {fps} к/с.",
   "generation.video.rife_off_hint": "Результат воспроизводится с родной для модели частотой {fps} к/с.",
   "generation.video.rife_install_hint": "При включении будут установлены узлы интерполяции и контрольная точка на 20 МБ, после чего ComfyUI перезапустится.",
@@ -1842,6 +1850,7 @@ const ru: Record<string, string> = {
   // ── Галерея LoRA ────────────────────────────────────────
   "lora.search_placeholder": "Поиск LoRA...",
   "lora.no_loras": "Нет доступных LoRA — проверьте папку моделей ComfyUI",
+  "lora.no_h3_loras": "LoRA для MiniMax H3 не найдены. В Model Hub они находятся под базовой моделью \"MiniMax H3\".",
   "lora.no_results": "Не найдено LoRA по запросу \"{query}\"",
   "lora.not_on_civitai": "Нет на CivitAI",
   "lora.next_image": "Следующее изображение",

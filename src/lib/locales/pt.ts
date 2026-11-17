@@ -1181,6 +1181,7 @@ const pt: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "A imagem 1 é a que será editada. Adicione uma pessoa como imagem 2 para colocá-la nela (\"coloque a pessoa da segunda imagem à mesa\"). Fique em até 2 MP.",
   "generation.image_edit.krea2_style_note": "Use uma ou duas imagens de estilo; o prompt descreve a imagem nova.",
   "generation.image_edit.flux3_note": "O FLUX 3 Klein aceita até 10 imagens de referência. Refira-se a elas no prompt pela ordem (a primeira imagem, a segunda imagem) e descreva o resultado completo, não apenas a alteração.",
+  "generation.image_edit.registered_note": "{model} aceita até {n} imagens de referência. Descreva só a mudança e diga para que serve cada imagem extra (por exemplo, \"a roupa da imagem 2\").",
   "generation.image_edit.camera.title": "Ângulo da câmera",
   "generation.image_edit.camera.tip": "Fotografa a referência novamente de outro ângulo. Adiciona uma descrição do plano no início do prompt e, se estiver instalada, a LoRA Multiple-Angles (treinada no Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Direção",
@@ -1203,6 +1204,7 @@ const pt: Record<string, string> = {
   "generation.image_edit.anima_note":
     "O ReStyler redesenha o personagem da sua imagem de referência no estilo Anima. A saída corresponde ao tamanho da referência. Requer o LoRA Anima Edit (download do Civitai; pode ser necessária uma chave de API ou VPN).",
   "generation.image_edit.anima_lora_download": "Baixar Anima Edit LoRA (350 MB)",
+  "generation.image_edit.required_download": "Baixar {file}",
   "generation.image_edit.reference_strength": "Força da referência",
   "generation.image_edit.reference_strength_tip":
     "O quanto o resultado segue a imagem de referência. 1.0 mantém a composição e os detalhes; reduza (tente 0.5-0.8) para deixar o prompt e o estilo mudarem mais a imagem.",
@@ -1247,6 +1249,12 @@ const pt: Record<string, string> = {
   "generation.video.ref_required": "Adicione pelo menos uma imagem de referência.",
   "generation.video.rife": "Interpolação de quadros",
   "generation.video.rife_tip": "Gera quadros intermediários após a amostragem, para que a reprodução pareça mais suave sem alterar a duração do clipe.",
+  "generation.video.loras": "LoRAs",
+  "generation.video.loras_tip": "Seus próprios LoRAs do MiniMax H3 (estilo, personagem, movimento de câmera etc.). Eles carregam sobre o modelo H3 antes do Turbo e continuam ativos nas regravações e no refinamento 2x. Só LoRAs do H3 aparecem; no Model Hub eles ficam no modelo base \"MiniMax H3\".",
+  "generation.video.loras_add": "+ Adicionar LoRA",
+  "generation.video.loras_none": "Nenhum LoRA do MiniMax H3 encontrado",
+  "generation.video.loras_select": "Escolha um LoRA do H3",
+  "generation.video.loras_not_found": "{name} (não encontrado)",
   "generation.video.rife_on_hint": "A saída é reproduzida a {fps} fps.",
   "generation.video.rife_off_hint": "A saída é reproduzida nos {fps} fps nativos do modelo.",
   "generation.video.rife_install_hint": "Ativar isto instala os nós de interpolação e um checkpoint de 20 MB e reinicia o ComfyUI.",
@@ -1842,6 +1850,7 @@ const pt: Record<string, string> = {
   // ── Galeria LoRA ────────────────────────────────────────
   "lora.search_placeholder": "Buscar LoRAs...",
   "lora.no_loras": "Nenhum LoRA disponível — verifique sua pasta de modelos do ComfyUI",
+  "lora.no_h3_loras": "Nenhum LoRA do MiniMax H3 encontrado. O Model Hub os lista no modelo base \"MiniMax H3\".",
   "lora.no_results": "Nenhum LoRA encontrado para \"{query}\"",
   "lora.not_on_civitai": "Não encontrado no CivitAI",
   "lora.next_image": "Próxima imagem",

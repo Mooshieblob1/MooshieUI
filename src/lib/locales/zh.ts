@@ -1181,6 +1181,7 @@ const zh: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "图 1 是要编辑的图片。把人物作为图 2 加入即可放进图 1（如“让第二张图里的人坐到桌边”）。请保持在 2 MP 以内。",
   "generation.image_edit.krea2_style_note": "使用一到两张风格图；提示词描述新图片。",
   "generation.image_edit.flux3_note": "FLUX 3 Klein 最多可使用 10 张参考图。在提示词中按顺序指代它们（第一张图、第二张图），并描述完整的结果，而不只是改动。",
+  "generation.image_edit.registered_note": "{model} 最多可使用 {n} 张参考图。只描述要改的地方，并说明每张额外图片的用途（例如“图 2 的服装”）。",
   "generation.image_edit.camera.title": "相机角度",
   "generation.image_edit.camera.tip": "从另一个角度重新拍摄参考图。会在提示词开头加入镜头描述，如果已安装 Multiple-Angles LoRA（基于 Qwen Image Edit 2511 训练）也会一并应用。",
   "generation.image_edit.camera.direction": "方向",
@@ -1203,6 +1204,7 @@ const zh: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler 会以 Anima 风格重新绘制参考图片中的角色。输出尺寸与参考图片一致。需要 Anima Edit LoRA（从 Civitai 下载；可能需要 API 密钥或 VPN）。",
   "generation.image_edit.anima_lora_download": "下载 Anima Edit LoRA（350 MB）",
+  "generation.image_edit.required_download": "下载 {file}",
   "generation.image_edit.reference_strength": "参考强度",
   "generation.image_edit.reference_strength_tip":
     "输出对参考图像的遵循程度。1.0 保持构图和细节；调低（建议 0.5-0.8）可让提示词和风格更大幅度地改变图像。",
@@ -1247,6 +1249,12 @@ const zh: Record<string, string> = {
   "generation.video.ref_required": "请至少添加一张参考图像。",
   "generation.video.rife": "补帧",
   "generation.video.rife_tip": "在采样后生成中间帧，使播放更流畅，同时不改变片段时长。",
+  "generation.video.loras": "LoRA",
+  "generation.video.loras_tip": "你自己的 MiniMax H3 LoRA(风格、角色、镜头运动等)。它们在 Turbo 之前加载到 H3 模型上,重拍和 2x 精修时也保持启用。这里只列出 H3 LoRA;模型中心将其归在基础模型 \"MiniMax H3\" 下。",
+  "generation.video.loras_add": "+ 添加 LoRA",
+  "generation.video.loras_none": "未找到 MiniMax H3 LoRA",
+  "generation.video.loras_select": "选择 H3 LoRA",
+  "generation.video.loras_not_found": "{name}(未找到)",
   "generation.video.rife_on_hint": "输出以 {fps} fps 播放。",
   "generation.video.rife_off_hint": "输出以模型原生的 {fps} fps 播放。",
   "generation.video.rife_install_hint": "开启后会安装补帧节点和一个 20 MB 的检查点，然后重启 ComfyUI。",
@@ -1842,6 +1850,7 @@ const zh: Record<string, string> = {
   // ── LoRA 图库 ──────────────────────────────────────────
   "lora.search_placeholder": "搜索 LoRA...",
   "lora.no_loras": "没有 LoRA — 请检查您的 ComfyUI 模型文件夹",
+  "lora.no_h3_loras": "未找到 MiniMax H3 LoRA。模型中心将其归在基础模型 \"MiniMax H3\" 下。",
   "lora.no_results": "没有匹配 \"{query}\" 的 LoRA",
   "lora.not_on_civitai": "不在 CivitAI 上",
   "lora.next_image": "下一张图片",

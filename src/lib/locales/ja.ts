@@ -1196,6 +1196,7 @@ const ja: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "画像 1 が編集する画像です。人物を画像 2 として追加すると、その人物を画像 1 に入れられます（「2 枚目の人物をテーブルに座らせて」など）。2 MP 以下にしてください。",
   "generation.image_edit.krea2_style_note": "スタイル画像は 1〜2 枚。プロンプトには新しい画像の内容を書きます。",
   "generation.image_edit.flux3_note": "FLUX 3 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
+  "generation.image_edit.registered_note": "{model}は最大{n}枚の参照画像を使えます。変更点だけを書き、追加の画像それぞれの役割を書いてください（例：「画像2の服」）。",
   "generation.image_edit.camera.title": "カメラアングル",
   "generation.image_edit.camera.tip": "参照画像を別の角度から撮り直します。プロンプトの先頭にショットの説明を追加し、インストール済みなら Multiple-Angles LoRA（Qwen Image Edit 2511 で学習）も適用します。",
   "generation.image_edit.camera.direction": "方向",
@@ -1218,6 +1219,7 @@ const ja: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStylerは参照画像のキャラクターをAnimaスタイルで描き直します。出力サイズは参照画像に合わせられます。Anima Edit LoRAが必要です（Civitaiからダウンロード。APIキーまたはVPNが必要な場合があります）。",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRAをダウンロード（350 MB）",
+  "generation.image_edit.required_download": "{file}をダウンロード",
   "generation.image_edit.reference_strength": "参照強度",
   "generation.image_edit.reference_strength_tip":
     "出力が参照画像にどれだけ従うか。1.0 は構図とディテールを維持します。下げる（0.5〜0.8 が目安）とプロンプトとスタイルによる変化が大きくなります。",
@@ -1262,6 +1264,12 @@ const ja: Record<string, string> = {
   "generation.video.ref_required": "参照画像を1枚以上追加してください。",
   "generation.video.rife": "フレーム補間",
   "generation.video.rife_tip": "サンプリング後に中間フレームを生成し、クリップの長さを変えずに滑らかな再生を実現します。",
+  "generation.video.loras": "LoRA",
+  "generation.video.loras_tip": "MiniMax H3 用の LoRA(スタイル、キャラクター、カメラの動きなど)。Turbo より前に H3 モデルへ読み込まれ、リテイクや 2x リファインでも有効なままです。H3 用 LoRA だけが表示されます。Model Hub ではベースモデル \"MiniMax H3\" にあります。",
+  "generation.video.loras_add": "+ LoRA を追加",
+  "generation.video.loras_none": "MiniMax H3 用 LoRA が見つかりません",
+  "generation.video.loras_select": "H3 用 LoRA を選択",
+  "generation.video.loras_not_found": "{name}(見つかりません)",
   "generation.video.rife_on_hint": "出力は {fps} fps で再生されます。",
   "generation.video.rife_off_hint": "出力はモデル本来の {fps} fps で再生されます。",
   "generation.video.rife_install_hint": "オンにすると補間ノードと20MBのチェックポイントをインストールし、ComfyUIを再起動します。",
@@ -1864,6 +1872,7 @@ const ja: Record<string, string> = {
   // ── LoRAギャラリー ──────────────────────────────────────
   "lora.search_placeholder": "LoRAを検索...",
   "lora.no_loras": "LoRAがありません — ComfyUIモデルフォルダを確認してください",
+  "lora.no_h3_loras": "MiniMax H3 用 LoRA が見つかりません。Model Hub ではベースモデル \"MiniMax H3\" に表示されます。",
   "lora.no_results": "「{query}」に一致するLoRAはありません",
   "lora.not_on_civitai": "CivitAIにはありません",
   "lora.next_image": "次の画像",

@@ -8,6 +8,8 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import CameraAnglePicker from "./CameraAnglePicker.svelte";
+  import { architectures } from "../../stores/architectures.svelte.js";
+  import { findFamily, registeredMode, registeredSampling } from "../../utils/architectures.js";
   import {
     KREA2_EDIT_LORAS,
     KREA2_EDIT_METHODS,
@@ -36,8 +38,17 @@
     }
     return Math.min(slotCount, Math.max(3, lastFilled + 2));
   });
+  // A registered architecture's edit mode (src-tauri/src/architectures).
+  const registeredEdit = $derived.by(() => {
+    void architectures.version;
+    const found = findFamily(generation.modelFamily);
+    const mode = registeredMode(generation.modelFamily, "image_edit");
+    return found && mode ? { label: found.family.label, arch: found.arch, mode } : null;
+  });
   const familyBadge = $derived(
-    generation.isFlux3
+    registeredEdit
+      ? registeredEdit.label
+      : generation.isFlux3
       ? locale.t("generation.image_edit.family_badge.flux3klein")
       : generation.isQwenEditPlus
       ? locale.t("generation.image_edit.family_badge.qwen_edit_plus")
@@ -63,6 +74,28 @@
   const animaLoraInstalled = $derived(
     models.loras.some((m) => m.endsWith(animaEditLora.filename)),
   );
+
+  // Files the registered edit mode loads by fixed name (an edit LoRA) that
+  // are not installed yet. endsWith so a file in a subfolder counts.
+  const missingRequiredFiles = $derived(
+    (registeredEdit?.mode.required_files ?? []).filter((file) => {
+      const installed = file.category === "loras" ? models.loras : (models.serverModels[file.category] ?? []);
+      return !installed.some((m) => m.split(/[\\/]/).pop()?.toLowerCase() === file.filename.toLowerCase());
+    }),
+  );
+    async function downloadRequiredFile(file: { url: string; category: string; filename: string }) {
+    loraDownloadError = null;
+    loraDownloading = true;
+    downloadingFilename = file.filename;
+    try {
+      await downloadModel(file.url, file.category, file.filename);
+      await models.refresh();
+    } catch (e) {
+      loraDownloadError = locale.t("generation.image_edit.camera.download_failed", { error: String(e) });
+    } finally {
+      loraDownloading = false;
+    }
+  }
 
   // Krea 2 edits through the selected method's edit LoRA (utils/krea2Edit.ts).
   const krea2Lora = $derived(KREA2_EDIT_LORAS[generation.krea2EditMethod]);
@@ -199,6 +232,21 @@
     return Math.max(16, Math.round(value / 16) * 16);
   }
 
+  /**
+   * A registered edit model samples at the reference's aspect, no larger than
+   * the mode's own base size in pixels (MOSS-Image: 1 MP, as Comfy-Org's edit
+   * template scales it), rounded to the model's size multiple.
+   */
+  function fitRegisteredEditSize(width: number, height: number): { width: number; height: number } | null {
+    if (!registeredEdit) return null;
+    const sampling = registeredSampling(generation.modelFamily, "image_edit");
+    const step = Math.max(8, registeredEdit.arch.resolution_multiple || 16);
+    const maxPixels = sampling ? sampling.width * sampling.height : width * height;
+    const scale = Math.min(1, Math.sqrt(maxPixels / (width * height)));
+    const snap = (v: number) => Math.max(step, Math.round((v * scale) / step) * step);
+    return { width: snap(width), height: snap(height) };
+  }
+
   async function uploadToSlot(slot: number, file: File) {
     if (!file.type.startsWith("image/")) return;
     const prepared = await prepareImage(file);
@@ -215,9 +263,14 @@
       // unless Lock resolution is on, which keeps the user's own size. Krea 2
       // edits stay at or under 2 MP, its trained range.
       if (slot === 0 && !generation.resolutionLocked && prepared.width > 0 && prepared.height > 0) {
-        const size = generation.isKrea2
-          ? fitKrea2EditSize(prepared.width, prepared.height)
-          : { width: snap16(prepared.width), height: snap16(prepared.height) };
+        const size = registeredEdit
+          ? (fitRegisteredEditSize(prepared.width, prepared.height) ?? {
+              width: snap16(prepared.width),
+              height: snap16(prepared.height),
+            })
+          : generation.isKrea2
+            ? fitKrea2EditSize(prepared.width, prepared.height)
+            : { width: snap16(prepared.width), height: snap16(prepared.height) };
         generation.width = size.width;
         generation.height = size.height;
       }
@@ -254,6 +307,12 @@
     [
       locale.t("generation.image_edit.hint"),
       generation.isFlux3 ? locale.t("generation.image_edit.flux3_note") : null,
+      registeredEdit && registeredEdit.mode.max_references > 1
+        ? locale.t("generation.image_edit.registered_note", {
+            model: registeredEdit.label,
+            n: registeredEdit.mode.max_references,
+          })
+        : null,
       generation.isAnima ? locale.t("generation.image_edit.anima_note") : null,
       generation.isKrea2 && krea2UsesPatch
         ? locale.t("generation.image_edit.krea2_refs_note")
@@ -289,6 +348,41 @@
       {locale.t("generation.image_edit.wrong_model")}
     </div>
   {:else}
+    {#each missingRequiredFiles as file (file.filename)}
+      <button
+        class="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-xs text-neutral-100 hover:border-indigo-500 transition-colors disabled:opacity-50"
+        disabled={loraDownloading}
+        onclick={() => downloadRequiredFile(file)}
+      >
+        {locale.t("generation.image_edit.required_download", { file: file.filename })}{#if file.size}
+          <span class="text-neutral-400"> ({file.size})</span>{/if}
+      </button>
+    {/each}
+    {#if registeredEdit && loraDownloading}
+      <div class="bg-neutral-800/80 rounded-lg px-3 py-2">
+        <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+          <span class="truncate mr-2">
+            {locale.t("generation.upscale.downloading", { model: downloadingFilename })}
+          </span>
+          {#if dlTotal > 0}
+            <span class="shrink-0 tabular-nums">
+              {locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)
+            </span>
+          {/if}
+        </div>
+        {#if dlTotal > 0}
+          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+            <div
+              class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
+              style="width: {dlPercent}%"
+            ></div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+    {#if registeredEdit && loraDownloadError}
+      <p class="text-[11px] text-red-400">{loraDownloadError}</p>
+    {/if}
     {#if generation.isAnima}
       {#if !animaLoraInstalled}
         <button

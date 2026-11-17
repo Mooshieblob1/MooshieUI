@@ -227,7 +227,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein, Krea 2 or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein, Krea 2, MOSS-Image or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
         ));
     }
@@ -358,6 +358,10 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         );
     }
 
+    // SD3 split checks the registry cannot express: some encoder picked, and a
+    // VAE picked unless the file brings its own.
+    crate::architectures::sd3::validate(params)?;
+
     // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
     // conditioning). With any other encoder, ComfyUI fails deep inside sampling
     // with a cryptic feature-count error, so fail fast here instead.
@@ -416,37 +420,6 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
-    // MOSS-Image needs ComfyUI's "moss_image" CLIP type (v0.43.0+), which only
-    // builds the MOSS encoder around Qwen3.5 9B. Anything else fails inside
-    // ComfyUI with an unhelpful error, so fail fast with the fix instead.
-    if matches!(
-        params.model_architecture.as_str(),
-        "mossimage" | "mossimagebase"
-    ) && params.use_split_model
-    {
-        if params.clip_type.as_deref() != Some("moss_image") {
-            return Err(
-                "MOSS-Image requires the CLIP loader type \"moss_image\" (ComfyUI 0.43.0 or newer). Re-select the MOSS-Image model so the text encoder settings refresh, or update ComfyUI.".into(),
-            );
-        }
-        let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
-        let clip_lower = clip_model.to_lowercase();
-        if clip_model.is_empty()
-            || !crate::commands::api::MOSS_IMAGE_TEXT_ENCODER_MARKERS
-                .iter()
-                .any(|marker| clip_lower.contains(marker))
-        {
-            return Err(format!(
-                "MOSS-Image requires the Qwen3.5 9B text encoder, but {} is selected. Open the model panel to download it (qwen3.5_9b_w4a8_gptq.safetensors), or if this file really is a Qwen3.5 9B encoder, rename it to include \"qwen3.5_9b\".",
-                if clip_model.is_empty() {
-                    "none".to_string()
-                } else {
-                    format!("\"{clip_model}\"")
-                }
-            ));
-        }
-    }
-
     // INT8-Fast guard: when enabled for a split-model family, the family must
     // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
     // are incompatible with the INT8-Fast loader (they route through
@@ -471,15 +444,6 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         ) {
             return Err(
                 "FLUX 3 Klein loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
-                    .to_string(),
-            );
-        }
-        if matches!(
-            params.model_architecture.as_str(),
-            "mossimage" | "mossimagebase"
-        ) {
-            return Err(
-                "MOSS-Image loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
                     .to_string(),
             );
         }
@@ -1574,23 +1538,23 @@ pub fn is_vpred_model(params: &GenerationParams) -> bool {
 /// Returns true when the resolved architecture uses a 16-channel latent bucket.
 /// Anima/Wan (Wan2.1-based) need this — a 4-channel latent fails at decode.
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    matches!(
-        params.model_architecture.as_str(),
-        "sd3"
-            | "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "chroma"
-            | "zib"
-            | "zit"
-            | "qwen"
-            | "qwen_edit"
-            | "qwen_edit_plus"
-            | "flux1kontext"
-            | "anima"
-            | "krea2"
-    )
+    crate::architectures::sd3::is_sd3(&params.model_architecture)
+        || matches!(
+            params.model_architecture.as_str(),
+            "flux"
+                | "flux1d"
+                | "flux1s"
+                | "flux1krea"
+                | "chroma"
+                | "zib"
+                | "zit"
+                | "qwen"
+                | "qwen_edit"
+                | "qwen_edit_plus"
+                | "flux1kontext"
+                | "anima"
+                | "krea2"
+        )
 }
 
 /// Returns true when the resolved architecture uses the Flux.2 latent node.
@@ -2042,13 +2006,54 @@ mod validation_and_seed_tests {
             p.clip_type = Some("moss_image".to_string());
             p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".to_string());
             let err = validate_generation_params(&p).unwrap_err();
-            assert!(err.contains("Qwen3.5 9B"), "{err}");
+            assert!(err.contains("qwen3.5_9b_w4a8_gptq"), "{err}");
 
             p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
             p.int8_fast_enabled = true;
             let err = validate_generation_params(&p).unwrap_err();
             assert!(err.contains("INT8-Fast"), "{err}");
         }
+    }
+
+    #[test]
+    fn moss_image_edits_with_up_to_four_references() {
+        for family in ["mossimage", "mossimagebase"] {
+            let mut p = params("image_edit", family);
+            p.use_split_model = true;
+            p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.clip_type = Some("moss_image".to_string());
+            p.edit_reference_images = (0..4).map(|i| format!("ref{i}.png")).collect();
+            assert!(validate_generation_params(&p).is_ok());
+            assert!(image_edit::supports_family(family));
+
+            p.edit_reference_images.push("ref4.png".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("up to 4"), "{err}");
+        }
+    }
+
+    #[test]
+    fn moss_image_edit_runs_its_dedicated_graph() {
+        let mut p = params("image_edit", "mossimage");
+        p.use_split_model = true;
+        p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+        p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+        p.clip_type = Some("moss_image".to_string());
+        p.vae = Some("flux2-vae_small.safetensors".to_string());
+        p.edit_reference_images = vec!["ref0.png".to_string()];
+        let workflow = build_workflow(&p, 1, true);
+        let classes: Vec<&str> = workflow
+            .as_object()
+            .expect("workflow object")
+            .values()
+            .filter_map(|n| n["class_type"].as_str())
+            .collect();
+        assert!(classes.contains(&"TextEncodeMOSSImageEdit"), "{classes:?}");
+        assert!(
+            classes.contains(&"SkipLayerGuidanceDiTSimple"),
+            "{classes:?}"
+        );
     }
 
     #[test]
@@ -2238,7 +2243,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if params.model_architecture == "sd3" {
+    } else if crate::architectures::sd3::is_sd3(&params.model_architecture) {
         // ModelSamplingSD3 — discrete flow matching with constant shift
         let node_id = result.next_id.to_string();
         result.workflow.insert(

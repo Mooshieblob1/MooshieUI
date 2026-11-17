@@ -22,6 +22,8 @@
     type SamplingRecommendation,
   } from "../../utils/samplingRecommendation.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { architectures } from "../../stores/architectures.svelte.js";
+  import { registeredSampling } from "../../utils/architectures.js";
   import { checkNodeAvailable, downloadModel, getWatermarkStatus, prepareWatermark } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { ipcListen } from "../../utils/ipc.js";
@@ -64,6 +66,11 @@
   );
 
   const isKreaTurbo = $derived(generation.modelFamily === "krea2" && generation.hasTurboModelVariant);
+  // Sampling a registered architecture declares for this model and mode.
+  const registered = $derived.by(() => {
+    void architectures.version;
+    return registeredSampling(generation.modelFamily, generation.mode);
+  });
   const kreaSteps = $derived(activeKreaTurboSteps(generation.loras));
   let kreaRecOpen = $state(true);
   let kreaDownloadingFile = $state<string | null>(null);
@@ -277,6 +284,9 @@
     if (dmd2Enabled) return { min: 4, max: 8 };
     // Upstream advice for more quality is more steps at full strength.
     if (isKreaTurbo && kreaSteps < 8) return { min: kreaSteps, max: kreaSteps * 2 };
+    if (registered) {
+      return { min: Math.round(registered.steps * 0.8), max: Math.round(registered.steps * 1.2) };
+    }
     const sampler = generation.samplerName.toLowerCase();
     if (sampler.includes("euler")) return { min: 18, max: 28 };
     if (sampler.includes("dpmpp")) return { min: 24, max: 36 };
@@ -288,11 +298,15 @@
     if (dmd2Enabled) return { min: 1.0, max: 1.5, target: 1.0 };
     if (isKreaTurbo && kreaSteps < 8) return { min: KREA_TURBO_CFG, max: KREA_TURBO_CFG, target: KREA_TURBO_CFG };
     if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
-    // MOSS-Image runs at CFG 2.5 (Comfy-Org) and Moody Moss Mix at 3, both
-    // below the generic band, which would otherwise flag them and "fix" to 6.
-    if (generation.isMoodyMossMix) return { min: 2.5, max: 3.5, target: MOODY_MOSS_SAMPLING.cfg };
-    if (generation.modelFamily === "mossimage" || generation.modelFamily === "mossimagebase") {
-      return { min: 2.0, max: 3.5, target: 2.5 };
+    // Moody Moss Mix runs at CFG 3, below the generic band, which would
+    // otherwise flag it and "fix" to 6.
+    if (generation.isMoodyMossMix && generation.mode !== "image_edit") {
+      return { min: 2.5, max: 3.5, target: MOODY_MOSS_SAMPLING.cfg };
+    }
+    // A registered architecture's own CFG for this mode (MOSS-Image: 2.5, and
+    // 4 with its edit LoRA), with some room either side.
+    if (registered) {
+      return { min: registered.cfg * 0.8, max: registered.cfg * 1.4, target: registered.cfg };
     }
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
