@@ -14,6 +14,7 @@
 ### Prompts
 - **Right-click menu**: the prompt box now has Cut, Copy, Paste and Select all on right-click, and you can drag-select across highlighted tags.
 - **Weights survive autocomplete**: accepting an autocomplete suggestion or a spellcheck fix no longer deletes the weight syntax around a tag (`-2::tag::`, `{tag}`, `(tag:1.2)`).
+- **Enhance is now a chat**: Enhance (V5, general and H3) opens as a chat panel docked on the right instead of a modal, so the prompt box and Generate stay usable. The assistant can answer questions, revise an answer from your feedback, and keeps the conversation until you start a new chat. Answers apply with Replace, Append, Apply or Review.
 
 ### Models
 - **Moody Moss Mix**: support for the MOSS-Image fine-tune, with its full 4K HD workflow rebuilt in MooshieUI and a matching preset.
