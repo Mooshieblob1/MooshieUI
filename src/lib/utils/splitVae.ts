@@ -17,7 +17,6 @@ const QWEN_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "qwen",
   "qwen_edit",
   "qwen_edit_plus",
-  "wan",
   "krea2",
 ]);
 
@@ -27,8 +26,6 @@ const FLUX2_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "flux2d",
   "flux3klein",
   "flux3kleinbase",
-  "mossimage",
-  "mossimagebase",
 ]);
 
 /** Families that decode with the 16-channel Flux 1 VAE. */

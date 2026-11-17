@@ -1127,6 +1127,9 @@ const ja: Record<string, string> = {
   "generation.model.krea2_uncensored_downloading": "ダウンロード中... {percent}%",
   "generation.model.downloading_refusal_lora": "拒否軽減 LoRA をダウンロード中",
   "generation.model.nvfp4_warning": "NVFP4 モデルは NVIDIA Blackwell GPU（RTX 50 シリーズ）でのみネイティブ動作します。お使いの GPU は古いため、代わりにこのモデルの FP8 版をダウンロードして使用してください。",
+  "generation.model.wan_low_noise_paired": "Wan 2.2 A14B は2段階で動きます。このハイノイズモデルが画像の構図を作り、{file} が仕上げます。",
+  "generation.model.wan_low_noise_missing": "これは Wan 2.2 A14B のハイノイズ側です。画像を仕上げるには対応するローノイズモデルを diffusion_models に置くか、ローノイズモデルだけを選んでください。",
+  "generation.model.wan_not_text_to_image": "この Wan モデルは画像や動画から動画を作るもので、プロンプトから画像は作れません。Wan のテキストから動画モデル(Wan 2.1 T2V、Wan 2.2 TI2V 5B、Wan 2.2 T2V A14B)を選んでください。",
   "generation.model.downloading_vae": "VAEをダウンロード中...",
   "generation.model.downloading_file": "{name} をダウンロード中...",
   "generation.model.downloading_checkpoint": "チェックポイントをダウンロード中...",
@@ -1193,6 +1196,7 @@ const ja: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "画像 1 が編集する画像です。人物を画像 2 として追加すると、その人物を画像 1 に入れられます（「2 枚目の人物をテーブルに座らせて」など）。2 MP 以下にしてください。",
   "generation.image_edit.krea2_style_note": "スタイル画像は 1〜2 枚。プロンプトには新しい画像の内容を書きます。",
   "generation.image_edit.flux3_note": "FLUX 3 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
+  "generation.image_edit.registered_note": "{model}は最大{n}枚の参照画像を使えます。変更点だけを書き、追加の画像それぞれの役割を書いてください（例：「画像2の服」）。",
   "generation.image_edit.camera.title": "カメラアングル",
   "generation.image_edit.camera.tip": "参照画像を別の角度から撮り直します。プロンプトの先頭にショットの説明を追加し、インストール済みなら Multiple-Angles LoRA（Qwen Image Edit 2511 で学習）も適用します。",
   "generation.image_edit.camera.direction": "方向",
@@ -1215,6 +1219,7 @@ const ja: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStylerは参照画像のキャラクターをAnimaスタイルで描き直します。出力サイズは参照画像に合わせられます。Anima Edit LoRAが必要です（Civitaiからダウンロード。APIキーまたはVPNが必要な場合があります）。",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRAをダウンロード（350 MB）",
+  "generation.image_edit.required_download": "{file}をダウンロード",
   "generation.image_edit.reference_strength": "参照強度",
   "generation.image_edit.reference_strength_tip":
     "出力が参照画像にどれだけ従うか。1.0 は構図とディテールを維持します。下げる（0.5〜0.8 が目安）とプロンプトとスタイルによる変化が大きくなります。",

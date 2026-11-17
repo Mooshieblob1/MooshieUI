@@ -4514,35 +4514,6 @@ fn flux3_klein_family_from_text(lower: &str) -> Option<&'static str> {
     })
 }
 
-/// MOSS-Image (OpenMOSS), from a lowercase filename or CivitAI base-model name.
-///
-/// Comfy-Org ships `moss_image_{sft,base}_*`; community repos use
-/// `MOSS-Image-SFT-*` / `MOSS-Image-Base-*`. SFT is the default checkpoint: only
-/// a `base` marker selects the pretraining one. Tensor keys cannot tell the two
-/// apart, so a misnamed Base file reads as SFT (same graph, other preset).
-fn moss_image_family_from_text(lower: &str) -> Option<&'static str> {
-    let is_moss = [
-        "moss_image",
-        "moss-image",
-        "moss image",
-        "mossimage",
-        "moss.image",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
-        // Moody Moss Mix, a MOSS-Image SFT fine-tune whose files are named
-        // `Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors` and the like.
-        || (lower.contains("moody") && lower.contains("moss"));
-    if !is_moss {
-        return None;
-    }
-    Some(if lower.contains("base") {
-        "mossimagebase"
-    } else {
-        "mossimage"
-    })
-}
-
 /// MiniMax H3, the audio-video model (FL2VA / Ref2VA), from lowercased text:
 /// a CivitAI base model ("MiniMax H3"), a trainer's base-model tag
 /// ("minimax_h3_ref2va") or a filename ("camera_motion_h3_lora_v1",
@@ -4578,9 +4549,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
         return "minimaxh3";
     }
     if let Some(family) = flux3_klein_family_from_text(&bm) {
-        return family;
-    }
-    if let Some(family) = moss_image_family_from_text(&bm) {
         return family;
     }
     if bm == "flux.2 d" {
@@ -4665,9 +4633,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("cascade") {
         return "cascade";
     }
-    if bm.contains("kolors") {
-        return "kolors";
-    }
     if bm.contains("mugen") {
         return "mugen";
     }
@@ -4706,9 +4671,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     // "flux" and "klein", which the 9b/4b token tests below would otherwise
     // misread once a quantisation suffix adds a stray digit.
     if let Some(family) = flux3_klein_family_from_text(&name) {
-        return Some(family);
-    }
-    if let Some(family) = moss_image_family_from_text(&name) {
         return Some(family);
     }
     // Flux.2 Klein is registered (architectures/flux2_klein.rs) and matched
@@ -4843,9 +4805,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     }
     if name.contains("cascade") {
         return Some("cascade");
-    }
-    if name.contains("kolors") {
-        return Some("kolors");
     }
     if name.contains("mugen") {
         return Some("mugen");
@@ -4996,7 +4955,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
     matches!(
         family,
         "anima"
-            | "wan"
             | "qwen"
             | "qwen_edit"
             | "qwen_edit_plus"
@@ -5008,8 +4966,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "flux2d"
             | "flux3klein"
             | "flux3kleinbase"
-            | "mossimage"
-            | "mossimagebase"
             | "chroma"
             | "ideogram4"
             | "krea2"
@@ -5025,7 +4981,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 28] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5039,12 +4995,9 @@ pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
     "flux2d",
     "flux3klein",
     "flux3kleinbase",
-    "mossimage",
-    "mossimagebase",
     "chroma",
     "zib",
     "zit",
-    "wan",
     "qwen",
     "qwen_edit",
     "qwen_edit_plus",
@@ -5054,7 +5007,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
     "auraflow",
     "hunyuandit",
     "cascade",
-    "kolors",
     "mugen",
     "nanosaur",
     "unknown",
@@ -5083,7 +5035,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan" | "krea2"
+        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "krea2"
     ) {
         // The stock file first: decoder fine-tunes such as
         // `qwen_image_sharp_vae_bf16` sort ahead of it but are an opt-in look,
@@ -5098,10 +5050,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
             .or_else(|| vaes.first().cloned());
     }
 
-    if matches!(
-        family,
-        "flux2d" | "flux3klein" | "flux3kleinbase" | "mossimage" | "mossimagebase"
-    ) {
+    if matches!(family, "flux2d" | "flux3klein" | "flux3kleinbase") {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
     }
@@ -5144,17 +5093,6 @@ pub const KREA2_TEXT_ENCODER_MARKERS: [&str; 5] = [
 /// the markers are Krea 2's. Shared with the generate-time guard in templates/mod.rs.
 pub const FLUX3_TEXT_ENCODER_MARKERS: [&str; 5] = KREA2_TEXT_ENCODER_MARKERS;
 
-/// MOSS-Image conditions on the stock Qwen3.5 9B (`qwen3.5_9b_*` from Comfy-Org).
-/// ComfyUI only builds the MOSS encoder for that model under CLIP type
-/// `moss_image`, so nothing else may be paired with it.
-pub const MOSS_IMAGE_TEXT_ENCODER_MARKERS: [&str; 5] = [
-    "qwen3.5_9b",
-    "qwen3.5-9b",
-    "qwen35_9b",
-    "qwen3_5_9b",
-    "qwen3.5 9b",
-];
-
 /// Returns (recommended encoder filename if a compatible one exists, CLIP type).
 /// A `None` filename with `Some` type means: the family's CLIP type is known but
 /// no installed encoder is compatible — callers must NOT silently substitute an
@@ -5181,7 +5119,7 @@ fn recommended_clip_from_available(
         return Some((preferred, "wan"));
     }
 
-    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan") {
+    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen2.5-vl", "qwen_2.5_vl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "qwen_image"));
@@ -5242,13 +5180,6 @@ fn recommended_clip_from_available(
         return Some((preferred, "flux3"));
     }
 
-    if matches!(family, "mossimage" | "mossimagebase") {
-        // Strict: MOSS-Image reads the last hidden state of Qwen3.5 9B.
-        let preferred =
-            find_first_text_encoder_matching(encoders, &MOSS_IMAGE_TEXT_ENCODER_MARKERS);
-        return Some((preferred, "moss_image"));
-    }
-
     if family == "krea2" {
         // Strict: Krea 2 expects 12x2560=30720-dim conditioning from Qwen3-VL 4B.
         // Recommending any other encoder produces a confusing ComfyUI error.
@@ -5299,6 +5230,83 @@ mod split_model_pairing_tests {
             architecture_class("mossimage"),
             architecture_class("mossimagebase")
         );
+    }
+
+    #[test]
+    fn kolors_pairs_with_chatglm3_and_its_vae() {
+        // Kolors is a registered architecture (architectures/kolors.rs); the
+        // pairing functions consult it before their hand-written arms.
+        assert!(family_requires_separate_clip("kolors"));
+        let encoders = list(&[
+            "kolors_chatglm3.fp16-00001-of-00003.safetensors",
+            "kolors_chatglm3.fp16-00002-of-00003.safetensors",
+            "kolors_chatglm3.fp16-00003-of-00003.safetensors",
+            "qwen_3_4b.safetensors",
+        ]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "kolors", &encoders),
+            Some((
+                Some("kolors_chatglm3.fp16-00001-of-00003.safetensors".to_string()),
+                "kolors"
+            ))
+        );
+        // Strict: no ChatGLM3 on disk means no encoder, not a wrong one.
+        assert_eq!(
+            recommended_clip_from_available(
+                "diffusion_models",
+                "kolors",
+                &list(&["qwen_3_4b.safetensors"])
+            ),
+            Some((None, "kolors"))
+        );
+        assert_eq!(
+            recommended_vae_from_available(
+                "diffusion_models",
+                "kolors",
+                &list(&[
+                    "ae.safetensors",
+                    "sdxl_vae.safetensors",
+                    "kolors_vae_fp16.safetensors"
+                ])
+            ),
+            Some("kolors_vae_fp16.safetensors".to_string())
+        );
+        assert_eq!(
+            model_family_from_filename("Kolors-Realistic_v2.safetensors"),
+            Some("kolors")
+        );
+    }
+
+    #[test]
+    fn kolors_unets_are_recognised_by_their_text_projection() {
+        let mut diffusers: Vec<String> = (0..12)
+            .map(|i| format!("down_blocks.{}.resnets.0.conv1.weight", i % 3))
+            .chain((0..12).map(|i| format!("up_blocks.{}.resnets.0.conv1.weight", i % 3)))
+            .collect();
+        diffusers.push("encoder_hid_proj.weight".into());
+        diffusers.push("encoder_hid_proj.bias".into());
+        diffusers.push("conv_in.weight".into());
+        let names: Vec<&str> = diffusers.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("kolors")
+        );
+        assert_eq!(
+            infer_model_kind_from_key_names(&names),
+            Some("diffusion_model")
+        );
+
+        let ldm: Vec<String> = (0..12)
+            .map(|i| format!("model.diffusion_model.input_blocks.{i}.0.weight"))
+            .chain(["model.diffusion_model.label_emb.0.0.weight".to_string()])
+            .chain(["model.diffusion_model.encoder_hid_proj.weight".to_string()])
+            .collect();
+        let names: Vec<&str> = ldm.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("kolors")
+        );
+        assert_eq!(family_from_architecture("kolors"), Some("kolors"));
     }
 
     #[test]
@@ -7588,7 +7596,12 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some(if alpha { "pixart_alpha" } else { "pixart" }.to_string());
     }
 
-    // Kolors: ChatGLM-based text encoder
+    // Kolors: an SDXL UNet plus the ChatGLM3 text projection (encoder_hid_proj),
+    // in diffusers or ldm layout. Checked before the SDXL UNet test below,
+    // which it would otherwise pass.
+    if starts_with("encoder_hid_proj.") {
+        return Some("kolors".to_string());
+    }
     if contains("chatglm") {
         return Some("kolors".to_string());
     }
@@ -7696,6 +7709,11 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
     if DIFFUSION_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("diffusion_model");
     }
+    // A diffusers-layout Kolors UNet (Kwai-Kolors' `unet/` weights) has no
+    // container prefix; its ChatGLM3 projection is what marks it.
+    if has_tree("down_blocks.") && names.contains(&"encoder_hid_proj.weight") {
+        return Some("diffusion_model");
+    }
     let is_llm = has_tree(LLM_LAYER_PREFIX) && names.iter().any(|k| LLM_EMBEDDING_KEYS.contains(k));
     if is_llm || TEXT_ENCODER_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("text_encoder");
@@ -7748,14 +7766,12 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
     }
     match architecture {
         "anima" => Some("anima"),
-        "wan2.1" => Some("wan"),
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
         // Flux.2 Klein's flux2_klein_4b / flux2_klein_9b are registered
         // (architectures/flux2_klein.rs).
         "flux2_dev" => Some("flux2d"),
-        "moss_image" => Some("mossimage"),
         "minimax_h3" => Some("minimaxh3"),
         "qwen_image" => Some("qwen"),
         "stable-diffusion-3-medium" => Some("sd3"),
@@ -7796,17 +7812,13 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // Flux 2 sizes are told apart by their keys (Klein's classes come from
         // the registry), so a Klein file named Dev is corrected and vice versa.
         "flux2d" => Some("flux2_dev"),
-        // SFT and Base share every tensor key: one class for both.
-        "mossimage" | "mossimagebase" => Some("moss_image"),
         "minimaxh3" => Some("minimax_h3"),
         "anima" => Some("anima"),
-        "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),
         "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
         "hunyuandit" => Some("hunyuandit"),
         "cascade" => Some("cascade"),
-        "kolors" => Some("kolors"),
         _ => None,
     }
 }

@@ -1113,6 +1113,9 @@ const pt: Record<string, string> = {
   "generation.model.krea2_uncensored_downloading": "Baixando... {percent}%",
   "generation.model.downloading_refusal_lora": "Baixando LoRA de redução de recusas",
   "generation.model.nvfp4_warning": "Modelos NVFP4 funcionam nativamente apenas em GPUs NVIDIA Blackwell (série RTX 50). Sua GPU é mais antiga, então baixe e use a versão FP8 deste modelo.",
+  "generation.model.wan_low_noise_paired": "O Wan 2.2 A14B roda em duas metades: este modelo de ruído alto compõe a imagem e depois {file} a finaliza.",
+  "generation.model.wan_low_noise_missing": "Esta é a metade de ruído alto do Wan 2.2 A14B. Coloque o modelo de ruído baixo correspondente em diffusion_models para finalizar as imagens, ou escolha só o modelo de ruído baixo.",
+  "generation.model.wan_not_text_to_image": "Este modelo Wan transforma imagens ou vídeo em vídeo e não cria uma imagem a partir de um prompt. Escolha um modelo Wan de texto para vídeo (Wan 2.1 T2V, Wan 2.2 TI2V 5B ou Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Baixando VAE...",
   "generation.model.downloading_file": "Baixando {name}...",
   "generation.model.downloading_checkpoint": "Baixando checkpoint...",
@@ -1178,6 +1181,7 @@ const pt: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "A imagem 1 é a que será editada. Adicione uma pessoa como imagem 2 para colocá-la nela (\"coloque a pessoa da segunda imagem à mesa\"). Fique em até 2 MP.",
   "generation.image_edit.krea2_style_note": "Use uma ou duas imagens de estilo; o prompt descreve a imagem nova.",
   "generation.image_edit.flux3_note": "O FLUX 3 Klein aceita até 10 imagens de referência. Refira-se a elas no prompt pela ordem (a primeira imagem, a segunda imagem) e descreva o resultado completo, não apenas a alteração.",
+  "generation.image_edit.registered_note": "{model} aceita até {n} imagens de referência. Descreva só a mudança e diga para que serve cada imagem extra (por exemplo, \"a roupa da imagem 2\").",
   "generation.image_edit.camera.title": "Ângulo da câmera",
   "generation.image_edit.camera.tip": "Fotografa a referência novamente de outro ângulo. Adiciona uma descrição do plano no início do prompt e, se estiver instalada, a LoRA Multiple-Angles (treinada no Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Direção",
@@ -1200,6 +1204,7 @@ const pt: Record<string, string> = {
   "generation.image_edit.anima_note":
     "O ReStyler redesenha o personagem da sua imagem de referência no estilo Anima. A saída corresponde ao tamanho da referência. Requer o LoRA Anima Edit (download do Civitai; pode ser necessária uma chave de API ou VPN).",
   "generation.image_edit.anima_lora_download": "Baixar Anima Edit LoRA (350 MB)",
+  "generation.image_edit.required_download": "Baixar {file}",
   "generation.image_edit.reference_strength": "Força da referência",
   "generation.image_edit.reference_strength_tip":
     "O quanto o resultado segue a imagem de referência. 1.0 mantém a composição e os detalhes; reduza (tente 0.5-0.8) para deixar o prompt e o estilo mudarem mais a imagem.",

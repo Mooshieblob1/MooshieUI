@@ -1113,6 +1113,9 @@ const zh: Record<string, string> = {
   "generation.model.krea2_uncensored_downloading": "正在下载... {percent}%",
   "generation.model.downloading_refusal_lora": "正在下载拒绝削减 LoRA",
   "generation.model.nvfp4_warning": "NVFP4 模型仅能在 NVIDIA Blackwell GPU（RTX 50 系列）上原生运行。您的 GPU 较旧，请改为下载并使用该模型的 FP8 版本。",
+  "generation.model.wan_low_noise_paired": "Wan 2.2 A14B 分两段运行：这个高噪声模型先铺好画面，再由 {file} 完成。",
+  "generation.model.wan_low_noise_missing": "这是 Wan 2.2 A14B 的高噪声部分。请把对应的低噪声模型放进 diffusion_models 来完成图像，或者单独选择低噪声模型。",
+  "generation.model.wan_not_text_to_image": "这个 Wan 模型是把图像或视频变成视频的，不能根据提示词生成图像。请选择 Wan 文生视频模型（Wan 2.1 T2V、Wan 2.2 TI2V 5B 或 Wan 2.2 T2V A14B）。",
   "generation.model.downloading_vae": "正在下载 VAE...",
   "generation.model.downloading_file": "正在下载 {name}...",
   "generation.model.downloading_checkpoint": "正在下载检查点...",
@@ -1178,6 +1181,7 @@ const zh: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "图 1 是要编辑的图片。把人物作为图 2 加入即可放进图 1（如“让第二张图里的人坐到桌边”）。请保持在 2 MP 以内。",
   "generation.image_edit.krea2_style_note": "使用一到两张风格图；提示词描述新图片。",
   "generation.image_edit.flux3_note": "FLUX 3 Klein 最多可使用 10 张参考图。在提示词中按顺序指代它们（第一张图、第二张图），并描述完整的结果，而不只是改动。",
+  "generation.image_edit.registered_note": "{model} 最多可使用 {n} 张参考图。只描述要改的地方，并说明每张额外图片的用途（例如“图 2 的服装”）。",
   "generation.image_edit.camera.title": "相机角度",
   "generation.image_edit.camera.tip": "从另一个角度重新拍摄参考图。会在提示词开头加入镜头描述，如果已安装 Multiple-Angles LoRA（基于 Qwen Image Edit 2511 训练）也会一并应用。",
   "generation.image_edit.camera.direction": "方向",
@@ -1200,6 +1204,7 @@ const zh: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler 会以 Anima 风格重新绘制参考图片中的角色。输出尺寸与参考图片一致。需要 Anima Edit LoRA（从 Civitai 下载；可能需要 API 密钥或 VPN）。",
   "generation.image_edit.anima_lora_download": "下载 Anima Edit LoRA（350 MB）",
+  "generation.image_edit.required_download": "下载 {file}",
   "generation.image_edit.reference_strength": "参考强度",
   "generation.image_edit.reference_strength_tip":
     "输出对参考图像的遵循程度。1.0 保持构图和细节；调低（建议 0.5-0.8）可让提示词和风格更大幅度地改变图像。",

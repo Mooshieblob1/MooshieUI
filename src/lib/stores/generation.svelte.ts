@@ -98,6 +98,7 @@ import {
 } from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import { shouldKeepSplitVae } from "../utils/splitVae.js";
+import { findWanLowNoisePartner, WAN_LOW_NOISE_SLOT, wanVariant } from "../utils/wanModels.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
@@ -1193,6 +1194,8 @@ class GenerationStore {
   setMode(mode: GenerationMode): void {
     if (mode !== "video") this.lastImageMode = mode;
     if (mode === this._mode) return;
+    const modeSampling = (m: GenerationMode) => !!registeredMode(this.modelFamily, m)?.sampling;
+    const swapsSampling = modeSampling(this._mode) || modeSampling(mode);
 
     this.modeToggles = {
       ...this.modeToggles,
@@ -1211,6 +1214,9 @@ class GenerationStore {
     // Leaving the inpaint canvas abandons the painted edit; the paused run
     // itself stays until discarded.
     if (mode !== "inpainting") this.pausedEditArmed = false;
+    // A registered mode with its own sampling (MOSS-Image's edit LoRA) swaps
+    // the sampler settings in and out of that mode, keeping the size.
+    if (swapsSampling && !this.isNovelAi) this.applyModelSpecificPreset(true);
   }
 
   readPromptBucket(): PromptBucket {
@@ -1394,9 +1400,24 @@ class GenerationStore {
     return this.modelFamily === "zit";
   }
 
-  /** True when the selected model is a Wan variant. */
+  /**
+   * Wan 2.2 A14B: the installed low-noise expert that finishes the selected
+   * high-noise model. Null for every other model, or when none is installed.
+   */
+  get wanLowNoisePartner(): string | null {
+    if (!this.isWan || !this.useSplitModel || wanVariant(this.diffusionModel) !== "a14bHigh") return null;
+    // The same-name partner first; else the model panel's slot pick, when it
+    // is a text-to-video low-noise file that is still installed.
+    const slotPick = this.architectureFiles[WAN_LOW_NOISE_SLOT];
+    return (
+      findWanLowNoisePartner(this.diffusionModel, models.diffusionModels) ??
+      (slotPick && wanVariant(slotPick) === "a14bLow" && models.diffusionModels.includes(slotPick) ? slotPick : null)
+    );
+  }
+
+  /** True when the selected model is a Wan variant (Wan 2.1, 2.2 A14B, 2.2 TI2V 5B). */
   get isWan(): boolean {
-    return this.modelFamily === "wan";
+    return findFamily(this.modelFamily)?.arch.id === "wan";
   }
 
   /** True when the selected model is a Qwen variant. */
@@ -1533,11 +1554,6 @@ class GenerationStore {
   /** True when the selected model is Stable Cascade. */
   get isCascade(): boolean {
     return this.modelFamily === "cascade";
-  }
-
-  /** True when the selected model is Kolors. */
-  get isKolors(): boolean {
-    return this.modelFamily === "kolors";
   }
 
   /** True when the selected model is Mugen (SDXL with Flux2 VAE + rectified flow). */
@@ -2312,12 +2328,12 @@ class GenerationStore {
     this.scheduler = this.resolveAvailableOption(models.schedulers, preferred, "normal");
   }
 
-  private applyResolvedPreset(preset: ModelPreset) {
+  private applyResolvedPreset(preset: ModelPreset, keepSize = false) {
     this.steps = preset.steps;
     this.cfg = preset.cfg;
     this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
-    if (!this.hasAuthoritativeEditSource && !this.resolutionLocked) {
+    if (!keepSize && !this.hasAuthoritativeEditSource && !this.resolutionLocked) {
       this.width = preset.width;
       this.height = preset.height;
     }
@@ -2685,7 +2701,11 @@ class GenerationStore {
     });
   }
 
-  applyModelSpecificPreset() {
+  /**
+   * `keepSize` is set on a mode switch: only the sampling changes, the size
+   * the user has in that mode stays.
+   */
+  applyModelSpecificPreset(keepSize = false) {
     // Autocomplete tag-set sync on model-family change is handled by an
     // $effect in App.svelte (stores must not import each other).
 
@@ -2696,7 +2716,13 @@ class GenerationStore {
       this.useSplitModel && this.diffusionModel ? `dm:${this.diffusionModel}` : `cp:${this.checkpoint}`,
       this.modelFamily,
       this.modelTurboVariant,
-    ].join("|");
+      // A registered mode with its own sampling (an edit LoRA) re-applies
+      // when the user switches into or out of that mode. Absent otherwise, so
+      // every other model keeps the key it already saved.
+      registeredMode(this.modelFamily, this._mode)?.sampling ? `mode:${this._mode}` : null,
+    ]
+      .filter((part) => part !== null)
+      .join("|");
     if (presetKey === this.modelPresetAppliedKey) return;
     const isFirstPresetApplication = !this.modelPresetAppliedKey;
     // Advanced Mode: after the first-ever application, preserve the user's generation
@@ -2709,6 +2735,16 @@ class GenerationStore {
 
     this.modelPresetAppliedKey = presetKey;
 
+    // Moody Moss Mix, a MOSS-Image fine-tune, follows its author's 4K HD
+    // workflow outside Image Edit: Euler on simple at 25 steps and CFG 3, from
+    // a 2:3 base of about 1 MP that the second pass takes to 1.5x, and the
+    // workflow's negative prompt when the box is empty.
+    if (this.isMoodyMossMix && this._mode !== "image_edit") {
+      if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
+      this.applyResolvedPreset({ ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE }, keepSize);
+      return;
+    }
+
     // A registered architecture declares its own defaults (per mode when the
     // mode wants other settings, e.g. an edit LoRA).
     const registered = registeredSampling(this.modelFamily, this._mode);
@@ -2720,7 +2756,7 @@ class GenerationStore {
         scheduler: registered.scheduler,
         width: registered.width,
         height: registered.height,
-      });
+      }, keepSize);
       return;
     }
 
@@ -2824,29 +2860,6 @@ class GenerationStore {
         };
         break;
 
-      // MOSS-Image SFT and Base: Comfy-Org's bundled templates (25 steps at
-      // CFG 2.5, er_sde on simple, 1024x1024), with a real negative prompt.
-      // Moody Moss Mix follows its author's 4K HD workflow instead: Euler on
-      // simple at 25 steps and CFG 3, from a 2:3 base of about 1 MP that the
-      // second pass takes to 1.5x, and the workflow's negative prompt when
-      // the box is empty.
-      case "mossimage":
-      case "mossimagebase":
-        if (this.isMoodyMossMix) {
-          preset = { ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE };
-          if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
-          break;
-        }
-        preset = {
-          steps: 25,
-          cfg: 2.5,
-          samplerName: "er_sde",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
       // Z-Image Base defaults.
       case "zib":
         preset = {
@@ -2902,18 +2915,6 @@ class GenerationStore {
           cfg: 4.0,
           samplerName: "euler",
           scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Kolors stays in the SDXL-like resolution bucket with a slightly higher CFG.
-      case "kolors":
-        preset = {
-          steps: 25,
-          cfg: 5.0,
-          samplerName: "euler",
-          scheduler: "normal",
           width: 1024,
           height: 1024,
         };
@@ -2980,7 +2981,6 @@ class GenerationStore {
             };
         break;
 
-      case "wan":
       case "qwen":
         preset = {
           steps: 30,
@@ -3055,7 +3055,7 @@ class GenerationStore {
         break;
     }
 
-    this.applyResolvedPreset(preset);
+    this.applyResolvedPreset(preset, keepSize);
   }
 
   async loadSettings() {
@@ -4608,11 +4608,15 @@ class GenerationStore {
         .slice(0, this.editReferenceSlotCount)
         .filter((v): v is string => !!v),
       // Only the current family's slots, so another family's files never ride along.
-      architecture_files: Object.fromEntries(
-        (findFamily(this.modelFamily)?.arch.model_slots ?? [])
-          .map((slot) => [slot.key, this.architectureFiles[slot.key] ?? ""] as const)
-          .filter(([, file]) => !!file),
-      ),
+      architecture_files: {
+        ...Object.fromEntries(
+          (findFamily(this.modelFamily)?.arch.model_slots ?? [])
+            .map((slot) => [slot.key, this.architectureFiles[slot.key] ?? ""] as const)
+            .filter(([, file]) => !!file),
+        ),
+        // Wan 2.2 A14B pairs the high-noise model with its own low-noise file.
+        ...(this.wanLowNoisePartner ? { [WAN_LOW_NOISE_SLOT]: this.wanLowNoisePartner } : {}),
+      },
       edit_reference_strength: this.editReferenceStrength,
       edit_split_screen: this.editSplitScreen,
       ...(this._mode === "image_edit" && this.isKrea2

@@ -1113,6 +1113,9 @@ const ru: Record<string, string> = {
   "generation.model.krea2_uncensored_downloading": "Скачивание... {percent}%",
   "generation.model.downloading_refusal_lora": "Скачивание LoRA снижения отказов",
   "generation.model.nvfp4_warning": "Модели NVFP4 нативно работают только на GPU NVIDIA Blackwell (серия RTX 50). Ваш GPU старше, поэтому скачайте и используйте версию FP8 этой модели.",
+  "generation.model.wan_low_noise_paired": "Wan 2.2 A14B работает в две половины: эта модель с высоким шумом задаёт композицию, затем {file} завершает изображение.",
+  "generation.model.wan_low_noise_missing": "Это половина Wan 2.2 A14B с высоким шумом. Положите подходящую модель с низким шумом в diffusion_models, чтобы завершать изображения, или выберите только модель с низким шумом.",
+  "generation.model.wan_not_text_to_image": "Эта модель Wan превращает изображения или видео в видео и не может создать изображение по промпту. Выберите модель Wan «текст в видео» (Wan 2.1 T2V, Wan 2.2 TI2V 5B или Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Скачивание VAE...",
   "generation.model.downloading_file": "Скачивание {name}...",
   "generation.model.downloading_checkpoint": "Скачивание чекпоинта...",
@@ -1178,6 +1181,7 @@ const ru: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "Изображение 1 редактируется. Добавьте человека как изображение 2, чтобы поместить его туда («посади человека со второго изображения за стол»). Не больше 2 МП.",
   "generation.image_edit.krea2_style_note": "Используйте одно или два изображения стиля; промпт описывает новое изображение.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein принимает до 10 референсных изображений. Называйте их в промпте по порядку (первое изображение, второе изображение) и описывайте весь результат, а не только изменение.",
+  "generation.image_edit.registered_note": "{model} принимает до {n} референсных изображений. Опишите только изменение и укажите, зачем нужно каждое дополнительное изображение (например, \"наряд с изображения 2\").",
   "generation.image_edit.camera.title": "Ракурс камеры",
   "generation.image_edit.camera.tip": "Переснимает референс с другого ракурса. Добавляет описание кадра в начало промпта и LoRA Multiple-Angles, если она установлена (обучена на Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Направление",
@@ -1200,6 +1204,7 @@ const ru: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler перерисовывает персонажа с референсного изображения в стиле Anima. Размер результата совпадает с референсом. Требуется LoRA Anima Edit (загрузка с Civitai; может понадобиться API-ключ или VPN).",
   "generation.image_edit.anima_lora_download": "Скачать Anima Edit LoRA (350 МБ)",
+  "generation.image_edit.required_download": "Скачать {file}",
   "generation.image_edit.reference_strength": "Сила референса",
   "generation.image_edit.reference_strength_tip":
     "Насколько результат следует референсному изображению. 1.0 сохраняет композицию и детали; уменьшите (попробуйте 0.5-0.8), чтобы промпт и стиль сильнее меняли изображение.",

@@ -232,7 +232,7 @@ pub fn find(all: &[Setup], model: Option<&str>, purpose: Purpose) -> Result<Setu
     let Some(wanted) = model.map(str::trim).filter(|m| !m.is_empty()) else {
         return setups.first().cloned().ok_or_else(|| match purpose {
             Purpose::Generate => "No saved generation setup yet. Generate one image in MooshieUI (txt2img, local or NovelAI) with the model you want, then try again.".to_string(),
-            Purpose::Edit => "No saved Image Edit setup yet. Run one Image Edit in MooshieUI with an edit model (Qwen Image Edit, Flux Kontext, FLUX 3 Klein or Anima), then try again.".to_string(),
+            Purpose::Edit => "No saved Image Edit setup yet. Run one Image Edit in MooshieUI with an edit model (Qwen Image Edit, Flux Kontext, FLUX 3 Klein, MOSS-Image or Anima), then try again.".to_string(),
         });
     };
     let lower = wanted.to_ascii_lowercase();

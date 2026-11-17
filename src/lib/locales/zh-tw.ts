@@ -1113,6 +1113,9 @@ const zhTw: Record<string, string> = {
   "generation.model.krea2_uncensored_downloading": "正在下載... {percent}%",
   "generation.model.downloading_refusal_lora": "正在下載拒絕削減 LoRA",
   "generation.model.nvfp4_warning": "NVFP4 模型僅能在 NVIDIA Blackwell GPU（RTX 50 系列）上原生執行。您的 GPU 較舊，請改為下載並使用該模型的 FP8 版本。",
+  "generation.model.wan_low_noise_paired": "Wan 2.2 A14B 分兩段執行：這個高雜訊模型先鋪好畫面，再由 {file} 完成。",
+  "generation.model.wan_low_noise_missing": "這是 Wan 2.2 A14B 的高雜訊部分。請把對應的低雜訊模型放進 diffusion_models 來完成圖像，或者單獨選擇低雜訊模型。",
+  "generation.model.wan_not_text_to_image": "這個 Wan 模型是把圖像或影片變成影片的，無法根據提示詞產生圖像。請選擇 Wan 文字轉影片模型（Wan 2.1 T2V、Wan 2.2 TI2V 5B 或 Wan 2.2 T2V A14B）。",
   "generation.model.downloading_vae": "正在下載 VAE...",
   "generation.model.downloading_file": "正在下載 {name}...",
   "generation.model.downloading_checkpoint": "正在下載檢查點...",
@@ -1178,6 +1181,7 @@ const zhTw: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "圖 1 是要編輯的圖片。把人物作為圖 2 加入即可放進圖 1（如「讓第二張圖裡的人坐到桌邊」）。請保持在 2 MP 以內。",
   "generation.image_edit.krea2_style_note": "使用一到兩張風格圖；提示詞描述新圖片。",
   "generation.image_edit.flux3_note": "FLUX 3 Klein 最多可使用 10 張參考圖。在提示詞中依順序指稱它們（第一張圖、第二張圖），並描述完整的結果，而不只是改動。",
+  "generation.image_edit.registered_note": "{model} 最多可使用 {n} 張參考圖。只描述要改的地方，並說明每張額外圖片的用途（例如「圖 2 的服裝」）。",
   "generation.image_edit.camera.title": "攝影機角度",
   "generation.image_edit.camera.tip": "從另一個角度重新拍攝參考圖。會在提示詞開頭加入鏡頭描述，若已安裝 Multiple-Angles LoRA（以 Qwen Image Edit 2511 訓練）也會一併套用。",
   "generation.image_edit.camera.direction": "方向",
@@ -1200,6 +1204,7 @@ const zhTw: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler 會以 Anima 風格重新繪製參考圖片中的角色。輸出尺寸與參考圖片一致。需要 Anima Edit LoRA（從 Civitai 下載；可能需要 API 金鑰或 VPN）。",
   "generation.image_edit.anima_lora_download": "下載 Anima Edit LoRA（350 MB）",
+  "generation.image_edit.required_download": "下載 {file}",
   "generation.image_edit.reference_strength": "參考強度",
   "generation.image_edit.reference_strength_tip":
     "輸出對參考影像的遵循程度。1.0 保持構圖和細節；調低（建議 0.5-0.8）可讓提示詞和風格更大幅度地改變影像。",

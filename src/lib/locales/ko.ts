@@ -1113,6 +1113,9 @@ const ko: Record<string, string> = {
   "generation.model.krea2_uncensored_downloading": "다운로드 중... {percent}%",
   "generation.model.downloading_refusal_lora": "거부 감소 LoRA 다운로드 중",
   "generation.model.nvfp4_warning": "NVFP4 모델은 NVIDIA Blackwell GPU(RTX 50 시리즈)에서만 네이티브로 작동합니다. 사용 중인 GPU는 이전 세대이므로 이 모델의 FP8 버전을 다운로드하여 사용하세요.",
+  "generation.model.wan_low_noise_paired": "Wan 2.2 A14B는 두 단계로 실행됩니다. 이 하이 노이즈 모델이 이미지 구도를 잡고, {file}이(가) 마무리합니다.",
+  "generation.model.wan_low_noise_missing": "Wan 2.2 A14B의 하이 노이즈 절반입니다. 이미지를 마무리하려면 짝이 되는 로우 노이즈 모델을 diffusion_models에 넣거나, 로우 노이즈 모델만 선택하세요.",
+  "generation.model.wan_not_text_to_image": "이 Wan 모델은 이미지나 영상을 영상으로 바꾸는 모델이라 프롬프트로 이미지를 만들 수 없습니다. Wan 텍스트-투-비디오 모델(Wan 2.1 T2V, Wan 2.2 TI2V 5B, Wan 2.2 T2V A14B)을 선택하세요.",
   "generation.model.downloading_vae": "VAE 다운로드 중...",
   "generation.model.downloading_file": "{name} 다운로드 중...",
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
@@ -1178,6 +1181,7 @@ const ko: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "이미지 1이 편집할 이미지입니다. 인물을 이미지 2로 추가하면 그 인물을 넣을 수 있습니다(\"두 번째 이미지의 인물을 테이블에 앉혀 줘\"). 2 MP 이하로 유지하세요.",
   "generation.image_edit.krea2_style_note": "스타일 이미지는 한두 장을 쓰고, 프롬프트에는 새 이미지를 설명하세요.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
+  "generation.image_edit.registered_note": "{model}은(는) 참조 이미지를 최대 {n}장까지 사용합니다. 바꿀 부분만 쓰고, 추가 이미지마다 용도를 적으세요(예: \"이미지 2의 옷\").",
   "generation.image_edit.camera.title": "카메라 앵글",
   "generation.image_edit.camera.tip": "참조 이미지를 다른 각도에서 다시 촬영합니다. 프롬프트 앞에 샷 설명을 추가하고, 설치되어 있으면 Multiple-Angles LoRA(Qwen Image Edit 2511로 학습)도 적용합니다.",
   "generation.image_edit.camera.direction": "방향",
@@ -1200,6 +1204,7 @@ const ko: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler는 참조 이미지의 캐릭터를 Anima 스타일로 다시 그립니다. 출력 크기는 참조 이미지와 동일합니다. Anima Edit LoRA가 필요합니다 (Civitai 다운로드, API 키 또는 VPN이 필요할 수 있음).",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRA 다운로드 (350 MB)",
+  "generation.image_edit.required_download": "{file} 다운로드",
   "generation.image_edit.reference_strength": "참조 강도",
   "generation.image_edit.reference_strength_tip":
     "출력이 참조 이미지를 얼마나 따를지 정합니다. 1.0은 구도와 디테일을 유지하며, 낮추면(0.5-0.8 권장) 프롬프트와 스타일이 이미지를 더 크게 바꿉니다.",

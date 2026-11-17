@@ -38,6 +38,8 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     validate_pause_resume(params)?;
     // Registered architectures: supported modes, strict encoder and model
     // slots, INT8-Fast and reference count (see `crate::architectures`).
+    // Wan first: an image-to-video file should hear that, not an encoder hint.
+    crate::architectures::wan::validate(params)?;
     crate::architectures::validate(params)?;
 
     // Video mode has its own parameter set; validate it and return early so
@@ -220,7 +222,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein, Krea 2 or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein, Krea 2, MOSS-Image or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
         ));
     }
@@ -409,37 +411,6 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
-    // MOSS-Image needs ComfyUI's "moss_image" CLIP type (v0.43.0+), which only
-    // builds the MOSS encoder around Qwen3.5 9B. Anything else fails inside
-    // ComfyUI with an unhelpful error, so fail fast with the fix instead.
-    if matches!(
-        params.model_architecture.as_str(),
-        "mossimage" | "mossimagebase"
-    ) && params.use_split_model
-    {
-        if params.clip_type.as_deref() != Some("moss_image") {
-            return Err(
-                "MOSS-Image requires the CLIP loader type \"moss_image\" (ComfyUI 0.43.0 or newer). Re-select the MOSS-Image model so the text encoder settings refresh, or update ComfyUI.".into(),
-            );
-        }
-        let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
-        let clip_lower = clip_model.to_lowercase();
-        if clip_model.is_empty()
-            || !crate::commands::api::MOSS_IMAGE_TEXT_ENCODER_MARKERS
-                .iter()
-                .any(|marker| clip_lower.contains(marker))
-        {
-            return Err(format!(
-                "MOSS-Image requires the Qwen3.5 9B text encoder, but {} is selected. Open the model panel to download it (qwen3.5_9b_w4a8_gptq.safetensors), or if this file really is a Qwen3.5 9B encoder, rename it to include \"qwen3.5_9b\".",
-                if clip_model.is_empty() {
-                    "none".to_string()
-                } else {
-                    format!("\"{clip_model}\"")
-                }
-            ));
-        }
-    }
-
     // INT8-Fast guard: when enabled for a split-model family, the family must
     // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
     // are incompatible with the INT8-Fast loader (they route through
@@ -464,15 +435,6 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         ) {
             return Err(
                 "FLUX 3 Klein loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
-                    .to_string(),
-            );
-        }
-        if matches!(
-            params.model_architecture.as_str(),
-            "mossimage" | "mossimagebase"
-        ) {
-            return Err(
-                "MOSS-Image loads its INT8 files without the INT8-Fast loader (ComfyUI handles them natively). Turn the INT8-Fast toggle off in the model panel and generate again."
                     .to_string(),
             );
         }
@@ -683,7 +645,7 @@ pub struct ModelLoadResult {
 /// model; `resolved_model_path` is filled in by the `generate` command. Both are
 /// required — without the resolved path there is nothing for the path loaders to
 /// open, so the caller falls back to the stock loaders.
-fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
+pub(crate) fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
     params.model_source_category.as_deref()?;
     params
         .resolved_model_path
@@ -712,6 +674,127 @@ fn int8_fast_model_type(family: &str) -> Option<&'static str> {
         "ideogram4" => Some("ideogram4"),
         // Everything else is unsupported by the OTUNetLoaderW8A8 node
         _ => None,
+    }
+}
+
+/// Loader node for a split diffusion model: GGUF, a file outside its folder
+/// (by absolute path), INT8-Fast, or the stock `UNETLoader`.
+///
+/// GGUF quantized models cannot be loaded by core UNETLoader, so they go
+/// through the ComfyUI-GGUF custom node (installed at ComfyUI setup).
+pub(crate) fn unet_loader_node(
+    unet_name: &str,
+    misplaced_path: Option<&str>,
+    params: &GenerationParams,
+) -> Value {
+    if unet_name.to_ascii_lowercase().ends_with(".gguf") {
+        json!({
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {
+                "unet_name": unet_name
+            }
+        })
+    } else if let Some(path) = misplaced_path {
+        // Split-file model physically stored in another folder (usually
+        // checkpoints/). UNETLoader validates unet_name against its own folder
+        // listing and would reject it, so load by absolute path instead.
+        json!({
+            "class_type": "MooshieDiffusionLoaderPath",
+            "inputs": {
+                "unet_path": path,
+                "weight_dtype": "default"
+            }
+        })
+    } else if params.int8_fast_enabled {
+        // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
+        // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
+        // family has a known model_type mapping before we reach here.
+        let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
+        json!({
+            "class_type": "OTUNetLoaderW8A8",
+            "inputs": {
+                "unet_name": unet_name,
+                "weight_dtype": "default",
+                "model_type": model_type,
+                "on_the_fly_quantization": false,
+                "enable_convrot": params.int8_fast_convrot,
+                "lora_mode": "None"
+            }
+        })
+    } else {
+        json!({
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": unet_name,
+                "model_name": unet_name,
+                "weight_dtype": "default"
+            }
+        })
+    }
+}
+
+/// The stock split-model loaders: the diffusion model (`unet_name`, through
+/// [`unet_loader_node`]), `CLIPLoader` (or `CLIPLoaderGGUF`) and `VAELoader`.
+/// UNETLoader gets both unet_name and model_name for compatibility across
+/// standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+pub(crate) fn split_loader_nodes(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    params: &GenerationParams,
+    unet_name: &str,
+    misplaced_path: Option<&str>,
+) -> crate::architectures::LoaderOutput {
+    // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
+    // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+    // GGUF quantized models cannot be loaded by core UNETLoader — route them
+    // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
+    let unet_id = next_id.to_string();
+    let unet_node = unet_loader_node(unet_name, misplaced_path, params);
+    workflow.insert(unet_id.clone(), unet_node);
+    let model_source = (unet_id, 0);
+    next_id += 1;
+
+    // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
+    let clip_id = next_id.to_string();
+    let clip_type = params.clip_type.as_deref().unwrap_or("wan");
+    let clip_name = params.clip_model.as_deref().unwrap_or("");
+    let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
+        "CLIPLoaderGGUF"
+    } else {
+        "CLIPLoader"
+    };
+    workflow.insert(
+        clip_id.clone(),
+        json!({
+            "class_type": clip_class,
+            "inputs": {
+                "clip_name": clip_name,
+                "type": clip_type
+            }
+        }),
+    );
+    let clip_source = (clip_id, 0);
+    next_id += 1;
+
+    // VAELoader — always needed for split models (use params.vae or a default)
+    let vae_id = next_id.to_string();
+    let vae_name = params.vae.as_deref().unwrap_or("");
+    workflow.insert(
+        vae_id.clone(),
+        json!({
+            "class_type": "VAELoader",
+            "inputs": {
+                "vae_name": vae_name
+            }
+        }),
+    );
+    let vae_source = (vae_id, 0);
+    next_id += 1;
+    crate::architectures::LoaderOutput {
+        model: model_source,
+        clip: clip_source,
+        vae: vae_source,
+        next_id,
     }
 }
 
@@ -778,96 +861,17 @@ pub fn load_model_nodes(
         vae_source = loaded.vae;
         next_id = loaded.next_id;
     } else if params.use_split_model {
-        // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
-        // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
-        // GGUF quantized models cannot be loaded by core UNETLoader — route them
-        // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
-        let unet_name = params.diffusion_model.as_deref().unwrap_or("");
-        let unet_id = next_id.to_string();
-        let unet_node = if unet_name.to_ascii_lowercase().ends_with(".gguf") {
-            json!({
-                "class_type": "UnetLoaderGGUF",
-                "inputs": {
-                    "unet_name": unet_name
-                }
-            })
-        } else if let Some(path) = misplaced_model_path(params) {
-            // Split-file model physically stored in another folder (usually
-            // checkpoints/). UNETLoader validates unet_name against its own folder
-            // listing and would reject it, so load by absolute path instead.
-            json!({
-                "class_type": "MooshieDiffusionLoaderPath",
-                "inputs": {
-                    "unet_path": path,
-                    "weight_dtype": "default"
-                }
-            })
-        } else if params.int8_fast_enabled {
-            // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
-            // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
-            // family has a known model_type mapping before we reach here.
-            let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
-            json!({
-                "class_type": "OTUNetLoaderW8A8",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "weight_dtype": "default",
-                    "model_type": model_type,
-                    "on_the_fly_quantization": false,
-                    "enable_convrot": params.int8_fast_convrot,
-                    "lora_mode": "None"
-                }
-            })
-        } else {
-            json!({
-                "class_type": "UNETLoader",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "model_name": unet_name,
-                    "weight_dtype": "default"
-                }
-            })
-        };
-        workflow.insert(unet_id.clone(), unet_node);
-        model_source = (unet_id, 0);
-        next_id += 1;
-
-        // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
-        let clip_id = next_id.to_string();
-        let clip_type = params.clip_type.as_deref().unwrap_or("wan");
-        let clip_name = params.clip_model.as_deref().unwrap_or("");
-        let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
-            "CLIPLoaderGGUF"
-        } else {
-            "CLIPLoader"
-        };
-        workflow.insert(
-            clip_id.clone(),
-            json!({
-                "class_type": clip_class,
-                "inputs": {
-                    "clip_name": clip_name,
-                    "type": clip_type
-                }
-            }),
+        let loaded = split_loader_nodes(
+            workflow,
+            next_id,
+            params,
+            params.diffusion_model.as_deref().unwrap_or(""),
+            misplaced_model_path(params),
         );
-        clip_source = (clip_id, 0);
-        next_id += 1;
-
-        // VAELoader — always needed for split models (use params.vae or a default)
-        let vae_id = next_id.to_string();
-        let vae_name = params.vae.as_deref().unwrap_or("");
-        workflow.insert(
-            vae_id.clone(),
-            json!({
-                "class_type": "VAELoader",
-                "inputs": {
-                    "vae_name": vae_name
-                }
-            }),
-        );
-        vae_source = (vae_id, 0);
-        next_id += 1;
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else {
         // Standard CheckpointLoaderSimple, or the path-based Mooshie loader when the
         // checkpoint physically lives outside models/checkpoints/.
@@ -903,6 +907,11 @@ pub fn load_model_nodes(
             log::warn!(
                 "Skipping LoRA with empty name — this should have been filtered by the frontend"
             );
+            continue;
+        }
+        // Wan 2.2 A14B LoRAs come as high/low-noise pairs; a high-noise half
+        // only belongs on the high-noise expert (architectures/wan.rs).
+        if !crate::architectures::wan::lora_applies_to_main_model(params, &lora.name) {
             continue;
         }
         let lora_id = next_id.to_string();
@@ -1213,6 +1222,9 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // conditioning.
     if txt2img::moody_moss_hd_active(params) {
         sync_moody_moss_first_pass(&mut result);
+    }
+    if crate::architectures::wan::two_expert_active(params) {
+        crate::architectures::wan::sync_high_noise_pass(&mut result);
     }
 
     result
@@ -1535,7 +1547,6 @@ pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
             | "qwen_edit_plus"
             | "flux1kontext"
             | "anima"
-            | "wan"
             | "krea2"
     )
 }
@@ -1989,13 +2000,54 @@ mod validation_and_seed_tests {
             p.clip_type = Some("moss_image".to_string());
             p.clip_model = Some("qwen3vl_4b_fp8_scaled.safetensors".to_string());
             let err = validate_generation_params(&p).unwrap_err();
-            assert!(err.contains("Qwen3.5 9B"), "{err}");
+            assert!(err.contains("qwen3.5_9b_w4a8_gptq"), "{err}");
 
             p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
             p.int8_fast_enabled = true;
             let err = validate_generation_params(&p).unwrap_err();
             assert!(err.contains("INT8-Fast"), "{err}");
         }
+    }
+
+    #[test]
+    fn moss_image_edits_with_up_to_four_references() {
+        for family in ["mossimage", "mossimagebase"] {
+            let mut p = params("image_edit", family);
+            p.use_split_model = true;
+            p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+            p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+            p.clip_type = Some("moss_image".to_string());
+            p.edit_reference_images = (0..4).map(|i| format!("ref{i}.png")).collect();
+            assert!(validate_generation_params(&p).is_ok());
+            assert!(image_edit::supports_family(family));
+
+            p.edit_reference_images.push("ref4.png".to_string());
+            let err = validate_generation_params(&p).unwrap_err();
+            assert!(err.contains("up to 4"), "{err}");
+        }
+    }
+
+    #[test]
+    fn moss_image_edit_runs_its_dedicated_graph() {
+        let mut p = params("image_edit", "mossimage");
+        p.use_split_model = true;
+        p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".to_string());
+        p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".to_string());
+        p.clip_type = Some("moss_image".to_string());
+        p.vae = Some("flux2-vae_small.safetensors".to_string());
+        p.edit_reference_images = vec!["ref0.png".to_string()];
+        let workflow = build_workflow(&p, 1, true);
+        let classes: Vec<&str> = workflow
+            .as_object()
+            .expect("workflow object")
+            .values()
+            .filter_map(|n| n["class_type"].as_str())
+            .collect();
+        assert!(classes.contains(&"TextEncodeMOSSImageEdit"), "{classes:?}");
+        assert!(
+            classes.contains(&"SkipLayerGuidanceDiTSimple"),
+            "{classes:?}"
+        );
     }
 
     #[test]
@@ -2594,6 +2646,102 @@ mod tests {
         value["height"] = json!(1248);
         value["moody_moss_hd"] = json!(true);
         serde_json::from_value(value).unwrap()
+    }
+
+    fn kolors_params() -> serde_json::Value {
+        let mut value = serde_json::to_value(klein_int8_params("kolors", false)).unwrap();
+        value["diffusion_model"] = json!("kolors_unet_fp16.safetensors");
+        value["clip_model"] = json!("kolors_chatglm3.fp16-00001-of-00003.safetensors");
+        value["clip_type"] = json!("kolors");
+        value["vae"] = json!("kolors_vae_fp16.safetensors");
+        value["cfg"] = json!(5.0);
+        value["loras"] = json!([{"name": "kolors_style.safetensors", "strength_model": 0.8, "strength_clip": 1.0}]);
+        value
+    }
+
+    /// Kolors (architectures/kolors.rs) runs through the bundled MooshieKolorsLoader (UNet + ChatGLM3),
+    /// a stock VAELoader, and core CLIPTextEncode/KSampler/LoraLoader.
+    #[test]
+    fn kolors_txt2img_uses_the_bundled_loader() {
+        let params: GenerationParams = serde_json::from_value(kolors_params()).unwrap();
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+        let loaders = nodes_of(&workflow, "MooshieKolorsLoader");
+        assert_eq!(loaders.len(), 1, "{workflow}");
+        let (loader_id, loader) = loaders[0];
+        assert_eq!(
+            loader["inputs"]["unet_name"],
+            json!("kolors_unet_fp16.safetensors")
+        );
+        assert_eq!(
+            loader["inputs"]["text_encoder_name"],
+            json!("kolors_chatglm3.fp16-00001-of-00003.safetensors")
+        );
+        assert_eq!(loader["inputs"]["unet_path"], json!(""));
+        for class in ["UNETLoader", "CLIPLoader", "CheckpointLoaderSimple"] {
+            assert!(
+                nodes_of(&workflow, class).is_empty(),
+                "{class} must not be emitted"
+            );
+        }
+        let vaes = nodes_of(&workflow, "VAELoader");
+        assert_eq!(
+            vaes[0].1["inputs"]["vae_name"],
+            json!("kolors_vae_fp16.safetensors")
+        );
+        // The LoRA chains off the loader's MODEL and CLIP outputs.
+        let lora = nodes_of(&workflow, "LoraLoader")[0].1;
+        assert_eq!(lora["inputs"]["model"], json!([loader_id, 0]));
+        assert_eq!(lora["inputs"]["clip"], json!([loader_id, 1]));
+        assert_eq!(
+            nodes_of(&workflow, "KSampler")[0].1["inputs"]["cfg"],
+            json!(5.0)
+        );
+    }
+
+    #[test]
+    fn kolors_unet_in_checkpoints_loads_by_path() {
+        let mut value = kolors_params();
+        value["model_source_category"] = json!("checkpoints");
+        value["resolved_model_path"] = json!("/models/checkpoints/kolors_unet_fp16.safetensors");
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        let workflow = build_workflow(&params, 42, false);
+        let loader = nodes_of(&workflow, "MooshieKolorsLoader")[0].1;
+        assert_eq!(
+            loader["inputs"]["unet_path"],
+            json!("/models/checkpoints/kolors_unet_fp16.safetensors")
+        );
+    }
+
+    #[test]
+    fn kolors_rejects_what_cannot_work() {
+        let check = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let mut value = kolors_params();
+            edit(&mut value);
+            let params: GenerationParams = serde_json::from_value(value).unwrap();
+            validate_generation_params(&params)
+        };
+        assert!(check(&|v| v["use_split_model"] = json!(false))
+            .unwrap_err()
+            .contains("separate files"));
+        assert!(check(&|v| v["clip_model"] = json!("qwen_3_4b.safetensors"))
+            .unwrap_err()
+            .contains("kolors_chatglm3.fp16-00001-of-00003.safetensors"));
+        assert!(check(&|v| v["clip_model"] = json!(null))
+            .unwrap_err()
+            .contains("none is selected"));
+        assert!(check(&|v| {
+            v["controlnet"] = json!({
+                "enabled": true,
+                "image": "pose.png",
+                "controlnet_model": "sdxl_canny.safetensors",
+                "strength": 1.0,
+                "start_percent": 0.0,
+                "end_percent": 1.0
+            })
+        })
+        .unwrap_err()
+        .contains("ControlNet"));
     }
 
     fn nodes_of<'a>(workflow: &'a Value, class: &str) -> Vec<(&'a String, &'a Value)> {
