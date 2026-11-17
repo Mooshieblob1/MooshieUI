@@ -972,6 +972,8 @@ const ja: Record<string, string> = {
   "generation.dimensions.reset": "{res}にリセット",
   "generation.dimensions.recommended": "{model}の推奨: {res}",
   "generation.dimensions.result": "結果",
+  "generation.dimensions.transparent": "透明な背景",
+  "generation.dimensions.transparent_tip": "モデルに透明な背景を指定します。アップスケール、顔補正、セグメント補正は不透明な画像が必要なため、有効にすると背景が塗りつぶされます。",
   "generation.swap_panels": "左右パネルを入れ替える",
   "generation.batch_fewer": "枚数を減らす",
   "generation.batch_more": "枚数を増やす",
