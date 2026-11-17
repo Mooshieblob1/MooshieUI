@@ -35,6 +35,7 @@
   import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
   import { isFlux1VaeName } from "../../utils/splitVae.js";
+  import { planCascadeStageB, sameFiles, withCascadeFiles } from "../../utils/cascade.js";
 
   interface ModelFile {
     filename: string;
@@ -580,6 +581,24 @@
         scheduler: "simple",
       },
     },
+    // Stable Cascade stage C, ComfyUI checkpoint format (text encoder and
+    // EfficientNet encoder inside). Stage B (~4.6 GB, counted in the size)
+    // downloads by itself once Cascade is selected; see ensureCascadeStageB.
+    {
+      label: "Stable Cascade",
+      size: "~13.8 GB",
+      checkpoint: {
+        filename: "stable_cascade_stage_c.safetensors",
+        url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/comfyui_checkpoints/stable_cascade_stage_c.safetensors",
+        category: "checkpoints",
+      },
+      autoSettings: {
+        steps: 20,
+        cfg: 4,
+        samplerName: "euler_ancestral",
+        scheduler: "simple",
+      },
+    },
     {
       // Z-Image diffusion weights usually arrive from the Model Hub on their
       // own. Detection-only for the diffusion file; the Qwen3-4B encoder and
@@ -1051,6 +1070,82 @@
       requiredEncoderEnsureRunning = false;
     }
   }
+
+  let cascadeEnsureRunning = false;
+  let cascadeDownloadFailed = false;
+
+  /**
+   * Stable Cascade needs stage B next to the stage C model the user picked.
+   * Uses an installed one (checkpoint, or diffusion model + stage A) and
+   * downloads the official all-in-one stage B checkpoint when none is there.
+   */
+  async function ensureCascadeStageB() {
+    if (cascadeEnsureRunning) return;
+    if (models.loading || !Object.keys(models.serverModels).length) return;
+    const plan = planCascadeStageB(
+      { checkpoints: models.checkpoints, diffusionModels: models.diffusionModels, vaes: models.vaes },
+      generation.architectureFiles,
+    );
+    if (plan.files) {
+      const next = withCascadeFiles(generation.architectureFiles, plan.files);
+      if (!sameFiles(next, generation.architectureFiles)) {
+        generation.architectureFiles = next;
+        generation.saveSettings();
+      }
+      return;
+    }
+    if (downloading !== null || models.remote || cascadeDownloadFailed) return;
+
+    cascadeEnsureRunning = true;
+    downloading = "Stable Cascade";
+    downloadError = "";
+    const seeded: Record<string, DlEntry> = {};
+    for (const file of plan.download) {
+      seeded[file.filename] = {
+        filename: file.filename,
+        label: locale.t('generation.model.downloading_file', { name: "Stable Cascade stage B" }),
+        downloaded: 0,
+        total: 0,
+        done: false,
+      };
+    }
+    dlEntries = seeded;
+    dlOrder = plan.download.map((f) => f.filename);
+    try {
+      for (const file of plan.download) {
+        await downloadModel(file.url, file.category, file.filename);
+        await cacheHashAfterDownload(file);
+      }
+      await models.refresh();
+      downloading = null;
+      dlEntries = {};
+      dlOrder = [];
+    } catch (e) {
+      console.error("Failed to download Stable Cascade stage B:", e);
+      cascadeDownloadFailed = true;
+      downloadError = `Download failed: ${e}`;
+      setTimeout(() => {
+        downloading = null;
+        downloadError = "";
+        dlEntries = {};
+        dlOrder = [];
+      }, 4000);
+    } finally {
+      cascadeEnsureRunning = false;
+    }
+    // Pick up what just arrived.
+    if (!cascadeDownloadFailed) void ensureCascadeStageB();
+  }
+
+  $effect(() => {
+    if (generation.modelFamily === "cascade") {
+      // Re-run when the inventory changes.
+      void models.checkpoints;
+      void models.diffusionModels;
+      void models.vaes;
+      void ensureCascadeStageB();
+    }
+  });
 
   // Family detection itself lives in an App.svelte $effect (it has to run while
   // this panel is collapsed). The encoder download stays here because it drives

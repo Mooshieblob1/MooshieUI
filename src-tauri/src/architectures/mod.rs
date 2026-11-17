@@ -25,6 +25,8 @@
 //!
 //! Compiled in both the desktop and the server build: no `tauri` here.
 
+mod cascade;
+
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -32,7 +34,7 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 /// Every registered architecture. Add one line per architecture file.
-pub static ALL: &[&ArchitectureSpec] = &[];
+pub static ALL: &[&ArchitectureSpec] = &[&cascade::SPEC];
 
 /// How prompts for a family are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

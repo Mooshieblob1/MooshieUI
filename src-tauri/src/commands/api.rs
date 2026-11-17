@@ -4656,9 +4656,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("hunyuan") {
         return "hunyuandit";
     }
-    if bm.contains("cascade") {
-        return "cascade";
-    }
     if bm.contains("kolors") {
         return "kolors";
     }
@@ -4863,9 +4860,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.contains("hunyuan") {
         return Some("hunyuandit");
     }
-    if name.contains("cascade") {
-        return Some("cascade");
-    }
     if name.contains("kolors") {
         return Some("kolors");
     }
@@ -5051,7 +5045,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 37] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 36] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5084,7 +5078,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 37] = [
     "auraflow",
     "pixart",
     "hunyuandit",
-    "cascade",
     "kolors",
     "mugen",
     "nanosaur",
@@ -7353,7 +7346,6 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "auraflow" => Some("auraflow"),
         "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
-        "stable_cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
         "stable-diffusion-xl-v1-base" => Some("sdxl"),
         "stable-diffusion-v1-5" => Some("sd15"),
@@ -7394,7 +7386,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         "auraflow" => Some("auraflow"),
         "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
-        "cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
         _ => None,
     }
