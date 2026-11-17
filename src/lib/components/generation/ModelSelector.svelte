@@ -35,6 +35,7 @@
   import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
   import { isFlux1VaeName } from "../../utils/splitVae.js";
+  import { wanVariant } from "../../utils/wanModels.js";
 
   interface ModelFile {
     filename: string;
@@ -1002,7 +1003,9 @@
     const req =
       REQUIRED_SPLIT_ENCODERS[generation.modelFamily] ??
       registeredRequirement(generation.modelFamily, generation.mode);
-    if (req && generation.useSplitModel) {
+    // A Wan image-to-video file cannot make images: no encoder download for it.
+    const unusableWan = generation.isWan && wanVariant(generation.diffusionModel) === "notTextToImage";
+    if (req && generation.useSplitModel && !unusableWan) {
       void ensureRequiredSplitEncoder(req);
     }
   });
@@ -1026,6 +1029,13 @@
    * (so AMD/Intel/CPU users don't see entries they can't run).
    */
   let computeCapability = $state<number | null>(null);
+
+  // Wan 2.2 A14B: say which low-noise file finishes the high-noise model, or
+  // that one is missing. Image-to-video Wan files cannot make an image at all.
+  const wanSplitVariant = $derived(
+    generation.useSplitModel && generation.isWan ? wanVariant(generation.diffusionModel) : null,
+  );
+  const wanPairedLowNoise = $derived(wanSplitVariant === "a14bHigh" ? generation.wanLowNoisePartner : null);
 
   // NVFP4 weights only run natively on Blackwell (compute capability 10.0+).
   // Warn owners of older NVIDIA GPUs that they need the FP8 build instead.
@@ -2042,6 +2052,21 @@
             </div>
           {/if}
         {/each}
+      </div>
+    {/if}
+    {#if wanSplitVariant === "a14bHigh"}
+      {#if wanPairedLowNoise}
+        <div class="mt-2 rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-[11px] text-neutral-300">
+          {locale.t('generation.model.wan_low_noise_paired', { file: wanPairedLowNoise.split(/[\\/]/).pop() ?? wanPairedLowNoise })}
+        </div>
+      {:else}
+        <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+          {locale.t('generation.model.wan_low_noise_missing')}
+        </div>
+      {/if}
+    {:else if wanSplitVariant === "notTextToImage"}
+      <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+        {locale.t('generation.model.wan_not_text_to_image')}
       </div>
     {/if}
     {#if showNvfp4Warning}

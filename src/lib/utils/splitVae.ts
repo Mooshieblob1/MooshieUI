@@ -17,7 +17,6 @@ const QWEN_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "qwen",
   "qwen_edit",
   "qwen_edit_plus",
-  "wan",
   "krea2",
 ]);
 
