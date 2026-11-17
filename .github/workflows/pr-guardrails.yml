@@ -149,6 +149,11 @@ jobs:
           npx esbuild scripts/tests/architectures.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/architectures.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/architectures.test.mjs"
 
+      - name: Wan image model tests
+        run: |
+          npx esbuild scripts/tests/wanModels.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/wanModels.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/wanModels.test.mjs"
+
       - name: Moody Moss Mix detection tests
         run: |
           npx esbuild scripts/tests/moodyMoss.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/moodyMoss.test.mjs" --log-level=warning

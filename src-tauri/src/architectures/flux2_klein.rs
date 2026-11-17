@@ -161,6 +161,7 @@ const fn spec(
         modes: MODES,
         negative_prompt,
         resolution_multiple: 16,
+        controlnet: true,
         loader: None,
         text_encode: None,
     }

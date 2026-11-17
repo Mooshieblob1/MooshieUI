@@ -173,7 +173,6 @@ fn is_prose_family(family: &str) -> bool {
             | "zib"
             | "zit"
             | "qwen"
-            | "wan"
             | "ideogram4"
             | "auraflow"
             | "hunyuandit"

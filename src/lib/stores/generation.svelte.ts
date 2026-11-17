@@ -98,6 +98,7 @@ import {
 } from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import { shouldKeepSplitVae } from "../utils/splitVae.js";
+import { findWanLowNoisePartner, WAN_LOW_NOISE_SLOT, wanVariant } from "../utils/wanModels.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
@@ -1396,9 +1397,24 @@ class GenerationStore {
     return this.modelFamily === "zit";
   }
 
-  /** True when the selected model is a Wan variant. */
+  /**
+   * Wan 2.2 A14B: the installed low-noise expert that finishes the selected
+   * high-noise model. Null for every other model, or when none is installed.
+   */
+  get wanLowNoisePartner(): string | null {
+    if (!this.isWan || !this.useSplitModel || wanVariant(this.diffusionModel) !== "a14bHigh") return null;
+    // The same-name partner first; else the model panel's slot pick, when it
+    // is a text-to-video low-noise file that is still installed.
+    const slotPick = this.architectureFiles[WAN_LOW_NOISE_SLOT];
+    return (
+      findWanLowNoisePartner(this.diffusionModel, models.diffusionModels) ??
+      (slotPick && wanVariant(slotPick) === "a14bLow" && models.diffusionModels.includes(slotPick) ? slotPick : null)
+    );
+  }
+
+  /** True when the selected model is a Wan variant (Wan 2.1, 2.2 A14B, 2.2 TI2V 5B). */
   get isWan(): boolean {
-    return this.modelFamily === "wan";
+    return findFamily(this.modelFamily)?.arch.id === "wan";
   }
 
   /** True when the selected model is a Qwen variant. */
@@ -1535,11 +1551,6 @@ class GenerationStore {
   /** True when the selected model is Stable Cascade. */
   get isCascade(): boolean {
     return this.modelFamily === "cascade";
-  }
-
-  /** True when the selected model is Kolors. */
-  get isKolors(): boolean {
-    return this.modelFamily === "kolors";
   }
 
   /** True when the selected model is Mugen (SDXL with Flux2 VAE + rectified flow). */
@@ -2927,18 +2938,6 @@ class GenerationStore {
         };
         break;
 
-      // Kolors stays in the SDXL-like resolution bucket with a slightly higher CFG.
-      case "kolors":
-        preset = {
-          steps: 25,
-          cfg: 5.0,
-          samplerName: "euler",
-          scheduler: "normal",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
       // SD 1.5 keeps the smaller canvas and classic DPM++/Karras combo.
       case "sd15":
         preset = {
@@ -3000,7 +2999,6 @@ class GenerationStore {
             };
         break;
 
-      case "wan":
       case "qwen":
         preset = {
           steps: 30,
@@ -4625,11 +4623,15 @@ class GenerationStore {
         .slice(0, this.editReferenceSlotCount)
         .filter((v): v is string => !!v),
       // Only the current family's slots, so another family's files never ride along.
-      architecture_files: Object.fromEntries(
-        (findFamily(this.modelFamily)?.arch.model_slots ?? [])
-          .map((slot) => [slot.key, this.architectureFiles[slot.key] ?? ""] as const)
-          .filter(([, file]) => !!file),
-      ),
+      architecture_files: {
+        ...Object.fromEntries(
+          (findFamily(this.modelFamily)?.arch.model_slots ?? [])
+            .map((slot) => [slot.key, this.architectureFiles[slot.key] ?? ""] as const)
+            .filter(([, file]) => !!file),
+        ),
+        // Wan 2.2 A14B pairs the high-noise model with its own low-noise file.
+        ...(this.wanLowNoisePartner ? { [WAN_LOW_NOISE_SLOT]: this.wanLowNoisePartner } : {}),
+      },
       edit_reference_strength: this.editReferenceStrength,
       edit_split_screen: this.editSplitScreen,
       ...(this._mode === "image_edit" && this.isKrea2

@@ -161,6 +161,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     ],
     negative_prompt: true,
     resolution_multiple: 16,
+    controlnet: true,
     loader: Some(load),
     text_encode: None,
 };

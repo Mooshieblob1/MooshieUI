@@ -248,7 +248,6 @@ export function getPresetModel(
       return preset.models.illustrious ?? preset.models.sdxl ?? null;
     case "sdxl":
     case "pony":
-    case "kolors":
       return preset.models.sdxl ?? null;
     case "sd15":
       return preset.models.sd15 ?? null;
