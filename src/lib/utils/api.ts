@@ -1143,6 +1143,8 @@ export interface ModelSpec {
   model_kind?: string;
   /** How `model_kind` was determined: `"tensor_keys"`, `"gguf"`, or `"family"`. */
   model_kind_source?: string;
+  /** `"true"` when the file carries a VAE but no text encoders (Stability's SD3 release files). */
+  baked_vae?: string;
   /** "true" when `architecture` came from tensor-key inference, not the file. */
   architecture_inferred?: string;
   /** Comma-joined names of the `modelspec.*` fields actually declared in the file. */

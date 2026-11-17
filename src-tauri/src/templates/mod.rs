@@ -353,6 +353,10 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         );
     }
 
+    // SD3 split checks the registry cannot express: some encoder picked, and a
+    // VAE picked unless the file brings its own.
+    crate::architectures::sd3::validate(params)?;
+
     // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
     // conditioning). With any other encoder, ComfyUI fails deep inside sampling
     // with a cryptic feature-count error, so fail fast here instead.
@@ -1532,23 +1536,23 @@ pub fn is_vpred_model(params: &GenerationParams) -> bool {
 /// Returns true when the resolved architecture uses a 16-channel latent bucket.
 /// Anima/Wan (Wan2.1-based) need this — a 4-channel latent fails at decode.
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    matches!(
-        params.model_architecture.as_str(),
-        "sd3"
-            | "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "chroma"
-            | "zib"
-            | "zit"
-            | "qwen"
-            | "qwen_edit"
-            | "qwen_edit_plus"
-            | "flux1kontext"
-            | "anima"
-            | "krea2"
-    )
+    crate::architectures::sd3::is_sd3(&params.model_architecture)
+        || matches!(
+            params.model_architecture.as_str(),
+            "flux"
+                | "flux1d"
+                | "flux1s"
+                | "flux1krea"
+                | "chroma"
+                | "zib"
+                | "zit"
+                | "qwen"
+                | "qwen_edit"
+                | "qwen_edit_plus"
+                | "flux1kontext"
+                | "anima"
+                | "krea2"
+        )
 }
 
 /// Returns true when the resolved architecture uses the Flux.2 latent node.
@@ -2237,7 +2241,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if params.model_architecture == "sd3" {
+    } else if crate::architectures::sd3::is_sd3(&params.model_architecture) {
         // ModelSamplingSD3 — discrete flow matching with constant shift
         let node_id = result.next_id.to_string();
         result.workflow.insert(

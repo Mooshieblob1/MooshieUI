@@ -40,6 +40,7 @@ mod minimax_h3_image;
 mod moss_image;
 mod pixart;
 mod qwen_image_21;
+pub mod sd3;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
@@ -58,6 +59,7 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &flux2_klein::SPEC_4B_BASE,
     &wan::SPEC,
     &kolors::SPEC,
+    &sd3::SPEC,
 ];
 
 /// How prompts for a family are written.
