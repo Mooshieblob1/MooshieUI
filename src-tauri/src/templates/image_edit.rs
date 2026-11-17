@@ -25,8 +25,15 @@
 //!     loaded, sampling is otherwise plain txt2img from an empty latent at the
 //!     same size (the temporal concat requires matching spatial dims).
 //!
-//! Qwen/Kontext/FLUX 3 use only core ComfyUI nodes; Anima additionally needs the
-//! ComfyUI-Cosmos-Reference custom node package.
+//!   * MOSS-Image (`mossimage`, `mossimagebase`) — the MOSS-Image Edit LoRA
+//!     (loaded by constant filename after the user's LoRAs) plus core
+//!     `TextEncodeMOSSImageEdit` (ComfyUI 0.43.0+), which folds up to four
+//!     references into both conditionings as reference latents. Mirrors
+//!     Comfy-Org's `image_moss_image_edit` template: Skip Layer Guidance on
+//!     single layer 22, an empty Flux 2 latent at the output size.
+//!
+//! Qwen/Kontext/FLUX 3/MOSS-Image use only core ComfyUI nodes; Anima additionally
+//! needs the ComfyUI-Cosmos-Reference custom node package.
 
 use serde_json::json;
 
@@ -34,7 +41,7 @@ use super::{
     build_scheduled_conditioning, insert_vae_decode, load_model_nodes, strip_lora_tags,
     WorkflowResult,
 };
-use crate::comfyui::nodes::ANIMA_EDIT_LORA_FILENAME;
+use crate::comfyui::nodes::{ANIMA_EDIT_LORA_FILENAME, MOSS_IMAGE_EDIT_LORA_FILENAME};
 use crate::comfyui::types::GenerationParams;
 
 /// Families [`build`] has an edit graph for. `validate_generation_params`
@@ -42,7 +49,14 @@ use crate::comfyui::types::GenerationParams;
 pub fn supports_family(arch: &str) -> bool {
     matches!(
         arch,
-        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "flux3klein" | "flux3kleinbase" | "anima"
+        "flux1kontext"
+            | "qwen_edit"
+            | "qwen_edit_plus"
+            | "flux3klein"
+            | "flux3kleinbase"
+            | "mossimage"
+            | "mossimagebase"
+            | "anima"
     )
 }
 
@@ -50,11 +64,16 @@ pub fn supports_family(arch: &str) -> bool {
 /// documented limit). Mirrored by `editReferenceSlotCount` in the generation store.
 pub const FLUX3_MAX_REFERENCES: usize = 10;
 
+/// Most reference images the MOSS-Image Edit LoRA was trained on. Mirrored by
+/// `editReferenceSlotCount` in the generation store.
+pub const MOSS_MAX_REFERENCES: usize = 4;
+
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     match params.model_architecture.as_str() {
         "flux1kontext" => build_kontext(params, seed),
         "qwen_edit" | "qwen_edit_plus" => build_qwen(params, seed),
         "flux3klein" | "flux3kleinbase" => build_flux3(params, seed),
+        "mossimage" | "mossimagebase" => build_moss(params, seed),
         "anima" => build_anima_restyler(params, seed),
         // Validation guarantees a supported edit family reaches here; fall back to
         // txt2img defensively rather than panicking on an unexpected architecture.
@@ -849,6 +868,203 @@ fn build_flux3(params: &GenerationParams, seed: i64) -> WorkflowResult {
     }
 }
 
+/// `edit_format` of the MOSS-Image Edit LoRA: references go in as reference
+/// latents only, and the text encoder never sees them.
+const MOSS_EDIT_FORMAT: &str = "Moss-Image-Edit";
+
+/// MOSS-Image Edit path (Comfy-Org's `image_moss_image_edit` template).
+///
+/// The edit LoRA rides on the user's model and LoRA chain, followed by Skip
+/// Layer Guidance on single layer 22 (what the LoRA author ships). References
+/// enter the diffusion model at exactly the size they arrive, and the template
+/// samples the output at the first reference's size, so reference 1 is scaled
+/// to the output size and the others to one megapixel (16 px steps). Both
+/// conditionings come from `TextEncodeMOSSImageEdit` with the same references,
+/// as the template does: the negative describes what to avoid, not what to
+/// remove from the scene.
+fn build_moss(params: &GenerationParams, seed: i64) -> WorkflowResult {
+    let mut workflow = serde_json::Map::new();
+    let next_id: u32 = 1;
+
+    let ml = load_model_nodes(&mut workflow, next_id, params);
+    let mut next_id = ml.next_id;
+    let clip_source = ml.clip_source;
+    let vae_source = ml.vae_source;
+
+    let lora_id = next_id.to_string();
+    workflow.insert(
+        lora_id.clone(),
+        json!({
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": [ml.model_source.0.clone(), ml.model_source.1],
+                "lora_name": MOSS_IMAGE_EDIT_LORA_FILENAME,
+                "strength_model": 1.0
+            }
+        }),
+    );
+    next_id += 1;
+
+    let slg_id = next_id.to_string();
+    workflow.insert(
+        slg_id.clone(),
+        json!({
+            "class_type": "SkipLayerGuidanceDiTSimple",
+            "inputs": {
+                "model": [lora_id, 0],
+                "double_layers": "",
+                "single_layers": "22",
+                "start_percent": 0.0,
+                "end_percent": 1.0
+            }
+        }),
+    );
+    next_id += 1;
+    let model_source = (slg_id, 0u32);
+
+    let mut refs = reference_images(params);
+    if refs.is_empty() {
+        // Validation should prevent this; keep the workflow well-formed regardless.
+        refs.push("");
+    }
+    refs.truncate(MOSS_MAX_REFERENCES);
+
+    let mut scaled_ids: Vec<String> = Vec::with_capacity(refs.len());
+    for (idx, image_name) in refs.iter().enumerate() {
+        let load_id = next_id.to_string();
+        workflow.insert(
+            load_id.clone(),
+            json!({
+                "class_type": "LoadImage",
+                "inputs": { "image": image_name }
+            }),
+        );
+        next_id += 1;
+
+        let scale_id = next_id.to_string();
+        let scale = if idx == 0 {
+            json!({
+                "class_type": "ImageScale",
+                "inputs": {
+                    "image": [load_id, 0],
+                    "width": params.width,
+                    "height": params.height,
+                    "upscale_method": "lanczos",
+                    "crop": "center"
+                }
+            })
+        } else {
+            json!({
+                "class_type": "ImageScaleToTotalPixels",
+                "inputs": {
+                    "image": [load_id, 0],
+                    "upscale_method": "lanczos",
+                    "megapixels": 1.0,
+                    "resolution_steps": 16
+                }
+            })
+        };
+        workflow.insert(scale_id.clone(), scale);
+        next_id += 1;
+        scaled_ids.push(scale_id);
+    }
+
+    let mut encode = |next_id: &mut u32, prompt: &str| -> (String, u32) {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("clip".into(), json!([clip_source.0.clone(), clip_source.1]));
+        inputs.insert("prompt".into(), json!(strip_lora_tags(prompt)));
+        inputs.insert("vae".into(), json!([vae_source.0.clone(), vae_source.1]));
+        inputs.insert("edit_format".into(), json!(MOSS_EDIT_FORMAT));
+        inputs.insert("image_strength".into(), json!(1.0));
+        // Autogrow inputs travel as dotted keys in API prompts.
+        for (idx, scaled_id) in scaled_ids.iter().enumerate() {
+            inputs.insert(format!("images.image_{idx}"), json!([scaled_id.clone(), 0]));
+        }
+        let id = next_id.to_string();
+        workflow.insert(
+            id.clone(),
+            json!({ "class_type": "TextEncodeMOSSImageEdit", "inputs": inputs }),
+        );
+        *next_id += 1;
+        (id, 0)
+    };
+    let pos_source = encode(&mut next_id, &params.positive_prompt);
+    let neg_source = encode(&mut next_id, &params.negative_prompt);
+
+    // The refinement chains (upscale, face fix) run on the plain model without
+    // the edit LoRA, at other sizes; references would only pull them off the
+    // edit. They get plain text conditioning, which ComfyUI never runs unless a
+    // chain is wired to it.
+    let (refiner_positive, nid) = build_scheduled_conditioning(
+        &mut workflow,
+        next_id,
+        &clip_source,
+        &params.positive_prompt,
+        &[],
+    );
+    next_id = nid;
+    let (refiner_negative, nid) = build_scheduled_conditioning(
+        &mut workflow,
+        next_id,
+        &clip_source,
+        &params.negative_prompt,
+        &[],
+    );
+    next_id = nid;
+
+    let latent_id = next_id.to_string();
+    workflow.insert(
+        latent_id.clone(),
+        json!({
+            "class_type": "EmptyFlux2LatentImage",
+            "inputs": {
+                "width": params.width,
+                "height": params.height,
+                "batch_size": params.batch_size
+            }
+        }),
+    );
+    next_id += 1;
+
+    let sampler_id = next_id.to_string();
+    workflow.insert(
+        sampler_id.clone(),
+        json!({
+            "class_type": "KSampler",
+            "inputs": {
+                "model": [model_source.0.clone(), model_source.1],
+                "positive": [pos_source.0.clone(), pos_source.1],
+                "negative": [neg_source.0.clone(), neg_source.1],
+                "latent_image": [latent_id, 0],
+                "seed": seed,
+                "steps": params.steps,
+                "cfg": params.cfg,
+                "sampler_name": params.sampler_name,
+                "scheduler": params.scheduler,
+                "denoise": 1.0
+            }
+        }),
+    );
+    next_id += 1;
+
+    let (decode_id, next_id) =
+        insert_vae_decode(&mut workflow, next_id, &sampler_id, &vae_source, params);
+
+    WorkflowResult {
+        workflow,
+        next_id,
+        image_output: (decode_id, 0),
+        model_source,
+        clip_source,
+        positive_source: refiner_positive,
+        negative_source: refiner_negative,
+        vae_source,
+        sampler_id,
+        refiner_model_source: Some(ml.model_source.clone()),
+        base_sources: None,
+    }
+}
+
 /// Flux.1 Kontext path.
 fn build_kontext(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
@@ -1051,6 +1267,106 @@ mod tests {
         p.height = 832;
         p.batch_size = 2;
         p
+    }
+
+    fn moss_params(family: &str, refs: usize) -> GenerationParams {
+        let mut p = anima_params();
+        p.model_architecture = family.to_string();
+        p.use_split_model = true;
+        p.diffusion_model = Some("moss_image_sft_int8_convrot.safetensors".into());
+        p.clip_model = Some("qwen3.5_9b_w4a8_gptq.safetensors".into());
+        p.clip_type = Some("moss_image".into());
+        p.vae = Some("flux2-vae_small.safetensors".into());
+        p.positive_prompt = "Change only the jacket to a black wool coat.".into();
+        p.negative_prompt = "nsfw, worst quality".into();
+        p.edit_reference_images = (0..refs).map(|i| format!("ref{i}.png")).collect();
+        p.width = 1216;
+        p.height = 832;
+        p.sampler_name = "euler".into();
+        p.scheduler = "normal".into();
+        p
+    }
+
+    fn input_node<'a>(
+        result: &'a WorkflowResult,
+        link: &serde_json::Value,
+    ) -> &'a serde_json::Value {
+        &result.workflow[link[0].as_str().unwrap()]
+    }
+
+    #[test]
+    fn moss_edit_follows_the_comfy_template() {
+        for family in ["mossimage", "mossimagebase"] {
+            assert!(supports_family(family));
+            let result = build(&moss_params(family, 2), 7);
+
+            // Sampler model: SLG on single layer 22 over the edit LoRA.
+            let sampler = &result.workflow[&result.sampler_id]["inputs"];
+            let slg = input_node(&result, &sampler["model"]);
+            assert_eq!(slg["class_type"], "SkipLayerGuidanceDiTSimple");
+            assert_eq!(slg["inputs"]["single_layers"], "22");
+            assert_eq!(slg["inputs"]["double_layers"], "");
+            let lora = input_node(&result, &slg["inputs"]["model"]);
+            assert_eq!(lora["class_type"], "LoraLoaderModelOnly");
+            assert_eq!(lora["inputs"]["lora_name"], MOSS_IMAGE_EDIT_LORA_FILENAME);
+            assert_eq!(lora["inputs"]["strength_model"], 1.0);
+
+            // Both conditionings: the edit encoder with every reference.
+            for (key, prompt) in [
+                ("positive", "Change only the jacket to a black wool coat."),
+                ("negative", "nsfw, worst quality"),
+            ] {
+                let enc = input_node(&result, &sampler[key]);
+                assert_eq!(enc["class_type"], "TextEncodeMOSSImageEdit");
+                assert_eq!(enc["inputs"]["edit_format"], "Moss-Image-Edit");
+                assert_eq!(enc["inputs"]["prompt"], prompt);
+                assert!(enc["inputs"]["vae"].is_array());
+                let first = input_node(&result, &enc["inputs"]["images.image_0"]);
+                assert_eq!(first["class_type"], "ImageScale");
+                assert_eq!(first["inputs"]["width"], 1216);
+                assert_eq!(first["inputs"]["height"], 832);
+                let second = input_node(&result, &enc["inputs"]["images.image_1"]);
+                assert_eq!(second["class_type"], "ImageScaleToTotalPixels");
+                assert_eq!(second["inputs"]["megapixels"], 1.0);
+                assert_eq!(second["inputs"]["resolution_steps"], 16);
+                assert_eq!(
+                    input_node(&result, &second["inputs"]["image"])["inputs"]["image"],
+                    "ref1.png"
+                );
+                assert!(enc["inputs"].get("images.image_2").is_none());
+            }
+
+            let latent = input_node(&result, &sampler["latent_image"]);
+            assert_eq!(latent["class_type"], "EmptyFlux2LatentImage");
+            assert_eq!(latent["inputs"]["width"], 1216);
+            assert_eq!(latent["inputs"]["height"], 832);
+            assert_eq!(sampler["denoise"], 1.0);
+        }
+    }
+
+    #[test]
+    fn moss_edit_caps_references_and_keeps_refiners_off_the_edit() {
+        let result = build(&moss_params("mossimage", 6), 7);
+        assert_eq!(
+            nodes_of_type(&result, "LoadImage").len(),
+            MOSS_MAX_REFERENCES
+        );
+
+        // Upscale and face fix get the plain model and plain text conditioning:
+        // no edit LoRA, no references.
+        let refiner = result.refiner_model();
+        let refiner_node = &result.workflow[&refiner.0];
+        assert_ne!(refiner_node["class_type"], "SkipLayerGuidanceDiTSimple");
+        assert_ne!(
+            refiner_node["inputs"]["lora_name"],
+            MOSS_IMAGE_EDIT_LORA_FILENAME
+        );
+        for source in [&result.positive_source, &result.negative_source] {
+            assert_ne!(
+                result.workflow[&source.0]["class_type"],
+                "TextEncodeMOSSImageEdit"
+            );
+        }
     }
 
     #[test]

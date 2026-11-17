@@ -210,7 +210,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein, MOSS-Image or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
         ));
     }
