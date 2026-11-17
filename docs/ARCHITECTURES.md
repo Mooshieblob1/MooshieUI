@@ -29,7 +29,7 @@ hand.
 | Field | Used for |
 | --- | --- |
 | `families` | One entry per variant: id, label, filename / CivitAI `baseModel` detection (`Detect`), `turbo`, sampling defaults, Model Hub entries, optional encoder / VAE override |
-| `split_only` | Never a single-file checkpoint: always loaded split |
+| `split_only` | Never a single-file checkpoint: always loaded split (a checkpoint load is refused) |
 | `prompt_style` | Tags or natural language (prompt tools, saved characters, Enhance) |
 | `tensor_architecture` | Key from structural detection (`infer_*` in `commands/api.rs`) that means this architecture |
 | `text_encoder` | `CLIPLoader` type, filename markers, `strict`, download |
@@ -41,6 +41,7 @@ hand.
 | `modes` | Supported modes (others are refused), Image Edit reference count, files a mode loads by fixed name, per-mode sampling, optional dedicated builder |
 | `negative_prompt` | `false` hides the negative prompt box |
 | `resolution_multiple` | Size multiple the model needs (served to the frontend; round in the builder too) |
+| `controlnet` | `false` refuses requests with ControlNet on (no ControlNet fits the model) |
 
 ## Hooks
 
@@ -57,6 +58,16 @@ All optional, all plain functions:
   fully dedicated graph for one mode. The generic injections and
   `finish_workflow` (upscale, face fix, segment detail, save) still run on it;
   set `refiner_model_source` when the refiners need another model.
+
+## Bundled loader nodes
+
+A family whose model or encoder core ComfyUI cannot load, and for which no
+maintained third-party pack fits, can ship its own loader in
+`comfyui-nodes/<name>_support/` instead of a `NodePack`. Deploy it in
+`comfyui::nodes::ensure_mooshie_nodes`, list its class in
+`REQUIRED_MOOSHIE_NODE_CLASSES`, mirror it in `comfyui-nodes/install.sh`,
+`scripts/comfyui-compat/smoke_test.py` and `deploy/Dockerfile`, and emit it
+from a `loader` hook. `architectures/kolors.rs` is the example.
 
 ## MCP
 

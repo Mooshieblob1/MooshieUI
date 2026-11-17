@@ -182,6 +182,7 @@ COPY --chown=mooshie:mooshie comfyui-nodes/nodes_guidance.py ${COMFYUI_PATH}/cus
 COPY --chown=mooshie:mooshie comfyui-nodes/nodes_sdxl_flux2vae.py ${COMFYUI_PATH}/custom_nodes/
 COPY --chown=mooshie:mooshie comfyui-nodes/nodes_sdxl_flux2vae_combined.py ${COMFYUI_PATH}/custom_nodes/
 COPY --chown=mooshie:mooshie comfyui-nodes/nanosaur_support/ ${COMFYUI_PATH}/custom_nodes/nanosaur_support/
+COPY --chown=mooshie:mooshie comfyui-nodes/kolors_support/ ${COMFYUI_PATH}/custom_nodes/kolors_support/
 
 # Copy server binary, frontend, and entrypoint (root-owned: read-only to the app)
 COPY --from=builder /build/src-tauri/target/release/mooshieui-server /app/mooshieui-server

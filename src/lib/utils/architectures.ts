@@ -89,6 +89,8 @@ export interface ArchitectureSpec {
   modes: ArchitectureMode[];
   negative_prompt: boolean;
   resolution_multiple: number;
+  /** False when the backend refuses ControlNet for this architecture. */
+  controlnet: boolean;
 }
 
 let registry: ArchitectureSpec[] = [];

@@ -43,7 +43,6 @@ export const MODEL_FAMILIES = [
   "pixart",
   "hunyuandit",
   "cascade",
-  "kolors",
   "mugen",
   "nanosaur",
   "unknown",
@@ -131,7 +130,6 @@ export const MODEL_FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
   pixart: "PixArt",
   hunyuandit: "HunyuanDiT",
   cascade: "Stable Cascade",
-  kolors: "Kolors",
   mugen: "Mugen",
   nanosaur: "Nanosaur",
 };

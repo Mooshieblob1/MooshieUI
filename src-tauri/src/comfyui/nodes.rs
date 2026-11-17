@@ -310,6 +310,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieCheckpointLoaderPath",
     "MooshieDiffusionLoaderPath",
     "NanoSaurLoader",
+    "MooshieKolorsLoader",
     "ApplyTiledDiffusion",
     "MooshieAnimaTeaCache",
     "MooshieSigmaTail",
@@ -344,6 +345,17 @@ const NANOSAUR_MODEL_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_su
 const NANOSAUR_TEXT_ENCODER_PY: &str =
     include_str!("../../../comfyui-nodes/nanosaur_support/text_encoder.py");
 const NANOSAUR_VAE_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/vae.py");
+
+// ── Kolors custom node package (MooshieKolorsLoader) ─────────────────────────
+// Kolors' UNet and its ChatGLM3-6B text encoder, built on ComfyUI's own model
+// classes and ops so core CLIPTextEncode, KSampler and LoraLoader drive them.
+// The ChatGLM3 tokenizer is part of the Kolors release, so the node fetches it
+// (pinned, SHA-256 checked) beside the encoder instead of it being bundled.
+const KOLORS_INIT_PY: &str = include_str!("../../../comfyui-nodes/kolors_support/__init__.py");
+const KOLORS_NODES_PY: &str = include_str!("../../../comfyui-nodes/kolors_support/nodes.py");
+const KOLORS_MODEL_PY: &str = include_str!("../../../comfyui-nodes/kolors_support/model.py");
+const KOLORS_TEXT_ENCODER_PY: &str =
+    include_str!("../../../comfyui-nodes/kolors_support/text_encoder.py");
 
 // ── MiniMax H3 Director package (video mode) ─────────────────────────────────
 // Vendored from ComfyUI-MiniMaxH3-Director v0.1.5 (GPL-3.0); see
@@ -530,6 +542,32 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         std::fs::write(&path, content).map_err(|e| {
             format!(
                 "Failed to write nanosaur_support/{} at '{}': {}",
+                name,
+                path.display(),
+                e
+            )
+        })?;
+    }
+
+    // ── Kolors custom node package (MooshieKolorsLoader) ─────────────────────
+    let kolors_dir = custom_nodes.join("kolors_support");
+    std::fs::create_dir_all(&kolors_dir).map_err(|e| {
+        format!(
+            "Failed to create kolors_support directory at '{}': {}",
+            kolors_dir.display(),
+            e
+        )
+    })?;
+    for (name, content) in [
+        ("__init__.py", KOLORS_INIT_PY),
+        ("nodes.py", KOLORS_NODES_PY),
+        ("model.py", KOLORS_MODEL_PY),
+        ("text_encoder.py", KOLORS_TEXT_ENCODER_PY),
+    ] {
+        let path = kolors_dir.join(name);
+        std::fs::write(&path, content).map_err(|e| {
+            format!(
+                "Failed to write kolors_support/{} at '{}': {}",
                 name,
                 path.display(),
                 e
