@@ -64,6 +64,8 @@ export interface ArchitectureFamily {
   recommended: ArchitectureRecommendedModel[];
   text_encoder: ArchitectureEncoder | null;
   vae: ArchitectureVae | null;
+  /** Fixed sigma schedule the family was distilled for (Turbo models). */
+  manual_sigmas: string | null;
 }
 
 export interface ArchitectureMode {

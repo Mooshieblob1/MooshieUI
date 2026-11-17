@@ -97,6 +97,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
         }],
         text_encoder: None,
         vae: None,
+        manual_sigmas: None,
     }],
     split_only: true,
     // ChatGLM3 reads Chinese and English sentences.
