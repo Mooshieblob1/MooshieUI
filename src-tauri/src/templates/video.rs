@@ -1894,6 +1894,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_the_h3_image_model() {
+        let mut params = video_params("fl2va");
+        params.video_diffusion_model =
+            Some("minimax_h3_image_pruned_int8_convrot.safetensors".to_string());
+        let err = crate::templates::validate_generation_params(&params).unwrap_err();
+        assert!(err.contains("image model"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn validate_rejects_cross_variant_diffusion_model() {
         let mut params = video_params("fl2va");
         params.video_diffusion_model = Some("minimax_h3_ref2va_nvfp4.safetensors".to_string());

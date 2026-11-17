@@ -4,6 +4,7 @@ pub mod facefix;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
+pub mod krea2_edit;
 pub mod mesh3d;
 pub mod moody_moss;
 pub mod music;
@@ -110,6 +111,12 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             .map(str::trim)
             .unwrap_or("");
         let diffusion_lower = diffusion.to_lowercase();
+        if crate::architectures::family_from_text(diffusion).is_some() {
+            return Err(format!(
+                "\"{}\" is an image model, not a MiniMax H3 video model. Pick an H3 video diffusion model for video, or load this one in Text to Image.",
+                diffusion
+            ));
+        }
         if !video::H3_DIFFUSION_MARKERS
             .iter()
             .any(|marker| diffusion_lower.contains(marker))
@@ -213,8 +220,20 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein, Krea 2 or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
+        ));
+    }
+
+    // Krea 2 edits through an edit LoRA, which the frontend resolves to an
+    // installed file. Without one the graph would load an empty LoRA name.
+    if params.mode == "image_edit"
+        && params.model_architecture == "krea2"
+        && params.krea2_edit_lora.trim().is_empty()
+    {
+        return Err(format!(
+            "Krea 2 {} needs its edit LoRA. Download it from the Image Edit panel, then generate again.",
+            krea2_edit::method(params).label()
         ));
     }
 
@@ -538,6 +557,15 @@ fn check_locked(
 /// latent was sampled with (see `pause_locked_settings`). Steps and
 /// scheduler are locked too, except on a final stage that finishes the run.
 fn validate_pause_resume(params: &GenerationParams) -> Result<(), String> {
+    // A registered architecture's dedicated txt2img graph has no stages to
+    // stop between.
+    if pause_resume_active(params) && crate::architectures::builder(params).is_some() {
+        let label = crate::architectures::find(&params.model_architecture)
+            .map_or("This model", |(_, family)| family.label);
+        return Err(format!(
+            "{label} cannot pause partway through a generation. Clear the pause step and generate again."
+        ));
+    }
     if params.mode != "txt2img" {
         if !params.resume_stages.is_empty() {
             return Err(
@@ -1178,6 +1206,9 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // Resumed stage extras (sigma tail, painted edit). Last, because they
     // read the schedule off the fully patched model the injects above built.
     inject_resume_stage(&mut result, params, seed);
+
+    // A registered family distilled for a fixed sigma schedule (Turbo models).
+    crate::architectures::apply_manual_sigmas(&mut result, params);
 
     // The patches above rewire only the main sampler, which for Moody Moss
     // 4K HD is the second pass. The first pass must see the same model and
@@ -1892,6 +1923,22 @@ mod validation_and_seed_tests {
             p.model_architecture = arch.to_string();
             assert!(validate_generation_params(&p).is_ok(), "{arch}");
         }
+    }
+
+    #[test]
+    fn krea2_image_edit_needs_an_edit_lora() {
+        let mut p = params("image_edit", "krea2");
+        p.edit_reference_images = vec!["ref.png".to_string()];
+        p.krea2_edit_method = "identity".to_string();
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("Identity Edit needs its edit LoRA"), "{err}");
+
+        p.krea2_edit_lora = "krea2_identity_edit_v2_r128.safetensors".to_string();
+        assert!(validate_generation_params(&p).is_ok());
+
+        // txt2img on Krea 2 never needs one.
+        let p = params("txt2img", "krea2");
+        assert!(validate_generation_params(&p).is_ok());
     }
 
     #[test]
