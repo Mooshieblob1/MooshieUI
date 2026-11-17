@@ -33,6 +33,7 @@ use crate::templates::WorkflowResult;
 
 mod ming_image;
 mod minimax_h3_image;
+mod pixart;
 mod qwen_image_21;
 
 /// Every registered architecture. Add one line per architecture file.
@@ -41,6 +42,9 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &minimax_h3_image::SPEC,
     &ming_image::SPEC,
     &ming_image::LAYER_SPEC,
+    // PixArt Alpha before Sigma: its filename markers are the narrower ones.
+    &pixart::ALPHA_SPEC,
+    &pixart::SPEC,
 ];
 
 /// How prompts for a family are written.
