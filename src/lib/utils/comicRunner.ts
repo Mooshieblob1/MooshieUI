@@ -127,7 +127,9 @@ function objectUrl(png: Uint8Array): string {
 }
 
 function checkGenerationReady() {
-  if (generation.mode === "video") throw new Error(locale.t("comic.error_video_mode"));
+  // The page's own settings only ever make still images. App.svelte already
+  // keeps them on txt2img; this covers anything that switched them since.
+  if (generation.mode !== "txt2img") generation.setMode("txt2img");
   if (!generation.checkpoint) throw new Error(locale.t("generation.error_no_checkpoint"));
 }
 
@@ -135,9 +137,14 @@ function checkGenerationReady() {
 // Per-panel generation
 // ---------------------------------------------------------------------------
 
-async function generateOne(panel: ComicPanel): Promise<void> {
+/**
+ * A panel's request, built from the Comic page's own settings. Built for every
+ * panel before the first one is queued, so leaving the page mid-run (which
+ * swaps the Generate tab's settings back in) can't change the later panels.
+ */
+function panelParams(panel: ComicPanel): GenerationParams | null {
   const rect = comic.rects.get(panel.id);
-  if (!rect) return;
+  if (!rect) return null;
   const page = pageSize(comic.pageShape);
   const size = panelGenerationSize(rect, page, { width: generation.width, height: generation.height });
   // NovelAI letters the panel's dialogue from a Text: block; other models get none.
@@ -147,6 +154,10 @@ async function generateOne(panel: ComicPanel): Promise<void> {
   if (params.novelai) {
     params.novelai = { ...params.novelai, characters: [], use_coords: false, vibes: [], director_references: [] };
   }
+  return params;
+}
+
+async function generateOne(panel: ComicPanel, params: GenerationParams): Promise<void> {
   comic.setResult(panel.id, { status: "running", error: undefined, issues: null, checkError: undefined });
   const promptId = await submitGeneration(params);
   const image = await waitForImage(promptId);
@@ -170,11 +181,21 @@ export async function generatePanels(ids?: string[]): Promise<void> {
   comic.running = true;
   comic.stopRequested = false;
   for (const p of targets) comic.setResult(p.id, { status: "queued", error: undefined });
+  const prepared = new Map<string, GenerationParams | Error | null>();
+  for (const p of targets) {
+    try {
+      prepared.set(p.id, panelParams(p));
+    } catch (e) {
+      prepared.set(p.id, e instanceof Error ? e : new Error(String(e)));
+    }
+  }
   try {
     for (const panel of targets) {
       if (comic.stopRequested) break;
       try {
-        await generateOne(panel);
+        const params = prepared.get(panel.id);
+        if (params instanceof Error) throw params;
+        if (params) await generateOne(panel, params);
       } catch (e) {
         comic.setResult(panel.id, { status: "failed", error: messageOf(e) });
       }

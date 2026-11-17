@@ -846,10 +846,29 @@
   let generationDoneToast = $state<GenerationDoneToast | null>(null);
 
   function openGenerationWorkspace(workspace: "image" | "video") {
+    // Bring the Generate tab's settings back first, so the mode lands on them
+    // and not on the Comic page's own.
+    generationTabs.leavePage();
     generation.setMode(workspace === "video" ? "video" : generation.lastImageMode);
     if (workspace === "video") canvas.isCanvasMode = false;
     currentPage = "generate";
   }
+
+  // The Comic page has its own model and settings: a hidden generation tab that
+  // is swapped in while the page is open and parked again when it closes. It
+  // only ever makes still images, so it never stays in another mode.
+  $effect(() => {
+    const onComic = currentPage === "comic";
+    const livePage = generationTabs.activeTab?.page;
+    untrack(() => {
+      if (onComic && livePage !== "comic") {
+        generationTabs.enterPage("comic");
+        if (generation.mode !== "txt2img") generation.setMode("txt2img");
+      } else if (!onComic && livePage === "comic") {
+        generationTabs.leavePage();
+      }
+    });
+  });
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -4148,7 +4167,7 @@
     {:else if currentPage === "scene"}
       <ScenePage onOpenSettings={() => (currentPage = "settings")} />
     {:else if currentPage === "comic"}
-      <ComicPage onOpenGenerate={() => (currentPage = "generate")} />
+      <ComicPage />
     {:else if currentPage === "gallery"}
       <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} onMake3D={model3d.enabled ? (image) => { void model3d.useGalleryImage(image); currentPage = "model3d"; } : undefined} />
     {:else if currentPage === "modelhub"}
