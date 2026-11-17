@@ -31,8 +31,14 @@ use serde_json::{json, Map, Value};
 use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
+mod pixart;
+
 /// Every registered architecture. Add one line per architecture file.
-pub static ALL: &[&ArchitectureSpec] = &[];
+pub static ALL: &[&ArchitectureSpec] = &[
+    // PixArt Alpha before Sigma: its filename markers are the narrower ones.
+    &pixart::ALPHA_SPEC,
+    &pixart::SPEC,
+];
 
 /// How prompts for a family are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -1470,11 +1470,6 @@ class GenerationStore {
     return (this._mode === "img2img" || this._mode === "inpainting") && !!this.inputImage;
   }
 
-  /** True when the selected model is PixArt. */
-  get isPixArt(): boolean {
-    return this.modelFamily === "pixart";
-  }
-
   /** True when the selected model is HunyuanDiT. */
   get isHunyuanDit(): boolean {
     return this.modelFamily === "hunyuandit";
@@ -2843,18 +2838,6 @@ class GenerationStore {
         preset = {
           steps: 28,
           cfg: 3.5,
-          samplerName: "euler",
-          scheduler: "normal",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // PixArt ships best with conservative Euler-based defaults.
-      case "pixart":
-        preset = {
-          steps: 20,
-          cfg: 4.5,
           samplerName: "euler",
           scheduler: "normal",
           width: 1024,
