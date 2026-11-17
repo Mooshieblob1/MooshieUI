@@ -11,6 +11,8 @@
  * rather than inside a component because both callers need it.
  */
 
+import { registeredSampling } from "./architectures.js";
+
 export interface SamplingRecommendation {
   steps: number;
   cfg: number;
@@ -83,26 +85,6 @@ export const KREA2_SAMPLING: SamplingRecommendation = {
   scheduler: "sgm_uniform",
   upscaleSteps: 10,
   facefixSteps: 10,
-};
-
-/**
- * Flux.2 Klein 4B/9B distilled (and the 9B KV edit checkpoint): 4 steps
- * without guidance (Black Forest Labs' model card, ComfyUI's bundled Klein
- * templates). Matches the store's flux2klein4b/flux2klein9b preset.
- */
-export const FLUX2_KLEIN_SAMPLING: SamplingRecommendation = {
-  steps: 4,
-  cfg: 1.0,
-  samplerName: "euler",
-  scheduler: "simple",
-};
-
-/** Flux.2 Klein Base 4B/9B: ComfyUI's bundled base templates, 20 steps at CFG 5. */
-export const FLUX2_KLEIN_BASE_SAMPLING: SamplingRecommendation = {
-  steps: 20,
-  cfg: 5.0,
-  samplerName: "euler",
-  scheduler: "simple",
 };
 
 /**
@@ -204,9 +186,17 @@ export function recommendedSamplingFor(
 ): SamplingRecommendation | null {
   const name = (filename ?? "").toLowerCase();
   const fam = (family ?? "").toLowerCase();
+  // A registered architecture (src-tauri/src/architectures) declares its own.
+  const registered = registeredSampling(family);
+  if (registered) {
+    return {
+      steps: registered.steps,
+      cfg: registered.cfg,
+      samplerName: registered.sampler,
+      scheduler: registered.scheduler,
+    };
+  }
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
-  if (fam === "flux2klein4b" || fam === "flux2klein9b") return FLUX2_KLEIN_SAMPLING;
-  if (fam === "flux2klein4bbase" || fam === "flux2klein9bbase") return FLUX2_KLEIN_BASE_SAMPLING;
   if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
   if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;
   if (fam === "mossimage" || fam === "mossimagebase") {

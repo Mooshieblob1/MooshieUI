@@ -154,6 +154,9 @@ pub enum PromptStyle {
 /// (Kontext, Qwen-Image-Edit) take instructions rather than scene descriptions,
 /// so they are left out until they get a recipe of their own.
 fn is_prose_family(family: &str) -> bool {
+    if let Some(style) = crate::architectures::prompt_style(family) {
+        return style == crate::architectures::PromptStyle::Natural;
+    }
     matches!(
         family,
         "krea2"
@@ -162,10 +165,6 @@ fn is_prose_family(family: &str) -> bool {
             | "flux1s"
             | "flux1krea"
             | "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
             | "mossimage"

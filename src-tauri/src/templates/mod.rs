@@ -35,6 +35,9 @@ use crate::comfyui::types::{BaseSources, GenerationParams, PromptSegment, StageC
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
     validate_pause_resume(params)?;
+    // Registered architectures: supported modes, strict encoder and model
+    // slots, INT8-Fast and reference count (see `crate::architectures`).
+    crate::architectures::validate(params)?;
 
     // Video mode has its own parameter set; validate it and return early so
     // image-only guards (input images, ControlNet, style transfer) never
@@ -387,47 +390,6 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
-    // Flux.2 Klein builds its encoder under the "flux2" CLIP type from a Qwen3
-    // (or Qwen3-VL) model of its own size: 4B for Klein 4B, 8B for Klein 9B.
-    // The wrong size fails inside sampling with a shape error.
-    if params.use_split_model {
-        let klein_size = match params.model_architecture.as_str() {
-            "flux2klein4b" | "flux2klein4bbase" => Some((
-                "4B",
-                &crate::commands::api::FLUX2_KLEIN_4B_TEXT_ENCODER_MARKERS[..],
-                "qwen_3_4b.safetensors",
-                "qwen_3_4b",
-            )),
-            "flux2klein9b" | "flux2klein9bbase" => Some((
-                "9B",
-                &crate::commands::api::FLUX2_KLEIN_9B_TEXT_ENCODER_MARKERS[..],
-                "qwen_3_8b_fp8mixed.safetensors",
-                "qwen_3_8b",
-            )),
-            _ => None,
-        };
-        if let Some((size, markers, download, marker)) = klein_size {
-            if !matches!(params.clip_type.as_deref(), Some("flux2") | Some("flux")) {
-                return Err(format!(
-                    "Flux.2 Klein {size} requires the CLIP loader type \"flux2\". Re-select the Flux.2 Klein model so the text encoder settings refresh."
-                ));
-            }
-            let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
-            let clip_lower = clip_model.to_lowercase();
-            if clip_model.is_empty() || !markers.iter().any(|m| clip_lower.contains(m)) {
-                return Err(format!(
-                    "Flux.2 Klein {size} needs a Qwen3 {} text encoder, but {} is selected. Open the model panel to download it ({download}), or if this file really is that encoder, rename it to include \"{marker}\".",
-                    if size == "4B" { "4B" } else { "8B" },
-                    if clip_model.is_empty() {
-                        "none".to_string()
-                    } else {
-                        format!("\"{clip_model}\"")
-                    }
-                ));
-            }
-        }
-    }
-
     // MOSS-Image needs ComfyUI's "moss_image" CLIP type (v0.43.0+), which only
     // builds the MOSS encoder around Qwen3.5 9B. Anything else fails inside
     // ComfyUI with an unhelpful error, so fail fast with the fix instead.
@@ -706,11 +668,12 @@ fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
 /// families the node does not support, which causes `validate_params` to
 /// reject the combination before workflow construction.
 fn int8_fast_model_type(family: &str) -> Option<&'static str> {
+    if let Some(model_type) = crate::architectures::int8_fast_model_type(family) {
+        return model_type;
+    }
     match family {
-        // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
-        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
-            Some("flux2")
-        }
+        // Flux.2 Dev (Flux.2 Klein declares its own in the registry)
+        "flux2d" => Some("flux2"),
         // Z-Image variants (turbo and base)
         "zit" | "zib" => Some("z-image"),
         // Other mapped families
@@ -776,6 +739,16 @@ pub fn load_model_nodes(
             vae_source,
             next_id,
         };
+    } else if let Some(loader) =
+        crate::architectures::loader(params).filter(|_| params.use_split_model)
+    {
+        // A registered architecture with its own loaders (several encoders,
+        // a custom loader node, ...). The LoRA chain below runs on them.
+        let loaded = loader(workflow, next_id, params);
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else if params.use_split_model {
         // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
         // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
@@ -1002,22 +975,29 @@ pub fn build_workflow(
         return video::build(params, seed, video_metadata_supported);
     }
 
-    if pause_resume_active(params) {
-        return build_paused_workflow(params, seed);
-    }
-
-    if params.style_transfer_enabled && params.model_architecture == "anima" {
+    let workflow = if pause_resume_active(params) {
+        build_paused_workflow(params, seed)
+    } else if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
-        return finish_workflow(result, params, seed);
-    }
-
-    if moody_moss::area_detail_active(params) {
+        finish_workflow(result, params, seed)
+    } else if moody_moss::area_detail_active(params) {
         let result = moody_moss::build_area_detail(params, seed);
-        return finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed);
-    }
+        finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed)
+    } else {
+        let result = build_image_stage(params, seed);
+        finish_workflow(result, params, seed)
+    };
+    apply_architecture_text_encode(workflow, params)
+}
 
-    let result = build_image_stage(params, seed);
-    finish_workflow(result, params, seed)
+/// Rewrite prompt encoders for a registered architecture whose text encoder
+/// needs its own node. Runs on the finished graph so every template and
+/// appended chain (hires fix, face fix, segment detail) is covered.
+fn apply_architecture_text_encode(mut workflow: Value, params: &GenerationParams) -> Value {
+    if let Some(map) = workflow.as_object_mut() {
+        crate::architectures::apply_text_encode(map, params);
+    }
+    workflow
 }
 
 /// Whether this request pauses partway through sampling or resumes a paused run.
@@ -1132,11 +1112,17 @@ fn build_paused_workflow(params: &GenerationParams, seed: i64) -> Value {
 /// Build one image template plus the model/conditioning patches that every
 /// image mode shares. `finish_workflow` appends the post-process chains.
 fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
-    let mut result = match params.mode.as_str() {
-        "img2img" => img2img::build(params, seed),
-        "inpainting" => inpainting::build(params, seed),
-        "image_edit" => image_edit::build(params, seed),
-        _ => txt2img::build(params, seed),
+    // A registered architecture's dedicated graph for this mode, else the
+    // generic template.
+    let mut result = if let Some(build) = crate::architectures::builder(params) {
+        build(params, seed)
+    } else {
+        match params.mode.as_str() {
+            "img2img" => img2img::build(params, seed),
+            "inpainting" => inpainting::build(params, seed),
+            "image_edit" => image_edit::build(params, seed),
+            _ => txt2img::build(params, seed),
+        }
     };
 
     // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)

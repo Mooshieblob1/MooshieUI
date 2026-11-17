@@ -46,32 +46,22 @@ use crate::comfyui::types::GenerationParams;
 /// Families [`build`] has an edit graph for. `validate_generation_params`
 /// rejects Image Edit mode for any other.
 pub fn supports_family(arch: &str) -> bool {
+    if let Some(supported) = crate::architectures::supports_mode(arch, "image_edit") {
+        return supported;
+    }
     matches!(
         arch,
-        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "anima"
-    ) || is_klein_edit_family(arch)
-}
-
-/// Families edited through the shared Klein multi-reference graph.
-pub fn is_klein_edit_family(arch: &str) -> bool {
-    matches!(
-        arch,
-        "flux3klein"
-            | "flux3kleinbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
+        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "flux3klein" | "flux3kleinbase" | "anima"
     )
 }
 
 /// Klein checkpoints trained with real CFG, which take an encoded negative
 /// prompt. The distilled ones sample at CFG 1 against a zeroed negative.
+/// Flux.2 Klein says so in its registry spec (`negative_prompt`).
 fn klein_uses_negative_prompt(arch: &str) -> bool {
-    matches!(
-        arch,
-        "flux3kleinbase" | "flux2klein4bbase" | "flux2klein9bbase"
-    )
+    crate::architectures::find(arch)
+        .map(|(spec, _)| spec.negative_prompt)
+        .unwrap_or(arch == "flux3kleinbase")
 }
 
 /// Flux.2 Klein 9B KV, Black Forest Labs' KV-cache edit checkpoint
@@ -102,7 +92,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     match params.model_architecture.as_str() {
         "flux1kontext" => build_kontext(params, seed),
         "qwen_edit" | "qwen_edit_plus" => build_qwen(params, seed),
-        arch if is_klein_edit_family(arch) => build_klein(params, seed),
+        "flux3klein" | "flux3kleinbase" => build_klein(params, seed),
         "anima" => build_anima_restyler(params, seed),
         // Validation guarantees a supported edit family reaches here; fall back to
         // txt2img defensively rather than panicking on an unexpected architecture.
@@ -764,7 +754,9 @@ fn build_anima_restyler(params: &GenerationParams, seed: i64) -> WorkflowResult 
 /// a zeroed copy of the positive text; base checkpoints run real CFG and
 /// encode the negative prompt. The Flux.2 Klein 9B KV checkpoint runs through
 /// `FluxKVCache`, as in ComfyUI's `image_flux2_klein_9b_kv_image_edit` template.
-fn build_klein(params: &GenerationParams, seed: i64) -> WorkflowResult {
+/// Flux.2 Klein reaches it as its registered Image Edit builder
+/// (`architectures/flux2_klein.rs`).
+pub fn build_klein(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
     let next_id: u32 = 1;
 
@@ -1187,7 +1179,7 @@ mod tests {
             ("flux2klein9bbase", "flux-2-klein-base-9b-fp8.safetensors"),
         ] {
             assert!(supports_family(family), "{family}");
-            let result = build(&flux2_klein_params(family, file, 4), 7);
+            let result = build_klein(&flux2_klein_params(family, file, 4), 7);
             let multi = nodes_of_type(&result, "ReferenceMultiLatent");
             assert_eq!(multi.len(), 1, "{family}");
             assert_eq!(multi[0]["inputs"]["resolution.megapixels"], 1.0);
@@ -1212,7 +1204,7 @@ mod tests {
 
     #[test]
     fn flux2_klein_edit_caps_references_at_ten() {
-        let result = build(
+        let result = build_klein(
             &flux2_klein_params("flux2klein4b", "flux-2-klein-4b.safetensors", 14),
             7,
         );
@@ -1224,7 +1216,7 @@ mod tests {
 
     #[test]
     fn flux2_klein_9b_kv_samples_through_the_kv_cache_patch() {
-        let result = build(
+        let result = build_klein(
             &flux2_klein_params("flux2klein9b", "flux-2-klein-9b-kv-fp8.safetensors", 2),
             7,
         );
