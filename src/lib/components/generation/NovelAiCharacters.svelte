@@ -13,7 +13,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
-  import { naiEnhance } from "../../stores/naiEnhance.svelte.js";
+  import { enhanceChat } from "../../stores/enhanceChat.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { naiV5Variant, novelAiMaxCharacters } from "../../utils/novelaiModels.js";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -27,7 +27,7 @@
   const hasEnabledCharacter = $derived(characters.some((character) => character.enabled));
 
   /**
-   * Isolate outfits needs two filled boxes, and opens the V5 Enhance review,
+   * Isolate outfits needs two filled boxes, and opens the V5 Enhance review in the chat panel,
    * so it is offered on V5 models only.
    */
   const canIsolate = $derived(
@@ -36,7 +36,7 @@
   );
 
   function isolateOutfits() {
-    if (!naiEnhance.openIsolateReview()) {
+    if (!enhanceChat.openIsolateReview()) {
       gallery.showToast(locale.t("prompt_assistant.nai_isolate_nothing"), "info");
     }
   }

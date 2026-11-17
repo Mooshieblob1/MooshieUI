@@ -1001,6 +1001,8 @@ export interface PromptAssistantOpts {
    * (`characterNotesBlock`). Only an external provider is sent it.
    */
   character_notes?: string;
+  /** From the Enhance chat: the answer may start with a `<reply>` block for the user. */
+  chat?: boolean;
 }
 
 /** Ids of the external LLM providers the backend registry knows about. */
