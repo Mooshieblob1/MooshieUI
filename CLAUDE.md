@@ -36,8 +36,8 @@ Project skills live in `.claude/skills/` (synced from canonical `.agents/skills/
 | Skill | Purpose |
 |-------|---------|
 | `push` | Land changes on main via squash-merged PR, no release |
-| `release` | Full release: version bump, changelog, PR, bot triage, tag, CI |
-| `quickrelease` | Release without local checks/bot triage (trivial, pre-verified changes only) |
+| `release` | Full release: version bump, changelog, PR gated on the full CI suite (Apple Silicon included), tag, watch Build & Release |
+| `quickrelease` | Release gated only on the required checks + dependency audit (pre-verified changes only) |
 | `cleanup` | Branch hygiene + bot PR comment triage |
 | `pre-commit-check` | Pre-commit/pre-PR validation (build gates, conventions, i18n) |
 | `add-tauri-command` | New Tauri command: Rust handler + lib.rs registration + TS wrapper |
