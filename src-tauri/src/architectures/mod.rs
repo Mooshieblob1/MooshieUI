@@ -31,10 +31,11 @@ use serde_json::{json, Map, Value};
 use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
+mod minimax_h3_image;
 mod qwen_image_21;
 
 /// Every registered architecture. Add one line per architecture file.
-pub static ALL: &[&ArchitectureSpec] = &[&qwen_image_21::SPEC];
+pub static ALL: &[&ArchitectureSpec] = &[&qwen_image_21::SPEC, &minimax_h3_image::SPEC];
 
 /// How prompts for a family are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
