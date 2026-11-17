@@ -67,6 +67,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
             recommended: &[],
             text_encoder: None,
             vae: None,
+            manual_sigmas: None,
         },
         // SD3.5 Large Turbo: distilled to 4 steps without guidance (Stability's card).
         FamilySpec {
@@ -95,6 +96,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
             recommended: &[],
             text_encoder: None,
             vae: None,
+            manual_sigmas: None,
         },
     ],
     split_only: false,

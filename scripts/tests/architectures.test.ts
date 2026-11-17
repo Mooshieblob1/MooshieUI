@@ -27,6 +27,7 @@ const fixture: ArchitectureSpec = {
       recommended: [],
       text_encoder: null,
       vae: null,
+      manual_sigmas: null,
     },
   ],
   split_only: true,
