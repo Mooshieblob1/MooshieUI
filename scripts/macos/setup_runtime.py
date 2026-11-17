@@ -24,6 +24,21 @@ def run(*args, **kwargs):
     return subprocess.run(list(map(str, args)), check=True, **kwargs)
 
 
+def rust_str(field, fields, source):
+    """A `&'static str` field of a package entry: a string literal, or the
+    name of a `const NAME: &str = "...";` in the same file."""
+    literal = re.search(rf'{field}:\s*"([^"]+)"', fields)
+    if literal:
+        return literal.group(1)
+    named = re.search(rf'{field}:\s*([A-Z][A-Z0-9_]*)', fields)
+    if not named:
+        raise RuntimeError(f"Cannot read {field} in {fields!r}")
+    const = re.search(rf'const {named.group(1)}:\s*&str\s*=\s*"([^"]+)";', source)
+    if not const:
+        raise RuntimeError(f"Cannot resolve {named.group(1)}")
+    return const.group(1)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--uv", required=True, type=Path)
@@ -79,7 +94,7 @@ def main():
             fields = package.group(1)
             name = re.search(r'name:\s*"([^"]+)"', fields).group(1)
             url = re.search(r'git_url:\s*"([^"]+)"', fields).group(1)
-            rev = re.search(r'git_rev:\s*"([^"]+)"', fields).group(1)
+            rev = rust_str(r"git_rev", fields, nodes_source)
             subdir = re.search(r'source_subdir:\s*Some\("([^"]+)"\)', fields)
             req_file = re.search(r'requirements_file:\s*"([^"]+)"', fields).group(1)
             classes = re.search(r'verify_nodes:\s*&\[(.*?)\]', fields, re.S).group(1)
