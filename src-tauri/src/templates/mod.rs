@@ -332,13 +332,13 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         );
     }
 
-    // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
-    // conditioning). With any other encoder, ComfyUI fails deep inside sampling
-    // with a cryptic feature-count error, so fail fast here instead.
     // SD3 split checks the registry cannot express: some encoder picked, and a
     // VAE picked unless the file brings its own.
     crate::architectures::sd3::validate(params)?;
 
+    // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
+    // conditioning). With any other encoder, ComfyUI fails deep inside sampling
+    // with a cryptic feature-count error, so fail fast here instead.
     if params.model_architecture == "krea2" && params.use_split_model {
         if params.clip_type.as_deref() != Some("krea2") {
             return Err(
