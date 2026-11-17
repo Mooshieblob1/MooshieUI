@@ -18,6 +18,7 @@
 - **Anima Style Reference: Art style**: a third method that takes a picture's palette, shading and texture without its subject. No downloads needed.
 - **Qwen-Image 2.1 and Turbo**: detected correctly now (they were treated as Qwen-Image 1 and could not generate), with the right encoder and VAE, a Model Hub download, and Image Edit with up to 10 references. Turbo runs on its 8-step schedule.
 - **MiniMax-H3-Image**: txt2img and Image Edit (up to 16 references) for the 33B model, with INT8 and W4A8 Model Hub downloads and the pDMD 2-step mode.
+- **PixArt Sigma and Alpha**: now generate (they were only detected before), loaded split with the T5-XXL encoder and the right VAE, with the encoder downloaded when missing.
 - **Krea 2 in Image Edit**: pick General Edit, Identity Edit or Style Reference under Edit LoRA, with 1 or 2 reference images.
 - **Transparent backgrounds kept**: images with a real alpha channel now save with their transparency instead of being made opaque.
 
