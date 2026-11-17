@@ -266,7 +266,11 @@ fn load(
     let model_id = next_id.to_string();
     workflow.insert(
         model_id.clone(),
-        crate::templates::split_diffusion_model_node(params),
+        crate::templates::unet_loader_node(
+            trimmed(params.diffusion_model.as_deref()),
+            crate::templates::misplaced_model_path(params),
+            params,
+        ),
     );
     next_id += 1;
 
