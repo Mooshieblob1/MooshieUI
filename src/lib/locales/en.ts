@@ -1258,6 +1258,7 @@ const en: Record<string, string> = {
   "generation.model.downloading_file": "Downloading {name}...",
   "generation.model.downloading_checkpoint": "Downloading checkpoint...",
   "generation.model.auto_download": "auto-download",
+  "generation.model.notice.minimax_h3_image": "Community license: written permission from MiniMax is needed above US$1M yearly revenue or to offer it as a hosted service.",
   "generation.model.cloud_badge": "cloud",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Architecture:",

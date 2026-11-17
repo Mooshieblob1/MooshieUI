@@ -1115,6 +1115,7 @@ const ko: Record<string, string> = {
   "generation.model.downloading_file": "{name} 다운로드 중...",
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
   "generation.model.auto_download": "자동 다운로드",
+  "generation.model.notice.minimax_h3_image": "커뮤니티 라이선스: 연 매출 100만 달러 초과 또는 호스팅 서비스로 제공하려면 MiniMax의 서면 허가가 필요합니다.",
   "generation.model.cloud_badge": "클라우드",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "아키텍처:",
