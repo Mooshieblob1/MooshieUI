@@ -1,5 +1,25 @@
 # Changelog
 
+## What's New in v2.4.0
+
+### Model architecture registry
+- **One spec per model family**: model families are now declared once in a registry that drives detection, text encoders, VAE, extra model files, modes, sampling defaults and Model Hub downloads. Most of the families below moved onto it in this release.
+
+### New and fixed models
+- **Flux.2 Klein (4B, 9B, Base)**: Image Edit with up to 10 reference images, Flux.2 Klein 9B KV support, and the right defaults (4 steps at CFG 1 for distilled, 20 steps at CFG 5 for Base). Renamed Klein files are no longer mistaken for Flux.1.
+- **Flux.1 from split files**: dev, schnell, Krea and Kontext now load T5-XXL and CLIP-L together, as ComfyUI does. Split Flux.1 images were silently degraded before.
+- **SD3 and SD3.5 from split files**: CLIP-L, CLIP-G and T5-XXL load together, Stability's own release files work, and SD3.5 Large Turbo runs on its 4-step schedule. New Model Hub downloads for the encoders and GGUF models.
+- **Stable Cascade**: now generates, with the official stage C plus stage B workflow for txt2img, img2img, hires fix and face fix. The stage B checkpoint downloads when missing.
+- **Wan 2.x as an image model**: Wan 2.1, Wan 2.2 A14B (high and low noise experts) and Wan 2.2 TI2V 5B now generate stills with the umT5 encoder and the right VAE.
+- **Kolors**: now generates, through a bundled ChatGLM3 loader node. No third-party node pack needed, and a Model Hub entry for the full set of files.
+- **Ming-Image 0.1**: Design (txt2img, img2img, inpainting, Image Edit with up to 8 references, and a Transparent background option) and Layer.
+- **MOSS-Image**: Image Edit with the MOSS-Image Edit LoRA and up to 4 references.
+
+### Video
+- **Your own LoRAs on MiniMax H3**: Video mode has its own LoRA list for community H3 LoRAs (orbit, character swap, camera motion, style). They stay on for retake and 2x refinement, and acceleration adapters are never applied twice.
+
+---
+
 ## What's New in v2.3.51
 
 ### Comic pages
