@@ -50,6 +50,13 @@ pub async fn generate(
     )
     .await
     .map_err(AppError::InvalidWorkflow)?;
+    crate::comfyui::nodes::verify_architecture_nodes_for_generation(
+        &state.http_client,
+        &state.base_url().await,
+        &params,
+    )
+    .await
+    .map_err(AppError::InvalidWorkflow)?;
     // A remote ComfyUI lists and loads its own model files, so the local
     // install is only consulted when the app launched the server itself.
     let models_are_local = {
