@@ -1128,6 +1128,17 @@ fn colmajor_alpha_offset(bit_idx: usize, width: usize, height: usize, bpp: usize
     (y * width + x) * bpp + (bpp - bpp / 4)
 }
 
+/// True when any of the first `pixels` pixels of an RGBA buffer (`bpp` 4 for
+/// 8-bit, 8 for 16-bit) is see-through. Every alpha byte of 0xFE or 0xFF counts
+/// as opaque, so an image that already carries a stealth payload (which only
+/// flips the lowest alpha bit) can still be re-embedded.
+fn has_transparency(rgba: &[u8], pixels: usize, bpp: usize) -> bool {
+    let alpha_bytes = bpp / 4;
+    rgba.chunks_exact(bpp)
+        .take(pixels)
+        .any(|px| px[bpp - alpha_bytes..].iter().any(|&b| b < 0xFE))
+}
+
 /// Encode metadata into the alpha channel LSBs of an RGBA pixel buffer.
 /// Works for both 8-bit (bpp=4) and 16-bit (bpp=8) RGBA.
 /// Format: magic_bits(120) + length_bits(32) + gzip_data_bits
@@ -1142,6 +1153,13 @@ fn encode_stealth_alpha(
     let w = width as usize;
     let h = height as usize;
     check_pixel_len(rgba, width, height, bpp)?;
+
+    // The payload lives in the alpha channel and starts by making it opaque,
+    // which would erase a real transparent background (Ming-Image, Qwen-Image
+    // 2.1). Such an image keeps its alpha; callers fall back to text chunks.
+    if has_transparency(rgba, w * h, bpp) {
+        return Err("image has transparency, which stealth metadata would overwrite".into());
+    }
 
     // Set all alpha to max first (matching the Python implementation)
     // For 8-bit: alpha byte = 0xFF. For 16-bit: alpha = 0xFFFF (two bytes).
@@ -2908,6 +2926,93 @@ mod tests {
             "test prompt hello world"
         );
         assert_eq!(read_params.get("seed").unwrap(), "12345");
+    }
+
+    /// An RGBA PNG whose left half is see-through, the way Ming-Image and
+    /// Qwen-Image 2.1 return a transparent background.
+    fn make_transparent_png(width: u32, height: u32, bit16: bool) -> Vec<u8> {
+        let mut output = Vec::new();
+        let bpp: usize = if bit16 { 8 } else { 4 };
+        let mut buf = vec![200u8; (width as usize) * (height as usize) * bpp];
+        for (i, px) in buf.chunks_exact_mut(bpp).enumerate() {
+            if (i % width as usize) < (width as usize) / 2 {
+                px[bpp - bpp / 4..].fill(0);
+            } else {
+                px[bpp - bpp / 4..].fill(0xFF);
+            }
+        }
+        {
+            let mut encoder = png::Encoder::new(&mut output, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(if bit16 {
+                png::BitDepth::Sixteen
+            } else {
+                png::BitDepth::Eight
+            });
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&buf).unwrap();
+        }
+        output
+    }
+
+    fn png_alpha_bytes(png_bytes: &[u8]) -> Vec<u8> {
+        let decoder = png::Decoder::new(Cursor::new(png_bytes));
+        let mut reader = decoder.read_info().unwrap();
+        let (color, depth) = reader.output_color_type();
+        assert_eq!(color, png::ColorType::Rgba);
+        let bpp = if depth == png::BitDepth::Sixteen {
+            8
+        } else {
+            4
+        };
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        buf.truncate(info.buffer_size());
+        buf.chunks_exact(bpp)
+            .flat_map(|px| px[bpp - bpp / 4..].to_vec())
+            .collect()
+    }
+
+    #[test]
+    fn stealth_modes_keep_a_transparent_background() {
+        let params = test_params();
+        for bit16 in [false, true] {
+            let png_bytes = make_transparent_png(64, 64, bit16);
+            let alpha = png_alpha_bytes(&png_bytes);
+            for mode in [MetadataMode::StealthAlpha, MetadataMode::Both] {
+                let embedded = embed_png_metadata(&png_bytes, &params, mode).unwrap();
+                assert_eq!(png_alpha_bytes(&embedded), alpha, "{mode:?} bit16={bit16}");
+                // The settings still travel, in the text chunk.
+                assert_params_match(&read_png_metadata(&embedded).unwrap().unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn rgba8_save_keeps_a_transparent_background() {
+        let (w, h) = (64u32, 64u32);
+        let mut rgba = make_test_rgba(w, h);
+        for px in rgba.chunks_exact_mut(4).take(100) {
+            px[3] = 0;
+        }
+        let png = encode_png_with_metadata_rgba8(&rgba, w, h, &test_params(), MetadataMode::Both)
+            .unwrap();
+        let alpha: Vec<u8> = rgba.chunks_exact(4).map(|px| px[3]).collect();
+        assert_eq!(png_alpha_bytes(&png), alpha);
+        assert_params_match(&read_png_metadata(&png).unwrap().unwrap());
+    }
+
+    #[test]
+    fn an_existing_stealth_payload_does_not_count_as_transparency() {
+        let png_bytes = make_test_png(64, 64, false);
+        let mut first = test_params();
+        first.insert("seed".to_string(), "1".to_string());
+        let once = embed_png_metadata(&png_bytes, &first, MetadataMode::StealthAlpha).unwrap();
+        let mut second = test_params();
+        second.insert("seed".to_string(), "2".to_string());
+        let twice = embed_png_metadata(&once, &second, MetadataMode::StealthAlpha).unwrap();
+        let back = read_stealth_alpha(&twice).unwrap().unwrap();
+        assert_eq!(back.get("seed").map(String::as_str), Some("2"));
     }
 
     #[test]
