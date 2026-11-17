@@ -28,7 +28,6 @@ export const MODEL_FAMILIES = [
   "chroma",
   "zib",
   "zit",
-  "wan",
   "qwen",
   "qwen_edit",
   "qwen_edit_plus",
@@ -114,7 +113,6 @@ export const MODEL_FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
   chroma: "Chroma",
   zib: "Z-Image Base",
   zit: "Z-Image Turbo",
-  wan: "Wan",
   qwen: "Qwen",
   ideogram4: "Ideogram 4.0",
   krea2: "Krea 2",
@@ -193,7 +191,6 @@ export function signalsIndicateVPred(signals: ModelFamilySignals): boolean {
  */
 export const SPLIT_ONLY_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "anima",
-  "wan",
   "qwen",
   "qwen_edit",
   "qwen_edit_plus",

@@ -4972,7 +4972,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
     matches!(
         family,
         "anima"
-            | "wan"
             | "qwen"
             | "qwen_edit"
             | "qwen_edit_plus"
@@ -5001,7 +5000,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 31] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5020,7 +5019,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
     "chroma",
     "zib",
     "zit",
-    "wan",
     "qwen",
     "qwen_edit",
     "qwen_edit_plus",
@@ -5059,7 +5057,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan" | "krea2"
+        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "krea2"
     ) {
         // The stock file first: decoder fine-tunes such as
         // `qwen_image_sharp_vae_bf16` sort ahead of it but are an opt-in look,
@@ -5157,7 +5155,7 @@ fn recommended_clip_from_available(
         return Some((preferred, "wan"));
     }
 
-    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan") {
+    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen2.5-vl", "qwen_2.5_vl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "qwen_image"));
@@ -7580,7 +7578,6 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
     }
     match architecture {
         "anima" => Some("anima"),
-        "wan2.1" => Some("wan"),
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
@@ -7630,7 +7627,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // SFT and Base share every tensor key: one class for both.
         "mossimage" | "mossimagebase" => Some("moss_image"),
         "anima" => Some("anima"),
-        "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),
         "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
