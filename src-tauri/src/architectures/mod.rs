@@ -31,6 +31,7 @@ use serde_json::{json, Map, Value};
 use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
+mod flux2_klein;
 mod kolors;
 mod ming_image;
 mod minimax_h3_image;
@@ -46,6 +47,11 @@ pub static ALL: &[&ArchitectureSpec] = &[
     // PixArt Alpha before Sigma: its filename markers are the narrower ones.
     &pixart::ALPHA_SPEC,
     &pixart::SPEC,
+    // Distilled before Base: a purely structural match picks the first.
+    &flux2_klein::SPEC_9B,
+    &flux2_klein::SPEC_9B_BASE,
+    &flux2_klein::SPEC_4B,
+    &flux2_klein::SPEC_4B_BASE,
     &kolors::SPEC,
 ];
 
@@ -495,7 +501,10 @@ fn validate_in(registry: &[&ArchitectureSpec], params: &GenerationParams) -> Res
             modes.join(", ")
         ));
     }
-    if checked_mode && arch.split_only && !params.use_split_model {
+    // A family with its own loader node cannot load through the checkpoint
+    // loader at all. Without one, a single-file checkpoint may still work
+    // (an all-in-one repack), so it is left to ComfyUI.
+    if checked_mode && arch.split_only && arch.loader.is_some() && !params.use_split_model {
         return Err(format!(
             "{} loads as separate files, not as a checkpoint: put the model in models/diffusion_models and pick it there with its text encoder. The Model Hub entry downloads all of them.",
             family.label
@@ -771,6 +780,10 @@ mod tests {
         unreachable!("not called in these tests")
     }
 
+    fn fixture_loader(_: &mut Map<String, Value>, _: u32, _: &GenerationParams) -> LoaderOutput {
+        unreachable!("not called in these tests")
+    }
+
     fn fixture_encode(params: &GenerationParams, clip: &Value, text: &str) -> Value {
         json!({
             "class_type": "FixtureEncode",
@@ -970,7 +983,18 @@ mod tests {
 
         let mut p = params("fixture", "txt2img");
         p.use_split_model = false;
-        assert!(validate_in(&r, &p).unwrap_err().contains("separate files"));
+        p.architecture_files.clear();
+        assert!(
+            validate_in(&r, &p).is_ok(),
+            "no loader hook: a checkpoint may work"
+        );
+        let with_loader: &'static ArchitectureSpec = Box::leak(Box::new(ArchitectureSpec {
+            loader: Some(fixture_loader),
+            ..FIXTURE
+        }));
+        assert!(validate_in(&[with_loader], &p)
+            .unwrap_err()
+            .contains("separate files"));
 
         let mut p = params("fixture", "txt2img");
         p.controlnet = Some(

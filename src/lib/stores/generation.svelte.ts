@@ -1493,9 +1493,9 @@ class GenerationStore {
 
   /**
    * Number of reference-image slots the current edit family accepts: 10 for
-   * FLUX 3 Klein (FLUX3_MAX_REFERENCES in templates/image_edit.rs), 3 for
+   * FLUX 3 Klein (KLEIN_MAX_REFERENCES in templates/image_edit.rs), 3 for
    * Qwen Edit Plus, 2 for Krea 2 (scene + person, or two style references),
-   * else 1.
+   * else 1. Registered families declare their own.
    */
   get editReferenceSlotCount(): number {
     const registered = registeredMode(this.modelFamily, "image_edit");
@@ -1573,8 +1573,6 @@ class GenerationStore {
       "flux1s",
       "flux1krea",
       "zit",
-      "flux2klein9b",
-      "flux2klein4b",
       "flux3klein",
     ].includes(this.modelFamily);
   }
@@ -2781,10 +2779,8 @@ class GenerationStore {
         };
         break;
 
-      // Flux.2 base.
+      // Flux.2 Dev.
       case "flux2d":
-      case "flux2klein9bbase":
-      case "flux2klein4bbase":
         preset = {
           steps: 20,
           cfg: 4.0,
@@ -2836,19 +2832,6 @@ class GenerationStore {
           steps: 25,
           cfg: 2.5,
           samplerName: "er_sde",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Flux.2 klein.
-      case "flux2klein9b":
-      case "flux2klein4b":
-        preset = {
-          steps: 9,
-          cfg: 1.5,
-          samplerName: "euler",
           scheduler: "simple",
           width: 1024,
           height: 1024,

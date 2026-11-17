@@ -29,7 +29,7 @@ hand.
 | Field | Used for |
 | --- | --- |
 | `families` | One entry per variant: id, label, filename / CivitAI `baseModel` detection (`Detect`), `turbo`, sampling defaults, Model Hub entries, optional encoder / VAE override |
-| `split_only` | Never a single-file checkpoint: always loaded split (a checkpoint load is refused) |
+| `split_only` | Never a single-file checkpoint: always loaded split (with a `loader` hook, a checkpoint load is refused) |
 | `prompt_style` | Tags or natural language (prompt tools, saved characters, Enhance) |
 | `tensor_architecture` | Key from structural detection (`infer_*` in `commands/api.rs`) that means this architecture |
 | `text_encoder` | `CLIPLoader` type, filename markers, `strict`, download |

@@ -331,7 +331,7 @@ pub fn definitions() -> Value {
         json!({
             "name": "edit_image",
             "title": "Edit image",
-            "description": "Edit an image with an instruction using an Image Edit model (Qwen Image Edit, Flux Kontext, FLUX 3 Klein, Anima ReStyler). Reuses the owner's last Image Edit setup for the model (get_status lists setups with mode image_edit). The first image is edited; more images are references (Klein takes up to 10). Saved to the gallery like generate_image.",
+            "description": "Edit an image with an instruction using an Image Edit model (Qwen Image Edit, Flux Kontext, Flux.2 Klein, FLUX 3 Klein, Anima ReStyler). Reuses the owner's last Image Edit setup for the model (get_status lists setups with mode image_edit). The first image is edited; more images are references (Klein takes up to 10). Saved to the gallery like generate_image.",
             "inputSchema": {
                 "type": "object",
                 "required": ["images", "prompt"],
