@@ -95,6 +95,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
             }],
             text_encoder: None,
             vae: None,
+            manual_sigmas: None,
         },
         FamilySpec {
             family: "wan22a14b",
@@ -123,6 +124,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
             recommended: &[],
             text_encoder: None,
             vae: None,
+            manual_sigmas: None,
         },
         FamilySpec {
             family: "wan22ti2v",
@@ -165,6 +167,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
                 strict: true,
                 download: Some(WAN22_VAE),
             }),
+            manual_sigmas: None,
         },
     ],
     split_only: true,
