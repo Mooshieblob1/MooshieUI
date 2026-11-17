@@ -5483,6 +5483,39 @@ mod split_model_pairing_tests {
     }
 
     #[test]
+    fn minimax_h3_image_tensor_keys_are_not_the_video_model() {
+        let image = [
+            "video_patch_proj.weight",
+            "condition_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+            "final_layer.video_out.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&image).as_deref(),
+            Some("minimax_h3_image")
+        );
+        assert_eq!(
+            family_from_architecture("minimax_h3_image"),
+            Some("minimaxh3image")
+        );
+        let video = [
+            "video_patch_proj.weight",
+            "audio_patch_proj.weight",
+            "condition_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+        ];
+        assert_ne!(
+            infer_architecture_from_key_names(&video).as_deref(),
+            Some("minimax_h3_image")
+        );
+        assert_eq!(
+            model_family_from_filename("minimax_h3_image_pruned_int8_convrot.safetensors"),
+            Some("minimaxh3image")
+        );
+        assert!(family_requires_separate_clip("minimaxh3image"));
+    }
+
+    #[test]
     fn qwen_image_21_tensor_keys_are_not_qwen_image_1() {
         let v21 = [
             "txt_in.text_norm.weight",
@@ -7184,6 +7217,17 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     let starts_with = |p: &str| bare.iter().any(|k| k.starts_with(p));
     let contains = |s: &str| bare.iter().any(|k| k.contains(s));
     let has_key = |name: &str| bare.contains(&name);
+
+    // MiniMax-H3-Image: the H3 DiT (video patch embed plus the conditioning
+    // projection) without the audio stream, as in ComfyUI's
+    // `model_detection` (`minimax_h3_image` when `audio_patch_proj` is absent).
+    // The audio-video H3 model is a video-mode model and keeps falling through.
+    if has_key("video_patch_proj.weight")
+        && has_key("condition_proj.weight")
+        && !has_key("audio_patch_proj.weight")
+    {
+        return Some("minimax_h3_image".to_string());
+    }
 
     // Anima: a Cosmos-Predict2 backbone plus a Qwen3 LLM adapter. Checked before
     // plain Cosmos because it shares that backbone — the adapter is what makes

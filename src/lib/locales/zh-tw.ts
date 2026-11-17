@@ -1115,6 +1115,7 @@ const zhTw: Record<string, string> = {
   "generation.model.downloading_file": "正在下載 {name}...",
   "generation.model.downloading_checkpoint": "正在下載檢查點...",
   "generation.model.auto_download": "自動下載",
+  "generation.model.notice.minimax_h3_image": "社群授權：年營收超過 100 萬美元或作為託管服務提供時，需取得 MiniMax 的書面許可。",
   "generation.model.cloud_badge": "雲端",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "架構:",

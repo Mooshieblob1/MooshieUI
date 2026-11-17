@@ -1115,6 +1115,7 @@ const it: Record<string, string> = {
   "generation.model.downloading_file": "Download di {name}...",
   "generation.model.downloading_checkpoint": "Download checkpoint...",
   "generation.model.auto_download": "Download automatico",
+  "generation.model.notice.minimax_h3_image": "Licenza community: serve un permesso scritto di MiniMax oltre 1 milione di US$ di fatturato annuo o per offrirlo come servizio ospitato.",
   "generation.model.cloud_badge": "Cloud",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Architettura:",

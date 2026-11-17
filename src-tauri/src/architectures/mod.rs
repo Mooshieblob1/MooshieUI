@@ -31,12 +31,14 @@ use serde_json::{json, Map, Value};
 use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
+mod minimax_h3_image;
 mod pixart;
 mod qwen_image_21;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
     &qwen_image_21::SPEC,
+    &minimax_h3_image::SPEC,
     // PixArt Alpha before Sigma: its filename markers are the narrower ones.
     &pixart::ALPHA_SPEC,
     &pixart::SPEC,
