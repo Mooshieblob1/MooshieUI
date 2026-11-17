@@ -37,6 +37,10 @@ pub struct PromptAssistantOpts {
     /// notes. Added to the system prompt for external providers only.
     #[serde(default)]
     pub character_notes: Option<String>,
+    /// From the Enhance chat panel: the model may talk back in a `<reply>`
+    /// block, which is split off before the prompt is repaired.
+    #[serde(default)]
+    pub chat: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -335,8 +339,10 @@ async fn run_generation(
     };
     let system = grounding::system_prompt(style, mode, &candidates, opts.include_artists)
         + &grounding::reference_rules(images.len())
-        + &notes;
-    let max_tokens = grounding::max_tokens(mode, opts.length.as_deref());
+        + &notes
+        + grounding::chat_rules(opts.chat, &purpose);
+    let max_tokens = grounding::max_tokens(mode, opts.length.as_deref())
+        + grounding::chat_reply_tokens(opts.chat);
     let user = grounding::user_turn(mode, input, instruction, &labels);
 
     let history = crate::prompt_assistant::history::sanitize(
@@ -357,16 +363,16 @@ async fn run_generation(
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
     // "blue hair" prompt). No-op for Compose and for prose families.
-    // With character notes the reply may end in facts to save to memory:
-    // split them off before the prompt is finished, and hand them back after it.
-    let (raw, facts) = if notes.is_empty() {
-        (raw, String::new())
-    } else {
-        grounding::split_memory(&raw)
-    };
-    Ok(grounding::with_memory(
-        grounding::finish(input, &raw, mode, style),
-        &facts,
+    // With character notes the reply may end in facts to save to memory, and in
+    // the chat a `<reply>` block may come first: both are split off before the
+    // prompt is finished, and handed back around it.
+    Ok(grounding::finish_answer(
+        input,
+        raw,
+        mode,
+        style,
+        !notes.is_empty(),
+        opts.chat && purpose == "natural_language",
     ))
 }
 
