@@ -4422,6 +4422,7 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.chat_thinking": "思考中...",
   "prompt_assistant.chat_needs_v5": "切換到 V5 模型才能套用。",
   "prompt_assistant.chat_copy_failed": "無法複製",
+  "prompt_assistant.chat_show_earlier": "顯示較早的訊息 ({count})",
   "prompt_assistant.session_continue_placeholder": "提出修改、給予回饋或提問...",
   "prompt_assistant.busy_generation": "正在生成中 — 請等待完成後再試。",
   "prompt_assistant.no_model": "未安裝提示詞助手模型。",

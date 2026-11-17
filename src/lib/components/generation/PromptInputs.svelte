@@ -124,16 +124,11 @@
   const isNaiV5 = $derived(!isVideoMode && generation.isNovelAi && naiVariant !== null);
 
   /**
-   * Every Enhance opens the same chat panel, on the conversation for the
-   * current model (V5, video, or every other image model). The button toggles
-   * it: a second press hides the panel and keeps the conversation.
+   * Every Enhance opens the same chat window, on the conversation for the
+   * current model (V5, video, or every other image model).
    */
   function onEnhanceClick() {
     const action = isVideoMode ? "enhance_h3" : isNaiV5 ? "enhance_nai" : "enhance";
-    if (enhanceChat.open) {
-      enhanceChat.close();
-      return;
-    }
     if (!promptAssistant.isAvailable) {
       _pendingAction = action;
       promptAssistant.setupModalOpen = true;
@@ -289,10 +284,7 @@
              The image one grounds on danbooru tags, which is exactly wrong for
              H3 prose, so video mode swaps it out rather than offering both. -->
         <button
-          class="rounded-lg border px-2 py-0.5 text-[10px] hover:bg-neutral-800 disabled:opacity-40 {enhanceChat.open
-            ? 'border-indigo-500/70 text-neutral-100'
-            : 'border-neutral-600 text-neutral-300'}"
-          aria-pressed={enhanceChat.open}
+          class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
           title={isVideoMode
             ? locale.t("prompt_assistant.enhance_h3_tooltip")
             : isNaiV5

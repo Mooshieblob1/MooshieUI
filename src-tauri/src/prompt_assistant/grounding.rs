@@ -529,7 +529,7 @@ pub fn with_memory(prompt: String, facts: &str) -> String {
 /// The Enhance chat rules, added to the system prompt when the request comes
 /// from the Enhance chat panel. Mirrors `CHAT_CLAUSE` in
 /// src/lib/utils/enhanceChat.ts; change them together.
-pub const CHAT_RULES: &str = "\n\nCHAT\nYou are talking with the user in a chat panel beside their prompt box. \
+pub const CHAT_RULES: &str = "\n\nCHAT\nYou are talking with the user in a chat window opened from their prompt box. \
 They can read everything you write and answer you, and the app applies your prompt for them when they \
 choose to.\n- When the newest message asks for a prompt or a change to one, answer with the prompt \
 exactly as the output format above says. You may put one short <reply>...</reply> block before it: a \

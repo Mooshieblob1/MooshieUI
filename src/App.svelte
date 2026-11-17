@@ -45,9 +45,6 @@
   import { stopScorePreview } from "./lib/utils/musicPreview.js";
   $effect(() => { const id = musicCover.nativeJob?.prompt_id; if (id) untrack(() => music.rememberPrompt(id)); });
   $effect(() => { if (music.playing) untrack(stopScorePreview); });
-  // The Enhance chat shows the conversation for the model being used, so a
-  // model or mode switch while it is open switches the conversation too.
-  $effect(() => { const flow = currentEnhanceFlow(); if (enhanceChat.open) untrack(() => enhanceChat.setFlow(flow)); });
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { loraKeywords } from "./lib/stores/loraKeywords.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -83,8 +80,7 @@
   import ImageEditor from "./lib/components/editor/ImageEditor.svelte";
   import { imageEditor } from "./lib/stores/imageEditor.svelte.js";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
-  import EnhanceChatPanel from "./lib/components/generation/EnhanceChatPanel.svelte";
-  import { enhanceChat, currentEnhanceFlow } from "./lib/stores/enhanceChat.svelte.js";
+  import EnhanceChatModal from "./lib/components/generation/EnhanceChatModal.svelte";
   import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
   import NaiImageEnhanceModal from "./lib/components/generation/NaiImageEnhanceModal.svelte";
   import StyleCreatorLightbox from "./lib/components/generation/StyleCreatorLightbox.svelte";
@@ -5005,7 +5001,7 @@
 <!-- The Enhance chat, every flow. Mounted at root because it is app wide and
      outlives the prompt panel that opens it: switching to the gallery
      mid-conversation must not discard an answer not yet applied. -->
-<EnhanceChatPanel />
+<EnhanceChatModal />
 <DirectorToolsModal />
 
 <!-- NovelAI image Enhance. Root-mounted for the same reason Director Tools is:

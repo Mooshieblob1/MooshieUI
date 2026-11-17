@@ -4530,6 +4530,7 @@ const en: Record<string, string> = {
   "prompt_assistant.chat_thinking": "Thinking...",
   "prompt_assistant.chat_needs_v5": "Switch to a V5 model to apply this.",
   "prompt_assistant.chat_copy_failed": "Couldn't copy",
+  "prompt_assistant.chat_show_earlier": "Show earlier messages ({count})",
   "prompt_assistant.session_continue_placeholder": "Ask for a change, give feedback or ask a question...",
   "prompt_assistant.busy_generation": "Busy generating — try again after it finishes.",
   "prompt_assistant.no_model": "No prompt assistant model installed.",

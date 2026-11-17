@@ -23,10 +23,10 @@ import type { NaiCanonPriority } from "../utils/naiSavedCharacters.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
 
 /**
- * The Enhance chat: a conversation with the prompt assistant in a panel beside
- * the prompt box, for every image model (`general`), NovelAI V5 (`nai`) and
+ * The Enhance chat: a conversation with the prompt assistant in a modal chat
+ * window opened from the prompt box, for every image model (`general`), NovelAI V5 (`nai`) and
  * video (`h3`). Each flow keeps its own conversation, which is the persistent
- * Enhance session (`enhancerSessions`): what the panel shows is exactly what is
+ * Enhance session (`enhancerSessions`): what the window shows is exactly what is
  * sent back to the model as history.
  *
  * Every answer is still a prompt in the target model's own format, and the
@@ -45,7 +45,7 @@ import type { NaiLanguage } from "../utils/naiLanguage.js";
  * state over the conversation and the review.
  */
 
-/** Which part of the panel is showing: the conversation, or a V5 answer's per-field review. */
+/** Which part of the window is showing: the conversation, or a V5 answer's per-field review. */
 export type EnhanceChatView = "chat" | "review";
 
 export type EnhanceFlow = "nai" | "general" | "h3";
@@ -235,7 +235,7 @@ export interface ChatAnswerMeta {
   applied?: boolean;
 }
 
-/** One exchange as the panel shows it. */
+/** One exchange as the window shows it. */
 export interface ChatExchange {
   at: number;
   /** What the user sent, as the session stores it. */
@@ -250,10 +250,10 @@ export interface ChatExchange {
 export type EnhanceLength = "short" | "medium" | "detailed";
 
 class EnhanceChatStore {
-  /** Whether the panel is showing. Closing it keeps the conversation and any answer on its way. */
+  /** Whether the chat window is showing. Closing it keeps the conversation and any answer on its way. */
   open = $state(false);
   view = $state<EnhanceChatView>("chat");
-  /** Which conversation the panel shows. Follows the model while the panel is open. */
+  /** Which conversation the window shows, picked from the model when it opens. */
   flow = $state<EnhanceFlow>("general");
   /** The message being typed. */
   input = $state("");
@@ -274,18 +274,18 @@ class EnhanceChatStore {
   /**
    * V5 only: answers are written for V5 Full, and applying one also switches to
    * V5 Full with the Curated-leaning settings in `NOVELAI_CURATE`. Off each
-   * time the panel opens, so it only happens when ticked.
+   * time the window opens, so it only happens when ticked.
    */
   curate = $state(false);
   /**
    * V5 only: which side wins when a saved canon character's card disagrees
-   * with canon. Back to saved each time the panel opens; an answer that lists
+   * with canon. Back to saved each time the window opens; an answer that lists
    * differences offers the switch as a redo.
    */
   canonPriority = $state<NaiCanonPriority>("saved");
   /**
    * Whether saved characters' memory notes go out with the request. On each
-   * time the panel opens; unticked, a request works from the text and saved
+   * time the window opens; unticked, a request works from the text and saved
    * looks alone, the clean start for a composition that keeps failing.
    */
   useMemory = $state(true);
@@ -305,7 +305,7 @@ class EnhanceChatStore {
     return this.busyFlow !== null;
   }
 
-  /** Open the panel on a flow's conversation. */
+  /** Open the chat window on a flow's conversation. */
   openChat(flow: EnhanceFlow = currentEnhanceFlow()): void {
     if (!this.open) {
       this.curate = false;
@@ -317,19 +317,11 @@ class EnhanceChatStore {
     this.open = true;
   }
 
-  /** Hide the panel. The conversation stays, and an answer on its way still lands in it. */
+  /** Close the window. The conversation stays, and an answer on its way still lands in it. */
   close(): void {
     this.open = false;
     this.view = "chat";
     this.pending = null;
-  }
-
-  /** Switch the panel to another flow's conversation, as when the model changes. */
-  setFlow(flow: EnhanceFlow): void {
-    if (this.flow === flow) return;
-    this.flow = flow;
-    // A review is written for one model's boxes; it does not survive a switch.
-    if (this.view === "review") this.backToChat();
   }
 
   backToChat(): void {
@@ -723,7 +715,7 @@ class EnhanceChatStore {
   }
 
   /**
-   * Write the ticked rows and go back to the conversation.
+   * Write the ticked rows and close the window.
    *
    * Character slots are built in one pass rather than through
    * `addNovelAiCharacter`, so that an answer proposing three new characters
@@ -767,8 +759,6 @@ class EnhanceChatStore {
     generation.saveSettings();
 
     this.markApplied(p.answerAt);
-    this.view = "chat";
-    this.pending = null;
     this.finishApply("nai");
   }
 
@@ -794,7 +784,13 @@ class EnhanceChatStore {
     };
   }
 
+  /**
+   * Close the window once an answer is in the prompt box, the way the Enhance
+   * modal always has: the next step is generating. Enhance reopens it on the
+   * same conversation.
+   */
   private finishApply(flow: EnhanceFlow): void {
+    this.close();
     this.undoFlow = flow;
     this.showUndo = true;
     if (this.undoTimer) clearTimeout(this.undoTimer);

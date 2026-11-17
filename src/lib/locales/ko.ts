@@ -4422,6 +4422,7 @@ const ko: Record<string, string> = {
   "prompt_assistant.chat_thinking": "생각 중...",
   "prompt_assistant.chat_needs_v5": "적용하려면 V5 모델로 전환하세요.",
   "prompt_assistant.chat_copy_failed": "복사하지 못했습니다",
+  "prompt_assistant.chat_show_earlier": "이전 메시지 보기 ({count})",
   "prompt_assistant.session_continue_placeholder": "변경 요청, 피드백 또는 질문을 입력하세요...",
   "prompt_assistant.busy_generation": "생성 중입니다 — 완료 후 다시 시도하세요.",
   "prompt_assistant.no_model": "프롬프트 어시스턴트 모델이 설치되지 않았습니다.",
