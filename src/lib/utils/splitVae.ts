@@ -9,6 +9,7 @@
  * say) shares the latent format and must survive model reloads and reconnects.
  */
 import type { ModelFamily } from "./modelFamily.js";
+import { findFamily, registeredVae, vaeMatches } from "./architectures.js";
 
 /** Anima, Qwen Image and Krea 2 decode with the 16-channel Qwen Image VAE (a Wan 2.1 VAE fine-tune). */
 const QWEN_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
@@ -60,6 +61,10 @@ export function isFlux1VaeName(filename: string): boolean {
  */
 export function splitVaeFitsFamily(vae: string, family: ModelFamily | null | undefined): boolean | null {
   if (!family) return null;
+  if (findFamily(family)) {
+    const spec = registeredVae(family);
+    return spec ? vaeMatches(spec, vae) : null;
+  }
   const lower = vae.toLowerCase();
   if (QWEN_LATENT_FAMILIES.has(family)) {
     // Wan 2.1's VAE shares the latent format; Wan 2.2's 48-channel VAE does not.
