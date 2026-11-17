@@ -1139,6 +1139,7 @@ const de: Record<string, string> = {
   "generation.model.downloading_file": "{name} wird heruntergeladen...",
   "generation.model.downloading_checkpoint": "Checkpoint wird heruntergeladen...",
   "generation.model.auto_download": "Automatischer Download",
+  "generation.model.notice.minimax_h3_image": "Community-Lizenz: Ab 1 Mio. US$ Jahresumsatz oder für einen gehosteten Dienst ist eine schriftliche Erlaubnis von MiniMax nötig.",
   "generation.model.cloud_badge": "Cloud",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Architektur:",

@@ -1132,6 +1132,7 @@ const ja: Record<string, string> = {
   "generation.model.downloading_file": "{name} をダウンロード中...",
   "generation.model.downloading_checkpoint": "チェックポイントをダウンロード中...",
   "generation.model.auto_download": "自動ダウンロード",
+  "generation.model.notice.minimax_h3_image": "コミュニティライセンス：年間売上が100万米ドルを超える場合、またはホスティングサービスとして提供する場合は MiniMax の書面による許可が必要です。",
   "generation.model.cloud_badge": "クラウド",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "アーキテクチャ:",

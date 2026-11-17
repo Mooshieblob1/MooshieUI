@@ -1118,6 +1118,7 @@ const ru: Record<string, string> = {
   "generation.model.downloading_file": "Скачивание {name}...",
   "generation.model.downloading_checkpoint": "Скачивание чекпоинта...",
   "generation.model.auto_download": "Автоскачивание",
+  "generation.model.notice.minimax_h3_image": "Лицензия сообщества: при годовом доходе свыше 1 млн долларов США или для размещённого сервиса нужно письменное разрешение MiniMax.",
   "generation.model.cloud_badge": "Облако",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Архитектура:",

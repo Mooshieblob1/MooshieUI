@@ -113,6 +113,12 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             .map(str::trim)
             .unwrap_or("");
         let diffusion_lower = diffusion.to_lowercase();
+        if crate::architectures::family_from_text(diffusion).is_some() {
+            return Err(format!(
+                "\"{}\" is an image model, not a MiniMax H3 video model. Pick an H3 video diffusion model for video, or load this one in Text to Image.",
+                diffusion
+            ));
+        }
         if !video::H3_DIFFUSION_MARKERS
             .iter()
             .any(|marker| diffusion_lower.contains(marker))
@@ -553,6 +559,15 @@ fn check_locked(
 /// latent was sampled with (see `pause_locked_settings`). Steps and
 /// scheduler are locked too, except on a final stage that finishes the run.
 fn validate_pause_resume(params: &GenerationParams) -> Result<(), String> {
+    // A registered architecture's dedicated txt2img graph has no stages to
+    // stop between.
+    if pause_resume_active(params) && crate::architectures::builder(params).is_some() {
+        let label = crate::architectures::find(&params.model_architecture)
+            .map_or("This model", |(_, family)| family.label);
+        return Err(format!(
+            "{label} cannot pause partway through a generation. Clear the pause step and generate again."
+        ));
+    }
     if params.mode != "txt2img" {
         if !params.resume_stages.is_empty() {
             return Err(

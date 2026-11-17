@@ -1243,6 +1243,7 @@ const pl: Record<string, string> = {
   "generation.model.downloading_file": "Pobieranie {name}...",
   "generation.model.downloading_checkpoint": "Pobieranie Checkpointu...",
   "generation.model.auto_download": "automatyczne pobieranie",
+  "generation.model.notice.minimax_h3_image": "Licencja społecznościowa: powyżej 1 mln USD rocznego przychodu lub przy udostępnianiu jako usługa hostowana potrzebna jest pisemna zgoda MiniMax.",
   "generation.model.cloud_badge": "Chmura",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "Architektura:",
