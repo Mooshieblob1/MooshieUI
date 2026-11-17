@@ -1311,6 +1311,7 @@ const pl: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "Obraz 1 to obraz do edycji. Dodaj osobę jako obraz 2, aby ją w nim umieścić (\"posadź osobę z drugiego obrazu przy stole\"). Nie przekraczaj 2 MP.",
   "generation.image_edit.krea2_style_note": "Użyj jednego lub dwóch obrazów stylu; prompt opisuje nowy obraz.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein przyjmuje do 10 obrazów referencyjnych. W prompcie odwołuj się do nich według kolejności (pierwszy obraz, drugi obraz) i opisz cały wynik, nie tylko zmianę.",
+  "generation.image_edit.registered_note": "{model} przyjmuje do {n} obrazów referencyjnych. Opisz tylko zmianę i napisz, do czego służy każdy dodatkowy obraz (na przykład \"strój z obrazu 2\").",
   "generation.image_edit.camera.title": "Kąt kamery",
   "generation.image_edit.camera.tip": "Fotografuje referencję ponownie z innego kąta. Dodaje opis ujęcia na początku promptu oraz LoRA Multiple-Angles, jeśli jest zainstalowana (trenowana na Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Kierunek",
@@ -1333,6 +1334,7 @@ const pl: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler przerysowuje postać z obrazu referencyjnego w stylu Anima. Wynik ma rozmiar obrazu referencyjnego. Wymaga LoRA Anima Edit (pobieranie z Civitai; może być potrzebny klucz API lub VPN).",
   "generation.image_edit.anima_lora_download": "Pobierz Anima Edit LoRA (350 MB)",
+  "generation.image_edit.required_download": "Pobierz {file}",
   "generation.image_edit.reference_strength": "Siła referencji",
   "generation.image_edit.reference_strength_tip":
     "Jak mocno wynik podąża za obrazem referencyjnym. 1.0 zachowuje kompozycję i detale; obniż (spróbuj 0.5-0.8), aby prompt i styl mocniej zmieniały obraz.",

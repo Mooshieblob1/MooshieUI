@@ -1190,6 +1190,8 @@ class GenerationStore {
   setMode(mode: GenerationMode): void {
     if (mode !== "video") this.lastImageMode = mode;
     if (mode === this._mode) return;
+    const modeSampling = (m: GenerationMode) => !!registeredMode(this.modelFamily, m)?.sampling;
+    const swapsSampling = modeSampling(this._mode) || modeSampling(mode);
 
     this.modeToggles = {
       ...this.modeToggles,
@@ -1208,6 +1210,9 @@ class GenerationStore {
     // Leaving the inpaint canvas abandons the painted edit; the paused run
     // itself stays until discarded.
     if (mode !== "inpainting") this.pausedEditArmed = false;
+    // A registered mode with its own sampling (MOSS-Image's edit LoRA) swaps
+    // the sampler settings in and out of that mode, keeping the size.
+    if (swapsSampling && !this.isNovelAi) this.applyModelSpecificPreset(true);
   }
 
   readPromptBucket(): PromptBucket {
@@ -2319,12 +2324,12 @@ class GenerationStore {
     this.scheduler = this.resolveAvailableOption(models.schedulers, preferred, "normal");
   }
 
-  private applyResolvedPreset(preset: ModelPreset) {
+  private applyResolvedPreset(preset: ModelPreset, keepSize = false) {
     this.steps = preset.steps;
     this.cfg = preset.cfg;
     this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
-    if (!this.hasAuthoritativeEditSource && !this.resolutionLocked) {
+    if (!keepSize && !this.hasAuthoritativeEditSource && !this.resolutionLocked) {
       this.width = preset.width;
       this.height = preset.height;
     }
@@ -2692,7 +2697,11 @@ class GenerationStore {
     });
   }
 
-  applyModelSpecificPreset() {
+  /**
+   * `keepSize` is set on a mode switch: only the sampling changes, the size
+   * the user has in that mode stays.
+   */
+  applyModelSpecificPreset(keepSize = false) {
     // Autocomplete tag-set sync on model-family change is handled by an
     // $effect in App.svelte (stores must not import each other).
 
@@ -2703,7 +2712,13 @@ class GenerationStore {
       this.useSplitModel && this.diffusionModel ? `dm:${this.diffusionModel}` : `cp:${this.checkpoint}`,
       this.modelFamily,
       this.modelTurboVariant,
-    ].join("|");
+      // A registered mode with its own sampling (an edit LoRA) re-applies
+      // when the user switches into or out of that mode. Absent otherwise, so
+      // every other model keeps the key it already saved.
+      registeredMode(this.modelFamily, this._mode)?.sampling ? `mode:${this._mode}` : null,
+    ]
+      .filter((part) => part !== null)
+      .join("|");
     if (presetKey === this.modelPresetAppliedKey) return;
     const isFirstPresetApplication = !this.modelPresetAppliedKey;
     // Advanced Mode: after the first-ever application, preserve the user's generation
@@ -2716,6 +2731,16 @@ class GenerationStore {
 
     this.modelPresetAppliedKey = presetKey;
 
+    // Moody Moss Mix, a MOSS-Image fine-tune, follows its author's 4K HD
+    // workflow outside Image Edit: Euler on simple at 25 steps and CFG 3, from
+    // a 2:3 base of about 1 MP that the second pass takes to 1.5x, and the
+    // workflow's negative prompt when the box is empty.
+    if (this.isMoodyMossMix && this._mode !== "image_edit") {
+      if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
+      this.applyResolvedPreset({ ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE }, keepSize);
+      return;
+    }
+
     // A registered architecture declares its own defaults (per mode when the
     // mode wants other settings, e.g. an edit LoRA).
     const registered = registeredSampling(this.modelFamily, this._mode);
@@ -2727,7 +2752,7 @@ class GenerationStore {
         scheduler: registered.scheduler,
         width: registered.width,
         height: registered.height,
-      });
+      }, keepSize);
       return;
     }
 
@@ -2825,29 +2850,6 @@ class GenerationStore {
           steps: 50,
           cfg: 3.5,
           samplerName: "euler",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // MOSS-Image SFT and Base: Comfy-Org's bundled templates (25 steps at
-      // CFG 2.5, er_sde on simple, 1024x1024), with a real negative prompt.
-      // Moody Moss Mix follows its author's 4K HD workflow instead: Euler on
-      // simple at 25 steps and CFG 3, from a 2:3 base of about 1 MP that the
-      // second pass takes to 1.5x, and the workflow's negative prompt when
-      // the box is empty.
-      case "mossimage":
-      case "mossimagebase":
-        if (this.isMoodyMossMix) {
-          preset = { ...MOODY_MOSS_SAMPLING, ...MOODY_MOSS_BASE_SIZE };
-          if (!this.negativePrompt.trim()) this.negativePrompt = MOODY_MOSS_NEGATIVE;
-          break;
-        }
-        preset = {
-          steps: 25,
-          cfg: 2.5,
-          samplerName: "er_sde",
           scheduler: "simple",
           width: 1024,
           height: 1024,
@@ -3049,7 +3051,7 @@ class GenerationStore {
         break;
     }
 
-    this.applyResolvedPreset(preset);
+    this.applyResolvedPreset(preset, keepSize);
   }
 
   async loadSettings() {

@@ -1234,6 +1234,7 @@ const es: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "La imagen 1 es la que se edita. Añade una persona como imagen 2 para colocarla en ella (\"pon a la persona de la segunda imagen en la mesa\"). No pases de 2 MP.",
   "generation.image_edit.krea2_style_note": "Usa una o dos imágenes de estilo; el prompt describe la imagen nueva.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein admite hasta 10 imágenes de referencia. Nómbralas en el prompt por su orden (la primera imagen, la segunda imagen) y describe el resultado completo, no solo el cambio.",
+  "generation.image_edit.registered_note": "{model} admite hasta {n} imágenes de referencia. Describe solo el cambio y di para qué sirve cada imagen extra (por ejemplo, \"el atuendo de la imagen 2\").",
   "generation.image_edit.camera.title": "Ángulo de cámara",
   "generation.image_edit.camera.tip": "Vuelve a fotografiar la referencia desde otro ángulo. Añade una descripción del plano al inicio del prompt y, si está instalada, la LoRA Multiple-Angles (entrenada con Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Dirección",
@@ -1256,6 +1257,7 @@ const es: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler redibuja el personaje de tu imagen de referencia en el estilo Anima. La salida coincide con el tamaño de la referencia. Requiere el LoRA Anima Edit (descarga de Civitai; puede necesitarse una clave API o VPN).",
   "generation.image_edit.anima_lora_download": "Descargar Anima Edit LoRA (350 MB)",
+  "generation.image_edit.required_download": "Descargar {file}",
   "generation.image_edit.reference_strength": "Fuerza de referencia",
   "generation.image_edit.reference_strength_tip":
     "Cuánto sigue el resultado a la imagen de referencia. 1.0 mantiene la composición y los detalles; bájalo (prueba 0.5-0.8) para que el prompt y el estilo cambien más la imagen.",
