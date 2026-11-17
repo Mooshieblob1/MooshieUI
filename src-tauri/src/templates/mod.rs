@@ -1179,6 +1179,9 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // read the schedule off the fully patched model the injects above built.
     inject_resume_stage(&mut result, params, seed);
 
+    // A registered family distilled for a fixed sigma schedule (Turbo models).
+    crate::architectures::apply_manual_sigmas(&mut result, params);
+
     // The patches above rewire only the main sampler, which for Moody Moss
     // 4K HD is the second pass. The first pass must see the same model and
     // conditioning.
