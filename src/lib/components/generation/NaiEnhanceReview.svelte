@@ -112,7 +112,7 @@
   }
 
   // A review is written for one model's boxes, so leaving V5 while it is on
-  // screen sends the panel back to the conversation.
+  // screen sends the window back to the conversation.
   $effect(() => {
     if (enhanceChat.view === "review" && pending && !naiV5Variant(generation.checkpoint)) {
       enhanceChat.backToChat();

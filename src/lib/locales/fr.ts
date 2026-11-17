@@ -4448,6 +4448,7 @@ const fr: Record<string, string> = {
   "prompt_assistant.chat_thinking": "Réflexion...",
   "prompt_assistant.chat_needs_v5": "Passez à un modèle V5 pour appliquer ceci.",
   "prompt_assistant.chat_copy_failed": "Copie impossible",
+  "prompt_assistant.chat_show_earlier": "Afficher les messages précédents ({count})",
   "prompt_assistant.session_continue_placeholder": "Demandez une modification, donnez votre avis ou posez une question...",
   "prompt_assistant.busy_generation": "Génération en cours — réessayez une fois terminé.",
   "prompt_assistant.no_model": "Aucun modèle d'assistant de prompt installé.",

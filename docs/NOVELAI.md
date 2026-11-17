@@ -3789,3 +3789,48 @@ reply split. The conversation needs a real LLM.
 | 9 | Restart the app, open Enhance | The conversation is still there and its answers still apply |
 
 **Do not skip:** 1, 3, 5.
+
+### 2026-11-17 - Enhance chat back in a modal
+
+**Requested by:** the user: "this new enhance is hugely laggy, even when
+nothing is on the enhance menu, fix that and restore it back to the modal as a
+chat window pls".
+
+**What changed.** The Enhance chat is a modal chat window again
+(`EnhanceChatModal.svelte`, was `EnhanceChatPanel.svelte`) instead of a panel
+docked over the right of the app. Everything inside it is the same chat.
+
+- The window is centred over a dimmed app, full screen on a phone. The V5
+  review widens it to the old modal's width. Escape or a click beside it closes
+  it (a click beside the review does not), and the conversation stays.
+- Applying an answer (Replace, Append, Apply, or Apply selected in the review)
+  closes the window, the way the old modal did, and Undo appears under the
+  prompt box. Enhance opens the window again on the same conversation.
+- The panel's drag-to-resize, its remembered width, and the switch of
+  conversation when the model changed while it was open are gone: the window
+  covers the model picker, and each opening picks the conversation from the
+  model.
+- A session keeps up to 50 exchanges, each a full prompt. The window now
+  renders the newest 12 and a "Show earlier messages" button for the rest, so
+  opening a long chat stays light.
+- The gallery picker for reference images mounts only while picking.
+- The chat rules tell the model it is in a chat window opened from the prompt
+  box (`CHAT_CLAUSE` and `grounding::CHAT_RULES` changed together).
+
+The lag itself did not reproduce in a browser with a faked backend: opening,
+typing and idling cost the same with the panel open as closed. The panel was
+the one Enhance surface that stayed on screen over the live app; the modal
+shell is the one the old Enhance used without complaints.
+
+**MCP:** no change.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Press Enhance, type a scene, Enter | A centred chat window opens; the answer arrives in it |
+| 2 | Press Replace (or Apply on V5) | The window closes, the prompt box changes, Undo shows |
+| 3 | Press Enhance again | The same conversation, newest answer at the bottom, marked Applied |
+| 4 | V5 answer, Review | The window widens to the two column review; Apply selected closes it |
+| 5 | A chat with more than 12 exchanges | "Show earlier messages" at the top loads 12 more per press |
+| 6 | Use the app with the chat open and closed | No stutter typing, scrolling or switching |
+
+**Do not skip:** 1, 2, 6.

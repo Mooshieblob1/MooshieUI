@@ -4422,6 +4422,7 @@ const it: Record<string, string> = {
   "prompt_assistant.chat_thinking": "Sto pensando...",
   "prompt_assistant.chat_needs_v5": "Passa a un modello V5 per applicarlo.",
   "prompt_assistant.chat_copy_failed": "Impossibile copiare",
+  "prompt_assistant.chat_show_earlier": "Mostra i messaggi precedenti ({count})",
   "prompt_assistant.session_continue_placeholder": "Chiedi una modifica, dai un parere o fai una domanda...",
   "prompt_assistant.busy_generation": "Generazione in corso — riprova al termine.",
   "prompt_assistant.no_model": "Nessun modello assistente prompt installato.",

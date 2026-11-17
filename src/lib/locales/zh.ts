@@ -4423,6 +4423,7 @@ const zh: Record<string, string> = {
   "prompt_assistant.chat_thinking": "思考中...",
   "prompt_assistant.chat_needs_v5": "切换到 V5 模型才能应用。",
   "prompt_assistant.chat_copy_failed": "无法复制",
+  "prompt_assistant.chat_show_earlier": "显示更早的消息 ({count})",
   "prompt_assistant.session_continue_placeholder": "提出修改、给出反馈或提问...",
   "prompt_assistant.busy_generation": "正在生成中 — 请等待完成后重试。",
   "prompt_assistant.no_model": "未安装提示词助手模型。",

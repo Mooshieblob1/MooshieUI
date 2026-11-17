@@ -4425,6 +4425,7 @@ const de: Record<string, string> = {
   "prompt_assistant.chat_thinking": "Denkt nach...",
   "prompt_assistant.chat_needs_v5": "Wechsle zu einem V5-Modell, um das zu übernehmen.",
   "prompt_assistant.chat_copy_failed": "Kopieren fehlgeschlagen",
+  "prompt_assistant.chat_show_earlier": "Ältere Nachrichten anzeigen ({count})",
   "prompt_assistant.session_continue_placeholder": "Änderung wünschen, Feedback geben oder eine Frage stellen...",
   "prompt_assistant.busy_generation": "Beschäftigt mit Generierung — nach Abschluss erneut versuchen.",
   "prompt_assistant.no_model": "Kein Prompt-Assistent-Modell installiert.",

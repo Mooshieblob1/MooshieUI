@@ -4447,6 +4447,7 @@ const ja: Record<string, string> = {
   "prompt_assistant.chat_thinking": "考え中...",
   "prompt_assistant.chat_needs_v5": "適用するにはV5モデルに切り替えてください。",
   "prompt_assistant.chat_copy_failed": "コピーできませんでした",
+  "prompt_assistant.chat_show_earlier": "以前のメッセージを表示 ({count})",
   "prompt_assistant.session_continue_placeholder": "変更の依頼、感想、質問を入力...",
   "prompt_assistant.busy_generation": "生成中です — 完了後にもう一度お試しください。",
   "prompt_assistant.no_model": "プロンプトアシスタントモデルがインストールされていません。",

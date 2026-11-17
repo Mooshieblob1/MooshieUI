@@ -4422,6 +4422,7 @@ const ru: Record<string, string> = {
   "prompt_assistant.chat_thinking": "Думаю...",
   "prompt_assistant.chat_needs_v5": "Переключитесь на модель V5, чтобы применить это.",
   "prompt_assistant.chat_copy_failed": "Не удалось скопировать",
+  "prompt_assistant.chat_show_earlier": "Показать предыдущие сообщения ({count})",
   "prompt_assistant.session_continue_placeholder": "Попросите изменение, дайте отзыв или задайте вопрос...",
   "prompt_assistant.busy_generation": "Идёт генерация — попробуйте после завершения.",
   "prompt_assistant.no_model": "Модель ассистента промптов не установлена.",
