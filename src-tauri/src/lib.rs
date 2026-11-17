@@ -1,3 +1,4 @@
+pub mod architectures;
 pub mod attention;
 pub mod auth;
 pub mod cloud;
@@ -649,6 +650,7 @@ pub fn run() {
             commands::server::kill_port_process,
             commands::server::check_server_health,
             commands::api::get_models,
+            commands::api::list_model_architectures,
             commands::api::get_samplers,
             commands::api::get_embeddings,
             commands::api::get_queue,

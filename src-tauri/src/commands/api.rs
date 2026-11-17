@@ -93,6 +93,16 @@ pub async fn get_models(
     state.get_models_list(&category).await
 }
 
+/// The registered model architectures (`crate::architectures`) for the
+/// frontend: labels, detection-free metadata, sampling defaults, Model Hub
+/// entries, encoder / VAE / slot downloads and supported modes.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_model_architectures(
+) -> Result<Vec<&'static crate::architectures::ArchitectureSpec>, AppError> {
+    Ok(crate::architectures::list())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_samplers(state: State<'_, Arc<AppState>>) -> Result<SamplerInfo, AppError> {
@@ -4556,6 +4566,10 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.is_empty() {
         return "unknown";
     }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&bm) {
+        return family;
+    }
 
     if bm.contains("nanosaur") {
         return "nanosaur";
@@ -4691,6 +4705,10 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     let name = filename.trim().to_lowercase();
     if name.is_empty() {
         return None;
+    }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&name) {
+        return Some(family);
     }
 
     if name.contains("nanosaur") {
@@ -5018,6 +5036,9 @@ fn companion_text_encoder(model_filename: &str, encoders: &[String]) -> Option<S
 /// [`src/lib/utils/modelFamily.ts`](../../../src/lib/utils/modelFamily.ts) — keep
 /// the two in sync.
 pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
+    if let Some(split_only) = crate::architectures::requires_separate_clip(family) {
+        return split_only;
+    }
     matches!(
         family,
         "anima"
@@ -5045,6 +5066,55 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
     )
 }
 
+/// Families with hand-written arms in this file and the templates, mirrored
+/// by `MODEL_FAMILIES` in `src/lib/utils/modelFamily.ts`. A registered
+/// architecture (`crate::architectures`) must not reuse one of these ids.
+#[cfg(test)]
+pub(crate) fn is_legacy_family(family: &str) -> bool {
+    LEGACY_FAMILIES.contains(&family)
+}
+
+#[cfg(test)]
+pub(crate) const LEGACY_FAMILIES: [&str; 37] = [
+    "anima",
+    "sdxl",
+    "illustrious",
+    "pony",
+    "sd15",
+    "sd3",
+    "flux",
+    "flux1d",
+    "flux1s",
+    "flux1krea",
+    "flux2d",
+    "flux2klein9b",
+    "flux2klein9bbase",
+    "flux2klein4b",
+    "flux2klein4bbase",
+    "flux3klein",
+    "flux3kleinbase",
+    "mossimage",
+    "mossimagebase",
+    "chroma",
+    "zib",
+    "zit",
+    "wan",
+    "qwen",
+    "qwen_edit",
+    "qwen_edit_plus",
+    "flux1kontext",
+    "ideogram4",
+    "krea2",
+    "auraflow",
+    "pixart",
+    "hunyuandit",
+    "cascade",
+    "kolors",
+    "mugen",
+    "nanosaur",
+    "unknown",
+];
+
 /// The Flux 1 VAE, as Black Forest Labs and Comfy-Org name it (`ae.safetensors`)
 /// or under any `flux` name that is not the incompatible 32-channel Flux 2 VAE.
 fn find_flux1_vae(vaes: &[String]) -> Option<String> {
@@ -5061,6 +5131,9 @@ fn find_flux1_vae(vaes: &[String]) -> Option<String> {
 fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String]) -> Option<String> {
     if category != "diffusion_models" || vaes.is_empty() {
         return None;
+    }
+    if let Some(recommended) = crate::architectures::recommended_vae(family, vaes) {
+        return recommended;
     }
 
     if matches!(
@@ -5156,6 +5229,9 @@ fn recommended_clip_from_available(
 ) -> Option<(Option<String>, &'static str)> {
     if category != "diffusion_models" || encoders.is_empty() {
         return None;
+    }
+    if let Some(recommended) = crate::architectures::recommended_clip(family, encoders) {
+        return Some(recommended);
     }
 
     if family == "anima" {
@@ -7430,6 +7506,9 @@ fn gguf_is_text_model(general_arch: Option<&str>, names: &[&str]) -> bool {
 /// stock SDXL, so those resolve to the generic family and are only ever used to
 /// fill in a family that other detection left unknown.
 fn family_from_architecture(architecture: &str) -> Option<&'static str> {
+    if let Some(family) = crate::architectures::family_from_tensor_architecture(architecture) {
+        return Some(family);
+    }
     match architecture {
         "anima" => Some("anima"),
         "wan2.1" => Some("wan"),
@@ -7461,6 +7540,9 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
 /// variants). This keeps the veto conservative: it only fires when the file's
 /// weights prove a *different, known* class than the filename claimed.
 fn architecture_class(family: &str) -> Option<&'static str> {
+    if let Some(class) = crate::architectures::architecture_class(family) {
+        return Some(class);
+    }
     match family {
         // Classic SDXL-shaped UNets. Mugen is SDXL-shaped too (it is driven with
         // SDXL-style sampling in templates/mod.rs), so a mugen-by-filename tag is

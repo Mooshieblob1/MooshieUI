@@ -40,6 +40,9 @@ use crate::comfyui::types::GenerationParams;
 /// Families [`build`] has an edit graph for. `validate_generation_params`
 /// rejects Image Edit mode for any other.
 pub fn supports_family(arch: &str) -> bool {
+    if let Some(supported) = crate::architectures::supports_mode(arch, "image_edit") {
+        return supported;
+    }
     matches!(
         arch,
         "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "flux3klein" | "flux3kleinbase" | "anima"
