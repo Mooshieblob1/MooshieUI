@@ -31,8 +31,6 @@ const FLUX2_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "flux2klein4bbase",
   "flux3klein",
   "flux3kleinbase",
-  "mossimage",
-  "mossimagebase",
 ]);
 
 /** Families that decode with the 16-channel Flux 1 VAE. */

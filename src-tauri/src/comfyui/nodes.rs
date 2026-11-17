@@ -91,14 +91,6 @@ pub const ANIMA_EDIT_LORA_FILENAME: &str = "AnimeEditV2.safetensors";
 /// Civitai "Anima Edit" v2.0 (model 2650553, version 3089149).
 pub const ANIMA_EDIT_LORA_URL: &str = "https://civitai.com/api/download/models/3089149";
 
-/// MOSS-Image Edit LoRA (chinoll/Moss-Image-Edit, rank 64, rehosted by
-/// Comfy-Org) used by the MOSS-Image image_edit workflow. The template loads it
-/// by this exact filename; the frontend download button must save it under the
-/// same name (see ImageEditSettings.svelte).
-pub const MOSS_IMAGE_EDIT_LORA_FILENAME: &str = "moss_image_edit_lora_rank_64_bf16.safetensors";
-/// Comfy-Org/MOSS-Image `loras/` (297 MB, Apache-2.0 repackage).
-pub const MOSS_IMAGE_EDIT_LORA_URL: &str = "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/loras/moss_image_edit_lora_rank_64_bf16.safetensors";
-
 // GGUF-quantized diffusion models / text encoders cannot be loaded by core
 // ComfyUI loaders; the workflow builder emits UnetLoaderGGUF / CLIPLoaderGGUF
 // for .gguf files, which this package provides.

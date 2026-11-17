@@ -1160,6 +1160,7 @@ const ko: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
+  "generation.image_edit.registered_note": "{model}은(는) 참조 이미지를 최대 {n}장까지 사용합니다. 바꿀 부분만 쓰고, 추가 이미지마다 용도를 적으세요(예: \"이미지 2의 옷\").",
   "generation.image_edit.camera.title": "카메라 앵글",
   "generation.image_edit.camera.tip": "참조 이미지를 다른 각도에서 다시 촬영합니다. 프롬프트 앞에 샷 설명을 추가하고, 설치되어 있으면 Multiple-Angles LoRA(Qwen Image Edit 2511로 학습)도 적용합니다.",
   "generation.image_edit.camera.direction": "방향",
@@ -1182,6 +1183,7 @@ const ko: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler는 참조 이미지의 캐릭터를 Anima 스타일로 다시 그립니다. 출력 크기는 참조 이미지와 동일합니다. Anima Edit LoRA가 필요합니다 (Civitai 다운로드, API 키 또는 VPN이 필요할 수 있음).",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRA 다운로드 (350 MB)",
+  "generation.image_edit.required_download": "{file} 다운로드",
   "generation.image_edit.reference_strength": "참조 강도",
   "generation.image_edit.reference_strength_tip":
     "출력이 참조 이미지를 얼마나 따를지 정합니다. 1.0은 구도와 디테일을 유지하며, 낮추면(0.5-0.8 권장) 프롬프트와 스타일이 이미지를 더 크게 바꿉니다.",

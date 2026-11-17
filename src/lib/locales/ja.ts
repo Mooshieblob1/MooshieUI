@@ -1175,6 +1175,7 @@ const ja: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
+  "generation.image_edit.registered_note": "{model}は最大{n}枚の参照画像を使えます。変更点だけを書き、追加の画像それぞれの役割を書いてください（例：「画像2の服」）。",
   "generation.image_edit.camera.title": "カメラアングル",
   "generation.image_edit.camera.tip": "参照画像を別の角度から撮り直します。プロンプトの先頭にショットの説明を追加し、インストール済みなら Multiple-Angles LoRA（Qwen Image Edit 2511 で学習）も適用します。",
   "generation.image_edit.camera.direction": "方向",
@@ -1197,6 +1198,7 @@ const ja: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStylerは参照画像のキャラクターをAnimaスタイルで描き直します。出力サイズは参照画像に合わせられます。Anima Edit LoRAが必要です（Civitaiからダウンロード。APIキーまたはVPNが必要な場合があります）。",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRAをダウンロード（350 MB）",
+  "generation.image_edit.required_download": "{file}をダウンロード",
   "generation.image_edit.reference_strength": "参照強度",
   "generation.image_edit.reference_strength_tip":
     "出力が参照画像にどれだけ従うか。1.0 は構図とディテールを維持します。下げる（0.5〜0.8 が目安）とプロンプトとスタイルによる変化が大きくなります。",

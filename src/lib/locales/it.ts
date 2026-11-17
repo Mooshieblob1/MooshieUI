@@ -1160,6 +1160,7 @@ const it: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein accetta fino a 10 immagini di riferimento. Indicale nel prompt in base all'ordine (la prima immagine, la seconda immagine) e descrivi il risultato completo, non solo la modifica.",
+  "generation.image_edit.registered_note": "{model} accetta fino a {n} immagini di riferimento. Descrivi solo la modifica e indica a cosa serve ogni immagine aggiuntiva (per esempio \"l'outfit dell'immagine 2\").",
   "generation.image_edit.camera.title": "Angolo di ripresa",
   "generation.image_edit.camera.tip": "Riprende il riferimento da un'altra angolazione. Aggiunge una descrizione dell'inquadratura all'inizio del prompt e, se installata, la LoRA Multiple-Angles (addestrata su Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Direzione",
@@ -1182,6 +1183,7 @@ const it: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler ridisegna il personaggio dell'immagine di riferimento nello stile Anima. L'output corrisponde alle dimensioni del riferimento. Richiede il LoRA Anima Edit (download da Civitai; potrebbe servire una chiave API o una VPN).",
   "generation.image_edit.anima_lora_download": "Scarica Anima Edit LoRA (350 MB)",
+  "generation.image_edit.required_download": "Scarica {file}",
   "generation.image_edit.reference_strength": "Forza del riferimento",
   "generation.image_edit.reference_strength_tip":
     "Quanto il risultato segue l'immagine di riferimento. 1.0 mantiene composizione e dettagli; abbassalo (prova 0.5-0.8) per lasciare che prompt e stile cambino di più l'immagine.",

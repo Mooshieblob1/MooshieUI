@@ -1160,6 +1160,7 @@ const zhTw: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein 最多可使用 10 張參考圖。在提示詞中依順序指稱它們（第一張圖、第二張圖），並描述完整的結果，而不只是改動。",
+  "generation.image_edit.registered_note": "{model} 最多可使用 {n} 張參考圖。只描述要改的地方，並說明每張額外圖片的用途（例如「圖 2 的服裝」）。",
   "generation.image_edit.camera.title": "攝影機角度",
   "generation.image_edit.camera.tip": "從另一個角度重新拍攝參考圖。會在提示詞開頭加入鏡頭描述，若已安裝 Multiple-Angles LoRA（以 Qwen Image Edit 2511 訓練）也會一併套用。",
   "generation.image_edit.camera.direction": "方向",
@@ -1182,6 +1183,7 @@ const zhTw: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler 會以 Anima 風格重新繪製參考圖片中的角色。輸出尺寸與參考圖片一致。需要 Anima Edit LoRA（從 Civitai 下載；可能需要 API 金鑰或 VPN）。",
   "generation.image_edit.anima_lora_download": "下載 Anima Edit LoRA（350 MB）",
+  "generation.image_edit.required_download": "下載 {file}",
   "generation.image_edit.reference_strength": "參考強度",
   "generation.image_edit.reference_strength_tip":
     "輸出對參考影像的遵循程度。1.0 保持構圖和細節；調低（建議 0.5-0.8）可讓提示詞和風格更大幅度地改變影像。",
