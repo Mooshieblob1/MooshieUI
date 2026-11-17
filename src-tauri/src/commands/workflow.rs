@@ -55,6 +55,9 @@ pub async fn generate(
     let models_are_local = {
         let config = state.config.read().await;
         crate::commands::api::validate_generation_loras(&config, &params.loras)?;
+        if params.mode == "video" {
+            crate::commands::api::validate_generation_loras(&config, &params.video_loras)?;
+        }
         crate::commands::api::generation_models_are_local(&config)
     };
 

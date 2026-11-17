@@ -524,6 +524,8 @@ export interface GenerationParams {
   video_turbo_steps?: number;
   /** Turbo adapter filename inside `models/loras/`. */
   video_turbo_lora?: string | null;
+  /** The user's own H3 LoRAs, chained model-only before any acceleration adapter. */
+  video_loras?: LoraPayloadEntry[];
   /** MiniMax-H3 TeaCache: reuses the previous step's model output when little changed. */
   video_teacache_enabled?: boolean;
   /** Animated taeh3 live previews during H3 sampling. */

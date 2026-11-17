@@ -1,10 +1,12 @@
-import { getConfig, getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
+import { detectH3VideoLoras, getConfig, getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
 import { localOnlyModels } from "../utils/modelAvailability.js";
 
 class ModelsStore {
   checkpoints = $state<string[]>([]);
   vaes = $state<string[]>([]);
   loras = $state<string[]>([]);
+  /** The entries of `loras` that are MiniMax H3 video LoRAs (header-checked). */
+  h3VideoLoras = $state<string[]>([]);
   samplers = $state<string[]>([]);
   schedulers = $state<string[]>([]);
   embeddings = $state<string[]>([]);
@@ -29,6 +31,7 @@ class ModelsStore {
     this.checkpoints = [];
     this.vaes = [];
     this.loras = [];
+    this.h3VideoLoras = [];
     this.embeddings = [];
     this.upscaleModels = [];
     this.diffusionModels = [];
@@ -38,6 +41,27 @@ class ModelsStore {
     this.modelPatches = [];
     this.samplers = [];
     this.schedulers = [];
+  }
+
+  /** LoRAs for the image model: everything except the H3 video LoRAs. */
+  get imageLoras(): string[] {
+    if (this.h3VideoLoras.length === 0) return this.loras;
+    const video = new Set(this.h3VideoLoras);
+    return this.loras.filter((name) => !video.has(name));
+  }
+
+  /**
+   * Sort the LoRA list into image and H3 video LoRAs. Runs after the list is
+   * shown rather than before: it reads every LoRA's header, and a picker that
+   * briefly lists an H3 LoRA among the image ones is better than a late list.
+   */
+  private async classifyLoras(refreshId: number, loras: string[]) {
+    try {
+      const video = loras.length > 0 ? await detectH3VideoLoras(loras) : [];
+      if (refreshId === this.refreshId) this.h3VideoLoras = video;
+    } catch (e) {
+      console.warn("ModelsStore: H3 LoRA detection failed:", e);
+    }
   }
 
   async refresh(): Promise<boolean> {
@@ -104,6 +128,7 @@ class ModelsStore {
       this.checkpoints = inventory.checkpoints;
       this.vaes = inventory.vae;
       this.loras = inventory.loras;
+      void this.classifyLoras(refreshId, inventory.loras);
       this.embeddings = inventory.embeddings;
       this.upscaleModels = inventory.upscale_models;
       this.diffusionModels = mergedDiffusionModels;

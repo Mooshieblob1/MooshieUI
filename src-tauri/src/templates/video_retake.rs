@@ -39,6 +39,16 @@ pub fn build(
             json!({"unet_name": filename, "weight_dtype": "default"}),
         )
     };
+    // The user's own H3 LoRAs stay on (unlike the acceleration adapter): a
+    // character or style LoRA missing here would make the retaken frames drift
+    // from the rest of the clip.
+    let mut model = model;
+    for lora in super::video::user_loras(params) {
+        model = add(
+            "LoraLoaderModelOnly",
+            super::video::user_lora_inputs(&model, lora),
+        );
+    }
     let shifted = add(
         "MiniMaxH3SigmaShift",
         json!({"model": [model, 0], "shift_video": 12.0, "shift_audio": 3.0}),

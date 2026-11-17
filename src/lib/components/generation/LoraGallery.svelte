@@ -28,6 +28,7 @@
     type ModelGallerySort,
   } from "../../utils/modelGallerySort.js";
   import ModelPreviewActions from "./ModelPreviewActions.svelte";
+  import { h3UserLoraChoices } from "../../utils/h3Models.js";
 
   interface Props {
     cardSize?: number;
@@ -131,10 +132,20 @@
     } catch {}
   });
 
+  // Video mode lists only MiniMax H3 LoRAs and switches the video LoRA stack;
+  // image mode lists everything else and switches the image model's stack.
+  const videoMode = $derived(generation.mode === "video");
+  const availableLoras = $derived(
+    videoMode
+      ? h3UserLoraChoices(models.h3VideoLoras, generation.videoTurboEnabled ? generation.videoTurboLora : null)
+      : models.imageLoras,
+  );
+  const activeStack = $derived(videoMode ? generation.videoLoras : generation.loras);
+
   // All available LoRAs, filtered by search
   const filteredLoras = $derived(() => {
     const q = searchQuery.toLowerCase().trim();
-    let list = models.loras;
+    let list = availableLoras;
     if (q) {
       list = list.filter((name) => {
         const display = displayName(name).toLowerCase();
@@ -143,7 +154,7 @@
       });
     }
     const enabledSet = new Set(
-      generation.loras.filter((l) => l.enabled && l.name).map((l) => l.name),
+      activeStack.filter((l) => l.enabled && l.name).map((l) => l.name),
     );
     const familyOf = (filename: string) =>
       inferLoraFamily(filename, cache[filename]?.data);
@@ -169,10 +180,17 @@
   }
 
   function isLoraEnabled(filename: string): boolean {
-    return generation.loras.some((l) => l.name === filename && l.enabled);
+    return activeStack.some((l) => l.name === filename && l.enabled);
   }
 
   function toggleLoraByName(filename: string) {
+    if (videoMode) {
+      const idx = generation.videoLoras.findIndex((l) => l.name === filename);
+      if (idx >= 0) generation.updateVideoLora(idx, { enabled: !generation.videoLoras[idx].enabled });
+      else generation.addVideoLora(filename);
+      generation.saveSettings();
+      return;
+    }
     const idx = generation.loras.findIndex((l) => l.name === filename);
     if (idx >= 0) generation.toggleLora(idx);
     else generation.enableLoraByName(filename);
@@ -521,6 +539,8 @@
 
 <!-- Search + LoRA grid -->
 <div class="flex flex-col h-full">
+  <!-- LoRA presets hold image-model stacks, so video mode leaves them out. -->
+  {#if !videoMode}
   <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 {presetsOpen ? 'p-2' : 'px-2 py-1'} text-[11px] space-y-2 shrink-0">
     <button
       type="button"
@@ -600,6 +620,7 @@
     {/if}
     {/if}
   </div>
+  {/if}
 
   <!-- CivitAI bulk scan controls -->
   <div class="px-2 pt-1 pb-0.5 shrink-0">
@@ -747,9 +768,9 @@
     </div>
   {/if}
 
-  {#if models.loras.length === 0}
+  {#if availableLoras.length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
-      <p>{locale.t('lora.no_loras')}</p>
+      <p class="max-w-sm px-4 text-center">{locale.t(videoMode ? 'lora.no_h3_loras' : 'lora.no_loras')}</p>
     </div>
   {:else if filteredLoras().length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">

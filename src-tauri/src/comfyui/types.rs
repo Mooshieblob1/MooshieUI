@@ -310,6 +310,12 @@ pub struct GenerationParams {
     /// checkpoint when the client omits it.
     #[serde(default)]
     pub video_turbo_lora: Option<String>,
+    /// The user's own MiniMax H3 LoRAs (style, character, camera, ...), chained
+    /// model-only right after the DiT loader and before any acceleration
+    /// adapter. Separate from `loras`, which belongs to the image model.
+    /// Only `strength_model` is read: H3 LoRAs never touch the text encoder.
+    #[serde(default)]
+    pub video_loras: Vec<LoraParam>,
     /// TeaCache — reuses the previous step's model output while the
     /// accumulated input delta stays under threshold, skipping the real
     /// forward pass. Requires the `ComfyUI-MiniMaxH3-TeaCache` custom node

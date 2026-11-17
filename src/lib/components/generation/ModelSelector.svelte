@@ -1338,7 +1338,8 @@
 
   function filteredLorasForIndex(index: number) {
     const search = loraSearches[index] ?? "";
-    return models.loras.filter((l) =>
+    // MiniMax H3 video LoRAs live in the video panel's own stack.
+    return models.imageLoras.filter((l) =>
       l.toLowerCase().includes(search.toLowerCase())
     );
   }
