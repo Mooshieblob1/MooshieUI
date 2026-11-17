@@ -1112,6 +1112,7 @@ const ko: Record<string, string> = {
   "generation.model.downloading_refusal_lora": "거부 감소 LoRA 다운로드 중",
   "generation.model.nvfp4_warning": "NVFP4 모델은 NVIDIA Blackwell GPU(RTX 50 시리즈)에서만 네이티브로 작동합니다. 사용 중인 GPU는 이전 세대이므로 이 모델의 FP8 버전을 다운로드하여 사용하세요.",
   "generation.model.downloading_vae": "VAE 다운로드 중...",
+  "generation.model.downloading_cascade_stage_b": "Stable Cascade 스테이지 B 다운로드 중...",
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
   "generation.model.auto_download": "자동 다운로드",
   "generation.model.cloud_badge": "클라우드",

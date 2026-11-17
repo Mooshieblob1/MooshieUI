@@ -242,6 +242,11 @@ pub struct GenerationParams {
     /// CLIP model type for CLIPLoader (e.g. "wan", "sd3", etc.)
     #[serde(default)]
     pub clip_type: Option<String>,
+    /// Extra model files an architecture needs next to the main model, keyed
+    /// by slot. Stable Cascade reads its stage B decoder from here; see
+    /// `templates::cascade`.
+    #[serde(default)]
+    pub architecture_files: std::collections::BTreeMap<String, String>,
     /// Folder the active model physically lives in, set only when it disagrees
     /// with what the file actually is (a diffusion model in `checkpoints/`, or a
     /// full checkpoint in `diffusion_models/`). `None` for correctly-placed files.

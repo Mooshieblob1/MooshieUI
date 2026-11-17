@@ -1112,6 +1112,7 @@ const zh: Record<string, string> = {
   "generation.model.downloading_refusal_lora": "正在下载拒绝削减 LoRA",
   "generation.model.nvfp4_warning": "NVFP4 模型仅能在 NVIDIA Blackwell GPU（RTX 50 系列）上原生运行。您的 GPU 较旧，请改为下载并使用该模型的 FP8 版本。",
   "generation.model.downloading_vae": "正在下载 VAE...",
+  "generation.model.downloading_cascade_stage_b": "正在下载 Stable Cascade 阶段 B...",
   "generation.model.downloading_checkpoint": "正在下载检查点...",
   "generation.model.auto_download": "自动下载",
   "generation.model.cloud_badge": "云端",

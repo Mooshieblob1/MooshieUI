@@ -131,6 +131,38 @@
       filename: "flux3-image-klein-base-int8-convrot.safetensors",
       category: "diffusion_models",
     },
+    // Stable Cascade: pick stage C as the model; the model panel pairs it with
+    // stage B on its own (the full checkpoint, or Lite stage B + stage A).
+    {
+      label: "Stable Cascade Stage C",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/comfyui_checkpoints/stable_cascade_stage_c.safetensors",
+      filename: "stable_cascade_stage_c.safetensors",
+      category: "checkpoints",
+    },
+    {
+      label: "Stable Cascade Stage B",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/comfyui_checkpoints/stable_cascade_stage_b.safetensors",
+      filename: "stable_cascade_stage_b.safetensors",
+      category: "checkpoints",
+    },
+    {
+      label: "Stable Cascade Lite Stage C",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/stage_c_lite_bf16.safetensors",
+      filename: "stable_cascade_stage_c_lite_bf16.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Stable Cascade Lite Stage B",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/stage_b_lite_bf16.safetensors",
+      filename: "stable_cascade_stage_b_lite_bf16.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Stable Cascade Stage A (VAE)",
+      url: "https://huggingface.co/stabilityai/stable-cascade/resolve/main/stage_a.safetensors",
+      filename: "stage_a.safetensors",
+      category: "vae",
+    },
     {
       label: "MOSS-Image INT8",
       url: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/diffusion_models/moss_image_sft_int8_convrot.safetensors",

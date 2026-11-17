@@ -402,6 +402,8 @@ export interface GenerationParams {
   diffusion_model: string | null;
   clip_model: string | null;
   clip_type: string | null;
+  /** Extra model files keyed by architecture slot (Stable Cascade: "stage_b", "stage_b_unet", "stage_a"). */
+  architecture_files?: Record<string, string>;
   /** Folder the active model physically lives in when it contradicts its detected
    *  kind ("checkpoints" / "diffusion_models"); null when correctly placed. The
    *  backend resolves it to an absolute path for the Mooshie path loader nodes. */

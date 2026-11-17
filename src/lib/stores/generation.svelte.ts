@@ -838,6 +838,13 @@ class GenerationStore {
   private componentKindCache = new Map<string, ModelKind | null>();
   clipModel = $state<string | null>(null);
   clipType = $state<string | null>(null);
+  /**
+   * Extra model files an architecture needs next to the main model, keyed by
+   * slot. Stable Cascade keeps its stage B decoder here ("stage_b" for the
+   * ComfyUI checkpoint, or "stage_b_unet" + "stage_a" for split files); the
+   * model panel picks and downloads them.
+   */
+  architectureFiles = $state<Record<string, string>>({});
   stylePreset = $state<StylePresetId>("none");
   stylePresetsEnabled = $state(false);
   controlnetEnabled = $state(false);
@@ -2854,12 +2861,14 @@ class GenerationStore {
         };
         break;
 
-      // Stable Cascade keeps a simple scheduler preset for the base stage.
+      // Stable Cascade: the user's settings drive stage C, at the official
+      // workflow's values. Stage B runs its own fixed 10 steps at CFG 1.1
+      // (templates/cascade.rs).
       case "cascade":
         preset = {
           steps: 20,
           cfg: 4.0,
-          samplerName: "euler",
+          samplerName: "euler_ancestral",
           scheduler: "simple",
           width: 1024,
           height: 1024,
@@ -3127,6 +3136,8 @@ class GenerationStore {
       this.modelSourceCategory = saved.modelSourceCategory;
     if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
     if (saved.clipType !== undefined) this.clipType = saved.clipType;
+    if (saved.architectureFiles !== undefined && saved.architectureFiles !== null)
+      this.architectureFiles = { ...saved.architectureFiles };
     if (saved.stylePreset !== undefined) this.stylePreset = saved.stylePreset;
     if (saved.stylePresetsEnabled !== undefined) this.stylePresetsEnabled = !!saved.stylePresetsEnabled;
     if (saved.controlnetEnabled !== undefined) this.controlnetEnabled = saved.controlnetEnabled;
@@ -3437,6 +3448,7 @@ class GenerationStore {
         modelSourceCategory: this.modelSourceCategory,
         clipModel: this.clipModel,
         clipType: this.clipType,
+        architectureFiles: this.architectureFiles,
         stylePreset: this.stylePreset,
         stylePresetsEnabled: this.stylePresetsEnabled,
         controlnetEnabled: this.controlnetEnabled,
@@ -3628,6 +3640,7 @@ class GenerationStore {
       modelSourceCategory: this.modelSourceCategory,
       clipModel: this.clipModel,
       clipType: this.clipType,
+      architectureFiles: this.architectureFiles,
       stylePreset: this.stylePreset,
       stylePresetsEnabled: this.stylePresetsEnabled,
       controlnetEnabled: this.controlnetEnabled,
@@ -3893,6 +3906,8 @@ class GenerationStore {
    * it is dropped and the run completes.
    */
   get effectivePauseAtStep(): number {
+    // Stable Cascade samples in two separate stages, which can't pause.
+    if (this.isCascade) return 0;
     const step = Math.floor(this.pauseAtStep);
     if (!Number.isFinite(step) || step <= this.pausedEndStep || step >= this.steps) return 0;
     return step;
@@ -4474,6 +4489,7 @@ class GenerationStore {
       diffusion_model: this.diffusionModel,
       clip_model: this.clipModel,
       clip_type: this.clipType,
+      architecture_files: { ...this.architectureFiles },
       model_source_category: this.modelSourceCategory,
       controlnet: this.controlnetEnabled
         ? {

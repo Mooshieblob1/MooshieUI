@@ -5134,6 +5134,13 @@ fn recommended_clip_from_available(
         return None;
     }
 
+    if family == "cascade" {
+        // Stage C's text encoder is CLIP-G: the copy in the Stable Cascade
+        // repo, or SDXL's identical clip_g. Strict, like Anima.
+        let preferred = find_first_text_encoder_matching(encoders, &["cascade", "clip_g"]);
+        return Some((preferred, "stable_cascade"));
+    }
+
     if family == "anima" {
         // Strict: Anima's llm_adapter is trained against Qwen3-0.6B, so any other
         // encoder produces garbage rather than an error. Omit the model instead of
