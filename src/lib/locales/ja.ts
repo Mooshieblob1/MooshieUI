@@ -1175,8 +1175,6 @@ const ja: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
-  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
-  "generation.image_edit.flux2klein_note": "Flux.2 Kleinは最大10枚の参照画像を使えます。プロンプトでは順番で指定し（1枚目の画像、2枚目の画像）、変更点だけでなく完成した画像全体を説明してください。",
   "generation.image_edit.camera.title": "カメラアングル",
   "generation.image_edit.camera.tip": "参照画像を別の角度から撮り直します。プロンプトの先頭にショットの説明を追加し、インストール済みなら Multiple-Angles LoRA（Qwen Image Edit 2511 で学習）も適用します。",
   "generation.image_edit.camera.direction": "方向",

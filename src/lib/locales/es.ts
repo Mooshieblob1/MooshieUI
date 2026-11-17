@@ -1213,8 +1213,6 @@ const es: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein admite hasta 10 imágenes de referencia. Nómbralas en el prompt por su orden (la primera imagen, la segunda imagen) y describe el resultado completo, no solo el cambio.",
-  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
-  "generation.image_edit.flux2klein_note": "Flux.2 Klein admite hasta 10 imágenes de referencia. Nómbralas en el prompt por su orden (la primera imagen, la segunda imagen) y describe el resultado completo, no solo el cambio.",
   "generation.image_edit.camera.title": "Ángulo de cámara",
   "generation.image_edit.camera.tip": "Vuelve a fotografiar la referencia desde otro ángulo. Añade una descripción del plano al inicio del prompt y, si está instalada, la LoRA Multiple-Angles (entrenada con Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Dirección",

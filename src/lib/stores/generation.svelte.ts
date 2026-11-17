@@ -1349,18 +1349,6 @@ class GenerationStore {
     ].includes(this.modelFamily);
   }
 
-  /** True when the selected model is Flux.2 Klein 4B or 9B (distilled or base).
-   *  Registered in src-tauri/src/architectures/flux2_klein.rs; used only for
-   *  the Image Edit panel's badge and note. */
-  get isFlux2Klein(): boolean {
-    return [
-      "flux2klein9b",
-      "flux2klein9bbase",
-      "flux2klein4b",
-      "flux2klein4bbase",
-    ].includes(this.modelFamily);
-  }
-
   /** True when the selected model is FLUX 3 Image Klein (distilled or base). */
   get isFlux3(): boolean {
     return this.modelFamily === "flux3klein" || this.modelFamily === "flux3kleinbase";

@@ -1160,8 +1160,6 @@ const ko: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
-  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
-  "generation.image_edit.flux2klein_note": "Flux.2 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
   "generation.image_edit.camera.title": "카메라 앵글",
   "generation.image_edit.camera.tip": "참조 이미지를 다른 각도에서 다시 촬영합니다. 프롬프트 앞에 샷 설명을 추가하고, 설치되어 있으면 Multiple-Angles LoRA(Qwen Image Edit 2511로 학습)도 적용합니다.",
   "generation.image_edit.camera.direction": "방향",
