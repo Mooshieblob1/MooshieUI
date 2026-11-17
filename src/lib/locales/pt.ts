@@ -1147,7 +1147,7 @@ const pt: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Edição de Imagem",
   "generation.image_edit.hint": "Descreva a alteração no prompt (por exemplo \"deixe o céu roxo\"). O modelo edita sua imagem de referência em vez de gerar do zero.",
-  "generation.image_edit.wrong_model": "O modelo selecionado não suporta edição de imagens. Escolha um modelo Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein ou Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "O modelo selecionado não suporta edição de imagens. Escolha um modelo Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein ou Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Imagem de Referência",
   "generation.image_edit.reference_image_n": "Imagem de Referência {n}",
   "generation.image_edit.reference_set": "Imagem de referência definida",
@@ -1159,6 +1159,8 @@ const pt: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "O FLUX 3 Klein aceita até 10 imagens de referência. Refira-se a elas no prompt pela ordem (a primeira imagem, a segunda imagem) e descreva o resultado completo, não apenas a alteração.",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "O Flux.2 Klein aceita até 10 imagens de referência. Refira-se a elas no prompt pela ordem (a primeira imagem, a segunda imagem) e descreva o resultado completo, não apenas a alteração.",
   "generation.image_edit.camera.title": "Ângulo da câmera",
   "generation.image_edit.camera.tip": "Fotografa a referência novamente de outro ângulo. Adiciona uma descrição do plano no início do prompt e, se estiver instalada, a LoRA Multiple-Angles (treinada no Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Direção",

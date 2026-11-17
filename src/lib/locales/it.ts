@@ -1147,7 +1147,7 @@ const it: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Modifica Immagine",
   "generation.image_edit.hint": "Descrivi la modifica nel prompt (ad esempio \"rendi il cielo viola\"). Il modello modifica la tua immagine di riferimento invece di generarne una da zero.",
-  "generation.image_edit.wrong_model": "Il modello selezionato non supporta la modifica di immagini. Scegli un modello Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein o Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Il modello selezionato non supporta la modifica di immagini. Scegli un modello Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein o Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Immagine di riferimento",
   "generation.image_edit.reference_image_n": "Immagine di riferimento {n}",
   "generation.image_edit.reference_set": "Immagine di riferimento impostata",
@@ -1159,6 +1159,8 @@ const it: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein accetta fino a 10 immagini di riferimento. Indicale nel prompt in base all'ordine (la prima immagine, la seconda immagine) e descrivi il risultato completo, non solo la modifica.",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "Flux.2 Klein accetta fino a 10 immagini di riferimento. Indicale nel prompt in base all'ordine (la prima immagine, la seconda immagine) e descrivi il risultato completo, non solo la modifica.",
   "generation.image_edit.camera.title": "Angolo di ripresa",
   "generation.image_edit.camera.tip": "Riprende il riferimento da un'altra angolazione. Aggiunge una descrizione dell'inquadratura all'inizio del prompt e, se installata, la LoRA Multiple-Angles (addestrata su Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Direzione",

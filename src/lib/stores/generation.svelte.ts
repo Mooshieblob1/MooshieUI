@@ -29,6 +29,8 @@ import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "
 import { locale } from "./locale.svelte.js";
 import {
   BETA57_SCHEDULER,
+  FLUX2_KLEIN_BASE_SAMPLING,
+  FLUX2_KLEIN_SAMPLING,
   GENERIC_SAMPLING,
   MOODY_MOSS_BASE_SIZE,
   MOODY_MOSS_NEGATIVE,
@@ -1350,6 +1352,16 @@ class GenerationStore {
     ].includes(this.modelFamily);
   }
 
+  /** True when the selected model is Flux.2 Klein 4B or 9B (distilled or base). */
+  get isFlux2Klein(): boolean {
+    return [
+      "flux2klein9b",
+      "flux2klein9bbase",
+      "flux2klein4b",
+      "flux2klein4bbase",
+    ].includes(this.modelFamily);
+  }
+
   /** True when the selected model is FLUX 3 Image Klein (distilled or base). */
   get isFlux3(): boolean {
     return this.modelFamily === "flux3klein" || this.modelFamily === "flux3kleinbase";
@@ -1437,17 +1449,22 @@ class GenerationStore {
   /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
   get supportsImageEditMode(): boolean {
     return (
-      this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isFlux3 || this.isAnima
+      this.isQwenEdit ||
+      this.isQwenEditPlus ||
+      this.isFluxKontext ||
+      this.isFlux3 ||
+      this.isFlux2Klein ||
+      this.isAnima
     );
   }
 
   /**
    * Number of reference-image slots the current edit family accepts: 10 for
-   * FLUX 3 Klein (FLUX3_MAX_REFERENCES in templates/image_edit.rs), 3 for
-   * Qwen Edit Plus, else 1.
+   * FLUX 3 Klein and Flux.2 Klein (KLEIN_MAX_REFERENCES in
+   * templates/image_edit.rs), 3 for Qwen Edit Plus, else 1.
    */
   get editReferenceSlotCount(): number {
-    if (this.isFlux3) return EDIT_REFERENCE_SLOTS;
+    if (this.isFlux3 || this.isFlux2Klein) return EDIT_REFERENCE_SLOTS;
     return this.isQwenEditPlus ? 3 : 1;
   }
 
@@ -2720,10 +2737,8 @@ class GenerationStore {
         };
         break;
 
-      // Flux.2 base.
+      // Flux.2 Dev.
       case "flux2d":
-      case "flux2klein9bbase":
-      case "flux2klein4bbase":
         preset = {
           steps: 20,
           cfg: 4.0,
@@ -2732,6 +2747,13 @@ class GenerationStore {
           width: 1024,
           height: 1024,
         };
+        break;
+
+      // Flux.2 Klein Base: ComfyUI's bundled Klein base templates (txt2img
+      // and edit), 20 steps at CFG 5 with a real negative prompt.
+      case "flux2klein9bbase":
+      case "flux2klein4bbase":
+        preset = { ...FLUX2_KLEIN_BASE_SAMPLING, width: 1024, height: 1024 };
         break;
 
       // FLUX 3 Klein: Black Forest Labs' defaults (distilled 16 steps without
@@ -2781,17 +2803,11 @@ class GenerationStore {
         };
         break;
 
-      // Flux.2 klein.
+      // Flux.2 Klein distilled: Black Forest Labs' 4 steps without guidance,
+      // as in ComfyUI's bundled Klein templates (the KV checkpoint too).
       case "flux2klein9b":
       case "flux2klein4b":
-        preset = {
-          steps: 9,
-          cfg: 1.5,
-          samplerName: "euler",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
+        preset = { ...FLUX2_KLEIN_SAMPLING, width: 1024, height: 1024 };
         break;
 
       // Z-Image Base defaults.

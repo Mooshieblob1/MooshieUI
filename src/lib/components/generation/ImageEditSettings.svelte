@@ -32,6 +32,8 @@
   const familyBadge = $derived(
     generation.isFlux3
       ? locale.t("generation.image_edit.family_badge.flux3klein")
+      : generation.isFlux2Klein
+      ? locale.t("generation.image_edit.family_badge.flux2klein")
       : generation.isQwenEditPlus
       ? locale.t("generation.image_edit.family_badge.qwen_edit_plus")
       : generation.isFluxKontext
@@ -216,6 +218,7 @@
     [
       locale.t("generation.image_edit.hint"),
       generation.isFlux3 ? locale.t("generation.image_edit.flux3_note") : null,
+      generation.isFlux2Klein ? locale.t("generation.image_edit.flux2klein_note") : null,
       generation.isAnima ? locale.t("generation.image_edit.anima_note") : null,
     ]
       .filter(Boolean)

@@ -126,6 +126,43 @@
     url: "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/main/split_files/vae/flux2-vae.safetensors",
     category: "vae",
   };
+  // Flux.2 Klein 9B's encoder (Comfy-Org, ungated). Klein 4B shares Z-Image's
+  // qwen_3_4b (ZIMAGE_ENCODER_FILE).
+  const FLUX2_KLEIN_9B_ENCODER_FILE: ModelFile = {
+    filename: "qwen_3_8b_fp8mixed.safetensors",
+    url: "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+    category: "text_encoders",
+  };
+  // Mirror FLUX2_KLEIN_4B/9B_TEXT_ENCODER_MARKERS in src-tauri/src/commands/api.rs:
+  // the stock Qwen3 of the model's size, or the Qwen3-VL one of the same size.
+  const FLUX2_KLEIN_4B_ENCODER_MARKERS = [
+    ...ZIMAGE_ENCODER_MARKERS,
+    "qwen3vl-4b",
+    "qwen3vl_4b",
+    "qwen3-vl-4b",
+    "qwen3_vl_4b",
+    "qwen3vl4b",
+  ];
+  const FLUX2_KLEIN_9B_ENCODER_MARKERS = [
+    "qwen_3_8b",
+    "qwen3_8b",
+    "qwen3-8b",
+    "qwen38b",
+    "qwen3vl-8b",
+    "qwen3vl_8b",
+    "qwen3-vl-8b",
+    "qwen3_vl_8b",
+    "qwen3vl8b",
+  ];
+  function matchesAny(filename: string | null | undefined, markers: string[]): boolean {
+    if (!filename) return false;
+    const lower = filename.toLowerCase();
+    return markers.some((marker) => lower.includes(marker));
+  }
+  // Black Forest Labs' FP8 files. 4B is Apache 2.0 and ungated; the 9B repos
+  // are gated (FLUX Non-Commercial License), so they need an HF_TOKEN that
+  // has accepted it.
+  const BFL_KLEIN = "https://huggingface.co/black-forest-labs";
 
   const recommendedModels: RecommendedModel[] = [
     {
@@ -473,8 +510,8 @@
           // Listed under text_encoders so the picker resolves correctly;
           // backend hash lookup also falls through to `clip/`.
           category: "text_encoders",
-          // Flux 2 Klein ships with Qwen 3 as its text encoder.
-          clipType: "qwen_image",
+          // ComfyUI builds the Klein encoder under the flux2 CLIP type.
+          clipType: "flux2",
         },
         vaeModel: {
           filename: "flux-vae.safetensors",
@@ -483,11 +520,85 @@
         },
       },
       autoSettings: {
-        steps: 20,
+        steps: 4,
         cfg: 1.0,
         samplerName: "euler",
         scheduler: "simple",
       },
+    },
+    // Flux.2 Klein 4B/9B. Multi-reference Image Edit (up to 10 references)
+    // as well as txt2img; settings follow ComfyUI's bundled Klein templates.
+    {
+      label: "Flux.2 Klein 4B (FP8)",
+      size: "~12.5 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-4b-fp8.safetensors",
+          url: `${BFL_KLEIN}/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors`,
+          category: "diffusion_models",
+        },
+        clipModel: { ...ZIMAGE_ENCODER_FILE, clipType: "flux2" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: { steps: 4, cfg: 1.0, samplerName: "euler", scheduler: "simple" },
+    },
+    {
+      label: "Flux.2 Klein 4B Base (FP8)",
+      size: "~12.5 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-base-4b-fp8.safetensors",
+          url: `${BFL_KLEIN}/FLUX.2-klein-base-4b-fp8/resolve/main/flux-2-klein-base-4b-fp8.safetensors`,
+          category: "diffusion_models",
+        },
+        clipModel: { ...ZIMAGE_ENCODER_FILE, clipType: "flux2" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: { steps: 20, cfg: 5.0, samplerName: "euler", scheduler: "simple" },
+    },
+    {
+      label: "Flux.2 Klein 9B (FP8)",
+      size: "~18.4 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-9b-fp8.safetensors",
+          url: `${BFL_KLEIN}/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors`,
+          category: "diffusion_models",
+        },
+        clipModel: { ...FLUX2_KLEIN_9B_ENCODER_FILE, clipType: "flux2" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: { steps: 4, cfg: 1.0, samplerName: "euler", scheduler: "simple" },
+    },
+    {
+      label: "Flux.2 Klein 9B Base (FP8)",
+      size: "~18.6 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-base-9b-fp8.safetensors",
+          url: `${BFL_KLEIN}/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors`,
+          category: "diffusion_models",
+        },
+        clipModel: { ...FLUX2_KLEIN_9B_ENCODER_FILE, clipType: "flux2" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: { steps: 20, cfg: 5.0, samplerName: "euler", scheduler: "simple" },
+    },
+    {
+      // Black Forest Labs' KV-cache edit checkpoint: the edit graph adds the
+      // core FluxKVCache node so references are computed once, not every step.
+      label: "Flux.2 Klein 9B KV (FP8)",
+      size: "~18.8 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-9b-kv-fp8.safetensors",
+          url: `${BFL_KLEIN}/FLUX.2-klein-9b-kv-fp8/resolve/main/flux-2-klein-9b-kv-fp8.safetensors`,
+          category: "diffusion_models",
+        },
+        clipModel: { ...FLUX2_KLEIN_9B_ENCODER_FILE, clipType: "flux2" },
+        vaeModel: FLUX2_VAE_FILE,
+      },
+      autoSettings: { steps: 4, cfg: 1.0, samplerName: "euler", scheduler: "simple" },
     },
     // FLUX 3 Image Klein. Black Forest Labs' repo is gated, so the DiT needs
     // an HF_TOKEN that has accepted its licence; the encoder and VAE come from
@@ -787,6 +898,24 @@
     vaeFile: FLUX2_VAE_FILE,
   };
 
+  const FLUX2_KLEIN_4B_REQUIREMENT: RequiredSplitEncoder = {
+    label: "Flux.2 Klein 4B",
+    clipType: "flux2",
+    isEncoder: (filename) => matchesAny(filename, FLUX2_KLEIN_4B_ENCODER_MARKERS),
+    encoderFile: ZIMAGE_ENCODER_FILE,
+    isVae: (filename) => /flux2[-_]vae/i.test(filename),
+    vaeFile: FLUX2_VAE_FILE,
+  };
+
+  const FLUX2_KLEIN_9B_REQUIREMENT: RequiredSplitEncoder = {
+    label: "Flux.2 Klein 9B",
+    clipType: "flux2",
+    isEncoder: (filename) => matchesAny(filename, FLUX2_KLEIN_9B_ENCODER_MARKERS),
+    encoderFile: FLUX2_KLEIN_9B_ENCODER_FILE,
+    isVae: (filename) => /flux2[-_]vae/i.test(filename),
+    vaeFile: FLUX2_VAE_FILE,
+  };
+
   const MOSS_IMAGE_REQUIREMENT: RequiredSplitEncoder = {
     label: "MOSS-Image",
     clipType: "moss_image",
@@ -807,6 +936,10 @@
     },
     zit: ZIMAGE_REQUIREMENT,
     zib: ZIMAGE_REQUIREMENT,
+    flux2klein4b: FLUX2_KLEIN_4B_REQUIREMENT,
+    flux2klein4bbase: FLUX2_KLEIN_4B_REQUIREMENT,
+    flux2klein9b: FLUX2_KLEIN_9B_REQUIREMENT,
+    flux2klein9bbase: FLUX2_KLEIN_9B_REQUIREMENT,
     flux3klein: FLUX3_REQUIREMENT,
     flux3kleinbase: FLUX3_REQUIREMENT,
     mossimage: MOSS_IMAGE_REQUIREMENT,

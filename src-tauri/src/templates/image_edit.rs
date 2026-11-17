@@ -12,10 +12,16 @@
 //!     the encoded reference latent (denoise 1.0) so the output matches Kontext's
 //!     preferred scaled resolution.
 //!
-//!   * FLUX 3 Image Klein (`flux3klein`, `flux3kleinbase`) — up to ten references
-//!     are encoded by the core `ReferenceMultiLatent` node, which appends their
+//!   * Klein: FLUX 3 Image Klein (`flux3klein`, `flux3kleinbase`) and Flux.2
+//!     Klein 4B/9B (`flux2klein4b`, `flux2klein4bbase`, `flux2klein9b`,
+//!     `flux2klein9bbase`) — up to ten references are scaled to about 1 MP and
+//!     encoded by the core `ReferenceMultiLatent` node, which appends their
 //!     latents to both conditionings, as in ComfyUI's bundled Klein edit
-//!     templates. Sampling starts from an empty Flux 2 latent at the target size.
+//!     templates. Base checkpoints encode the negative prompt; distilled ones
+//!     zero it out. Flux.2 Klein 9B KV (`flux-2-klein-9b-kv`) also gets the core
+//!     `FluxKVCache` patch, which its template applies so the reference tokens
+//!     are computed once instead of on every step. Sampling starts from an
+//!     empty Flux 2 latent at the target size.
 //!
 //!   * Anima ReStyler (`anima`) — character-consistent restyling. The reference is
 //!     scaled to the target size, VAE-encoded, and applied through
@@ -25,7 +31,7 @@
 //!     loaded, sampling is otherwise plain txt2img from an empty latent at the
 //!     same size (the temporal concat requires matching spatial dims).
 //!
-//! Qwen/Kontext/FLUX 3 use only core ComfyUI nodes; Anima additionally needs the
+//! Qwen/Kontext/Klein use only core ComfyUI nodes; Anima additionally needs the
 //! ComfyUI-Cosmos-Reference custom node package.
 
 use serde_json::json;
@@ -42,19 +48,61 @@ use crate::comfyui::types::GenerationParams;
 pub fn supports_family(arch: &str) -> bool {
     matches!(
         arch,
-        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "flux3klein" | "flux3kleinbase" | "anima"
+        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "anima"
+    ) || is_klein_edit_family(arch)
+}
+
+/// Families edited through the shared Klein multi-reference graph.
+pub fn is_klein_edit_family(arch: &str) -> bool {
+    matches!(
+        arch,
+        "flux3klein"
+            | "flux3kleinbase"
+            | "flux2klein4b"
+            | "flux2klein4bbase"
+            | "flux2klein9b"
+            | "flux2klein9bbase"
     )
 }
 
-/// Most reference images FLUX 3 Image Klein conditions on (Black Forest Labs'
-/// documented limit). Mirrored by `editReferenceSlotCount` in the generation store.
-pub const FLUX3_MAX_REFERENCES: usize = 10;
+/// Klein checkpoints trained with real CFG, which take an encoded negative
+/// prompt. The distilled ones sample at CFG 1 against a zeroed negative.
+fn klein_uses_negative_prompt(arch: &str) -> bool {
+    matches!(
+        arch,
+        "flux3kleinbase" | "flux2klein4bbase" | "flux2klein9bbase"
+    )
+}
+
+/// Flux.2 Klein 9B KV, Black Forest Labs' KV-cache edit checkpoint
+/// (`flux-2-klein-9b-kv-fp8.safetensors`). Its tensor keys match the plain 9B,
+/// so only the filename tells them apart.
+pub fn is_flux2_klein_kv_model(params: &GenerationParams) -> bool {
+    let name = if params.use_split_model {
+        params.diffusion_model.as_deref().unwrap_or("")
+    } else {
+        params.checkpoint.as_str()
+    };
+    let lower = name.to_ascii_lowercase();
+    let base = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
+    base.contains("klein")
+        && [
+            "9b-kv", "9b_kv", "9bkv", "9b.kv", "-kv-", "_kv_", "-kv.", "_kv.",
+        ]
+        .iter()
+        .any(|marker| base.contains(marker))
+}
+
+/// Most reference images a Klein edit conditions on (Black Forest Labs'
+/// documented FLUX.2 / FLUX 3 limit). Mirrored by `editReferenceSlotCount` in
+/// the generation store and the `edit_image` MCP tool.
+pub const KLEIN_MAX_REFERENCES: usize = 10;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     match params.model_architecture.as_str() {
         "flux1kontext" => build_kontext(params, seed),
         "qwen_edit" | "qwen_edit_plus" => build_qwen(params, seed),
-        "flux3klein" | "flux3kleinbase" => build_flux3(params, seed),
+        arch if is_klein_edit_family(arch) => build_klein(params, seed),
         "anima" => build_anima_restyler(params, seed),
         // Validation guarantees a supported edit family reaches here; fall back to
         // txt2img defensively rather than panicking on an unexpected architecture.
@@ -708,20 +756,33 @@ fn build_anima_restyler(params: &GenerationParams, seed: i64) -> WorkflowResult 
     }
 }
 
-/// FLUX 3 Image Klein path.
+/// Klein path: FLUX 3 Image Klein and Flux.2 Klein 4B/9B.
 ///
 /// Every reference goes through one `ReferenceMultiLatent`, resized to about one
 /// megapixel each (the bundled templates' setting), and lands on positive and
-/// negative alike. The distilled checkpoint samples at CFG 1, so its negative is
-/// a zeroed copy of the positive text; the base checkpoint runs real CFG and
-/// encodes the negative prompt.
-fn build_flux3(params: &GenerationParams, seed: i64) -> WorkflowResult {
+/// negative alike. Distilled checkpoints sample at CFG 1, so their negative is
+/// a zeroed copy of the positive text; base checkpoints run real CFG and
+/// encode the negative prompt. The Flux.2 Klein 9B KV checkpoint runs through
+/// `FluxKVCache`, as in ComfyUI's `image_flux2_klein_9b_kv_image_edit` template.
+fn build_klein(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
     let next_id: u32 = 1;
 
     let ml = load_model_nodes(&mut workflow, next_id, params);
     let mut next_id = ml.next_id;
-    let model_source = ml.model_source;
+    let mut model_source = ml.model_source;
+    if params.model_architecture == "flux2klein9b" && is_flux2_klein_kv_model(params) {
+        let kv_id = next_id.to_string();
+        workflow.insert(
+            kv_id.clone(),
+            json!({
+                "class_type": "FluxKVCache",
+                "inputs": { "model": [model_source.0.clone(), model_source.1] }
+            }),
+        );
+        next_id += 1;
+        model_source = (kv_id, 0);
+    }
     let clip_source = ml.clip_source;
     let vae_source = ml.vae_source;
 
@@ -730,7 +791,7 @@ fn build_flux3(params: &GenerationParams, seed: i64) -> WorkflowResult {
         // Validation should prevent this; keep the workflow well-formed regardless.
         refs.push("");
     }
-    refs.truncate(FLUX3_MAX_REFERENCES);
+    refs.truncate(KLEIN_MAX_REFERENCES);
 
     let (pos_text, nid) = build_scheduled_conditioning(
         &mut workflow,
@@ -741,7 +802,7 @@ fn build_flux3(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id = nid;
 
-    let neg_text = if params.model_architecture == "flux3kleinbase" {
+    let neg_text = if klein_uses_negative_prompt(&params.model_architecture) {
         let neg_id = next_id.to_string();
         workflow.insert(
             neg_id.clone(),
@@ -1095,7 +1156,7 @@ mod tests {
         let result = build(&flux3_params("flux3kleinbase", 12), 7);
         assert_eq!(
             nodes_of_type(&result, "LoadImage").len(),
-            FLUX3_MAX_REFERENCES
+            KLEIN_MAX_REFERENCES
         );
         assert!(nodes_of_type(&result, "ConditioningZeroOut").is_empty());
         let negative = nodes_of_type(&result, "CLIPTextEncode")
@@ -1103,6 +1164,96 @@ mod tests {
             .find(|n| n["inputs"]["text"] == "lowres");
         assert!(negative.is_some(), "base must encode the negative prompt");
         assert!(supports_family("flux3klein") && supports_family("flux3kleinbase"));
+    }
+
+    fn flux2_klein_params(family: &str, diffusion_model: &str, refs: usize) -> GenerationParams {
+        let mut p = flux3_params(family, refs);
+        p.diffusion_model = Some(diffusion_model.into());
+        p.clip_model = Some(if family.starts_with("flux2klein9b") {
+            "qwen_3_8b_fp8mixed.safetensors".into()
+        } else {
+            "qwen_3_4b.safetensors".into()
+        });
+        p.clip_type = Some("flux2".into());
+        p
+    }
+
+    #[test]
+    fn flux2_klein_edit_uses_the_shared_multi_reference_graph() {
+        for (family, file) in [
+            ("flux2klein4b", "flux-2-klein-4b-fp8.safetensors"),
+            ("flux2klein4bbase", "flux-2-klein-base-4b-fp8.safetensors"),
+            ("flux2klein9b", "flux-2-klein-9b-fp8.safetensors"),
+            ("flux2klein9bbase", "flux-2-klein-base-9b-fp8.safetensors"),
+        ] {
+            assert!(supports_family(family), "{family}");
+            let result = build(&flux2_klein_params(family, file, 4), 7);
+            let multi = nodes_of_type(&result, "ReferenceMultiLatent");
+            assert_eq!(multi.len(), 1, "{family}");
+            assert_eq!(multi[0]["inputs"]["resolution.megapixels"], 1.0);
+            assert_eq!(nodes_of_type(&result, "LoadImage").len(), 4, "{family}");
+            assert_eq!(nodes_of_type(&result, "EmptyFlux2LatentImage").len(), 1);
+            assert!(nodes_of_type(&result, "FluxKVCache").is_empty(), "{family}");
+            // Base checkpoints run real CFG on the typed negative; distilled
+            // ones zero it, as in ComfyUI's Klein edit templates.
+            let zeroed = nodes_of_type(&result, "ConditioningZeroOut").len();
+            if family.ends_with("base") {
+                assert_eq!(zeroed, 0, "{family}");
+                assert!(nodes_of_type(&result, "CLIPTextEncode")
+                    .iter()
+                    .any(|n| n["inputs"]["text"] == "lowres"));
+            } else {
+                assert_eq!(zeroed, 1, "{family}");
+            }
+        }
+        // Flux.2 Dev is not a Klein edit family.
+        assert!(!supports_family("flux2d"));
+    }
+
+    #[test]
+    fn flux2_klein_edit_caps_references_at_ten() {
+        let result = build(
+            &flux2_klein_params("flux2klein4b", "flux-2-klein-4b.safetensors", 14),
+            7,
+        );
+        assert_eq!(
+            nodes_of_type(&result, "LoadImage").len(),
+            KLEIN_MAX_REFERENCES
+        );
+    }
+
+    #[test]
+    fn flux2_klein_9b_kv_samples_through_the_kv_cache_patch() {
+        let result = build(
+            &flux2_klein_params("flux2klein9b", "flux-2-klein-9b-kv-fp8.safetensors", 2),
+            7,
+        );
+        let kv: Vec<_> = result
+            .workflow
+            .iter()
+            .filter(|(_, n)| n["class_type"] == "FluxKVCache")
+            .collect();
+        assert_eq!(kv.len(), 1);
+        let kv_id = kv[0].0.clone();
+        let sampler = &result.workflow[&result.sampler_id]["inputs"];
+        assert_eq!(sampler["model"][0], kv_id);
+        assert_eq!(result.model_source.0, kv_id);
+    }
+
+    #[test]
+    fn flux2_klein_kv_is_told_apart_by_filename_only() {
+        let mut p = flux2_klein_params("flux2klein9b", "flux-2-klein-9b-kv-fp8.safetensors", 1);
+        assert!(is_flux2_klein_kv_model(&p));
+        p.diffusion_model = Some("Flux2/FLUX.2-klein-9B_KV.safetensors".into());
+        assert!(is_flux2_klein_kv_model(&p));
+        for name in [
+            "flux-2-klein-9b-fp8.safetensors",
+            "flux-2-klein-base-9b-fp8.safetensors",
+            "kv_merge/flux-2-klein-9b.safetensors",
+        ] {
+            p.diffusion_model = Some(name.into());
+            assert!(!is_flux2_klein_kv_model(&p), "{name}");
+        }
     }
 
     #[test]

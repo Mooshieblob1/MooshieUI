@@ -1277,7 +1277,7 @@ const pl: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Edycja obrazu",
   "generation.image_edit.hint": "Opisz zmianę w prompcie (na przykład \"zmień niebo na fioletowe\"). Model edytuje podany obraz referencyjny zamiast generować od zera.",
-  "generation.image_edit.wrong_model": "Wybrany model nie obsługuje edycji obrazów. Wybierz model Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein lub Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Wybrany model nie obsługuje edycji obrazów. Wybierz model Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein lub Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Obraz referencyjny",
   "generation.image_edit.reference_image_n": "Obraz referencyjny {n}",
   "generation.image_edit.reference_set": "Obraz referencyjny ustawiony",
@@ -1289,6 +1289,8 @@ const pl: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein przyjmuje do 10 obrazów referencyjnych. W prompcie odwołuj się do nich według kolejności (pierwszy obraz, drugi obraz) i opisz cały wynik, nie tylko zmianę.",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "Flux.2 Klein przyjmuje do 10 obrazów referencyjnych. W prompcie odwołuj się do nich według kolejności (pierwszy obraz, drugi obraz) i opisz cały wynik, nie tylko zmianę.",
   "generation.image_edit.camera.title": "Kąt kamery",
   "generation.image_edit.camera.tip": "Fotografuje referencję ponownie z innego kąta. Dodaje opis ujęcia na początku promptu oraz LoRA Multiple-Angles, jeśli jest zainstalowana (trenowana na Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Kierunek",

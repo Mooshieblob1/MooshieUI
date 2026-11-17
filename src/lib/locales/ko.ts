@@ -1147,7 +1147,7 @@ const ko: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "이미지 편집",
   "generation.image_edit.hint": "프롬프트에 변경 사항을 설명하세요 (예: \"하늘을 보라색으로 만들어\"). 모델은 처음부터 생성하는 대신 참조 이미지를 편집합니다.",
-  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein 또는 Flux.1 Kontext 모델을 선택하세요.",
+  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein 또는 Flux.1 Kontext 모델을 선택하세요.",
   "generation.image_edit.reference_image": "참조 이미지",
   "generation.image_edit.reference_image_n": "참조 이미지 {n}",
   "generation.image_edit.reference_set": "참조 이미지 설정됨",
@@ -1159,6 +1159,8 @@ const ko: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "Flux.2 Klein은 참조 이미지를 최대 10장까지 사용합니다. 프롬프트에서는 순서로 지칭하고(첫 번째 이미지, 두 번째 이미지) 변경 사항만이 아니라 결과 전체를 설명하세요.",
   "generation.image_edit.camera.title": "카메라 앵글",
   "generation.image_edit.camera.tip": "참조 이미지를 다른 각도에서 다시 촬영합니다. 프롬프트 앞에 샷 설명을 추가하고, 설치되어 있으면 Multiple-Angles LoRA(Qwen Image Edit 2511로 학습)도 적용합니다.",
   "generation.image_edit.camera.direction": "방향",

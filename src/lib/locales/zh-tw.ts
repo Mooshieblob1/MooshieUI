@@ -1147,7 +1147,7 @@ const zhTw: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "圖像編輯",
   "generation.image_edit.hint": "在提示詞中描述要修改的內容（例如「將天空改為紫色」）。模型將依據您的參考圖像進行編輯，而非從頭生成。",
-  "generation.image_edit.wrong_model": "所選模型不支援圖像編輯。請選擇 Qwen Image Edit、Qwen Image Edit Plus、FLUX 3 Klein 或 Flux.1 Kontext 模型。",
+  "generation.image_edit.wrong_model": "所選模型不支援圖像編輯。請選擇 Qwen Image Edit、Qwen Image Edit Plus、Flux.2 Klein、FLUX 3 Klein 或 Flux.1 Kontext 模型。",
   "generation.image_edit.reference_image": "參考圖像",
   "generation.image_edit.reference_image_n": "參考圖像 {n}",
   "generation.image_edit.reference_set": "參考圖像已設定",
@@ -1159,6 +1159,8 @@ const zhTw: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein 最多可使用 10 張參考圖。在提示詞中依順序指稱它們（第一張圖、第二張圖），並描述完整的結果，而不只是改動。",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "Flux.2 Klein 最多可使用 10 張參考圖。在提示詞中依順序指稱它們（第一張圖、第二張圖），並描述完整的結果，而不只是改動。",
   "generation.image_edit.camera.title": "攝影機角度",
   "generation.image_edit.camera.tip": "從另一個角度重新拍攝參考圖。會在提示詞開頭加入鏡頭描述，若已安裝 Multiple-Angles LoRA（以 Qwen Image Edit 2511 訓練）也會一併套用。",
   "generation.image_edit.camera.direction": "方向",

@@ -210,7 +210,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
         ));
     }
@@ -384,6 +384,47 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
                     format!("\"{clip_model}\"")
                 }
             ));
+        }
+    }
+
+    // Flux.2 Klein builds its encoder under the "flux2" CLIP type from a Qwen3
+    // (or Qwen3-VL) model of its own size: 4B for Klein 4B, 8B for Klein 9B.
+    // The wrong size fails inside sampling with a shape error.
+    if params.use_split_model {
+        let klein_size = match params.model_architecture.as_str() {
+            "flux2klein4b" | "flux2klein4bbase" => Some((
+                "4B",
+                &crate::commands::api::FLUX2_KLEIN_4B_TEXT_ENCODER_MARKERS[..],
+                "qwen_3_4b.safetensors",
+                "qwen_3_4b",
+            )),
+            "flux2klein9b" | "flux2klein9bbase" => Some((
+                "9B",
+                &crate::commands::api::FLUX2_KLEIN_9B_TEXT_ENCODER_MARKERS[..],
+                "qwen_3_8b_fp8mixed.safetensors",
+                "qwen_3_8b",
+            )),
+            _ => None,
+        };
+        if let Some((size, markers, download, marker)) = klein_size {
+            if !matches!(params.clip_type.as_deref(), Some("flux2") | Some("flux")) {
+                return Err(format!(
+                    "Flux.2 Klein {size} requires the CLIP loader type \"flux2\". Re-select the Flux.2 Klein model so the text encoder settings refresh."
+                ));
+            }
+            let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
+            let clip_lower = clip_model.to_lowercase();
+            if clip_model.is_empty() || !markers.iter().any(|m| clip_lower.contains(m)) {
+                return Err(format!(
+                    "Flux.2 Klein {size} needs a Qwen3 {} text encoder, but {} is selected. Open the model panel to download it ({download}), or if this file really is that encoder, rename it to include \"{marker}\".",
+                    if size == "4B" { "4B" } else { "8B" },
+                    if clip_model.is_empty() {
+                        "none".to_string()
+                    } else {
+                        format!("\"{clip_model}\"")
+                    }
+                ));
+            }
         }
     }
 
@@ -2416,6 +2457,16 @@ mod tests {
         // Krea 2 split-model validation requires clip_type = "krea2".
         if family == "krea2" {
             value["clip_type"] = json!("krea2");
+        }
+        // Flux.2 Klein validation requires the flux2 CLIP type and a Qwen3
+        // encoder of the model's size.
+        if family.starts_with("flux2klein") {
+            value["clip_type"] = json!("flux2");
+            value["clip_model"] = json!(if family.starts_with("flux2klein9b") {
+                "qwen_3_8b_fp8mixed.safetensors"
+            } else {
+                "qwen_3_4b.safetensors"
+            });
         }
         serde_json::from_value(value).expect("test params must deserialize")
     }

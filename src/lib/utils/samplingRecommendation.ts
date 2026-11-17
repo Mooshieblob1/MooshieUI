@@ -86,6 +86,26 @@ export const KREA2_SAMPLING: SamplingRecommendation = {
 };
 
 /**
+ * Flux.2 Klein 4B/9B distilled (and the 9B KV edit checkpoint): 4 steps
+ * without guidance (Black Forest Labs' model card, ComfyUI's bundled Klein
+ * templates). Matches the store's flux2klein4b/flux2klein9b preset.
+ */
+export const FLUX2_KLEIN_SAMPLING: SamplingRecommendation = {
+  steps: 4,
+  cfg: 1.0,
+  samplerName: "euler",
+  scheduler: "simple",
+};
+
+/** Flux.2 Klein Base 4B/9B: ComfyUI's bundled base templates, 20 steps at CFG 5. */
+export const FLUX2_KLEIN_BASE_SAMPLING: SamplingRecommendation = {
+  steps: 20,
+  cfg: 5.0,
+  samplerName: "euler",
+  scheduler: "simple",
+};
+
+/**
  * FLUX 3 Image Klein, distilled flow-map checkpoint: 16 steps without guidance
  * (Black Forest Labs' model card). Matches the store's flux3klein preset.
  */
@@ -185,6 +205,8 @@ export function recommendedSamplingFor(
   const name = (filename ?? "").toLowerCase();
   const fam = (family ?? "").toLowerCase();
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
+  if (fam === "flux2klein4b" || fam === "flux2klein9b") return FLUX2_KLEIN_SAMPLING;
+  if (fam === "flux2klein4bbase" || fam === "flux2klein9bbase") return FLUX2_KLEIN_BASE_SAMPLING;
   if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
   if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;
   if (fam === "mossimage" || fam === "mossimagebase") {

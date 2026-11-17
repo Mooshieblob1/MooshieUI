@@ -1168,7 +1168,7 @@ const de: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Bildbearbeitung",
   "generation.image_edit.hint": "Beschreibe die gewünschte Änderung im Prompt (zum Beispiel \"mach den Himmel lila\"). Das Modell bearbeitet dein Referenzbild, anstatt es von Grund auf neu zu erzeugen.",
-  "generation.image_edit.wrong_model": "Das ausgewählte Modell unterstützt keine Bildbearbeitung. Wähle ein Modell vom Typ Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein oder Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Das ausgewählte Modell unterstützt keine Bildbearbeitung. Wähle ein Modell vom Typ Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein oder Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Referenzbild",
   "generation.image_edit.reference_image_n": "Referenzbild {n}",
   "generation.image_edit.reference_set": "Referenzbild gesetzt",
@@ -1180,6 +1180,8 @@ const de: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein nimmt bis zu 10 Referenzbilder. Nenne sie im Prompt nach ihrer Reihenfolge (das erste Bild, das zweite Bild) und beschreibe das ganze Ergebnis, nicht nur die Änderung.",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "Flux.2 Klein nimmt bis zu 10 Referenzbilder. Nenne sie im Prompt nach ihrer Reihenfolge (das erste Bild, das zweite Bild) und beschreibe das ganze Ergebnis, nicht nur die Änderung.",
   "generation.image_edit.camera.title": "Kamerawinkel",
   "generation.image_edit.camera.tip": "Nimmt die Referenz aus einem anderen Winkel neu auf. Setzt eine Einstellungsbeschreibung an den Anfang deines Prompts und, falls installiert, die Multiple-Angles-LoRA (trainiert auf Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Richtung",

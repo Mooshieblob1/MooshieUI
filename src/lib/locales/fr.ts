@@ -1162,7 +1162,7 @@ const fr: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Édition d'image",
   "generation.image_edit.hint": "Décrivez la modification dans le prompt (par exemple \"rendez le ciel violet\"). Le modèle modifie votre image de référence plutôt que de générer à partir de zéro.",
-  "generation.image_edit.wrong_model": "Le modèle sélectionné ne prend pas en charge l'édition d'image. Choisissez un modèle Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein ou Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Le modèle sélectionné ne prend pas en charge l'édition d'image. Choisissez un modèle Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein ou Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Image de référence",
   "generation.image_edit.reference_image_n": "Image de référence {n}",
   "generation.image_edit.reference_set": "Image de référence définie",
@@ -1174,6 +1174,8 @@ const fr: Record<string, string> = {
   "generation.image_edit.family_badge.anima": "Anima ReStyler",
   "generation.image_edit.family_badge.flux3klein": "FLUX 3 Klein",
   "generation.image_edit.flux3_note": "FLUX 3 Klein accepte jusqu'à 10 images de référence. Désignez-les dans le prompt par leur ordre (la première image, la deuxième image) et décrivez le résultat complet, pas seulement la modification.",
+  "generation.image_edit.family_badge.flux2klein": "Flux.2 Klein",
+  "generation.image_edit.flux2klein_note": "Flux.2 Klein accepte jusqu'à 10 images de référence. Désignez-les dans le prompt par leur ordre (la première image, la deuxième image) et décrivez le résultat complet, pas seulement la modification.",
   "generation.image_edit.camera.title": "Angle de caméra",
   "generation.image_edit.camera.tip": "Reprend la référence sous un autre angle. Ajoute une description du plan au début du prompt, ainsi que la LoRA Multiple-Angles si elle est installée (entraînée sur Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Direction",
