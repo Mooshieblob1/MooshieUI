@@ -493,6 +493,14 @@ export interface GenerationParams {
   edit_reference_strength?: number;
   /** Anima ReStyler drastic restyle: split-screen inpaint of a 2x-wide composite, right half cropped as output. */
   edit_split_screen?: boolean;
+  /** Krea 2 Image Edit recipe: identity, general or style (templates/krea2_edit.rs). */
+  krea2_edit_method?: string;
+  /** Krea 2 Image Edit: the installed edit LoRA for the method (models/loras name). */
+  krea2_edit_lora?: string;
+  /** Krea 2 Identity/General Edit ref_boost for the last reference; omitted uses the method default. */
+  krea2_edit_ref_boost?: number;
+  /** Krea 2 Identity/General Edit: last reference beside the canvas (free restaging). */
+  krea2_edit_beside?: boolean;
   // --- Video generation (MiniMax H3) ---
   video_variant?: VideoVariant;
   /** 1-15 s; the backend snaps this to the nearest 17n+5 frame count at 24 fps. */

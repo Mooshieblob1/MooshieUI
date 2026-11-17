@@ -45,6 +45,13 @@ import {
   type MoodyMossSettings,
 } from "../utils/moodyMoss.js";
 import { artistTagPromptBody } from "../utils/artistTag.js";
+import {
+  KREA2_EDIT_LORAS,
+  KREA2_EDIT_MAX_REFERENCES,
+  installedKrea2EditLora,
+  parseKrea2EditMethod,
+  type Krea2EditMethod,
+} from "../utils/krea2Edit.js";
 import { KREA2_REFUSAL_LORA_STRENGTH, krea2RefusalLoraToApply, pickKrea2Encoder } from "../utils/krea2Encoder.js";
 import {
   MULTI_ANGLE_LORA,
@@ -856,6 +863,12 @@ class GenerationStore {
   editReferenceStrength = $state(1.0);
   /** Anima ReStyler drastic restyle: original split-screen inpaint recipe (stronger style change, ~2x generation area). */
   editSplitScreen = $state(false);
+  /** Krea 2 Image Edit recipe: General Edit, Identity Edit or Style Reference (utils/krea2Edit.ts). */
+  krea2EditMethod = $state<Krea2EditMethod>("general");
+  /** Krea 2 Identity/General Edit reference fidelity (ref_boost); null uses the method's default. */
+  krea2EditRefBoost = $state<number | null>(null);
+  /** Krea 2 Identity/General Edit: place the person beside the canvas so they can be restaged freely. */
+  krea2EditBeside = $state(true);
   /** Qwen Edit Plus camera angle: prepends a Multiple-Angles LoRA shot phrase to the prompt. */
   cameraAngleEnabled = $state(false);
   /** Index into CAMERA_AZIMUTHS (0 = front, clockwise in 45 degree steps). */
@@ -1378,6 +1391,24 @@ class GenerationStore {
     return this.modelFamily === "qwen";
   }
 
+  /** True when the selected model is Krea 2 (Raw, Turbo or a fine-tune). */
+  get isKrea2(): boolean {
+    return this.modelFamily === "krea2";
+  }
+
+  /** Krea 2 edit fidelity in effect: the user's value or the method's model-card default. */
+  get krea2EditRefBoostEffective(): number {
+    return this.krea2EditRefBoost ?? KREA2_EDIT_LORAS[this.krea2EditMethod].defaultRefBoost;
+  }
+
+  /** Switch the Krea 2 edit recipe and reset its dials to the model card's defaults. */
+  setKrea2EditMethod(method: Krea2EditMethod): void {
+    this.krea2EditMethod = method;
+    this.krea2EditRefBoost = null;
+    this.krea2EditBeside = KREA2_EDIT_LORAS[method].defaultBeside;
+    this.saveSettings();
+  }
+
   /** True when the selected model is Qwen Image Edit (single reference image). */
   get isQwenEdit(): boolean {
     return this.modelFamily === "qwen_edit";
@@ -1442,19 +1473,26 @@ class GenerationStore {
     // A registered architecture (src-tauri/src/architectures) says so itself.
     if (findFamily(this.modelFamily)) return registeredMode(this.modelFamily, "image_edit") !== null;
     return (
-      this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isFlux3 || this.isAnima
+      this.isQwenEdit ||
+      this.isQwenEditPlus ||
+      this.isFluxKontext ||
+      this.isFlux3 ||
+      this.isAnima ||
+      this.isKrea2
     );
   }
 
   /**
    * Number of reference-image slots the current edit family accepts: 10 for
    * FLUX 3 Klein (FLUX3_MAX_REFERENCES in templates/image_edit.rs), 3 for
-   * Qwen Edit Plus, else 1.
+   * Qwen Edit Plus, 2 for Krea 2 (scene + person, or two style references),
+   * else 1.
    */
   get editReferenceSlotCount(): number {
     const registered = registeredMode(this.modelFamily, "image_edit");
     if (registered) return Math.max(1, Math.min(EDIT_REFERENCE_SLOTS, registered.max_references));
     if (this.isFlux3) return EDIT_REFERENCE_SLOTS;
+    if (this.isKrea2) return KREA2_EDIT_MAX_REFERENCES;
     return this.isQwenEditPlus ? 3 : 1;
   }
 
@@ -3174,6 +3212,12 @@ class GenerationStore {
       this.editReferenceStrength = saved.editReferenceStrength;
     if (saved.editSplitScreen !== undefined)
       this.editSplitScreen = saved.editSplitScreen;
+    if (saved.krea2EditMethod !== undefined)
+      this.krea2EditMethod = parseKrea2EditMethod(saved.krea2EditMethod);
+    if (saved.krea2EditRefBoost !== undefined)
+      this.krea2EditRefBoost =
+        typeof saved.krea2EditRefBoost === "number" ? saved.krea2EditRefBoost : null;
+    if (saved.krea2EditBeside !== undefined) this.krea2EditBeside = !!saved.krea2EditBeside;
     if (saved.cameraAngleEnabled !== undefined)
       this.cameraAngleEnabled = !!saved.cameraAngleEnabled;
     if (saved.cameraAzimuth !== undefined) this.cameraAzimuth = clampAzimuth(saved.cameraAzimuth);
@@ -3486,6 +3530,9 @@ class GenerationStore {
         editReferenceImages: this.editReferenceImages,
         editReferenceStrength: this.editReferenceStrength,
         editSplitScreen: this.editSplitScreen,
+        krea2EditMethod: this.krea2EditMethod,
+        krea2EditRefBoost: this.krea2EditRefBoost,
+        krea2EditBeside: this.krea2EditBeside,
         cameraAngleEnabled: this.cameraAngleEnabled,
         cameraAzimuth: this.cameraAzimuth,
         cameraElevation: this.cameraElevation,
@@ -3678,6 +3725,9 @@ class GenerationStore {
       editReferenceImages: this.editReferenceImages,
       editReferenceStrength: this.editReferenceStrength,
       editSplitScreen: this.editSplitScreen,
+      krea2EditMethod: this.krea2EditMethod,
+      krea2EditRefBoost: this.krea2EditRefBoost,
+      krea2EditBeside: this.krea2EditBeside,
       cameraAngleEnabled: this.cameraAngleEnabled,
       cameraAzimuth: this.cameraAzimuth,
       cameraElevation: this.cameraElevation,
@@ -4582,6 +4632,14 @@ class GenerationStore {
       ),
       edit_reference_strength: this.editReferenceStrength,
       edit_split_screen: this.editSplitScreen,
+      ...(this._mode === "image_edit" && this.isKrea2
+        ? {
+            krea2_edit_method: this.krea2EditMethod,
+            krea2_edit_lora: installedKrea2EditLora(models.loras, this.krea2EditMethod) ?? "",
+            krea2_edit_ref_boost: this.krea2EditRefBoost ?? undefined,
+            krea2_edit_beside: this.krea2EditBeside,
+          }
+        : {}),
       video_variant: this.videoVariant,
       video_duration_seconds: this.videoDurationSeconds,
       video_megapixels: this.videoMegapixels,
