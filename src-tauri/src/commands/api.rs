@@ -4514,6 +4514,24 @@ fn flux3_klein_family_from_text(lower: &str) -> Option<&'static str> {
     })
 }
 
+/// MiniMax H3, the audio-video model (FL2VA / Ref2VA), from lowercased text:
+/// a CivitAI base model ("MiniMax H3"), a trainer's base-model tag
+/// ("minimax_h3_ref2va") or a filename ("camera_motion_h3_lora_v1",
+/// "H3_StereoDepth_FL2VA"). MiniMax-H3-Image shares the DiT but not the task,
+/// so anything naming "image" is left alone.
+pub(crate) fn minimax_h3_video_from_text(lower: &str) -> bool {
+    if lower.contains("image") {
+        return false;
+    }
+    if lower.contains("minimax") && lower.contains("h3") {
+        return true;
+    }
+    let mut tokens = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty());
+    tokens.any(|t| matches!(t, "h3" | "minimaxh3" | "fl2va" | "ref2va"))
+}
+
 fn model_family_from_base_model(base_model: &str) -> &'static str {
     let bm = base_model.trim().to_lowercase();
     if bm.is_empty() {
@@ -4526,6 +4544,9 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
 
     if bm.contains("nanosaur") {
         return "nanosaur";
+    }
+    if minimax_h3_video_from_text(&bm) {
+        return "minimaxh3";
     }
     if let Some(family) = flux3_klein_family_from_text(&bm) {
         return family;
@@ -4601,9 +4622,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("hunyuan") {
         return "hunyuandit";
     }
-    if bm.contains("cascade") {
-        return "cascade";
-    }
     if bm.contains("mugen") {
         return "mugen";
     }
@@ -4634,6 +4652,9 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
 
     if name.contains("nanosaur") {
         return Some("nanosaur");
+    }
+    if minimax_h3_video_from_text(&name) {
+        return Some("minimaxh3");
     }
     // FLUX 3 Image Klein before every Flux 2 matcher: its filenames carry
     // "flux" and "klein", which the 9b/4b token tests below would otherwise
@@ -4762,9 +4783,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     }
     if name.contains("hunyuan") {
         return Some("hunyuandit");
-    }
-    if name.contains("cascade") {
-        return Some("cascade");
     }
     if name.contains("mugen") {
         return Some("mugen");
@@ -4936,7 +4954,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 22] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 21] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -4955,7 +4973,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 22] = [
     "krea2",
     "auraflow",
     "hunyuandit",
-    "cascade",
     "mugen",
     "nanosaur",
     "unknown",
@@ -6840,6 +6857,133 @@ pub async fn detect_model_kind(
     detect_model_kind_internal(state.inner(), &category, &filename).await
 }
 
+/// What a LoRA's own header says about MiniMax H3: `Some(true)` for an H3
+/// video LoRA, `Some(false)` for a LoRA of another model (or of
+/// MiniMax-H3-Image), `None` when the header cannot tell.
+///
+/// Tensor keys decide first, then the trainer's base-model tags: ai-toolkit
+/// writes `ss_base_model_version` ("minimax_h3", "minimax_h3_ref2va"), other
+/// trainers `base_model` ("minimax-h3-fl2va") or `modelspec.architecture`.
+fn safetensors_lora_is_h3_video(path: &std::path::Path) -> Option<bool> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut size_buf = [0u8; 8];
+    file.read_exact(&mut size_buf).ok()?;
+    let header_size = u64::from_le_bytes(size_buf) as usize;
+    if header_size > 100 * 1024 * 1024 {
+        return None;
+    }
+    let mut header_buf = vec![0u8; header_size];
+    file.read_exact(&mut header_buf).ok()?;
+    let header: Value = serde_json::from_slice(&header_buf).ok()?;
+    let top = header.as_object()?;
+
+    let tags: Vec<String> = top
+        .get("__metadata__")
+        .and_then(Value::as_object)
+        .map(|meta| {
+            [
+                "ss_base_model_version",
+                "base_model",
+                "modelspec.architecture",
+            ]
+            .iter()
+            .filter_map(|k| meta.get(*k).and_then(Value::as_str))
+            .map(str::to_ascii_lowercase)
+            .collect()
+        })
+        .unwrap_or_default();
+    let names: Vec<&str> = top
+        .keys()
+        .map(String::as_str)
+        .filter(|k| *k != "__metadata__")
+        .collect();
+    match infer_architecture_from_key_names(&names).as_deref() {
+        Some("minimax_h3") => Some(!tags.iter().any(|t| t.contains("image"))),
+        Some(_) => Some(false),
+        None if tags.iter().any(|t| minimax_h3_video_from_text(t)) => Some(true),
+        None => None,
+    }
+}
+
+/// Whether one file in `models/loras` is a MiniMax H3 video LoRA: its header
+/// when it can be read (see [`safetensors_lora_is_h3_video`]), else its name.
+/// Header verdicts are cached by path, size and modification time, since the
+/// LoRA list is classified again on every model refresh.
+fn lora_is_h3_video(comfyui_path: &str, extra_model_paths: Option<&str>, filename: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Key = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+    static CACHE: OnceLock<Mutex<HashMap<Key, Option<bool>>>> = OnceLock::new();
+
+    if !is_safe_relative_model_path(filename) {
+        return false;
+    }
+    let by_name = minimax_h3_video_from_text(&filename.to_ascii_lowercase());
+    if comfyui_path.is_empty() || !filename.to_ascii_lowercase().ends_with(".safetensors") {
+        return by_name;
+    }
+    let Some(path) = resolve_model_path(comfyui_path, extra_model_paths, "loras", filename) else {
+        return by_name;
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return by_name;
+    };
+    let key: Key = (path.clone(), meta.len(), meta.modified().ok());
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = cache.lock().ok().and_then(|c| c.get(&key).copied());
+    let verdict = match cached {
+        Some(v) => v,
+        None => {
+            let v = safetensors_lora_is_h3_video(&path);
+            if let Ok(mut c) = cache.lock() {
+                c.insert(key, v);
+            }
+            v
+        }
+    };
+    verdict.unwrap_or(by_name)
+}
+
+/// The subset of `filenames` (LoRA names as ComfyUI lists them) that are
+/// MiniMax H3 video LoRAs. Header-only, never hashes or asks CivitAI, so the
+/// frontend can sort the whole LoRA list into image and video pickers on each
+/// model refresh. With a remote ComfyUI the files are not local and names alone
+/// decide.
+pub(crate) async fn h3_video_loras_internal(
+    state: &Arc<AppState>,
+    filenames: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    let (comfyui_path, extra_model_paths) = {
+        let config = state.config.read().await;
+        let local = generation_models_are_local(&config);
+        (
+            if local {
+                config.comfyui_path.clone()
+            } else {
+                String::new()
+            },
+            config.extra_model_paths.clone(),
+        )
+    };
+    tokio::task::spawn_blocking(move || {
+        filenames
+            .into_iter()
+            .filter(|name| lora_is_h3_video(&comfyui_path, extra_model_paths.as_deref(), name))
+            .collect()
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("LoRA inspection failed: {e}")))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn detect_h3_video_loras(
+    state: State<'_, Arc<AppState>>,
+    filenames: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    h3_video_loras_internal(state.inner(), filenames).await
+}
+
 /// Parse the safetensors JSON header and extract only the prediction-related
 /// fields used by the frontend runtime path.
 pub(crate) fn read_safetensors_runtime_metadata(
@@ -7372,6 +7516,23 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("cosmos_predict2".to_string());
     }
 
+    // MiniMax H3, as in ComfyUI's detect_unet_config: the DiT has a video patch
+    // projection, and only the audio-video model an audio one (MiniMax-H3-Image
+    // is the same DiT without audio). A LoRA has neither, only block and token
+    // refiner layers; it is read as the video model, the one MooshieUI runs.
+    // Checked before the classic-UNet fallback below, which would otherwise call
+    // any `diffusion_model.`-prefixed H3 LoRA an SD 1.5 one.
+    if has_key("video_patch_proj.weight") {
+        return Some(if has_key("audio_patch_proj.weight") {
+            "minimax_h3".to_string()
+        } else {
+            "minimax_h3_image".to_string()
+        });
+    }
+    if starts_with("token_refiner.blocks.") && starts_with("blocks.0.attn.qkv_proj.") {
+        return Some("minimax_h3".to_string());
+    }
+
     // Wan 2.1 (DiT video model)
     if has_key("head.modulation") {
         return Some("wan2.1".to_string());
@@ -7677,10 +7838,10 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         // Flux.2 Klein's flux2_klein_4b / flux2_klein_9b are registered
         // (architectures/flux2_klein.rs).
         "flux2_dev" => Some("flux2d"),
+        "minimax_h3" => Some("minimaxh3"),
         "qwen_image" => Some("qwen"),
         "auraflow" => Some("auraflow"),
         "hunyuandit" => Some("hunyuandit"),
-        "stable_cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
         "stable-diffusion-xl-v1-base" => Some("sdxl"),
         "stable-diffusion-v1-5" => Some("sd15"),
@@ -7715,11 +7876,11 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // Flux 2 sizes are told apart by their keys (Klein's classes come from
         // the registry), so a Klein file named Dev is corrected and vice versa.
         "flux2d" => Some("flux2_dev"),
+        "minimaxh3" => Some("minimax_h3"),
         "anima" => Some("anima"),
         "qwen" => Some("qwen_image"),
         "auraflow" => Some("auraflow"),
         "hunyuandit" => Some("hunyuandit"),
-        "cascade" => Some("cascade"),
         _ => None,
     }
 }
@@ -11671,6 +11832,197 @@ first_stage_model.encoder.norm_out.weight
         assert!(!gguf_is_text_model(
             Some("some_future_dit"),
             &["blocks.0.weight"]
+        ));
+    }
+}
+
+#[cfg(test)]
+mod h3_video_lora_tests {
+    use super::*;
+
+    /// Keys of an ai-toolkit MiniMax H3 LoRA (the 360 Orbit and Anti-Burn LoRAs
+    /// look like this), trimmed to a few blocks.
+    fn h3_lora_keys() -> Vec<String> {
+        let mut keys = Vec::new();
+        for block in [
+            "blocks.0",
+            "blocks.1",
+            "token_refiner.blocks.0",
+            "token_refiner.blocks.1",
+        ] {
+            for layer in ["attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2"] {
+                for ab in ["lora_A", "lora_B"] {
+                    keys.push(format!("diffusion_model.{block}.{layer}.{ab}.weight"));
+                }
+            }
+        }
+        keys
+    }
+
+    fn write_safetensors(
+        name: &str,
+        keys: &[String],
+        metadata: &[(&str, &str)],
+    ) -> std::path::PathBuf {
+        let mut header = serde_json::Map::new();
+        for key in keys {
+            header.insert(
+                key.clone(),
+                serde_json::json!({"dtype": "BF16", "shape": [16, 16], "data_offsets": [0, 0]}),
+            );
+        }
+        if !metadata.is_empty() {
+            let meta: serde_json::Map<String, Value> = metadata
+                .iter()
+                .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+                .collect();
+            header.insert("__metadata__".into(), Value::Object(meta));
+        }
+        let json = serde_json::to_vec(&Value::Object(header)).unwrap();
+        let dir = std::env::temp_dir().join(format!("mooshie-h3-lora-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        let mut bytes = (json.len() as u64).to_le_bytes().to_vec();
+        bytes.extend(json);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn civitai_and_trainer_base_models_name_minimax_h3() {
+        assert_eq!(model_family_from_base_model("MiniMax H3"), "minimaxh3");
+        assert_eq!(
+            model_family_from_base_model("minimax_h3_ref2va"),
+            "minimaxh3"
+        );
+        assert_eq!(
+            model_family_from_base_model("minimax-h3-fl2va"),
+            "minimaxh3"
+        );
+        assert_ne!(
+            model_family_from_base_model("MiniMax H3 Image"),
+            "minimaxh3"
+        );
+        assert_eq!(model_family_from_base_model("SDXL 1.0"), "sdxl");
+    }
+
+    #[test]
+    fn h3_filenames_resolve_to_minimax_h3() {
+        for name in [
+            "minimax_h3_flf2v_lora_v1.safetensors",
+            "camera_motion_h3_lora_v1_3000_pruned.safetensors",
+            "H3_StereoDepth_FL2VA.safetensors",
+            "h3-realism-people-t2v-i2v-r2v.safetensors",
+            "h3_character_swap_v1.5.safetensors",
+            "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        ] {
+            assert_eq!(
+                model_family_from_filename(name),
+                Some("minimaxh3"),
+                "{name}"
+            );
+        }
+        for name in [
+            "minimax_h3_image_pruned_bf16.safetensors",
+            "h3image_style.safetensors",
+            "flux3_klein_h300.safetensors",
+            "pony_style_v3.safetensors",
+        ] {
+            assert_ne!(
+                model_family_from_filename(name),
+                Some("minimaxh3"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn h3_lora_keys_are_not_read_as_sd15() {
+        let keys = h3_lora_keys();
+        let names: Vec<&str> = keys.iter().map(String::as_str).collect();
+        assert_eq!(
+            infer_architecture_from_key_names(&names).as_deref(),
+            Some("minimax_h3")
+        );
+        assert_eq!(family_from_architecture("minimax_h3"), Some("minimaxh3"));
+        assert_eq!(architecture_class("minimaxh3"), Some("minimax_h3"));
+    }
+
+    #[test]
+    fn h3_dit_keys_tell_video_from_image() {
+        let video = [
+            "video_patch_proj.weight",
+            "audio_patch_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&video).as_deref(),
+            Some("minimax_h3")
+        );
+        let image = ["video_patch_proj.weight", "blocks.0.attn.qkv_proj.weight"];
+        assert_eq!(
+            infer_architecture_from_key_names(&image).as_deref(),
+            Some("minimax_h3_image")
+        );
+    }
+
+    #[test]
+    fn lora_headers_decide_over_names() {
+        let h3 = write_safetensors("plain_name.safetensors", &h3_lora_keys(), &[]);
+        assert_eq!(safetensors_lora_is_h3_video(&h3), Some(true));
+
+        let image = write_safetensors(
+            "h3_named_image_lora.safetensors",
+            &h3_lora_keys(),
+            &[("ss_base_model_version", "minimax_h3_image")],
+        );
+        assert_eq!(safetensors_lora_is_h3_video(&image), Some(false));
+
+        // A kohya SDXL LoRA carries no H3 keys: not H3, even with "h3" in its name.
+        let sdxl_keys: Vec<String> = [
+            "lora_unet_input_blocks_4_1_proj_in.lora_down.weight",
+            "lora_unet_input_blocks_4_1_proj_in.lora_up.weight",
+        ]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+        let sdxl = write_safetensors("style_h3.safetensors", &sdxl_keys, &[]);
+        assert_ne!(safetensors_lora_is_h3_video(&sdxl), Some(true));
+
+        // Unrecognised keys fall back to the trainer's base-model tag.
+        let tagged = write_safetensors(
+            "tagged.safetensors",
+            &["some.custom.layer.lora_A.weight".to_string()],
+            &[("base_model", "minimax-h3-fl2va")],
+        );
+        assert_eq!(safetensors_lora_is_h3_video(&tagged), Some(true));
+    }
+
+    #[test]
+    fn lora_classification_uses_the_loras_folder() {
+        let dir = std::env::temp_dir().join(format!("mooshie-h3-classify-{}", std::process::id()));
+        let loras = dir.join("models").join("loras");
+        std::fs::create_dir_all(loras.join("video")).unwrap();
+        let src = write_safetensors("orbit_src.safetensors", &h3_lora_keys(), &[]);
+        std::fs::copy(&src, loras.join("video").join("orbit.safetensors")).unwrap();
+        std::fs::write(loras.join("anime.safetensors"), b"not a safetensors file").unwrap();
+        let root = dir.to_string_lossy().to_string();
+
+        assert!(lora_is_h3_video(&root, None, "video/orbit.safetensors"));
+        assert!(!lora_is_h3_video(&root, None, "anime.safetensors"));
+        // Not on disk (a remote server's LoRA): the name decides.
+        assert!(lora_is_h3_video(
+            &root,
+            None,
+            "camera_motion_h3_lora.safetensors"
+        ));
+        assert!(!lora_is_h3_video(&root, None, "detail_tweaker.safetensors"));
+        assert!(!lora_is_h3_video(&root, None, "../escape_h3.safetensors"));
+        // A remote ComfyUI: no local path at all.
+        assert!(lora_is_h3_video(
+            "",
+            None,
+            "minimax_h3_flf2v_lora_v1.safetensors"
         ));
     }
 }

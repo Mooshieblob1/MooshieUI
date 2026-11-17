@@ -106,8 +106,12 @@ pub fn append_upscale_chain(
 
     // Fast refine skips MultiDiffusion and tiled VAE (user opt-in; may OOM on Anima).
     // Otherwise split models (Anima/COSMOS) require tiled diffusion for 5D latents.
-    let use_tiling =
-        !params.upscale_fast_refine && (params.upscale_tiling || params.use_split_model);
+    // Never for Stable Cascade: its refine pass runs in stage B, guided by
+    // the whole image's stage C latent, which MultiDiffusion would hand to
+    // every tile.
+    let use_tiling = !params.upscale_fast_refine
+        && (params.upscale_tiling || params.use_split_model)
+        && !super::cascade::is_cascade(params);
     let use_tiled_vae =
         !params.upscale_fast_refine && (params.upscale_tiling || params.use_split_model);
 
@@ -245,7 +249,10 @@ pub fn append_upscale_chain(
     // only guidance the image ever receives. Halving there just under-guides the
     // refine and leaves the upscaler's high-frequency noise in place, so keep the
     // model's full CFG instead.
-    let upscale_cfg = if params.refine_only {
+    let upscale_cfg = if super::cascade::is_cascade(params) {
+        // Stage B does the refining, at its own CFG.
+        super::cascade::STAGE_B_CFG
+    } else if params.refine_only {
         params.cfg
     } else if is_cfgpp_sampler {
         (params.cfg / 2.0).max(2.0)

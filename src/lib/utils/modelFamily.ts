@@ -28,7 +28,6 @@ export const MODEL_FAMILIES = [
   "krea2",
   "auraflow",
   "hunyuandit",
-  "cascade",
   "mugen",
   "nanosaur",
   "unknown",
@@ -102,7 +101,6 @@ export const MODEL_FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
   krea2: "Krea 2",
   auraflow: "AuraFlow",
   hunyuandit: "HunyuanDiT",
-  cascade: "Stable Cascade",
   mugen: "Mugen",
   nanosaur: "Nanosaur",
 };

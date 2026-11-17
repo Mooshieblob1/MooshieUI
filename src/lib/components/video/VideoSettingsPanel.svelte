@@ -63,6 +63,7 @@
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import VideoLoraStack from "./VideoLoraStack.svelte";
   import { uploadForVideo, videoReferenceSlotsFree } from "../../utils/galleryActions.js";
 
 
@@ -1598,6 +1599,9 @@
       </p>
     {/if}
   </div>
+
+  <!-- The user's own H3 LoRAs, chained before the acceleration adapter. -->
+  <VideoLoraStack />
 
   <!-- One exclusive sampling mode. Existing Turbo preferences are preserved. -->
   <div class="space-y-2">

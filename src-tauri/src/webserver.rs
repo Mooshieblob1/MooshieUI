@@ -3509,6 +3509,10 @@ async fn dispatch_command(
                 let config = state.config.read().await;
                 crate::commands::api::validate_generation_loras(&config, &params.loras)
                     .map_err(|e| e.to_string())?;
+                if params.mode == "video" {
+                    crate::commands::api::validate_generation_loras(&config, &params.video_loras)
+                        .map_err(|e| e.to_string())?;
+                }
             }
             // The MCP server acts as the owner, so only the owner's runs
             // become setups it can reuse.
@@ -5057,6 +5061,14 @@ async fn dispatch_command(
                 crate::commands::api::detect_model_kind_internal(&state, &category, &filename)
                     .await
                     .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "detect_h3_video_loras" => {
+            let filenames: Vec<String> = serde_json::from_value(args["filenames"].clone())
+                .map_err(|e| format!("Invalid filenames: {}", e))?;
+            let result = crate::commands::api::h3_video_loras_internal(&state, filenames)
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
 

@@ -1,3 +1,4 @@
+pub mod cascade;
 pub mod controlnet;
 pub mod face_detect;
 pub mod facefix;
@@ -168,6 +169,10 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             }
         }
         return Ok(());
+    }
+
+    if cascade::is_cascade(params) {
+        cascade::validate(params)?;
     }
 
     let needs_input_image =
@@ -1171,9 +1176,6 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
 
     // v-prediction + zero-terminal SNR for NoobAI / Illustrious SDXL variants
     inject_vpred_zsnr_sampling(&mut result, params);
-
-    // Apply Stable Cascade model sampling if applicable
-    inject_cascade_sampling(&mut result, params);
 
     // Apply FluxGuidance for Flux Dev (positive conditioning guidance)
     inject_flux_guidance(&mut result, params);
@@ -2358,34 +2360,6 @@ fn inject_vpred_zsnr_sampling(result: &mut WorkflowResult, params: &GenerationPa
         result.next_id += 1;
     }
 
-    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
-        if let Some(inputs) = sampler_node.get_mut("inputs") {
-            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
-        }
-    }
-}
-
-/// Inject Stable Cascade model sampling (shift 2.0) for Cascade architecture models.
-fn inject_cascade_sampling(result: &mut WorkflowResult, params: &GenerationParams) {
-    if params.model_architecture != "cascade" {
-        return;
-    }
-
-    let node_id = result.next_id.to_string();
-    result.workflow.insert(
-        node_id.clone(),
-        json!({
-            "class_type": "ModelSamplingStableCascade",
-            "inputs": {
-                "model": [result.model_source.0.clone(), result.model_source.1],
-                "shift": 2.0
-            }
-        }),
-    );
-    result.model_source = (node_id, 0);
-    result.next_id += 1;
-
-    // Rewire KSampler to use patched model
     if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
         if let Some(inputs) = sampler_node.get_mut("inputs") {
             inputs["model"] = json!([result.model_source.0, result.model_source.1]);

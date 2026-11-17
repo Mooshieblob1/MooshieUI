@@ -28,6 +28,14 @@ The presets use the pruned conversions from [Kijai's repository](https://hugging
 
 TeaCache is skipped while a PDD preset is active, because it reuses the previous step's output and that output came from different heads. The TeaCache setting is kept and applies again with other methods. Upstream testing covered the pruned int8, fp8 and NVFP4 checkpoints. MooshieUI graph tests cover the wiring, not visual quality.
 
+## Your own LoRAs
+
+Community MiniMax H3 LoRAs (style, character swap, 360 orbit, camera motion, anti-burn and so on) go in the **LoRAs** list of the video panel, or switch on from the **LoRAs** tab, which lists only H3 LoRAs in video mode. Each one loads through core `LoraLoaderModelOnly` straight on the DiT, before the Turbo, LightX2V or PDD adapter and the sigma shift, so it needs no custom nodes. The same LoRAs stay on for a retake and for 2× refinement, which otherwise run on the bare model, so a character or style LoRA does not drop out of the retaken frames. They are written to the video's metadata as `loras` (`name:strength`), and reusing a video's settings puts them back in the video list rather than the image one.
+
+A LoRA counts as H3 when its tensor keys are the H3 DiT's (`blocks.N.attn.qkv_proj`, `token_refiner.blocks.N`) or its trainer's base-model tag names MiniMax H3; with a remote ComfyUI, where the files are not readable, the filename decides. H3 LoRAs are left out of the image LoRA pickers. CivitAI lists them under the base model "MiniMax H3", which MooshieUI now maps to its own family instead of guessing. MiniMax-H3-Image LoRAs share the DiT's keys and are only told apart by their names and tags. Acceleration adapters are not listed: the sampling mode loads them itself, and the backend skips one added by hand so it is never applied twice.
+
+ComfyUI maps H3 LoRA keys in `diffusion_model.*`, bare and `lora_unet_*` form. A LoRA trained on the unpruned DiT can carry AdaLN layers the pruned checkpoints no longer have; ComfyUI skips those keys with a log line and applies the rest. Several LoRA authors publish `_pruned` conversions for this reason.
+
 ## Live preview
 
 Turn on **Live preview** below TeaCache to watch a rough animated preview of the whole clip while it samples. ComfyUI's own video previewer decodes only the first latent frame, which in first/last-frame mode is the start image you supplied. The `MooshieH3LivePreview` node instead decodes each step's denoised estimate with [madebyollin's taeh3](https://github.com/madebyollin/taehv/tree/62f7591f59dfbb4c3c02b7a621d180a9eeaba26c) tiny autoencoder and sends it as an animated WebP. Previews are capped at 384 px on the long side, 12 fps and 72 frames, and play for the clip's real length.

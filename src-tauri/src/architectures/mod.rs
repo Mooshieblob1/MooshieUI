@@ -33,6 +33,7 @@ use serde_json::{json, Map, Value};
 use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
+mod cascade;
 pub mod flux1;
 mod flux2_klein;
 mod kolors;
@@ -58,6 +59,7 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &flux2_klein::SPEC_9B_BASE,
     &flux2_klein::SPEC_4B,
     &flux2_klein::SPEC_4B_BASE,
+    &cascade::SPEC,
     &wan::SPEC,
     &kolors::SPEC,
     &flux1::SPEC,

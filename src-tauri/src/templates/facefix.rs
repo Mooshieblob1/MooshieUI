@@ -53,6 +53,13 @@ pub(super) fn without_spatial_conditioning(
                 None => source,
             }
         }
+        // Stable Cascade's stage B prior is the whole image's stage C
+        // latent; a crop would be guided by the full composition squeezed
+        // into it.
+        "StableCascade_StageB_Conditioning" => match link(&inputs["conditioning"]) {
+            Some(inner) => without_spatial_conditioning(workflow, next_id, inner),
+            None => source,
+        },
         "FluxGuidance" | "StyleModelApply" => {
             let Some(inner) = link(&inputs["conditioning"]) else {
                 return source;
@@ -165,7 +172,7 @@ pub fn append_facefix_chain(
                 "detector_model": detector_model,
                 "seed": super::offset_seed(seed, 2),
                 "steps": params.facefix_steps,
-                "cfg": params.cfg,
+                "cfg": super::cascade::refiner_cfg(params),
                 "sampler_name": params.sampler_name,
                 "scheduler": params.scheduler,
                 "denoise": params.facefix_denoise,
