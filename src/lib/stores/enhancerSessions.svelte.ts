@@ -43,14 +43,21 @@ class EnhancerSessionsStore {
     if (this.dropped[flow] !== n) this.dropped = { ...this.dropped, [flow]: n };
   }
 
-  /** Record one completed exchange. Callers skip failed, cancelled and invalid answers. */
-  record(flow: EnhancerFlow, user: string, assistant: string): void {
-    if (!user.trim() || !assistant.trim()) return;
+  /**
+   * Record one completed exchange and return its timestamp, which is unique
+   * within the session. Null when a side is empty and nothing was recorded.
+   * Callers skip failed and cancelled requests.
+   */
+  record(flow: EnhancerFlow, user: string, assistant: string): number | null {
+    if (!user.trim() || !assistant.trim()) return null;
+    const last = this.sessions[flow][this.sessions[flow].length - 1];
+    const at = Math.max(Date.now(), (last?.at ?? 0) + 1);
     this.sessions = {
       ...this.sessions,
-      [flow]: appendTurn(this.sessions[flow], { user, assistant, at: Date.now() }),
+      [flow]: appendTurn(this.sessions[flow], { user, assistant, at }),
     };
     this.save();
+    return at;
   }
 
   /** Take back the newest exchange, for a rewrite that is being redone. */
