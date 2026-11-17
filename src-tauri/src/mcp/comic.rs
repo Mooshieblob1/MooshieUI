@@ -891,6 +891,7 @@ fn overrides(
         sampler: plan.sampler.clone(),
         scheduler: plan.scheduler.clone(),
         loras: None,
+        transparent_background: None,
     }
 }
 
