@@ -180,7 +180,6 @@ fn is_prose_family(family: &str) -> bool {
             | "sd3"
             | "ideogram4"
             | "auraflow"
-            | "pixart"
             | "hunyuandit"
             | "kolors"
     )
