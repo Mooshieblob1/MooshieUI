@@ -840,6 +840,11 @@ class GenerationStore {
    * through CheckpointLoaderSimple. Not persisted: re-derived on every pick.
    */
   mainModelIsFullCheckpoint = $state(false);
+  /**
+   * True when the selected model carries a VAE but no text encoders, as
+   * Stability's own SD3 / SD3.5 release files do. Not persisted.
+   */
+  mainModelHasBakedVae = $state(false);
   vaeWrongKind = $state<ModelKind | null>(null);
   clipWrongKind = $state<ModelKind | null>(null);
   private componentKindCache = new Map<string, ModelKind | null>();
@@ -1356,7 +1361,8 @@ class GenerationStore {
 
   /** True when the selected model is an SD3/SD3.5 variant. */
   get isSd3(): boolean {
-    return this.modelFamily === "sd3";
+    // Every family of the registered SD3 architecture (SD3, SD3.5 Large Turbo).
+    return findFamily(this.modelFamily)?.arch.id === "sd3";
   }
 
   /** True when the selected model is a Flux-family variant. */
@@ -1824,6 +1830,7 @@ class GenerationStore {
     this.modelSourceCategory = null;
     this.mainModelWrongKind = null;
     this.mainModelIsFullCheckpoint = false;
+    this.mainModelHasBakedVae = false;
     this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
   }
 
@@ -1838,6 +1845,7 @@ class GenerationStore {
     this.modelSpec = null;
     this.modelSpecUnavailable = false;
     this.mainModelIsFullCheckpoint = false;
+    this.mainModelHasBakedVae = false;
   }
 
   /** Drop the cached key so the next fetch re-runs backend detection. */
@@ -1882,6 +1890,7 @@ class GenerationStore {
     this.isModelMetadataLoading = true;
     this.mainModelWrongKind = null;
     this.mainModelIsFullCheckpoint = false;
+    this.mainModelHasBakedVae = false;
     try {
       const spec = await readModelSpec(category, filename);
       if (requestId !== this._latestModelMetadataRequestId) return;
@@ -1905,6 +1914,7 @@ class GenerationStore {
         modelRecommendedClipType: spec?.recommended_clip_type ?? null,
       });
       this.applyDetectedModelKind(category, filename, spec?.model_kind ?? null);
+      this.mainModelHasBakedVae = spec?.baked_vae === "true";
       this.ensureRecommendedSplitClip(models.textEncoders);
       this.ensureRecommendedSplitVae(models.vaes);
       this.applyModelSpecificPreset();
@@ -2029,8 +2039,34 @@ class GenerationStore {
     }
   }
 
+  /**
+   * Stability's SD3 / SD3.5 release files hold the VAE but no encoders. Sitting
+   * in `checkpoints/`, they decode with that VAE unless the user picks an SD3 one
+   * (the backend loads MODEL and VAE from one checkpoint loader, see
+   * `templates/sd3.rs`), so an empty VAE is the right setting for them.
+   */
+  get splitVaeFromModelFile(): boolean {
+    return (
+      this.useSplitModel &&
+      this.isSd3 &&
+      this.mainModelHasBakedVae &&
+      this.modelSourceCategory === "checkpoints"
+    );
+  }
+
   ensureRecommendedSplitVae(vaes: string[], save = false): void {
     if (!this.useSplitModel) return;
+
+    if (this.splitVaeFromModelFile) {
+      // Keep an installed SD3 VAE the user picked; drop anything else (an SDXL
+      // VAE left over from the last model) so the file's own VAE is used.
+      const current = this.vae.trim();
+      if (current && !shouldKeepSplitVae(current, this.modelFamily, vaes)) {
+        this.vae = "";
+        if (save) this.saveSettings();
+      }
+      return;
+    }
 
     const recommended = this.modelRecommendedVae?.trim();
     if (!recommended) return;
@@ -2768,18 +2804,6 @@ class GenerationStore {
           width: 896,
           height: 1152,
           upscaleDenoise: 0.5,
-        };
-        break;
-
-      // SD3 family prefers moderate CFG with SGM uniform scheduling.
-      case "sd3":
-        preset = {
-          steps: this.modelTurboVariant === "turbo" ? 6 : 28,
-          cfg: this.modelTurboVariant === "turbo" ? 1.0 : 4.5,
-          samplerName: "euler",
-          scheduler: "sgm_uniform",
-          width: 1024,
-          height: 1024,
         };
         break;
 
@@ -4106,7 +4130,14 @@ class GenerationStore {
       if (!this.clipType) {
         throw new Error("Split model text encoder type is still loading.");
       }
-      if (!this.vae) {
+      if (!this.vae && !this.splitVaeFromModelFile) {
+        if (this.isSd3) {
+          // GGUFs and bare SD3 diffusion models carry no VAE, and the SD3 VAE
+          // sits in Stability's gated repo, so it cannot be auto-downloaded.
+          throw new Error(
+            "This SD3 file has no VAE of its own. Pick the SD3 VAE under VAE, or download \"SD3.5 VAE (HF access)\" from the Model Hub.",
+          );
+        }
         throw new Error("Split model VAE is still loading.");
       }
     }
