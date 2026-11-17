@@ -960,6 +960,8 @@ const zhTw: Record<string, string> = {
   "generation.dimensions.reset": "重設為 {res}",
   "generation.dimensions.recommended": "{model} 建議：{res}",
   "generation.dimensions.result": "結果",
+  "generation.dimensions.transparent": "透明背景",
+  "generation.dimensions.transparent_tip": "要求模型產生透明背景。放大、臉部修復和分段細化需要不透明圖像，開啟它們時背景會被填滿。",
   "generation.swap_panels": "切換左右面板",
   "generation.batch_fewer": "減少張數",
   "generation.batch_more": "增加張數",

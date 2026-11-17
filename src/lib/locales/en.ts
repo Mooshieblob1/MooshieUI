@@ -1095,6 +1095,8 @@ const en: Record<string, string> = {
   "generation.dimensions.reset": "Reset to {res}",
   "generation.dimensions.recommended": "Recommended for {model}: {res}",
   "generation.dimensions.result": "Result",
+  "generation.dimensions.transparent": "Transparent background",
+  "generation.dimensions.transparent_tip": "Asks the model for a see-through background. Upscale, face fix and segment detail need an opaque image, so with them on the background is filled in.",
   "generation.swap_panels": "Swap left/right panels",
   "generation.batch_fewer": "Fewer images",
   "generation.batch_more": "More images",

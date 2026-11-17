@@ -960,6 +960,8 @@ const ru: Record<string, string> = {
   "generation.dimensions.reset": "Сбросить до {res}",
   "generation.dimensions.recommended": "Рекомендуется для {model}: {res}",
   "generation.dimensions.result": "Результат",
+  "generation.dimensions.transparent": "Прозрачный фон",
+  "generation.dimensions.transparent_tip": "Просит модель сделать прозрачный фон. Апскейл, исправление лиц и детализация сегментов требуют непрозрачного изображения, поэтому с ними фон заполняется.",
   "generation.swap_panels": "Поменять левую/правую панели",
   "generation.batch_fewer": "Меньше изображений",
   "generation.batch_more": "Больше изображений",

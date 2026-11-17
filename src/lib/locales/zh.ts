@@ -960,6 +960,8 @@ const zh: Record<string, string> = {
   "generation.dimensions.reset": "重置为 {res}",
   "generation.dimensions.recommended": "{model} 推荐：{res}",
   "generation.dimensions.result": "结果",
+  "generation.dimensions.transparent": "透明背景",
+  "generation.dimensions.transparent_tip": "要求模型生成透明背景。放大、面部修复和分段细化需要不透明图像，开启它们时背景会被填充。",
   "generation.swap_panels": "切换左右面板",
   "generation.batch_fewer": "减少张数",
   "generation.batch_more": "增加张数",
