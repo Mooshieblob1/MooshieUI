@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v2.4.1
+
+### Fixes and maintenance
+- **Enhance chat in a modal window again**: the Enhance chat moves out of the docked panel and back into a modal chat window. Applying closes it, and Enhance reopens the same conversation.
+- **Faster long chats**: long Enhance chats show the newest 12 exchanges with a Show earlier button, and the gallery picker loads only while picking.
+
+---
+
 ## What's New in v2.4.0
 
 ### Model architecture registry
