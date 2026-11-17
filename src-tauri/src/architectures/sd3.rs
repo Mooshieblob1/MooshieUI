@@ -1,25 +1,167 @@
-//! Stable Diffusion 3 / 3.5 from split files.
+//! Stable Diffusion 3 / 3.5 (SD3 Medium, SD3.5 Large, Large Turbo, Medium).
 //!
 //! An all-in-one SD3 checkpoint (Comfy-Org's `sd3.5_large_fp8_scaled`, or
 //! `sd3.5_medium_incl_clips_*`) bakes its three text encoders in and loads with
 //! `CheckpointLoaderSimple` like any other checkpoint. Everything else ships the
-//! encoders apart and needs ComfyUI's SD3 recipe instead:
+//! encoders apart and goes through [`load`], ComfyUI's SD3 recipe:
 //!
 //! - MODEL from `UNETLoader` (or `UnetLoaderGGUF` for city96's GGUFs).
-//! - CLIP from `TripleCLIPLoader` with CLIP-L, CLIP-G and T5-XXL. SD3 runs on
-//!   any subset of the three (ComfyUI zero-fills the missing ones), so two
-//!   files load through `DualCLIPLoader` and one through `CLIPLoader`, both
-//!   with type `sd3`. Dropping T5 is Stability's documented low-memory setup.
+//! - CLIP from `TripleCLIPLoader` with CLIP-L (`clip_model`), CLIP-G and T5-XXL
+//!   (the `clip_g` / `t5xxl` model slots). SD3 runs on any subset of the three
+//!   (ComfyUI zero-fills the missing ones), so two files load through
+//!   `DualCLIPLoader` and one through `CLIPLoader`, both with type `sd3`.
+//!   Dropping T5 is Stability's documented low-memory setup.
 //! - VAE from `VAELoader`, unless the file carries its own. Stability's own
 //!   `sd3_medium` / `sd3.5_large` / `sd3.5_medium` / `sd3.5_large_turbo` files
 //!   hold the MMDiT and the VAE but no encoders, so detection treats them as
-//!   diffusion models with a baked VAE. When such a file sits in
-//!   `checkpoints/` and no VAE is picked, one `CheckpointLoaderSimple` gives
-//!   both MODEL and VAE, as in ComfyUI's own SD3.5 example workflow.
+//!   diffusion models with a baked VAE (`baked_vae` in `commands::api`). When
+//!   such a file sits in `checkpoints/` and no VAE is picked, one
+//!   `CheckpointLoaderSimple` gives both MODEL and VAE, as in ComfyUI's own
+//!   SD3.5 example workflow.
+//!
+//! The SD3 VAE is only published in Stability's gated repos, so it has no
+//! auto-download here; the Model Hub links it ("HF access").
 
 use serde_json::{json, Map, Value};
 
+use super::{
+    ArchitectureSpec, Detect, EncoderSpec, FamilySpec, LoaderOutput, ModeSpec, ModelFile,
+    ModelSlot, PromptStyle, Sampling, VaeSpec,
+};
 use crate::comfyui::types::GenerationParams;
+
+/// True for every SD3 family. Shared code that treats SD3 specially (latent
+/// format, `ModelSamplingSD3`) asks this rather than naming the ids.
+pub fn is_sd3(family: &str) -> bool {
+    matches!(family, "sd3" | "sd3turbo")
+}
+
+pub static SPEC: ArchitectureSpec = ArchitectureSpec {
+    id: "sd3",
+    label: "Stable Diffusion 3",
+    families: &[
+        // First: structural detection (`joint_blocks`) resolves to it.
+        FamilySpec {
+            family: "sd3",
+            label: "SD3",
+            detect: Detect {
+                all_of: &[
+                    &["sd3"],
+                    &["sd 3"],
+                    &["stable diffusion 3"],
+                    &["stable-diffusion-3"],
+                    &["stable_diffusion_3"],
+                ],
+                none_of: &["turbo"],
+                base_models: &["sd 3", "sd 3.5", "sd 3.5 large", "sd 3.5 medium"],
+            },
+            turbo: false,
+            sampling: Some(Sampling {
+                steps: 28,
+                cfg: 4.5,
+                sampler: "euler",
+                scheduler: "sgm_uniform",
+                width: 1024,
+                height: 1024,
+            }),
+            recommended: &[],
+            text_encoder: None,
+            vae: None,
+        },
+        // SD3.5 Large Turbo: distilled to 4 steps without guidance (Stability's card).
+        FamilySpec {
+            family: "sd3turbo",
+            label: "SD3.5 Large Turbo",
+            detect: Detect {
+                all_of: &[
+                    &["sd3", "turbo"],
+                    &["sd 3", "turbo"],
+                    &["stable diffusion 3", "turbo"],
+                    &["stable-diffusion-3", "turbo"],
+                    &["stable_diffusion_3", "turbo"],
+                ],
+                none_of: &[],
+                base_models: &["sd 3.5 large turbo"],
+            },
+            turbo: true,
+            sampling: Some(Sampling {
+                steps: 4,
+                cfg: 1.0,
+                sampler: "euler",
+                scheduler: "sgm_uniform",
+                width: 1024,
+                height: 1024,
+            }),
+            recommended: &[],
+            text_encoder: None,
+            vae: None,
+        },
+    ],
+    split_only: false,
+    prompt_style: PromptStyle::Natural,
+    tensor_architecture: Some("stable-diffusion-3-medium"),
+    text_encoder: Some(EncoderSpec {
+        clip_type: "sd3",
+        markers: &CLIP_L_MARKERS,
+        strict: true,
+        download: Some(ModelFile {
+            filename: "clip_l.safetensors",
+            url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/clip_l.safetensors",
+            category: "text_encoders",
+            size: Some("~0.25 GB"),
+            sha256: None,
+        }),
+    }),
+    vae: Some(VaeSpec {
+        basenames: &["sd3.5_vae.safetensors", "sd3_vae.safetensors"],
+        markers: &VAE_MARKERS,
+        strict: true,
+        download: None,
+    }),
+    model_slots: &[
+        ModelSlot {
+            key: CLIP_G_SLOT,
+            label: "CLIP-G",
+            category: "text_encoders",
+            markers: &CLIP_G_MARKERS,
+            strict: false,
+            download: Some(ModelFile {
+                filename: "clip_g.safetensors",
+                url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/clip_g.safetensors",
+                category: "text_encoders",
+                size: Some("~1.4 GB"),
+                sha256: None,
+            }),
+        },
+        ModelSlot {
+            key: T5XXL_SLOT,
+            label: "T5-XXL",
+            category: "text_encoders",
+            markers: &T5XXL_MARKERS,
+            strict: false,
+            download: Some(ModelFile {
+                filename: "t5xxl_fp8_e4m3fn_scaled.safetensors",
+                url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+                category: "text_encoders",
+                size: Some("~5.2 GB"),
+                sha256: None,
+            }),
+        },
+    ],
+    custom_nodes: &[],
+    core_nodes: &["TripleCLIPLoader", "ModelSamplingSD3", "EmptySD3LatentImage"],
+    min_comfyui: None,
+    int8_fast_model_type: None,
+    modes: &[
+        ModeSpec::generic("txt2img"),
+        ModeSpec::generic("img2img"),
+        ModeSpec::generic("inpainting"),
+    ],
+    negative_prompt: true,
+    resolution_multiple: 16,
+    loader: Some(load),
+    text_encode: None,
+};
 
 /// `architecture_files` slot holding the CLIP-G (OpenCLIP bigG) encoder.
 pub const CLIP_G_SLOT: &str = "clip_g";
@@ -29,10 +171,11 @@ pub const T5XXL_SLOT: &str = "t5xxl";
 /// Filename markers for each SD3 encoder, as Stability and Comfy-Org name
 /// them (`clip_l.safetensors`, `clip_g.safetensors`, `t5xxl_fp16.safetensors`,
 /// `t5xxl_fp8_e4m3fn_scaled.safetensors`). Used only to recommend files, never
-/// to reject one: fine-tuned CLIP-L encoders keep their own names.
-pub const CLIP_L_MARKERS: [&str; 2] = ["clip_l", "clip-l"];
+/// to reject one, except CLIP-L, which the registry checks (the encoder is
+/// strict). `t5_xxl` is left out: Chroma's `flan_t5_xxl` would match it.
+pub const CLIP_L_MARKERS: [&str; 4] = ["clip_l", "clip-l", "vit-l-14", "vit_l_14"];
 pub const CLIP_G_MARKERS: [&str; 2] = ["clip_g", "clip-g"];
-pub const T5XXL_MARKERS: [&str; 3] = ["t5xxl", "t5_xxl", "t5-xxl"];
+pub const T5XXL_MARKERS: [&str; 3] = ["t5xxl", "t5-xxl", "t5-v1_1-xxl"];
 
 /// SD3 VAE filename markers. The SD3 VAE has 16 latent channels like the Flux 1
 /// VAE but different weights and scaling, so the two are not interchangeable.
@@ -40,7 +183,7 @@ pub const VAE_MARKERS: [&str; 4] = ["sd3", "sd35", "sd_3", "stable-diffusion-3"]
 
 /// True when this request should load SD3 through the split recipe.
 pub fn is_split_sd3(params: &GenerationParams) -> bool {
-    params.use_split_model && params.model_architecture == "sd3"
+    params.use_split_model && is_sd3(&params.model_architecture)
 }
 
 fn trimmed(value: Option<&str>) -> &str {
@@ -109,21 +252,13 @@ fn vae_from_model_file(params: &GenerationParams) -> bool {
         && params.model_source_category.as_deref() == Some("checkpoints")
 }
 
-/// Pre-LoRA sources from the SD3 split loaders.
-pub struct Sd3Base {
-    pub model: (String, u32),
-    pub clip: (String, u32),
-    pub vae: (String, u32),
-    pub next_id: u32,
-}
-
-/// Emit the SD3 split loaders. [`validate`] has already checked that an
+/// The SD3 loader hook: emits the split loaders. [`validate`] has already checked that an
 /// encoder is picked and that a VAE is either picked or baked into the file.
-pub fn load_base(
+pub fn load(
     workflow: &mut Map<String, Value>,
     mut next_id: u32,
     params: &GenerationParams,
-) -> Sd3Base {
+) -> LoaderOutput {
     let unet_name = trimmed(params.diffusion_model.as_deref());
     let resolved_path = params
         .model_source_category
@@ -197,7 +332,7 @@ pub fn load_base(
     let clip = (id, 0);
     next_id += 1;
 
-    Sd3Base {
+    LoaderOutput {
         model,
         clip,
         vae,
@@ -212,13 +347,13 @@ pub fn validate(params: &GenerationParams) -> Result<(), String> {
     }
     if encoder_files(params).is_empty() {
         return Err(
-            "SD3 needs its text encoders: CLIP-L, CLIP-G and T5-XXL (clip_l.safetensors, clip_g.safetensors, t5xxl_fp8_e4m3fn_scaled.safetensors). Open the model panel to download them. Any one or two of them also works, at lower quality."
+            "SD3 needs its text encoders: CLIP-L, CLIP-G and T5-XXL (clip_l.safetensors, clip_g.safetensors, t5xxl_fp8_e4m3fn_scaled.safetensors). Open the model panel to download them."
                 .into(),
         );
     }
     if trimmed(params.vae.as_deref()).is_empty() && !vae_from_model_file(params) {
         return Err(
-            "This SD3 file has no VAE of its own. Pick the SD3 VAE under VAE, or download it from the model panel."
+            "This SD3 file has no VAE of its own. Pick the SD3 VAE under VAE, or download \"SD3.5 VAE (HF access)\" from the Model Hub."
                 .into(),
         );
     }
@@ -248,9 +383,9 @@ mod tests {
         p
     }
 
-    fn build(p: &GenerationParams) -> (Map<String, Value>, Sd3Base) {
+    fn build(p: &GenerationParams) -> (Map<String, Value>, LoaderOutput) {
         let mut wf = Map::new();
-        let base = load_base(&mut wf, 1, p);
+        let base = load(&mut wf, 1, p);
         (wf, base)
     }
 

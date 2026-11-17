@@ -4630,14 +4630,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("pony") {
         return "pony";
     }
-    if bm.contains("stable diffusion 3")
-        || bm.contains("stable-diffusion-3")
-        || bm.contains("stable_diffusion_3")
-        || bm.contains("sd3")
-        || bm.contains("sd 3")
-    {
-        return "sd3";
-    }
     if bm.contains("chroma") {
         return "chroma";
     }
@@ -4839,14 +4831,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     }
     if name.contains("pony") {
         return Some("pony");
-    }
-    if name.contains("stable diffusion 3")
-        || name.contains("stable-diffusion-3")
-        || name.contains("stable_diffusion_3")
-        || name.contains("sd3")
-        || name.contains("sd 3")
-    {
-        return Some("sd3");
     }
     if name.contains("chroma") {
         return Some("chroma");
@@ -5051,13 +5035,12 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 37] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 36] = [
     "anima",
     "sdxl",
     "illustrious",
     "pony",
     "sd15",
-    "sd3",
     "flux",
     "flux1d",
     "flux1s",
@@ -5143,11 +5126,6 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     ) {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
-    }
-
-    if family == "sd3" {
-        // Strict: the SD3 VAE is 16-channel like Flux 1's but not interchangeable.
-        return find_first_vae_matching(vaes, &crate::templates::sd3::VAE_MARKERS);
     }
 
     if matches!(family, "zib" | "zit") {
@@ -5305,15 +5283,6 @@ fn recommended_clip_from_available(
         return Some((preferred, "moss_image"));
     }
 
-    if family == "sd3" {
-        // CLIP-L goes in the main encoder slot; CLIP-G and T5-XXL have their own
-        // (see templates/sd3.rs). SD3 runs on any subset of the three, so a
-        // missing CLIP-L is a download offer, not an error.
-        let preferred =
-            find_first_text_encoder_matching(encoders, &crate::templates::sd3::CLIP_L_MARKERS);
-        return Some((preferred, "sd3"));
-    }
-
     if family == "krea2" {
         // Strict: Krea 2 expects 12x2560=30720-dim conditioning from Qwen3-VL 4B.
         // Recommending any other encoder produces a confusing ComfyUI error.
@@ -5364,6 +5333,32 @@ mod split_model_pairing_tests {
             architecture_class("mossimage"),
             architecture_class("mossimagebase")
         );
+    }
+
+    #[test]
+    fn sd3_files_resolve_to_the_registered_families() {
+        for (name, family) in [
+            ("sd3.5_large.safetensors", "sd3"),
+            ("sd3.5_medium-Q8_0.gguf", "sd3"),
+            ("sd3_medium.safetensors", "sd3"),
+            ("sd3.5_large_turbo-Q8_0.gguf", "sd3turbo"),
+            ("sd3.5_large_turbo.safetensors", "sd3turbo"),
+        ] {
+            assert_eq!(model_family_from_filename(name), Some(family), "{name}");
+        }
+        assert_eq!(model_family_from_base_model("SD 3.5 Large"), "sd3");
+        assert_eq!(model_family_from_base_model("SD 3.5 Medium"), "sd3");
+        assert_eq!(
+            model_family_from_base_model("SD 3.5 Large Turbo"),
+            "sd3turbo"
+        );
+        assert_eq!(
+            family_from_architecture("stable-diffusion-3-medium"),
+            Some("sd3")
+        );
+        // Tensor keys cannot tell Turbo from Large: one class, no override.
+        assert_eq!(architecture_class("sd3"), architecture_class("sd3turbo"));
+        assert!(!family_requires_separate_clip("sd3"));
     }
 
     #[test]
@@ -6571,7 +6566,9 @@ pub(crate) async fn read_modelspec_internal(
         // VAE is recommended over it. The SD3 loader reads the VAE from the file.
         let vae_from_file = category == "checkpoints"
             && result.get("baked_vae").map(String::as_str) == Some("true")
-            && result.get("family").map(String::as_str) == Some("sd3");
+            && result
+                .get("family")
+                .is_some_and(|f| crate::architectures::sd3::is_sd3(f));
         // The helpers gate on this category internally; a reclassified checkpoint
         // must take the same path as a correctly-placed diffusion model.
         let category = "diffusion_models";
@@ -7439,7 +7436,6 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "flux3" => Some("flux3kleinbase"),
         "moss_image" => Some("mossimage"),
         "qwen_image" => Some("qwen"),
-        "stable-diffusion-3-medium" => Some("sd3"),
         "auraflow" => Some("auraflow"),
         "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
@@ -7480,7 +7476,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         "anima" => Some("anima"),
         "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),
-        "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
         "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),

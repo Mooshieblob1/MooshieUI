@@ -72,8 +72,6 @@ export function splitVaeFitsFamily(vae: string, family: ModelFamily | null | und
   }
   if (FLUX2_LATENT_FAMILIES.has(family)) return /flux2[-_]vae/.test(lower);
   if (FLUX1_LATENT_FAMILIES.has(family)) return isFlux1VaeName(vae);
-  // SD3's 16-channel VAE is its own; mirrors `VAE_MARKERS` in templates/sd3.rs.
-  if (family === "sd3") return /sd3|sd35|sd_3|stable-diffusion-3/.test(lower);
   return null;
 }
 

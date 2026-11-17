@@ -1329,7 +1329,8 @@ class GenerationStore {
 
   /** True when the selected model is an SD3/SD3.5 variant. */
   get isSd3(): boolean {
-    return this.modelFamily === "sd3";
+    // Every family of the registered SD3 architecture (SD3, SD3.5 Large Turbo).
+    return findFamily(this.modelFamily)?.arch.id === "sd3";
   }
 
   /** True when the selected model is a Flux-family variant. */
@@ -1987,7 +1988,7 @@ class GenerationStore {
   get splitVaeFromModelFile(): boolean {
     return (
       this.useSplitModel &&
-      this.modelFamily === "sd3" &&
+      this.isSd3 &&
       this.mainModelHasBakedVae &&
       this.modelSourceCategory === "checkpoints"
     );
@@ -2723,19 +2724,6 @@ class GenerationStore {
           width: 896,
           height: 1152,
           upscaleDenoise: 0.5,
-        };
-        break;
-
-      // SD3 family prefers moderate CFG with SGM uniform scheduling. SD3.5
-      // Large Turbo is distilled to 4 steps without guidance (Stability's card).
-      case "sd3":
-        preset = {
-          steps: this.modelTurboVariant === "turbo" ? 4 : 28,
-          cfg: this.modelTurboVariant === "turbo" ? 1.0 : 4.5,
-          samplerName: "euler",
-          scheduler: "sgm_uniform",
-          width: 1024,
-          height: 1024,
         };
         break;
 
@@ -4111,6 +4099,13 @@ class GenerationStore {
         throw new Error("Split model text encoder type is still loading.");
       }
       if (!this.vae && !this.splitVaeFromModelFile) {
+        if (this.isSd3) {
+          // GGUFs and bare SD3 diffusion models carry no VAE, and the SD3 VAE
+          // sits in Stability's gated repo, so it cannot be auto-downloaded.
+          throw new Error(
+            "This SD3 file has no VAE of its own. Pick the SD3 VAE under VAE, or download \"SD3.5 VAE (HF access)\" from the Model Hub.",
+          );
+        }
         throw new Error("Split model VAE is still loading.");
       }
     }

@@ -32,7 +32,9 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 /// Every registered architecture. Add one line per architecture file.
-pub static ALL: &[&ArchitectureSpec] = &[];
+pub mod sd3;
+
+pub static ALL: &[&ArchitectureSpec] = &[&sd3::SPEC];
 
 /// How prompts for a family are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -8,7 +8,6 @@ pub mod mesh3d;
 pub mod moody_moss;
 pub mod music;
 pub mod rife;
-pub mod sd3;
 pub mod segment_detail;
 pub mod splat;
 pub mod style_ref;
@@ -336,7 +335,9 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
     // conditioning). With any other encoder, ComfyUI fails deep inside sampling
     // with a cryptic feature-count error, so fail fast here instead.
-    sd3::validate(params)?;
+    // SD3 split checks the registry cannot express: some encoder picked, and a
+    // VAE picked unless the file brings its own.
+    crate::architectures::sd3::validate(params)?;
 
     if params.model_architecture == "krea2" && params.use_split_model {
         if params.clip_type.as_deref() != Some("krea2") {
@@ -1494,24 +1495,24 @@ pub fn is_vpred_model(params: &GenerationParams) -> bool {
 /// Returns true when the resolved architecture uses a 16-channel latent bucket.
 /// Anima/Wan (Wan2.1-based) need this — a 4-channel latent fails at decode.
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    matches!(
-        params.model_architecture.as_str(),
-        "sd3"
-            | "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "chroma"
-            | "zib"
-            | "zit"
-            | "qwen"
-            | "qwen_edit"
-            | "qwen_edit_plus"
-            | "flux1kontext"
-            | "anima"
-            | "wan"
-            | "krea2"
-    )
+    crate::architectures::sd3::is_sd3(&params.model_architecture)
+        || matches!(
+            params.model_architecture.as_str(),
+            "flux"
+                | "flux1d"
+                | "flux1s"
+                | "flux1krea"
+                | "chroma"
+                | "zib"
+                | "zit"
+                | "qwen"
+                | "qwen_edit"
+                | "qwen_edit_plus"
+                | "flux1kontext"
+                | "anima"
+                | "wan"
+                | "krea2"
+        )
 }
 
 /// Returns true when the resolved architecture uses the Flux.2 latent node.
@@ -2143,7 +2144,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if params.model_architecture == "sd3" {
+    } else if crate::architectures::sd3::is_sd3(&params.model_architecture) {
         // ModelSamplingSD3 — discrete flow matching with constant shift
         let node_id = result.next_id.to_string();
         result.workflow.insert(
