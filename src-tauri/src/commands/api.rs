@@ -5145,6 +5145,11 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
             .or_else(|| vaes.first().cloned());
     }
 
+    if family == "sd3" {
+        // Strict: the SD3 VAE is 16-channel like Flux 1's but not interchangeable.
+        return find_first_vae_matching(vaes, &crate::templates::sd3::VAE_MARKERS);
+    }
+
     if matches!(family, "zib" | "zit") {
         // Strict: Z-Image decodes with the 16-channel Flux 1 VAE. Omit the VAE
         // instead of falling back to an unrelated one (usually the SDXL VAE) and
@@ -5300,6 +5305,15 @@ fn recommended_clip_from_available(
         return Some((preferred, "moss_image"));
     }
 
+    if family == "sd3" {
+        // CLIP-L goes in the main encoder slot; CLIP-G and T5-XXL have their own
+        // (see templates/sd3.rs). SD3 runs on any subset of the three, so a
+        // missing CLIP-L is a download offer, not an error.
+        let preferred =
+            find_first_text_encoder_matching(encoders, &crate::templates::sd3::CLIP_L_MARKERS);
+        return Some((preferred, "sd3"));
+    }
+
     if family == "krea2" {
         // Strict: Krea 2 expects 12x2560=30720-dim conditioning from Qwen3-VL 4B.
         // Recommending any other encoder produces a confusing ComfyUI error.
@@ -5349,6 +5363,38 @@ mod split_model_pairing_tests {
         assert_eq!(
             architecture_class("mossimage"),
             architecture_class("mossimagebase")
+        );
+    }
+
+    #[test]
+    fn sd3_pairs_clip_l_and_only_an_sd3_vae() {
+        let encoders = list(&[
+            "clip_g.safetensors",
+            "clip_l.safetensors",
+            "t5xxl_fp8_e4m3fn_scaled.safetensors",
+        ]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "sd3", &encoders),
+            Some((Some("clip_l.safetensors".to_string()), "sd3"))
+        );
+        // No CLIP-L installed: the type still applies, the file is offered for download.
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "sd3", &encoders[..1]),
+            Some((None, "sd3"))
+        );
+        let vaes = list(&[
+            "ae.safetensors",
+            "sdxl_vae.safetensors",
+            "sd3.5_vae.safetensors",
+        ]);
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "sd3", &vaes),
+            Some("sd3.5_vae.safetensors".to_string())
+        );
+        // Strict: the Flux 1 VAE is 16-channel too but decodes SD3 latents wrong.
+        assert_eq!(
+            recommended_vae_from_available("diffusion_models", "sd3", &vaes[..2]),
+            None
         );
     }
 
@@ -6520,6 +6566,12 @@ pub(crate) async fn read_modelspec_internal(
         && (category == "diffusion_models"
             || result.get("model_kind").map(String::as_str) == Some("diffusion_model"));
     if effective_is_split {
+        // A file in `checkpoints/` that carries its own VAE (Stability's SD3
+        // release files) decodes with it unless the user picks another, so no
+        // VAE is recommended over it. The SD3 loader reads the VAE from the file.
+        let vae_from_file = category == "checkpoints"
+            && result.get("baked_vae").map(String::as_str) == Some("true")
+            && result.get("family").map(String::as_str) == Some("sd3");
         // The helpers gate on this category internally; a reclassified checkpoint
         // must take the same path as a correctly-placed diffusion model.
         let category = "diffusion_models";
@@ -6527,7 +6579,9 @@ pub(crate) async fn read_modelspec_internal(
             .get("family")
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
-        if let Ok(vaes) = state.get_models_list("vae").await {
+        if vae_from_file {
+            // Nothing to recommend.
+        } else if let Ok(vaes) = state.get_models_list("vae").await {
             if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes)
             {
                 result.insert("recommended_vae".to_string(), recommended_vae);
@@ -6796,6 +6850,9 @@ pub(crate) fn read_safetensors_modelspec(
         if let Some(kind) = infer_model_kind_from_key_names(&names) {
             result.insert("model_kind".to_string(), kind.to_string());
             result.insert("model_kind_source".to_string(), "tensor_keys".to_string());
+        }
+        if has_vae_but_no_text_encoders(&names) {
+            result.insert("baked_vae".to_string(), "true".to_string());
         }
     }
 
@@ -7285,6 +7342,11 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
     let has_tree = |prefix: &str| {
         names.iter().filter(|k| k.starts_with(prefix)).count() > MIN_TENSOR_TREE_KEYS
     };
+    if has_vae_but_no_text_encoders(names) {
+        // `CheckpointLoaderSimple` returns a `None` CLIP for it, so it has to
+        // load as a diffusion model with its encoders picked separately.
+        return Some("diffusion_model");
+    }
     if FULL_CHECKPOINT_KEY_PREFIXES.iter().copied().any(has_tree) {
         return Some("checkpoint");
     }
@@ -7299,6 +7361,34 @@ fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
         return Some("vae");
     }
     None
+}
+
+/// Prefixes under which a full checkpoint bakes its text encoders.
+const BAKED_TEXT_ENCODER_KEY_PREFIXES: [&str; 3] = [
+    "cond_stage_model.",
+    "conditioner.embedders.",
+    "text_encoders.",
+];
+
+/// A file with diffusion weights and a baked VAE (`first_stage_model.`) but no
+/// text encoders. Stability's own SD3 / SD3.5 release files
+/// (`sd3.5_large.safetensors`, `sd3.5_medium.safetensors`, ...) are built this
+/// way: ComfyUI loads their MODEL and VAE with `CheckpointLoaderSimple` and the
+/// encoders with `TripleCLIPLoader`. Reported as `baked_vae` so the loader can
+/// still take the VAE from the file.
+fn has_vae_but_no_text_encoders(names: &[&str]) -> bool {
+    let has_tree = |prefix: &str| {
+        names.iter().filter(|k| k.starts_with(prefix)).count() > MIN_TENSOR_TREE_KEYS
+    };
+    has_tree("first_stage_model.")
+        && !BAKED_TEXT_ENCODER_KEY_PREFIXES
+            .iter()
+            .copied()
+            .any(has_tree)
+        && ["model.diffusion_model.", "diffusion_model."]
+            .iter()
+            .copied()
+            .any(has_tree)
 }
 
 /// llama.cpp text-model architectures that ship as GGUF text encoders, after
@@ -11287,6 +11377,38 @@ first_stage_model.encoder.norm_out.weight
                 "{prefix}"
             );
         }
+    }
+
+    /// Stability's own `sd3.5_large.safetensors`: the MMDiT under
+    /// `model.diffusion_model.` and the VAE under `first_stage_model.`, with no
+    /// text encoders. `CheckpointLoaderSimple` gives it a `None` CLIP.
+    #[test]
+    fn checkpoint_without_text_encoders_is_a_diffusion_model_with_baked_vae() {
+        let mut names = Vec::new();
+        for i in 0..8 {
+            names.push(format!(
+                "model.diffusion_model.joint_blocks.{i}.x_block.attn.qkv.weight"
+            ));
+            names.push(format!(
+                "first_stage_model.decoder.up.{i}.block.0.conv1.weight"
+            ));
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert!(has_vae_but_no_text_encoders(&refs));
+        assert_eq!(
+            infer_model_kind_from_key_names(&refs),
+            Some("diffusion_model")
+        );
+
+        // The same file with its encoders baked in stays a full checkpoint.
+        for i in 0..8 {
+            names.push(format!(
+                "text_encoders.clip_l.transformer.text_model.encoder.layers.{i}.mlp.fc1.weight"
+            ));
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        assert!(!has_vae_but_no_text_encoders(&refs));
+        assert_eq!(infer_model_kind_from_key_names(&refs), Some("checkpoint"));
     }
 
     #[test]
