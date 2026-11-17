@@ -25,6 +25,8 @@
 //!
 //! Compiled in both the desktop and the server build: no `tauri` here.
 
+pub(crate) mod wan;
+
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -53,6 +55,7 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &flux2_klein::SPEC_4B,
     &flux2_klein::SPEC_4B_BASE,
     &cascade::SPEC,
+    &wan::SPEC,
 ];
 
 /// How prompts for a family are written.
