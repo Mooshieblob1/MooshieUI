@@ -38,11 +38,29 @@
   } from "../../utils/comicRunner.js";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { portal } from "../../utils/portal.js";
+  import ModelSelector from "../generation/ModelSelector.svelte";
+  import SamplerSettings from "../generation/SamplerSettings.svelte";
+  import DimensionControls from "../generation/DimensionControls.svelte";
 
-  interface Props {
-    onOpenGenerate: () => void;
+  // The page's own model and settings (a hidden generation tab App.svelte swaps
+  // in while this page is open), shown open until the user folds them away.
+  const SETTINGS_OPEN_KEY = "mooshieui.comic.settingsOpen.v1";
+  function readSettingsOpen(): boolean {
+    try {
+      return localStorage.getItem(SETTINGS_OPEN_KEY) !== "false";
+    } catch {
+      return true;
+    }
   }
-  let { onOpenGenerate }: Props = $props();
+  let showSettings = $state(readSettingsOpen());
+  function toggleSettings() {
+    showSettings = !showSettings;
+    try {
+      localStorage.setItem(SETTINGS_OPEN_KEY, String(showSettings));
+    } catch {
+      /* storage blocked: the panel just opens again next time */
+    }
+  }
 
   let showTemplates = $state(false);
   let showPage = $state(false);
@@ -254,23 +272,18 @@
     </div>
   </div>
 
-  <!-- Model line: the page uses whatever the Generate page is set to. -->
-  <div class="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5 text-[11px] text-neutral-500">
-    {#if modelName}
-      <span>{locale.t("comic.using_model", { model: modelName, size: `${generation.width}×${generation.height}` })}</span>
-    {:else}
-      <span class="text-amber-400">{locale.t("comic.no_model")}</span>
-    {/if}
-    <button class="text-indigo-300 hover:underline" onclick={onOpenGenerate}>{locale.t("comic.change_model")}</button>
-    {#if oneImage && !generation.isNovelAi}
-      <span class="text-amber-400">{locale.t("comic.error_one_image_novelai")}</span>
-    {:else if tooManyForOneImage}
-      <span class="text-amber-400">{locale.t("comic.error_one_image_panels", { max: String(ONE_SHOT_MAX_PANELS) })}</span>
-    {/if}
-    {#if error}
-      <span class="text-red-400">{error}</span>
-    {/if}
-  </div>
+  {#if (oneImage && !generation.isNovelAi) || tooManyForOneImage || error}
+    <div class="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5 text-[11px] text-neutral-500">
+      {#if oneImage && !generation.isNovelAi}
+        <span class="text-amber-400">{locale.t("comic.error_one_image_novelai")}</span>
+      {:else if tooManyForOneImage}
+        <span class="text-amber-400">{locale.t("comic.error_one_image_panels", { max: String(ONE_SHOT_MAX_PANELS) })}</span>
+      {/if}
+      {#if error}
+        <span class="text-red-400">{error}</span>
+      {/if}
+    </div>
+  {/if}
 
   {#if showTemplates}
     <div class="flex flex-wrap gap-2 border-b border-neutral-800 bg-neutral-900/50 px-3 py-2">
@@ -302,7 +315,36 @@
 
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
     <!-- Page setup: style, setting, cast, story -->
-    <aside class="space-y-4 border-neutral-800 p-3 text-xs lg:w-72 lg:shrink-0 lg:overflow-y-auto lg:border-r">
+    <aside class="space-y-4 border-neutral-800 p-3 text-xs lg:w-80 lg:shrink-0 lg:overflow-y-auto lg:border-r">
+      <!-- The Comic page's own model and settings, apart from the Generate page's. -->
+      <section class="rounded-lg border border-neutral-800 bg-neutral-900/40">
+        <button
+          class="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-neutral-800/40"
+          aria-expanded={showSettings}
+          onclick={toggleSettings}
+        >
+          <span class="shrink-0 font-medium text-neutral-300">{locale.t("comic.settings")}</span>
+          <span class="min-w-0 flex-1 truncate text-right text-[11px] {modelName ? 'text-neutral-500' : 'text-amber-400'}">
+            {modelName ? `${modelName} · ${generation.width}×${generation.height}` : locale.t("comic.settings_no_model")}
+          </span>
+          <svg class="h-3.5 w-3.5 shrink-0 text-neutral-500 transition-transform {showSettings ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        {#if showSettings}
+          <div class="space-y-3 border-t border-neutral-800 px-2.5 pb-3 pt-2.5">
+            <p class="text-[11px] text-neutral-500">{locale.t("comic.settings_hint")}</p>
+            <ModelSelector />
+            <div class="border-t border-neutral-800 pt-3">
+              <SamplerSettings />
+            </div>
+            <div class="border-t border-neutral-800 pt-3">
+              <DimensionControls />
+            </div>
+          </div>
+        {/if}
+      </section>
+
       <section class="space-y-1.5">
         <label class="block text-neutral-400" for="comic-style">{locale.t("comic.style")}</label>
         <input
