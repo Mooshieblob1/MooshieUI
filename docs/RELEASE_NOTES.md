@@ -16,6 +16,9 @@
 ### Models
 - **Moody Moss Mix**: support for the MOSS-Image fine-tune, with its full 4K HD workflow rebuilt in MooshieUI and a matching preset.
 - **Anima Style Reference: Art style**: a third method that takes a picture's palette, shading and texture without its subject. No downloads needed.
+- **Qwen-Image 2.1 and Turbo**: detected correctly now (they were treated as Qwen-Image 1 and could not generate), with the right encoder and VAE, a Model Hub download, and Image Edit with up to 10 references. Turbo runs on its 8-step schedule.
+- **Krea 2 in Image Edit**: pick General Edit, Identity Edit or Style Reference under Edit LoRA, with 1 or 2 reference images.
+- **Transparent backgrounds kept**: images with a real alpha channel now save with their transparency instead of being made opaque.
 
 ### Characters and NovelAI
 - **Portraits use a character prompt**: on NovelAI V4 and later, the portrait maker puts the character's look in a character prompt and keeps framing in the main prompt.
