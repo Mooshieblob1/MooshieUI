@@ -1,3 +1,12 @@
+## What's New in v2.4.2
+
+### Fixes and maintenance
+- **Comic page has its own model and settings**: the Comic page now has a Model and settings section with its own model, sampler and size, and no longer depends on (or is blocked by) the Generate page being in Video mode.
+- **Faster startup with many models**: model file hashes are remembered between launches, and Model Hub hash lookups run one at a time, so startup no longer stalls (most visible in browser mode) and installed models show up without a restart.
+- **Repeated character tags kept**: multi-character prompts keep tags repeated on purpose (like `long hair` for each character) when auto quality tags or Prompt Chunks are merged in.
+
+---
+
 ## What's New in v2.4.1
 
 ### Fixes and maintenance
