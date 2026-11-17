@@ -26,6 +26,7 @@
   import { showError } from "../../stores/errorModal.svelte.js";
   import { portal } from "../../utils/portal.js";
   import { sortCivitaiModels } from "../../utils/civitaiSort.js";
+  import { KREA2_EDIT_LORAS } from "../../utils/krea2Edit.js";
   import { civitaiModelPageUrl, isCivitaiPageHost, isMatureCivitaiModel } from "../../utils/civitaiUrl.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
@@ -154,6 +155,24 @@
       url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
       filename: "qwen3vl_4b_fp8_scaled.safetensors",
       category: "text_encoders",
+    },
+    {
+      label: "Krea 2 - Identity Edit V2 LoRA r128 (Image Edit)",
+      url: KREA2_EDIT_LORAS.identity.url,
+      filename: KREA2_EDIT_LORAS.identity.filename,
+      category: "loras",
+    },
+    {
+      label: "Krea 2 - General Edit V2 LoRA r128 (Image Edit)",
+      url: KREA2_EDIT_LORAS.general.url,
+      filename: KREA2_EDIT_LORAS.general.filename,
+      category: "loras",
+    },
+    {
+      label: "Krea 2 - Style Reference LoRA (Image Edit)",
+      url: KREA2_EDIT_LORAS.style.url,
+      filename: KREA2_EDIT_LORAS.style.filename,
+      category: "loras",
     },
     {
       label: "Krea 2 - Wulver v0.5 FP8 (Turbo)",
