@@ -249,7 +249,7 @@ export function getPresetModel(
     case "sd15":
       return preset.models.sd15 ?? null;
     default:
-      // Unknown or unsupported (auraflow, pixart, hunyuandit, cascade) — try best match
+      // Unknown or unsupported (auraflow, pixart, pixartalpha, hunyuandit, cascade) — try best match
       return preset.models.illustrious ?? preset.models.sdxl ?? preset.models.sd15 ?? null;
   }
 }
