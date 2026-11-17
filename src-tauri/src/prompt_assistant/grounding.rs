@@ -154,6 +154,11 @@ pub enum PromptStyle {
 /// (Kontext, Qwen-Image-Edit) take instructions rather than scene descriptions,
 /// so they are left out until they get a recipe of their own.
 fn is_prose_family(family: &str) -> bool {
+    // Kontext is registered as natural language (its prompts are sentences),
+    // but as an edit model it takes instructions; see above.
+    if family == "flux1kontext" {
+        return false;
+    }
     if let Some(style) = crate::architectures::prompt_style(family) {
         return style == crate::architectures::PromptStyle::Natural;
     }

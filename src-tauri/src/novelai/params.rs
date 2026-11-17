@@ -315,6 +315,11 @@ pub struct NovelAiParams {
     /// VAE for the split load.
     #[serde(default)]
     pub local_vae: Option<String>,
+    /// Extra files a registered architecture's split load needs (Flux.1's
+    /// CLIP-L, ...), keyed by model slot; becomes the local pass's
+    /// `architecture_files`. See `crate::architectures`.
+    #[serde(default)]
+    pub local_architecture_files: std::collections::BTreeMap<String, String>,
     /// Prompt in ComfyUI weight syntax, for the local pass only.
     ///
     /// Unset by the app: the local pass translates the top-level

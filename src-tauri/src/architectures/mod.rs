@@ -34,6 +34,7 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 mod cascade;
+pub mod flux1;
 mod flux2_klein;
 mod kolors;
 mod ming_image;
@@ -61,6 +62,9 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &cascade::SPEC,
     &wan::SPEC,
     &kolors::SPEC,
+    &flux1::SPEC,
+    &flux1::GENERIC_SPEC,
+    &flux1::KONTEXT_SPEC,
     &sd3::SPEC,
 ];
 

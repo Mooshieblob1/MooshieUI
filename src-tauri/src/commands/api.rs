@@ -4936,11 +4936,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "qwen"
             | "qwen_edit"
             | "qwen_edit_plus"
-            | "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "flux1kontext"
             | "flux2d"
             | "flux3klein"
             | "flux3kleinbase"
@@ -4959,16 +4954,12 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 26] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 21] = [
     "anima",
     "sdxl",
     "illustrious",
     "pony",
     "sd15",
-    "flux",
-    "flux1d",
-    "flux1s",
-    "flux1krea",
     "flux2d",
     "flux3klein",
     "flux3kleinbase",
@@ -4978,7 +4969,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 26] = [
     "qwen",
     "qwen_edit",
     "qwen_edit_plus",
-    "flux1kontext",
     "ideogram4",
     "krea2",
     "auraflow",
@@ -5038,10 +5028,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
         return find_flux1_vae(vaes);
     }
 
-    if matches!(
-        family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma"
-    ) {
+    if family == "chroma" {
         return find_flux1_vae(vaes).or_else(|| vaes.first().cloned());
     }
 
@@ -5124,10 +5111,9 @@ fn recommended_clip_from_available(
         return Some((preferred, "lumina2"));
     }
 
-    if matches!(
-        family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma"
-    ) {
+    if family == "chroma" {
+        // Chroma is T5-only by design. Flux.1 (T5 + CLIP-L) is registered in
+        // `crate::architectures::flux1`.
         let preferred = find_first_text_encoder_matching(encoders, &["flan_t5_xxl", "t5_xxl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "chroma"));

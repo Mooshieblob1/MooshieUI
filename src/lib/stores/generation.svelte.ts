@@ -25,7 +25,7 @@ import {
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "../utils/api.js";
-import { findFamily, registeredMode, registeredSampling } from "../utils/architectures.js";
+import { findFamily, registeredMode, registeredSampling, slotMatches } from "../utils/architectures.js";
 import { locale } from "./locale.svelte.js";
 import {
   BETA57_SCHEDULER,
@@ -217,6 +217,7 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     local_clip_model: null,
     local_clip_type: null,
     local_vae: null,
+    local_architecture_files: {},
     local_sampler: null,
     local_scheduler: null,
     local_cfg: null,
@@ -619,6 +620,22 @@ export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = appendMissingNegativeTags(
 
 /** Reference-image slots kept in the store: the most any edit family takes (FLUX 3 Klein). */
 export const EDIT_REFERENCE_SLOTS = 10;
+
+/**
+ * Model-slot files (Flux.1's CLIP-L, ...) for a registered family's split
+ * NovelAI local pass: the first installed file each slot accepts. The main
+ * panel's auto-download covers missing ones once that family is picked there.
+ */
+function localSlotFiles(family: string | null, encoders: string[], vaes: string[]): Record<string, string> {
+  const slots = findFamily(family)?.arch.model_slots ?? [];
+  const picks: Record<string, string> = {};
+  for (const slot of slots) {
+    const installed = slot.category === "text_encoders" ? encoders : slot.category === "vae" ? vaes : [];
+    const pick = installed.find((file) => slotMatches(slot, file));
+    if (pick) picks[slot.key] = pick;
+  }
+  return picks;
+}
 
 class GenerationStore {
   _mode = $state<GenerationMode>("txt2img");
@@ -2491,6 +2508,7 @@ class GenerationStore {
         local_clip_model: null,
         local_clip_type: null,
         local_vae: null,
+        local_architecture_files: {},
         local_sampler: null,
         local_scheduler: null,
         local_cfg: null,
@@ -2547,6 +2565,7 @@ class GenerationStore {
         : null,
       local_clip_type: useSplit ? (spec?.recommended_clip_type ?? null) : null,
       local_vae: useSplit ? matchInstalledModel(spec?.recommended_vae, vaes) : null,
+      local_architecture_files: useSplit ? localSlotFiles(spec?.family ?? null, encoders, vaes) : {},
       local_sampler: rec.samplerName,
       local_scheduler: rec.scheduler,
       local_cfg: rec.cfg,
