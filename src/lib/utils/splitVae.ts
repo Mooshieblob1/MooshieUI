@@ -25,10 +25,6 @@ const QWEN_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
 const FLUX2_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "ideogram4",
   "flux2d",
-  "flux2klein9b",
-  "flux2klein9bbase",
-  "flux2klein4b",
-  "flux2klein4bbase",
   "flux3klein",
   "flux3kleinbase",
 ]);

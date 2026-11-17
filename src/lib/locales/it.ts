@@ -960,6 +960,8 @@ const it: Record<string, string> = {
   "generation.dimensions.reset": "Reimposta a {res}",
   "generation.dimensions.recommended": "Consigliato per {model}: {res}",
   "generation.dimensions.result": "Risultato",
+  "generation.dimensions.transparent": "Sfondo trasparente",
+  "generation.dimensions.transparent_tip": "Chiede al modello uno sfondo trasparente. Upscale, correzione volti e dettaglio per segmenti richiedono un'immagine opaca, quindi con loro attivi lo sfondo viene riempito.",
   "generation.swap_panels": "Scambia pannelli sinistra/destra",
   "generation.batch_fewer": "Meno immagini",
   "generation.batch_more": "Più immagini",
@@ -1149,7 +1151,7 @@ const it: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Modifica Immagine",
   "generation.image_edit.hint": "Descrivi la modifica nel prompt (ad esempio \"rendi il cielo viola\"). Il modello modifica la tua immagine di riferimento invece di generarne una da zero.",
-  "generation.image_edit.wrong_model": "Il modello selezionato non supporta la modifica di immagini. Scegli un modello Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Krea 2 o Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Il modello selezionato non supporta la modifica di immagini. Scegli un modello Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein, Krea 2 o Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Immagine di riferimento",
   "generation.image_edit.reference_image_n": "Immagine di riferimento {n}",
   "generation.image_edit.reference_set": "Immagine di riferimento impostata",

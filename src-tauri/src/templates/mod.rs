@@ -220,7 +220,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein, Krea 2, MOSS-Image or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, Flux.2 Klein, FLUX 3 Klein, Krea 2, MOSS-Image or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
         ));
     }
@@ -660,10 +660,8 @@ fn int8_fast_model_type(family: &str) -> Option<&'static str> {
         return model_type;
     }
     match family {
-        // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
-        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
-            Some("flux2")
-        }
+        // Flux.2 Dev (Flux.2 Klein declares its own in the registry)
+        "flux2d" => Some("flux2"),
         // Z-Image variants (turbo and base)
         "zit" | "zib" => Some("z-image"),
         // Other mapped families
@@ -2493,6 +2491,16 @@ mod tests {
         // Krea 2 split-model validation requires clip_type = "krea2".
         if family == "krea2" {
             value["clip_type"] = json!("krea2");
+        }
+        // Flux.2 Klein validation requires the flux2 CLIP type and a Qwen3
+        // encoder of the model's size.
+        if family.starts_with("flux2klein") {
+            value["clip_type"] = json!("flux2");
+            value["clip_model"] = json!(if family.starts_with("flux2klein9b") {
+                "qwen_3_8b_fp8mixed.safetensors"
+            } else {
+                "qwen_3_4b.safetensors"
+            });
         }
         serde_json::from_value(value).expect("test params must deserialize")
     }

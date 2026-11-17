@@ -960,6 +960,8 @@ const zhTw: Record<string, string> = {
   "generation.dimensions.reset": "重設為 {res}",
   "generation.dimensions.recommended": "{model} 建議：{res}",
   "generation.dimensions.result": "結果",
+  "generation.dimensions.transparent": "透明背景",
+  "generation.dimensions.transparent_tip": "要求模型產生透明背景。放大、臉部修復和分段細化需要不透明圖像，開啟它們時背景會被填滿。",
   "generation.swap_panels": "切換左右面板",
   "generation.batch_fewer": "減少張數",
   "generation.batch_more": "增加張數",
@@ -1149,7 +1151,7 @@ const zhTw: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "圖像編輯",
   "generation.image_edit.hint": "在提示詞中描述要修改的內容（例如「將天空改為紫色」）。模型將依據您的參考圖像進行編輯，而非從頭生成。",
-  "generation.image_edit.wrong_model": "所選模型不支援圖像編輯。請選擇 Qwen Image Edit、Qwen Image Edit Plus、FLUX 3 Klein、Krea 2 或 Flux.1 Kontext 模型。",
+  "generation.image_edit.wrong_model": "所選模型不支援圖像編輯。請選擇 Qwen Image Edit、Qwen Image Edit Plus、Flux.2 Klein、FLUX 3 Klein、Krea 2 或 Flux.1 Kontext 模型。",
   "generation.image_edit.reference_image": "參考圖像",
   "generation.image_edit.reference_image_n": "參考圖像 {n}",
   "generation.image_edit.reference_set": "參考圖像已設定",

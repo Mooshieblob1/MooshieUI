@@ -465,8 +465,9 @@
           // Listed under text_encoders so the picker resolves correctly;
           // backend hash lookup also falls through to `clip/`.
           category: "text_encoders",
-          // Flux 2 Klein ships with Qwen 3 as its text encoder.
-          clipType: "qwen_image",
+          // ComfyUI builds the Klein encoder under the flux2 CLIP type, which
+          // the Flux.2 Klein registry spec requires.
+          clipType: "flux2",
         },
         vaeModel: {
           filename: "flux-vae.safetensors",
@@ -475,7 +476,7 @@
         },
       },
       autoSettings: {
-        steps: 20,
+        steps: 4,
         cfg: 1.0,
         samplerName: "euler",
         scheduler: "simple",

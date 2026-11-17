@@ -107,6 +107,7 @@ pub fn definitions() -> Value {
                             }
                         }
                     },
+                    "transparent_background": { "type": "boolean", "description": "Ask for a see-through (RGBA) background, for logos, stickers and design assets. Only models that support it (Ming-Image Design) use it. Default: the setup's." },
                     "wait": { "type": "boolean", "description": "Default true." },
                     "include_images": { "type": "boolean", "description": "Return image previews. Default true." }
                 }
@@ -330,7 +331,7 @@ pub fn definitions() -> Value {
         json!({
             "name": "edit_image",
             "title": "Edit image",
-            "description": "Edit an image with an instruction using an Image Edit model (Qwen Image Edit, Flux Kontext, FLUX 3 Klein, MOSS-Image, Anima ReStyler). Reuses the owner's last Image Edit setup for the model (get_status lists setups with mode image_edit). The first image is edited; more images are references (Klein takes up to 10, MOSS-Image 4). Saved to the gallery like generate_image.",
+            "description": "Edit an image with an instruction using an Image Edit model (Qwen Image Edit, Flux Kontext, Flux.2 Klein, FLUX 3 Klein, MOSS-Image, Anima ReStyler). Reuses the owner's last Image Edit setup for the model (get_status lists setups with mode image_edit). The first image is edited; more images are references (Klein takes up to 10, MOSS-Image 4). Saved to the gallery like generate_image.",
             "inputSchema": {
                 "type": "object",
                 "required": ["images", "prompt"],
