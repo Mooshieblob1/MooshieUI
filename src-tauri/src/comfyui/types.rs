@@ -558,6 +558,24 @@ pub struct GenerationParams {
     /// prompt hack, then crop the right half and scale it to the target size.
     #[serde(default)]
     pub edit_split_screen: bool,
+    /// Krea 2 Image Edit recipe: `identity` (Identity Edit V2), `general`
+    /// (General Edit V2) or `style` (Style Reference). Anything else builds
+    /// General Edit. See `templates/krea2_edit.rs`.
+    #[serde(default)]
+    pub krea2_edit_method: String,
+    /// Krea 2 Image Edit: the method's edit LoRA (a `models/loras` name),
+    /// picked by the frontend from whichever size is installed.
+    #[serde(default)]
+    pub krea2_edit_lora: String,
+    /// Krea 2 Identity/General Edit: `Krea2EditModelPatch.ref_boost` for the
+    /// last (or only) reference. `None` uses the recipe default (2 / 4).
+    #[serde(default)]
+    pub krea2_edit_ref_boost: Option<f64>,
+    /// Krea 2 Identity/General Edit: place the last reference beside the
+    /// canvas instead of pinned to its layout, so a person can be restaged
+    /// freely.
+    #[serde(default)]
+    pub krea2_edit_beside: bool,
     /// INT8-Fast (ComfyUI-INT8-Fast) loader. When true and the model is not
     /// .gguf, emits `OTUNetLoaderW8A8` instead of `UNETLoader` for pre-quantized
     /// INT8/ConvRot diffusion models. NVIDIA only; requires the

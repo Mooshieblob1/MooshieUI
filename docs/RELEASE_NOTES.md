@@ -1,3 +1,45 @@
+## What's New in v2.3.50
+
+### Comic pages
+- **Enhance V5 for panels**: on a NovelAI V5 model, "Write prompts from beats" writes each panel by the Enhance V5 rules, and a new per-panel Enhance button rewrites one panel with the rest of the page as context.
+- **Dialogue**: panels get a Dialogue field, one speech bubble per line, lettered on NovelAI. Whole-page mode letters all bubbles in reading order.
+
+### LoRAs
+- **One strength slider**: a single Strength slider now drives both model and CLIP strength, with a link button to split them again. The slider spans 0 to 2 in 0.05 steps, and double-click resets it to 1.
+- **Custom trigger words**: each LoRA gets a Trigger words field (in the LoRA panel and on the LoRA gallery card). The text goes into the prompt when the LoRA turns on and comes out when it turns off. Works offline.
+- **Collapsible LoRA Presets**: the presets section folds away and starts closed.
+
+### Prompts
+- **Right-click menu**: the prompt box now has Cut, Copy, Paste and Select all on right-click, and you can drag-select across highlighted tags.
+- **Weights survive autocomplete**: accepting an autocomplete suggestion or a spellcheck fix no longer deletes the weight syntax around a tag (`-2::tag::`, `{tag}`, `(tag:1.2)`).
+
+### Models
+- **Moody Moss Mix**: support for the MOSS-Image fine-tune, with its full 4K HD workflow rebuilt in MooshieUI and a matching preset.
+- **Anima Style Reference: Art style**: a third method that takes a picture's palette, shading and texture without its subject. No downloads needed.
+- **Qwen-Image 2.1 and Turbo**: detected correctly now (they were treated as Qwen-Image 1 and could not generate), with the right encoder and VAE, a Model Hub download, and Image Edit with up to 10 references. Turbo runs on its 8-step schedule.
+- **Krea 2 in Image Edit**: pick General Edit, Identity Edit or Style Reference under Edit LoRA, with 1 or 2 reference images.
+- **Transparent backgrounds kept**: images with a real alpha channel now save with their transparency instead of being made opaque.
+
+### Characters and NovelAI
+- **Portraits use a character prompt**: on NovelAI V4 and later, the portrait maker puts the character's look in a character prompt and keeps framing in the main prompt.
+- **MooshieUI marker on NovelAI PNGs**: NovelAI images saved as PNG now carry a small MooshieUI text chunk. The image bytes from NovelAI are untouched.
+
+### Image Info
+- **Stable field order**: fields show in the same order on every image, and a new button lets you hide and reorder fields.
+- **LoRAs one per line**, with the weight in a coloured pill.
+
+### MCP
+- **NovelAI over MCP**, inside the Opus free window only, so it never spends Anlas.
+- **Wildcards, saved characters, styles and chunks** by name in MCP prompts.
+- **Edit and upscale** existing images, signed download links for full-size files, gallery boards and Eagle search.
+- **Comics**: assistants can build comic pages over MCP.
+- **Tunnel fix**: the Cloudflare tunnel only shows as running once it has actually connected, and explains a blocked port 7844 (VPN or firewall).
+
+### Fixes
+- Apple Silicon build check fixed for node packs that live in a subfolder (SnapRef).
+
+---
+
 ## What's New in v2.3.49
 
 ### Comic pages
