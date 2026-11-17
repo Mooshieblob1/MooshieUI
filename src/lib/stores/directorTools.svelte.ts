@@ -9,7 +9,7 @@ import type { OutputImage } from "../types/index.js";
  *
  * A feature store, so it may read `generation`; nothing may depend on it in the
  * other direction. It holds no reference to the API: the modal owns the
- * `novelaiAugment` call, the same way `NaiEnhanceModal` owns its rewrite, so
+ * `novelaiAugment` call, the same way the Enhance chat (`enhanceChatRunner`) owns its rewrite, so
  * this stays a plain state machine over one form.
  *
  * There is no result state here. A Director Tool reports through the same
