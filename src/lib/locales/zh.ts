@@ -1115,6 +1115,7 @@ const zh: Record<string, string> = {
   "generation.model.downloading_file": "正在下载 {name}...",
   "generation.model.downloading_checkpoint": "正在下载检查点...",
   "generation.model.auto_download": "自动下载",
+  "generation.model.notice.minimax_h3_image": "社区许可：年收入超过 100 万美元或作为托管服务提供时，需要获得 MiniMax 的书面许可。",
   "generation.model.cloud_badge": "云端",
   "generation.model.adult_badge": "18+",
   "generation.model.architecture_label": "架构:",
