@@ -794,7 +794,13 @@
   }
 
   function architectureModelFile(file: ArchitectureModelFile): ModelFile {
-    return { filename: file.filename, url: file.url, category: file.category };
+    return {
+      filename: file.filename,
+      url: file.url,
+      category: file.category,
+      // AutoV2 (first 10 hex of the SHA-256), so a renamed copy still counts as installed.
+      hash: file.sha256 ? file.sha256.slice(0, 10).toUpperCase() : undefined,
+    };
   }
 
   /** Installed files in a ComfyUI model folder. */
