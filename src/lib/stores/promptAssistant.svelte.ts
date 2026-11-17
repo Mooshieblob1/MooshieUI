@@ -22,6 +22,7 @@ import {
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
+import { CHAT_CLAUSE, splitReply } from "../utils/enhanceChat.js";
 import {
   buildHistory,
   estimateTokens,
@@ -807,7 +808,9 @@ class PromptAssistantStore {
     images: string[];
     /** Aborting it stops the request on the backend too (see `runPromptAssistant`). */
     signal?: AbortSignal;
-  }): Promise<{ prompt: string; sessionUser: string; learned: LearnedMemory[] }> {
+    /** From the Enhance chat: the answer may carry a reply, or be one alone. */
+    chat?: boolean;
+  }): Promise<{ prompt: string; reply: string; sessionUser: string; learned: LearnedMemory[] }> {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
     const images = req.images;
@@ -821,27 +824,33 @@ class PromptAssistantStore {
       const history = this.sessionHistory("enhance", {
         systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
         userText: existing ? `${existing}\n${text}` : text,
-        maxOutputTokens: 384,
+        maxOutputTokens: req.chat ? 640 : 384,
       });
+      const opts = req.chat ? { ...req.opts, chat: true } : req.opts;
       const answer = await this.withStageListener(() =>
         existing
           ? enhancePrompt(
               existing,
               req.family,
-              { ...req.opts, instruction: text || undefined },
+              { ...opts, instruction: text || undefined },
               history.messages,
               images,
               req.signal,
             )
-          : composePrompt(text, req.family, req.opts, history.messages, images, req.signal),
+          : composePrompt(text, req.family, opts, history.messages, images, req.signal),
       );
+      // The backend puts the chat reply first and has already split it off
+      // before repairing the prompt; this only separates the two again.
+      const { reply, prompt: answerPrompt } = req.chat
+        ? splitReply(answer)
+        : { reply: "", prompt: answer };
       // Facts to save to a saved character's memory come after the prompt
       // when character notes went out (see `character_notes`).
-      const { prompt, learned } = splitLearnedMemory(answer);
+      const { prompt, learned } = splitLearnedMemory(answerPrompt);
       // The pasted current prompt is left out, like the V5 session: the next
       // turn sends whatever the prompt box holds by then.
       const sessionUser = withImageMarker(text || existing || "", images.length, "reference");
-      return { prompt, sessionUser, learned: req.opts.character_notes ? learned : [] };
+      return { prompt, reply, sessionUser, learned: req.opts.character_notes ? learned : [] };
     } finally {
       this.isGenerating = false;
     }
@@ -967,8 +976,10 @@ class PromptAssistantStore {
       references?: { base64: string; label: string }[];
       /** Aborting it stops the request on the backend too. */
       signal?: AbortSignal;
+      /** From the Enhance chat: the answer may carry a reply, or be one alone. */
+      chat?: boolean;
     } = {},
-  ): Promise<H3RewriteResult & { sessionUser: string }> {
+  ): Promise<H3RewriteResult & { sessionUser: string; reply: string }> {
     const usesFirstFrame =
       ctx.taskType === "i2va" || ctx.taskType === "fl2va";
     const image = (usesFirstFrame && firstFrameFilename) || null;
@@ -1000,7 +1011,10 @@ class PromptAssistantStore {
               ? h3IdleRewriteSystemPrompt(ctx, !!image)
               : h3RewriteSystemPrompt(ctx, !!image),
             skill,
-          ) + (refs.length ? `\n\n${h3ReferenceNote(refs.length, !!image)}` : "");
+          ) +
+          (refs.length ? `\n\n${h3ReferenceNote(refs.length, !!image)}` : "") +
+          (extra.chat ? `\n\n${CHAT_CLAUSE}` : "");
+        const maxTokens = H3_MAX_TOKENS + (extra.chat ? 256 : 0);
         const request = idle ? h3IdleUserPrompt(idea, ctx) : idea;
         const user =
           (existing && text ? h3EditUserPrompt(existing, request) : request) +
@@ -1008,7 +1022,7 @@ class PromptAssistantStore {
         const history = this.sessionHistory("h3", {
           systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
           userText: user,
-          maxOutputTokens: H3_MAX_TOKENS,
+          maxOutputTokens: maxTokens,
         });
         const system = withSessionClause(baseSystem, history.sentTurns);
         const sessionUser = withImageMarker(
@@ -1017,34 +1031,42 @@ class PromptAssistantStore {
           "reference",
         );
         const imageData = refs.map((r) => r.base64);
-        const first = (
+        const split = (raw: string) =>
+          extra.chat ? splitReply(raw) : { reply: "", prompt: raw.trim() };
+        const firstAnswer = split(
           await callExternalLlm(
             system,
             user,
-            H3_MAX_TOKENS,
+            maxTokens,
             image,
             imageData,
             history.messages,
             extra.signal,
-          )
-        ).trim();
+          ),
+        );
+        const first = firstAnswer.prompt;
+        const reply = firstAnswer.reply;
+        // A reply with no prompt is an answer to a question: nothing to check.
+        if (!first && reply) {
+          return { text: "", ok: true, rule: null, idle, sessionUser, reply };
+        }
         const check = validate(first, ctx);
         if (check.ok || !check.rule) {
-          return { text: first, ok: check.ok, rule: check.rule, idle, sessionUser };
+          return { text: first, ok: check.ok, rule: check.rule, idle, sessionUser, reply };
         }
-        const second = (
+        const second = split(
           await callExternalLlm(
             system,
             h3RetryInstruction(check.rule, first),
-            H3_MAX_TOKENS,
+            maxTokens,
             image,
             imageData,
             history.messages,
             extra.signal,
-          )
-        ).trim();
+          ),
+        ).prompt;
         const recheck = validate(second, ctx);
-        if (recheck.ok) return { text: second, ok: true, rule: null, idle, sessionUser };
+        if (recheck.ok) return { text: second, ok: true, rule: null, idle, sessionUser, reply };
         // Prefer whichever attempt produced something; the second can come back
         // empty when the model gives up on the correction.
         return {
@@ -1053,6 +1075,7 @@ class PromptAssistantStore {
           rule: recheck.rule ?? check.rule,
           idle,
           sessionUser,
+          reply,
         };
       });
     } finally {
@@ -1126,7 +1149,9 @@ class PromptAssistantStore {
     ctx: NaiPromptContext,
     referenceData: string[] = [],
     signal?: AbortSignal,
-  ): Promise<NaiRewriteResult & { raw: string; sessionUser: string }> {
+    /** From the Enhance chat: the answer may carry a reply, or be one alone. */
+    chat = false,
+  ): Promise<NaiRewriteResult & { raw: string; sessionUser: string; reply: string }> {
     // Before anything is sent, the skill authoring call included. The rating
     // also picks the vocabulary block, so an SFW request never carries the
     // explicit tag list.
@@ -1149,12 +1174,15 @@ class PromptAssistantStore {
             ...enhancerSessions.turns("nai").map((turn) => turn.user),
           ]),
         };
-        const sessionSystem = naiSystemWithSkill(naiRewriteSystemPrompt(sessionCtx), skill);
+        // The chat rules go last, after the output contract they make an exception to.
+        const chatClause = chat ? `\n\n${CHAT_CLAUSE}` : "";
+        const maxTokens = NAI_MAX_TOKENS + (chat ? 256 : 0);
+        const sessionSystem = naiSystemWithSkill(naiRewriteSystemPrompt(sessionCtx), skill) + chatClause;
         const sessionUserTurn = naiUserPrompt(prompt, sessionCtx);
         const history = this.sessionHistory("nai", {
           systemTokens: estimateTokens(sessionSystem),
           userText: sessionUserTurn,
-          maxOutputTokens: NAI_MAX_TOKENS,
+          maxOutputTokens: maxTokens,
         });
         // With history the turn is a revision of the newest answer; without it,
         // the ordinary rewrite from this text alone.
@@ -1172,7 +1200,7 @@ class PromptAssistantStore {
                   recipes: naiRecipeDirective([prompt]),
                 }),
                 skill,
-              );
+              ) + chatClause;
         // Saved without the pasted current prompt: the next turn sends that fresh.
         const sessionUser = withImageMarker(prompt, referenceData.length, "reference");
 
@@ -1180,28 +1208,30 @@ class PromptAssistantStore {
         // the model how it writes V5 prompts in general, and the answer is
         // cached per backend and variant, so feeding one user's references into
         // it would bias every later rewrite.
-        const firstRaw = await callExternalLlm(
-          system,
-          user,
-          NAI_MAX_TOKENS,
-          null,
-          referenceData,
-          history.messages,
-          signal,
+        const split = (raw: string) => (chat ? splitReply(raw) : { reply: "", prompt: raw });
+        const firstAnswer = split(
+          await callExternalLlm(system, user, maxTokens, null, referenceData, history.messages, signal),
         );
+        const firstRaw = firstAnswer.prompt;
+        const reply = firstAnswer.reply;
+        // A reply with no prompt answers a question: there are no fields to
+        // parse, and parsing nothing would only produce a validator problem.
+        if (!firstRaw.trim() && reply) {
+          return { parsed: parseNaiResponse(""), problems: [], raw: "", sessionUser, reply };
+        }
         const first = normalizeNaiResponse(parseNaiResponse(firstRaw));
         const problems = validateNaiResponse(first);
         if (problems.length === 0) {
-          return { parsed: first, problems: [], raw: firstRaw, sessionUser };
+          return { parsed: first, problems: [], raw: firstRaw, sessionUser, reply };
         }
 
         // The first answer goes back as a turn of its own, so the correction
         // is an edit of that text and not a second attempt from nothing, which
         // tends to fix the named problem and break something that was fine.
-        const secondRaw = await callExternalLlm(
+        const secondRaw = split(await callExternalLlm(
           system,
           naiRetryInstruction(problems),
-          NAI_MAX_TOKENS,
+          maxTokens,
           null,
           referenceData,
           [
@@ -1212,17 +1242,17 @@ class PromptAssistantStore {
             { role: "assistant", content: firstRaw },
           ],
           signal,
-        );
+        )).prompt;
         const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
         const recheck = validateNaiResponse(second);
         if (recheck.length === 0) {
-          return { parsed: second, problems: [], raw: secondRaw, sessionUser };
+          return { parsed: second, problems: [], raw: secondRaw, sessionUser, reply };
         }
         // Neither passed: keep the one with fewer problems, the correction on a
         // tie. The second can also come back empty when the model gives up.
         return second.base.trim() && recheck.length <= problems.length
-          ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser }
-          : { parsed: first, problems, raw: firstRaw, sessionUser };
+          ? { parsed: second, problems: recheck, raw: secondRaw, sessionUser, reply }
+          : { parsed: first, problems, raw: firstRaw, sessionUser, reply };
       });
     } finally {
       this.isGenerating = false;

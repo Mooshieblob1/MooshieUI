@@ -3,8 +3,10 @@ import { enhancerSessions } from "./enhancerSessions.svelte.js";
 import { createNovelAiCharacter } from "./generation.svelte.js";
 import { naiV5Variant, novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import { NAI_VARIANT_BUDGET } from "../utils/naiPrompt.js";
-import { serializeNaiFields } from "../utils/naiParse.js";
+import { parseNaiResponse } from "../utils/naiParse.js";
+import type { NaiParsedResponse } from "../utils/naiParse.js";
 import type { EnhancerFlow } from "../utils/enhancerSession.js";
+import { splitReply } from "../utils/enhanceChat.js";
 import { resolveNaiLanguage } from "../utils/naiLanguage.js";
 import {
   findOutfitOverlaps,
@@ -21,58 +23,32 @@ import type { NaiCanonPriority } from "../utils/naiSavedCharacters.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
 
 /**
- * Review state for the Enhance modal: the NovelAI V5 rewrite, the general
- * Enhance every other image model uses, and the video (H3) rewrite.
+ * The Enhance chat: a conversation with the prompt assistant in a panel beside
+ * the prompt box, for every image model (`general`), NovelAI V5 (`nai`) and
+ * video (`h3`). Each flow keeps its own conversation, which is the persistent
+ * Enhance session (`enhancerSessions`): what the panel shows is exactly what is
+ * sent back to the model as history.
  *
- * All three share the input stage (a free text box, reference images, "edit
- * current prompt") and differ only in what they review. The general and H3
- * ones change the prompt box alone, so they review one before/after pair; the
- * V5 one is the multi-field diff described below.
- *
- * The other two enhance paths overwrite the prompt box and offer an undo. This
- * one cannot: a V5 rewrite touches the base prompt, the undesired content and
- * every character box at once, so a blind overwrite would silently discard hand
- * written character work the user spent real Anlas tuning. The result is staged
- * here instead, shown as a diff with a checkbox per field, and only the ticked
- * rows are written.
+ * Every answer is still a prompt in the target model's own format, and the
+ * model may talk back in a reply alongside it, or with a reply alone when the
+ * user only asked something. Nothing is written to the prompt box until the
+ * user applies an answer. The general and H3 answers replace (or append to)
+ * the prompt box in one click. A V5 answer touches the base prompt, the
+ * undesired content and every character box at once, so besides a one-click
+ * Apply it opens the per-field review: a diff with a checkbox per field, where
+ * only the ticked rows are written, so hand-written character work is never
+ * discarded unseen.
  *
  * A feature store, so depending on `generation` is allowed. Nothing may depend
- * on this one in the other direction. In particular it holds no reference to the
- * prompt assistant: the modal owns that call, so this stays a plain state
- * machine over the two stages.
+ * on this one in the other direction. It holds no reference to the prompt
+ * assistant: `utils/enhanceChatRunner.ts` makes the calls, so this stays plain
+ * state over the conversation and the review.
  */
 
-/**
- * Which half of the modal is showing.
- *
- * `input` is where the user types what they want written; `review` is the diff
- * gate over what came back. One modal rather than two because the second is the
- * answer to the first, and cancelling out of either means the same thing:
- * nothing was written.
- */
-export type NaiEnhanceStage = "input" | "review";
+/** Which part of the panel is showing: the conversation, or a V5 answer's per-field review. */
+export type EnhanceChatView = "chat" | "review";
 
-/**
- * `nai` is the V5 rewrite, `general` the Enhance for every other image model,
- * `h3` the video rewrite.
- */
 export type EnhanceFlow = "nai" | "general" | "h3";
-
-/** A general or H3 rewrite awaiting review: it only ever touches the prompt box. */
-export interface GeneralEnhancePending {
-  before: string;
-  after: string;
-  /** Shown above the diff: an H3 format miss, or the idle-mode note. */
-  notice?: { kind: "warning" | "info"; text: string } | null;
-  /**
-   * The exchange this rewrite adds to the Enhance session, recorded only when
-   * the user applies it, as the V5 review does. Absent for an H3 answer that
-   * missed the format.
-   */
-  sessionTurn?: { user: string; assistant: string };
-  /** Run once when the rewrite is applied: saves what it learned to memory. */
-  onApplied?: () => void;
-}
 
 /** One reviewable field: what is there now, what the rewrite proposes. */
 export interface NaiEnhanceRow {
@@ -121,18 +97,8 @@ export interface NaiEnhancePending {
   base: NaiEnhanceRow;
   uc: NaiEnhanceRow;
   characters: NaiEnhanceCharacterRow[];
-  /**
-   * The exchange this rewrite adds to the Enhance session, recorded only when
-   * the user applies it. A rewrite they close without applying never becomes
-   * history, so wording that failed them is not carried into the next turn.
-   * Absent for an answer that failed validation and for review screens that
-   * did not come from a rewrite.
-   *
-   * `assistant` is the model's answer as it arrived. What is recorded is the
-   * review's fields as they stand when applied (see `apply`), so the next turn
-   * builds on the cleaned prompt and not on the mistakes the cleanup removed.
-   */
-  sessionTurn?: { user: string; assistant: string };
+  /** The chat answer this review came from, marked applied when it is. Absent for Isolate outfits. */
+  answerAt?: number;
   /** Run once when the rewrite is applied: saves what it learned to memory. */
   onApplied?: () => void;
 }
@@ -182,8 +148,6 @@ interface UndoSnapshot {
   positivePrompt: string;
   negativePrompt: string;
   characters: NovelAiCharacter[];
-  /** The session the apply added a turn to, so undoing takes the turn back too. */
-  sessionFlow?: EnhancerFlow;
   /** Present only when "Curate it" changed the generation settings too. */
   curate?: {
     checkpoint: string;
@@ -196,7 +160,7 @@ interface UndoSnapshot {
   };
 }
 
-/** Matches the text-enhance undo window in PromptInputs. */
+/** How long the undo pill under the prompt box stays up after an apply. */
 const UNDO_WINDOW_MS = 10000;
 
 /**
@@ -205,7 +169,7 @@ const UNDO_WINDOW_MS = 10000;
  * Mirrors `MAX_VISION_IMAGES` in the Rust vision layer, which enforces it for
  * real: every image is inlined into the request body, and no provider reads a
  * long image list as carefully as a short one. Four is also as many thumbnails
- * as fit on one row of the modal without shrinking them past recognition.
+ * as fit on one row of the chat composer without shrinking them past recognition.
  */
 export const NAI_MAX_REFERENCES = 4;
 
@@ -228,84 +192,251 @@ export interface NaiEnhanceReference {
 
 let referenceSeq = 0;
 
-class NaiEnhanceStore {
-  stage = $state<NaiEnhanceStage | null>(null);
-  /** Which rewrite the modal is running. Fixed for the life of one opening. */
-  flow = $state<EnhanceFlow>("nai");
-  /** What the user typed: a prompt to rewrite, or instructions for a new one. */
+/** The session each Enhance flow keeps its conversation in. */
+export function sessionFlowOf(flow: EnhanceFlow): EnhancerFlow {
+  return flow === "general" ? "enhance" : flow;
+}
+
+/** The Enhance flow for what is being generated right now. */
+export function currentEnhanceFlow(): EnhanceFlow {
+  if (generation.mode === "video") return "h3";
+  return generation.isNovelAi && naiV5Variant(generation.checkpoint) ? "nai" : "general";
+}
+
+/** What one request sent, kept so the answer can be asked for again. */
+export interface ChatRequest {
+  text: string;
+  references: NaiEnhanceReference[];
+}
+
+/**
+ * What only the answer that just arrived knows: the warnings, the V5 notes and
+ * canon differences, and what applying it saves to memory. Held for this run
+ * of the app; an answer reloaded from the saved session is its reply and
+ * prompt alone, which is all Apply needs.
+ */
+export interface ChatAnswerMeta {
+  /** An H3 format miss, or the idle-loop note. */
+  notice?: { kind: "warning" | "info"; text: string } | null;
+  /** V5: the rewrite's `NOTE:` line. */
+  note?: string;
+  /** V5: validator problems that survived the retry. */
+  problems?: string[];
+  /** V5: how saved canon characters differ from canon. Non-empty offers the redo choice. */
+  canon?: string[];
+  /** V5: the variant it was written for, and whether Curate it was on. */
+  variant?: NaiVariant;
+  language?: NaiLanguage;
+  curate?: boolean;
+  /** Run once when the answer is applied: saves what it learned to memory. */
+  onApplied?: () => void;
+  /** The request, for Retry and the canon redo. */
+  request?: ChatRequest;
+  applied?: boolean;
+}
+
+/** One exchange as the panel shows it. */
+export interface ChatExchange {
+  at: number;
+  /** What the user sent, as the session stores it. */
+  user: string;
+  /** The model's words to the user. */
+  reply: string;
+  /** The prompt in the target format. Empty for a reply-only answer. */
+  prompt: string;
+  meta: ChatAnswerMeta | undefined;
+}
+
+export type EnhanceLength = "short" | "medium" | "detailed";
+
+class EnhanceChatStore {
+  /** Whether the panel is showing. Closing it keeps the conversation and any answer on its way. */
+  open = $state(false);
+  view = $state<EnhanceChatView>("chat");
+  /** Which conversation the panel shows. Follows the model while the panel is open. */
+  flow = $state<EnhanceFlow>("general");
+  /** The message being typed. */
   input = $state("");
-  /** True while the rewrite is in flight, so the modal stays open and busy. */
-  busy = $state(false);
+  /** The flow whose answer is on its way, or null when nothing is running. */
+  busyFlow = $state<EnhanceFlow | null>(null);
+  /** The message on its way, shown in the conversation until its answer lands. */
+  sending = $state<{ flow: EnhanceFlow; text: string; references: NaiEnhanceReference[] } | null>(null);
+  /** The newest failure, shown at the end of its flow's conversation. */
+  error = $state<{ flow: EnhanceFlow; text: string } | null>(null);
+  /** Per-answer extras, by the answer's session timestamp. */
+  meta = $state<Record<number, ChatAnswerMeta>>({});
   pending = $state<NaiEnhancePending | null>(null);
-  generalPending = $state<GeneralEnhancePending | null>(null);
   showUndo = $state(false);
   /** Which flow the undo pill belongs to, for its label. */
   undoFlow = $state<EnhanceFlow>("nai");
-  /**
-   * Attached reference images, in the order the model will see them.
-   *
-   * Lives here rather than in the modal so that a rewrite triggered from the
-   * input stage still has them during the review stage, where the modal has
-   * swapped over to the diff and no longer renders the picker.
-   */
+  /** Images attached to the message being typed, in the order the model will see them. */
   references = $state<NaiEnhanceReference[]>([]);
   /**
-   * V5 flow only: applying also switches to V5 Full with the Curated-leaning
-   * settings in `NOVELAI_CURATE`. Off on every opening, so it only happens
-   * when ticked for this rewrite.
+   * V5 only: answers are written for V5 Full, and applying one also switches to
+   * V5 Full with the Curated-leaning settings in `NOVELAI_CURATE`. Off each
+   * time the panel opens, so it only happens when ticked.
    */
   curate = $state(false);
   /**
-   * V5 flow only: which side wins when a saved canon character's card
-   * disagrees with canon. Saved on every opening; the review offers the switch
-   * once the rewrite has listed differences.
+   * V5 only: which side wins when a saved canon character's card disagrees
+   * with canon. Back to saved each time the panel opens; an answer that lists
+   * differences offers the switch as a redo.
    */
   canonPriority = $state<NaiCanonPriority>("saved");
   /**
-   * Whether saved characters' memory notes go out with the rewrite. On every
-   * opening; unticked, one rewrite works from the text and saved looks alone,
-   * the clean start for a composition that keeps failing.
+   * Whether saved characters' memory notes go out with the request. On each
+   * time the panel opens; unticked, a request works from the text and saved
+   * looks alone, the clean start for a composition that keeps failing.
    */
   useMemory = $state(true);
+  /** General only, not saved: how long a prompt to write, and whether to add artist tags. */
+  length = $state<EnhanceLength>("medium");
+  includeArtists = $state(false);
 
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
   /**
-   * The rewrite in flight, if any. Closing the modal aborts it, which stops the
-   * request on the backend as well, so the next Enhance starts at once instead
-   * of waiting for an answer nobody will see.
+   * The request in flight, if any. Stop and New chat abort it, which stops it
+   * on the backend as well, so the next message starts at once.
    */
   private request: AbortController | null = null;
 
+  get busy(): boolean {
+    return this.busyFlow !== null;
+  }
+
+  /** Open the panel on a flow's conversation. */
+  openChat(flow: EnhanceFlow = currentEnhanceFlow()): void {
+    if (!this.open) {
+      this.curate = false;
+      this.canonPriority = "saved";
+      this.useMemory = true;
+    }
+    this.flow = flow;
+    this.view = "chat";
+    this.open = true;
+  }
+
+  /** Hide the panel. The conversation stays, and an answer on its way still lands in it. */
+  close(): void {
+    this.open = false;
+    this.view = "chat";
+    this.pending = null;
+  }
+
+  /** Switch the panel to another flow's conversation, as when the model changes. */
+  setFlow(flow: EnhanceFlow): void {
+    if (this.flow === flow) return;
+    this.flow = flow;
+    // A review is written for one model's boxes; it does not survive a switch.
+    if (this.view === "review") this.backToChat();
+  }
+
+  backToChat(): void {
+    this.view = "chat";
+    this.pending = null;
+  }
+
   /**
-   * Mark a rewrite as started and hand back the signal its calls should carry.
-   * Any rewrite still running is cancelled first: only one answer can land.
+   * Mark a request as started and hand back the signal its calls should carry.
+   * Any request still running is cancelled first: only one answer can land.
    */
-  beginRequest(): AbortSignal {
+  beginRequest(flow: EnhanceFlow, text: string, references: NaiEnhanceReference[]): AbortSignal {
     this.cancelRequest();
     this.request = new AbortController();
-    this.busy = true;
+    this.busyFlow = flow;
+    this.sending = { flow, text, references };
+    if (this.error?.flow === flow) this.error = null;
     return this.request.signal;
   }
 
   /**
-   * Mark the rewrite that owns `signal` as done. A cancelled one is ignored:
-   * cancelling already cleared `busy`, and a newer rewrite may own it by now.
+   * Mark the request that owns `signal` as done. A cancelled one is ignored:
+   * cancelling already cleared the state, and a newer request may own it now.
    */
   endRequest(signal: AbortSignal): void {
     if (this.request?.signal !== signal) return;
     this.request = null;
-    this.busy = false;
+    this.busyFlow = null;
+    this.sending = null;
+  }
+
+  /** Stop the answer on its way. What was sent goes back into the box. */
+  stop(): void {
+    const sent = this.sending;
+    this.cancelRequest();
+    if (sent && sent.flow === this.flow && !this.input.trim() && this.references.length === 0) {
+      this.input = sent.text;
+      this.references = sent.references;
+    }
   }
 
   private cancelRequest(): void {
     this.request?.abort();
     this.request = null;
-    this.busy = false;
+    this.busyFlow = null;
+    this.sending = null;
   }
 
-  get isOpen(): boolean {
-    return this.stage !== null;
+  /**
+   * Add a finished exchange to its flow's conversation. Returns its timestamp,
+   * or null when the session refused it (an empty side).
+   */
+  addAnswer(flow: EnhanceFlow, user: string, assistant: string, meta: ChatAnswerMeta): number | null {
+    const at = enhancerSessions.record(sessionFlowOf(flow), user, assistant);
+    if (at === null) return null;
+    this.meta = { ...this.meta, [at]: meta };
+    return at;
+  }
+
+  /** Show a failure at the end of the conversation, and give the user their message back. */
+  fail(flow: EnhanceFlow, text: string, request: ChatRequest): void {
+    this.error = { flow, text };
+    if (flow === this.flow && !this.input.trim() && this.references.length === 0) {
+      this.input = request.text;
+      this.references = request.references;
+    }
+  }
+
+  dismissError(): void {
+    this.error = null;
+  }
+
+  /** A flow's conversation, oldest first. */
+  exchanges(flow: EnhanceFlow): ChatExchange[] {
+    return enhancerSessions.turns(sessionFlowOf(flow)).map((t) => {
+      const { reply, prompt } = splitReply(t.assistant);
+      return { at: t.at, user: t.user, reply, prompt, meta: this.meta[t.at] };
+    });
+  }
+
+  /** Take back a flow's newest exchange, so it can be asked again. */
+  takeBackLast(flow: EnhanceFlow): void {
+    const turns = enhancerSessions.turns(sessionFlowOf(flow));
+    const last = turns[turns.length - 1];
+    if (!last) return;
+    enhancerSessions.dropLast(sessionFlowOf(flow));
+    const { [last.at]: _, ...rest } = this.meta;
+    this.meta = rest;
+  }
+
+  /** Start the flow's conversation over, stopping an answer still on its way. */
+  newChat(flow: EnhanceFlow): void {
+    if (this.busyFlow === flow) this.cancelRequest();
+    const gone = new Set(enhancerSessions.turns(sessionFlowOf(flow)).map((t) => t.at));
+    enhancerSessions.clear(sessionFlowOf(flow));
+    this.meta = Object.fromEntries(Object.entries(this.meta).filter(([at]) => !gone.has(Number(at))));
+    if (this.error?.flow === flow) this.error = null;
+    if (this.view === "review") this.backToChat();
+  }
+
+  private markApplied(at: number | undefined): void {
+    if (at === undefined) return;
+    const m = this.meta[at] ?? {};
+    const onApplied = m.onApplied;
+    this.meta = { ...this.meta, [at]: { ...m, applied: true, onApplied: undefined } };
+    // Memory is saved once, by the first apply.
+    onApplied?.();
   }
 
   get canAddReference(): boolean {
@@ -340,14 +471,114 @@ class NaiEnhanceStore {
   }
 
   setReferenceLabel(id: string, label: string): void {
-    this.references = this.references.map((r) =>
-      r.id === id ? { ...r, label } : r,
-    );
+    this.references = this.references.map((r) => (r.id === id ? { ...r, label } : r));
   }
 
-  clearReferences(): void {
-    this.references = [];
+  /** Paste the prompt box into the message, for the "tidy up what I have" case. */
+  copyExistingPrompt(): void {
+    this.input = generation.positivePrompt ?? "";
   }
+
+  // ---- Applying an answer ------------------------------------------------
+
+  /**
+   * Write a general or H3 answer into the prompt box. `append` keeps the
+   * current prompt and adds the answer after it, the way Compose did.
+   */
+  applyText(at: number, prompt: string, how: "replace" | "append"): void {
+    if (!prompt.trim()) return;
+    this.takeSnapshot();
+    const current = generation.positivePrompt?.trim();
+    generation.positivePrompt = how === "append" && current ? `${current}, ${prompt}` : prompt;
+    generation.saveSettings();
+    this.markApplied(at);
+    this.finishApply(this.flow === "h3" ? "h3" : "general");
+  }
+
+  /** A V5 answer's fields, read back from the conversation. */
+  private naiFields(at: number): NaiParsedResponse | null {
+    const ex = this.exchanges("nai").find((e) => e.at === at);
+    if (!ex || !ex.prompt.trim()) return null;
+    const parsed = parseNaiResponse(ex.prompt);
+    return parsed.base.trim() ? parsed : null;
+  }
+
+  /**
+   * The per-field review for a V5 answer, built against the boxes as they are
+   * now. Every row starts ticked: the answer is one coherent prompt, and half
+   * applying it leaves a base prompt describing characters that the boxes no
+   * longer match.
+   */
+  private naiPending(at: number): NaiEnhancePending | null {
+    const parsed = this.naiFields(at);
+    const variant = naiV5Variant(generation.checkpoint);
+    if (!parsed || !variant) return null;
+    const m = this.meta[at];
+    const boxes = generation.novelaiSettings.characters;
+    return {
+      variant,
+      language: m?.language ?? resolveNaiLanguage(generation.naiEnhanceLanguage, parsed.base),
+      budget: NAI_VARIANT_BUDGET[m?.curate ? "full" : variant],
+      note: m?.note ?? "",
+      problems: m?.problems ?? [],
+      canon: m?.canon ?? [],
+      answerAt: at,
+      onApplied: undefined,
+      base: { before: generation.positivePrompt, after: parsed.base, selected: true },
+      uc: { before: generation.negativePrompt, after: parsed.uc, selected: true },
+      characters: [
+        ...parsed.characters.map((after, i) => ({
+          before: boxes[i]?.prompt ?? "",
+          after,
+          selected: true,
+          targetIndex: i < boxes.length ? i : null,
+          removes: false,
+          ucBefore: boxes[i]?.negative_prompt ?? "",
+          ucAfter: parsed.characterUcs[i] ?? boxes[i]?.negative_prompt ?? "",
+        })),
+        // Boxes the answer came back short of. The base prompt it wrote
+        // describes the cast it returned, so a box left standing puts a
+        // character in the image that nothing asked for. Offered as a ticked
+        // removal row rather than cleared behind the user's back, and only
+        // for boxes with something in them.
+        ...boxes
+          .map((box, i) => ({ box, i }))
+          .slice(parsed.characters.length)
+          .filter(({ box }) => (box.prompt ?? "").trim() !== "")
+          .map(({ box, i }) => ({
+            before: box.prompt ?? "",
+            after: "",
+            selected: true,
+            targetIndex: i,
+            removes: true,
+            ucBefore: box.negative_prompt ?? "",
+            ucAfter: "",
+          })),
+      ],
+    };
+  }
+
+  /** Open a V5 answer's per-field review. False when it has no fields or the model is not V5. */
+  reviewAnswer(at: number): boolean {
+    const p = this.naiPending(at);
+    if (!p) return false;
+    this.curate = !!this.meta[at]?.curate;
+    this.pending = p;
+    this.view = "review";
+    return true;
+  }
+
+  /** Apply every field of a V5 answer, as the review would with nothing unticked. */
+  applyAnswer(at: number): boolean {
+    const p = this.naiPending(at);
+    if (!p) return false;
+    this.curate = !!this.meta[at]?.curate;
+    this.pending = p;
+    this.apply();
+    return true;
+  }
+
+  // ---- The V5 review ------------------------------------------------------
 
   /** True once at least one row is ticked, which is what enables Apply. */
   get hasSelection(): boolean {
@@ -359,8 +590,8 @@ class NaiEnhanceStore {
   /**
    * Every field that would be sent if the user applied right now.
    *
-   * Concatenated the way NovelAI counts it, so the modal's bar reflects the
-   * selection rather than the whole rewrite. Unticked rows keep their current
+   * Concatenated the way NovelAI counts it, so the review's bar reflects the
+   * selection rather than the whole answer. Unticked rows keep their current
    * text, because that is what will still be there afterwards.
    */
   get selectedText(): string {
@@ -375,34 +606,7 @@ class NaiEnhanceStore {
   }
 
   /**
-   * Open on an empty box.
-   *
-   * Deliberately empty rather than seeded with the current prompt: the box takes
-   * instructions ("make it a rainy night scene") as readily as a prompt, and a
-   * prefilled box reads as "edit this", which is the narrower of the two uses.
-   * The copy button underneath covers the other case in one click.
-   */
-  openInput(flow: EnhanceFlow = "nai"): void {
-    this.cancelRequest();
-    this.flow = flow;
-    this.stage = "input";
-    this.input = "";
-    this.busy = false;
-    this.pending = null;
-    this.generalPending = null;
-    this.references = [];
-    this.curate = false;
-    this.canonPriority = "saved";
-    this.useMemory = true;
-  }
-
-  /** Paste the prompt box into the input, for the "tidy up what I have" case. */
-  copyExistingPrompt(): void {
-    this.input = generation.positivePrompt ?? "";
-  }
-
-  /**
-   * Isolate outfits on the rewrite under review: restated outfit and hair tags
+   * Isolate outfits on the answer under review: restated outfit and hair tags
    * leave the base prompt, unplaced boxes get their grid side, and every box
    * gets the opposite-outfit UC. False when there was nothing to change.
    */
@@ -436,9 +640,9 @@ class NaiEnhanceStore {
   }
 
   /**
-   * Isolate outfits on the current prompt, with no rewrite: the result opens in
-   * the review as if a rewrite had proposed it. False when there is nothing to
-   * fix, or the model is not V5.
+   * Isolate outfits on the current prompt, with no request: the result opens
+   * in the review as if an answer had proposed it. False when there is nothing
+   * to fix, or the model is not V5.
    */
   openIsolateReview(): boolean {
     const variant = naiV5Variant(generation.checkpoint);
@@ -475,38 +679,11 @@ class NaiEnhanceStore {
     ) {
       return false;
     }
-    this.cancelRequest();
-    this.flow = "nai";
-    this.input = "";
-    this.references = [];
+    this.openChat("nai");
     this.curate = false;
-    this.generalPending = null;
     this.pending = withOutfitFields(pending, fixed);
-    this.stage = "review";
+    this.view = "review";
     return true;
-  }
-
-  showReview(pending: NaiEnhancePending): void {
-    this.pending = pending;
-    this.busy = false;
-    this.stage = "review";
-  }
-
-  showGeneralReview(pending: GeneralEnhancePending): void {
-    this.generalPending = pending;
-    this.busy = false;
-    this.stage = "review";
-  }
-
-  /** Close, cancelling the rewrite if one is still running. */
-  dismiss(): void {
-    this.cancelRequest();
-    this.stage = null;
-    this.pending = null;
-    this.generalPending = null;
-    this.busy = false;
-    this.input = "";
-    this.references = [];
   }
 
   toggleBase(): void {
@@ -546,10 +723,10 @@ class NaiEnhanceStore {
   }
 
   /**
-   * Write the ticked rows and close.
+   * Write the ticked rows and go back to the conversation.
    *
    * Character slots are built in one pass rather than through
-   * `addNovelAiCharacter`, so that a rewrite proposing three new characters
+   * `addNovelAiCharacter`, so that an answer proposing three new characters
    * cannot leave two of them written and the third dropped at the cap.
    */
   apply(): void {
@@ -584,53 +761,15 @@ class NaiEnhanceStore {
     generation.updateNovelAiSettings({
       characters: chars.filter((_, i) => !dropped.has(i)),
     });
-    // After the rows, so the avoids land on the undesired content the rewrite
+    // After the rows, so the avoids land on the undesired content the answer
     // wrote rather than being overwritten by it.
     if (this.curate) generation.applyNovelAiCurate();
     generation.saveSettings();
 
-    if (p.sessionTurn) {
-      // The cleaned fields, not the raw answer: the review already moved layout
-      // tags, split outfits and dropped filler, and a session that replays the
-      // uncleaned text teaches the next turn to repeat what was removed.
-      const fields = outfitFields(p);
-      const assistant = serializeNaiFields({
-        base: fields.base,
-        uc: p.uc.after,
-        characters: fields.boxes,
-        characterUcs: fields.ucs,
-      });
-      this.recordTurn("nai", p.sessionTurn.user, assistant || p.sessionTurn.assistant);
-    }
-    p.onApplied?.();
+    this.markApplied(p.answerAt);
+    this.view = "chat";
+    this.pending = null;
     this.finishApply("nai");
-  }
-
-  /**
-   * Write the general rewrite into the prompt box and close. `append` keeps
-   * the current prompt and adds the rewrite after it, the way Compose did.
-   */
-  applyGeneral(how: "replace" | "append"): void {
-    const p = this.generalPending;
-    if (!p) return;
-    this.takeSnapshot();
-    const current = generation.positivePrompt?.trim();
-    generation.positivePrompt =
-      how === "append" && current ? `${current}, ${p.after}` : p.after;
-    generation.saveSettings();
-    if (p.sessionTurn) {
-      this.recordTurn(this.flow === "h3" ? "h3" : "enhance", p.sessionTurn.user, p.sessionTurn.assistant);
-    }
-    p.onApplied?.();
-    this.finishApply(this.flow);
-  }
-
-  /** Add the applied exchange to its session and remember it for `undo`. */
-  private recordTurn(flow: EnhancerFlow, user: string, assistant: string): void {
-    // `record` skips an exchange with an empty side, and then there is nothing to take back.
-    if (!user.trim() || !assistant.trim()) return;
-    enhancerSessions.record(flow, user, assistant);
-    if (this.snapshot) this.snapshot.sessionFlow = flow;
   }
 
   private takeSnapshot(withSettings = false): void {
@@ -656,18 +795,16 @@ class NaiEnhanceStore {
   }
 
   private finishApply(flow: EnhanceFlow): void {
-    this.stage = null;
-    this.pending = null;
-    this.generalPending = null;
-    this.input = "";
-    this.references = [];
     this.undoFlow = flow;
     this.showUndo = true;
     if (this.undoTimer) clearTimeout(this.undoTimer);
     this.undoTimer = setTimeout(() => (this.showUndo = false), UNDO_WINDOW_MS);
   }
 
-  /** Restore everything the last apply touched, including untouched slots. */
+  /**
+   * Restore everything the last apply touched, including untouched slots. The
+   * conversation keeps the answer: it can be applied again from there.
+   */
   undo(): void {
     const snap = this.snapshot;
     if (snap) {
@@ -685,9 +822,6 @@ class NaiEnhanceStore {
       generation.negativePrompt = snap.negativePrompt;
       generation.updateNovelAiSettings({ characters: snap.characters });
       generation.saveSettings();
-      // The prompt is back to what it was, so the session must not go on
-      // treating the undone answer as the newest one to revise.
-      if (snap.sessionFlow) enhancerSessions.dropLast(snap.sessionFlow);
       this.snapshot = null;
     }
     this.showUndo = false;
@@ -696,4 +830,4 @@ class NaiEnhanceStore {
   }
 }
 
-export const naiEnhance = new NaiEnhanceStore();
+export const enhanceChat = new EnhanceChatStore();

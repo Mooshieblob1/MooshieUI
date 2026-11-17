@@ -6126,6 +6126,7 @@ async fn dispatch_command(
                 .as_str()
                 .unwrap_or("")
                 .to_string();
+            let chat = args["opts"]["chat"].as_bool().unwrap_or(false);
             let image_data: Option<Vec<String>> = args["imageData"].as_array().map(|a| {
                 a.iter()
                     .filter_map(|v| v.as_str().map(str::to_string))
@@ -6158,6 +6159,7 @@ async fn dispatch_command(
                                 &instruction,
                                 &labels,
                                 &character_notes,
+                                chat,
                                 image_data,
                             ),
                         )
@@ -6198,6 +6200,7 @@ async fn dispatch_command(
                         &instruction,
                         &labels,
                         &character_notes,
+                        chat,
                         image_data,
                     )
                     .await?;
@@ -7294,6 +7297,7 @@ pub async fn run_prompt_assistant_headless(
     instruction: &str,
     reference_labels: &[String],
     character_notes: &str,
+    chat: bool,
     image_data: Option<Vec<String>>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::grounding;
@@ -7357,10 +7361,11 @@ pub async fn run_prompt_assistant_headless(
     };
     let system = grounding::system_prompt(style, mode, &candidates, include_artists)
         + &grounding::reference_rules(images.len())
-        + &notes;
+        + &notes
+        + grounding::chat_rules(chat, &purpose);
     // Mirror the desktop token budget so browser Enhance honors the user's
     // length pick instead of always generating at the medium default.
-    let max_tokens = grounding::max_tokens(mode, length);
+    let max_tokens = grounding::max_tokens(mode, length) + grounding::chat_reply_tokens(chat);
     let user = grounding::user_turn(mode, input, instruction, &labels);
     let history = crate::prompt_assistant::history::sanitize(
         crate::prompt_assistant::history::for_purpose(&purpose, history),
@@ -7379,16 +7384,14 @@ pub async fn run_prompt_assistant_headless(
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose and for prose families. The desktop path
     // runs this too; omitting it here made browser Enhance silently drop user tags.
-    // With character notes the reply may end in facts to save to memory:
-    // split them off before the prompt is finished, and hand them back after it.
-    let (raw, facts) = if notes.is_empty() {
-        (raw, String::new())
-    } else {
-        grounding::split_memory(&raw)
-    };
-    Ok(grounding::with_memory(
-        grounding::finish(input, &raw, mode, style),
-        &facts,
+    // Memory facts and the chat's `<reply>` block are split off around it.
+    Ok(grounding::finish_answer(
+        input,
+        raw,
+        mode,
+        style,
+        !notes.is_empty(),
+        chat && purpose == "natural_language",
     ))
 }
 
