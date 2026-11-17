@@ -30,10 +30,10 @@ For setup and everyday use, see the [NovelAI wiki guide](https://github.com/Moos
 9. An Enhance button in the gallery lightbox, and a matching gallery
    context menu entry. It redraws an existing image at up to 3MP, using the
    prompt already in the generation panel.
-10. An Enhance for V5 button that rewrites a prompt into the V5 format through
-    the configured LLM, staged behind a review diff. Up to four reference
-    images can be attached to that rewrite, so a look the user cannot word can
-    be shown instead of described.
+10. An Enhance for V5 button that opens a chat with the configured LLM, which
+    writes prompts in the V5 format and applies them in one click or through
+    a per-field review diff. Up to four reference images can be attached to a
+    message, so a look the user cannot word can be shown instead of described.
 11. Personal encrypted API keys for hosted users and moderators. Desktop and
     admin accounts use the owner's config key; named accounts never fall back
     to it. See section 5.
@@ -3721,3 +3721,71 @@ NovelAI account.
 | 6 | Local model, paste the NovelAI prompt from step 1, generate | Generates as before, weights applied |
 
 **Do not skip:** 1, 2.
+
+### 2026-11-17 - Enhance is a chat
+
+**Requested by:** the user: "let's overhaul Enhance V5 and all the other
+enhances to just be a straight up chat with the LLM of choosing. What I mean by
+this is, instead of opening up a modal where you enter your prompt, a chat with
+the LLM opens up and handles all the applying of prompts for you. Workflow is
+still the same where it spits out a prompt in the format of the model you
+enhanced for (i.e. Anima, NAI, etc) but you can give it feedback or ask it
+questions and actually see responses".
+
+**What changed.** The Enhance modal (Enhance for V5, the general Enhance and
+Enhance for H3) is replaced by a chat panel docked on the right of the app.
+It is not a modal: the prompt box and Generate stay usable while it is open,
+and closing it keeps the conversation and any answer still on its way.
+
+- Each flow has its own conversation, which is the persistent Enhance session
+  that already existed, so what the panel shows is exactly what goes back to
+  the model as history. New chat clears it.
+- The model may now talk back. Every Enhance system prompt ends with chat
+  rules (`CHAT_CLAUSE` in `utils/enhanceChat.ts`, mirrored as
+  `grounding::CHAT_RULES` in Rust for the general Enhance): an answer can start
+  with one `<reply>...</reply>` block for the user, and a message that only asks
+  a question gets a reply alone with no prompt. The reply is split off before
+  the prompt is parsed, validated, retried or tag-repaired, so none of that
+  machinery sees prose. A tag upsampler model never gets the rules.
+- Every answer joins the conversation as it arrives, not only when applied, so
+  feedback on an answer ("make her hair longer") revises the answer the user is
+  looking at. Undo no longer takes the exchange out of the session.
+- General and H3 answers apply with Replace (and Append for the general one
+  when the prompt box has text). V5 answers apply every field with Apply, or
+  open the same per-field review as before with Review: checkboxes per field,
+  removal rows, overlap chips, Isolate outfits, the opposite-outfit UC and the
+  token budget. The panel widens for the review.
+- Everything the modal had is in the composer or under Options: reference
+  images (upload, paste, gallery, or paste an image into the box) with labels,
+  Edit current prompt, Copy existing prompt, Isolate outfits on the current
+  prompt, the V5 language, Curate it, Keep artists and minors rule, the general
+  Enhance's length and artist tags, and Use memory notes. V5 notes, validator
+  problems, canon differences (Keep saved / Use canon redo the answer), the H3
+  format warning and idle note show on the answer. The newest answer has Retry.
+- Enter sends, Shift+Enter starts a new line, Ctrl+Enter sends without
+  generating. Escape closes the panel (or leaves the review). The left edge
+  drags to resize, remembered per browser.
+
+The comic page's per-panel Enhance and its V5 drafts stay one-click actions on
+the comic page; they write panels in place and were never the modal.
+
+**MCP:** no change. The MCP server has no Enhance tool and never reads the
+Enhance sessions.
+
+**Testing required: yes.** `cargo test` (8 new tests in `grounding`) and
+`scripts/tests/enhanceChat.test.ts` (6 tests, run by Guardrails) cover the
+reply split. The conversation needs a real LLM.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Any image model, press Enhance, type a scene, Enter | The panel opens on the right; a prompt card arrives, usually with a short reply above it |
+| 2 | Type "make it night", Enter | The new prompt revises the last one rather than starting over |
+| 3 | Ask "why did you add rim lighting?" | A reply arrives with no prompt card |
+| 4 | Press Replace on a prompt card | The prompt box changes, Undo appears under it, the card shows Applied |
+| 5 | V5 model with two character boxes, ask for a scene, press Review | The per-field review opens in a wider panel; Apply selected writes the ticked rows |
+| 6 | V5, press Apply on an answer | Base, UC and character boxes all change; Undo restores all of them |
+| 7 | Switch the model from V5 to a local checkpoint with the panel open | The panel switches to the general conversation; switching back shows the V5 one |
+| 8 | Video mode, Enhance, ask for a shot | An H3 format prompt arrives; Replace writes it |
+| 9 | Restart the app, open Enhance | The conversation is still there and its answers still apply |
+
+**Do not skip:** 1, 3, 5.

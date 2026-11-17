@@ -32,13 +32,26 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 pub mod flux1;
+mod flux2_klein;
+mod ming_image;
 mod minimax_h3_image;
+mod pixart;
 mod qwen_image_21;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
     &qwen_image_21::SPEC,
     &minimax_h3_image::SPEC,
+    &ming_image::SPEC,
+    &ming_image::LAYER_SPEC,
+    // PixArt Alpha before Sigma: its filename markers are the narrower ones.
+    &pixart::ALPHA_SPEC,
+    &pixart::SPEC,
+    // Distilled before Base: a purely structural match picks the first.
+    &flux2_klein::SPEC_9B,
+    &flux2_klein::SPEC_9B_BASE,
+    &flux2_klein::SPEC_4B,
+    &flux2_klein::SPEC_4B_BASE,
     &flux1::SPEC,
     &flux1::GENERIC_SPEC,
     &flux1::KONTEXT_SPEC,

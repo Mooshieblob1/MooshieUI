@@ -170,10 +170,6 @@ fn is_prose_family(family: &str) -> bool {
             | "flux1s"
             | "flux1krea"
             | "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
             | "mossimage"
@@ -186,7 +182,6 @@ fn is_prose_family(family: &str) -> bool {
             | "wan"
             | "ideogram4"
             | "auraflow"
-            | "pixart"
             | "hunyuandit"
             | "kolors"
     )
@@ -533,6 +528,132 @@ pub fn with_memory(prompt: String, facts: &str) -> String {
     } else {
         format!("{prompt}\n{MEMORY_MARKER}\n{facts}")
     }
+}
+
+/// The Enhance chat rules, added to the system prompt when the request comes
+/// from the Enhance chat panel. Mirrors `CHAT_CLAUSE` in
+/// src/lib/utils/enhanceChat.ts; change them together.
+pub const CHAT_RULES: &str = "\n\nCHAT\nYou are talking with the user in a chat panel beside their prompt box. \
+They can read everything you write and answer you, and the app applies your prompt for them when they \
+choose to.\n- When the newest message asks for a prompt or a change to one, answer with the prompt \
+exactly as the output format above says. You may put one short <reply>...</reply> block before it: a \
+sentence or two on what you did or a question back, in the user's language. Never put prompt text \
+inside the reply.\n- When the newest message only asks a question, wants advice or an opinion, or \
+talks about something without asking for a change, answer in a <reply>...</reply> block alone and \
+write no prompt, even where the text above says to always return one.\n- Everything outside the \
+reply block is the prompt and is applied as it stands, so nothing else may go outside it: no \
+greeting, no explanation, no markdown.";
+
+/// The chat rules for a request, or nothing. A purpose-built tag upsampler
+/// cannot hold a conversation, so it never gets them and its answers are
+/// always a bare prompt.
+pub fn chat_rules(chat: bool, purpose: &str) -> &'static str {
+    if chat && purpose == "natural_language" {
+        CHAT_RULES
+    } else {
+        ""
+    }
+}
+
+/// Room for the chat's `<reply>` block on top of the prompt's own budget.
+pub fn chat_reply_tokens(chat: bool) -> u32 {
+    if chat {
+        256
+    } else {
+        0
+    }
+}
+
+/// Split the `<reply>` blocks off an answer: (reply, prompt). Mirrors
+/// `splitReply` in src/lib/utils/enhanceChat.ts. A block left open runs to the
+/// first blank line, or to the end when there is none.
+pub fn split_reply(raw: &str) -> (String, String) {
+    let mut rest = raw.replace("\r\n", "\n");
+    let mut replies: Vec<String> = Vec::new();
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let Some(start) = lower.find("<reply>") else {
+            break;
+        };
+        let body_start = start + "<reply>".len();
+        let after_lower = &lower[body_start..];
+        let (body, tail_start) = match after_lower.find("</reply>") {
+            Some(rel) => (
+                rest[body_start..body_start + rel].to_string(),
+                body_start + rel + "</reply>".len(),
+            ),
+            None => match blank_line(&rest[body_start..]) {
+                Some(rel) => (
+                    rest[body_start..body_start + rel].to_string(),
+                    body_start + rel,
+                ),
+                None => (rest[body_start..].to_string(), rest.len()),
+            },
+        };
+        if !body.trim().is_empty() {
+            replies.push(body.trim().to_string());
+        }
+        rest = format!("{}{}", &rest[..start], &rest[tail_start..]);
+    }
+    let mut prompt = rest.clone();
+    while let Some(i) = prompt.to_ascii_lowercase().find("</reply>") {
+        prompt.replace_range(i..i + "</reply>".len(), "");
+    }
+    (replies.join("\n\n"), prompt.trim().to_string())
+}
+
+/// Byte offset of the first line break followed by a blank line, like the
+/// `\n[ \t]*\n` search in `splitReply`.
+fn blank_line(text: &str) -> Option<usize> {
+    text.match_indices('\n').map(|(i, _)| i).find(|&i| {
+        let rest = &text[i + 1..];
+        let line_end = rest.find('\n');
+        line_end.is_some_and(|e| rest[..e].chars().all(|c| c == ' ' || c == '\t'))
+    })
+}
+
+/// The reply block first, then the prompt. Mirrors `joinReply` in enhanceChat.ts.
+pub fn join_reply(reply: &str, prompt: &str) -> String {
+    let (r, p) = (reply.trim(), prompt.trim());
+    match (r.is_empty(), p.is_empty()) {
+        (true, _) => p.to_string(),
+        (false, true) => format!("<reply>{r}</reply>"),
+        (false, false) => format!("<reply>{r}</reply>\n{p}"),
+    }
+}
+
+/// Turn a raw Enhance/Compose answer into what the frontend receives: the
+/// reply block (chat only), the repaired prompt, then any memory facts.
+///
+/// The reply is split off before anything else, so the tag repair never sees
+/// prose it would drop, and a reply-only answer skips `finish` entirely:
+/// finishing an empty prompt would rebuild one from the user's own tags, which
+/// is a prompt nobody asked for.
+pub fn finish_answer(
+    input: &str,
+    raw: String,
+    mode: GenMode,
+    style: PromptStyle,
+    with_notes: bool,
+    chat: bool,
+) -> String {
+    let (reply, raw) = if chat {
+        split_reply(&raw)
+    } else {
+        (String::new(), raw)
+    };
+    if chat && raw.trim().is_empty() {
+        return join_reply(&reply, "");
+    }
+    let (raw, facts) = if with_notes {
+        split_memory(&raw)
+    } else {
+        (raw, String::new())
+    };
+    join_reply(
+        &reply,
+        &with_memory(finish(input, &raw, mode, style), &facts),
+    )
 }
 
 /// Danbooru person-count tags, grouped girls / boys / others. Enhancement must not
@@ -1088,6 +1209,81 @@ fn repair_anima(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_reply_takes_the_block_and_keeps_the_prompt() {
+        let (r, p) = split_reply("<reply>Made it rainy.</reply>\n1girl, rain, night");
+        assert_eq!(r, "Made it rainy.");
+        assert_eq!(p, "1girl, rain, night");
+    }
+
+    #[test]
+    fn split_reply_reply_only_and_no_reply() {
+        assert_eq!(
+            split_reply("<REPLY>Use fewer tags.</REPLY>"),
+            ("Use fewer tags.".to_string(), String::new())
+        );
+        assert_eq!(
+            split_reply("1girl, solo"),
+            (String::new(), "1girl, solo".to_string())
+        );
+    }
+
+    #[test]
+    fn split_reply_unclosed_runs_to_blank_line() {
+        let (r, p) = split_reply("<reply>Done, swapped the dress.\n\n1girl, red dress");
+        assert_eq!(r, "Done, swapped the dress.");
+        assert_eq!(p, "1girl, red dress");
+        let (r, p) = split_reply("<reply>Just a thought");
+        assert_eq!(r, "Just a thought");
+        assert_eq!(p, "");
+    }
+
+    #[test]
+    fn split_reply_after_the_prompt_and_stray_close() {
+        let (r, p) = split_reply("1girl, beach\n<reply>Added a beach.</reply>");
+        assert_eq!(r, "Added a beach.");
+        assert_eq!(p, "1girl, beach");
+        assert_eq!(split_reply("1girl</reply>").1, "1girl");
+    }
+
+    #[test]
+    fn join_reply_shapes() {
+        assert_eq!(join_reply("", "1girl"), "1girl");
+        assert_eq!(join_reply("Hi", ""), "<reply>Hi</reply>");
+        assert_eq!(join_reply("Hi", "1girl"), "<reply>Hi</reply>\n1girl");
+    }
+
+    #[test]
+    fn chat_rules_only_for_chat_models() {
+        assert!(chat_rules(true, "natural_language").contains("<reply>"));
+        assert_eq!(chat_rules(true, "tag_upsampler"), "");
+        assert_eq!(chat_rules(false, "natural_language"), "");
+    }
+
+    #[test]
+    fn finish_answer_reply_only_builds_no_prompt() {
+        let out = finish_answer(
+            "1girl, red hair",
+            "<reply>Red suits her.</reply>".to_string(),
+            GenMode::Enhance,
+            PromptStyle::Prose,
+            false,
+            true,
+        );
+        assert_eq!(out, "<reply>Red suits her.</reply>");
+    }
+
+    #[test]
+    fn finish_answer_keeps_memory_after_the_prompt() {
+        let raw = format!(
+            "<reply>Saved her coat.</reply>\nA woman in a coat\n{MEMORY_MARKER}\nAnn | outfits.md | long coat"
+        );
+        let out = finish_answer("", raw, GenMode::Compose, PromptStyle::Prose, true, true);
+        assert!(out.starts_with("<reply>Saved her coat.</reply>\n"));
+        assert!(out.contains(MEMORY_MARKER));
+        assert!(out.ends_with("Ann | outfits.md | long coat"));
+    }
 
     #[test]
     fn corpus_loads_known_tags() {

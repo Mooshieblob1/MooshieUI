@@ -4562,18 +4562,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if let Some(family) = moss_image_family_from_text(&bm) {
         return family;
     }
-    if bm == "flux.2 klein 9b-base" {
-        return "flux2klein9bbase";
-    }
-    if bm == "flux.2 klein 9b" {
-        return "flux2klein9b";
-    }
-    if bm == "flux.2 klein 4b-base" {
-        return "flux2klein4bbase";
-    }
-    if bm == "flux.2 klein 4b" {
-        return "flux2klein4b";
-    }
     if bm == "flux.2 d" {
         return "flux2d";
     }
@@ -4650,9 +4638,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("auraflow") || bm.contains("aura flow") {
         return "auraflow";
     }
-    if bm.contains("pixart") {
-        return "pixart";
-    }
     if bm.contains("hunyuan") {
         return "hunyuandit";
     }
@@ -4702,36 +4687,8 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if let Some(family) = moss_image_family_from_text(&name) {
         return Some(family);
     }
-    if name.contains("flux.2 klein 9b-base")
-        || name.contains("flux2klein9bbase")
-        || (name.contains("flux")
-            && name.contains("klein")
-            && name.contains("9b")
-            && name.contains("base"))
-    {
-        return Some("flux2klein9bbase");
-    }
-    if name.contains("flux.2 klein 9b")
-        || name.contains("flux2klein9b")
-        || (name.contains("flux") && name.contains("klein") && name.contains("9b"))
-    {
-        return Some("flux2klein9b");
-    }
-    if name.contains("flux.2 klein 4b-base")
-        || name.contains("flux2klein4bbase")
-        || (name.contains("flux")
-            && name.contains("klein")
-            && name.contains("4b")
-            && name.contains("base"))
-    {
-        return Some("flux2klein4bbase");
-    }
-    if name.contains("flux.2 klein 4b")
-        || name.contains("flux2klein4b")
-        || (name.contains("flux") && name.contains("klein") && name.contains("4b"))
-    {
-        return Some("flux2klein4b");
-    }
+    // Flux.2 Klein is registered (architectures/flux2_klein.rs) and matched
+    // above, so a remaining Flux 2 name is Dev.
     if name.contains("flux.2 d")
         || name.contains("flux2d")
         || (name.contains("flux") && name.contains("2") && name.contains("d"))
@@ -4856,9 +4813,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     }
     if name.contains("auraflow") || name.contains("aura flow") {
         return Some("auraflow");
-    }
-    if name.contains("pixart") {
-        return Some("pixart");
     }
     if name.contains("hunyuan") {
         return Some("hunyuandit");
@@ -5023,10 +4977,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "qwen_edit"
             | "qwen_edit_plus"
             | "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
             | "mossimage"
@@ -5046,7 +4996,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 27] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5054,10 +5004,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
     "sd15",
     "sd3",
     "flux2d",
-    "flux2klein9b",
-    "flux2klein9bbase",
-    "flux2klein4b",
-    "flux2klein4bbase",
     "flux3klein",
     "flux3kleinbase",
     "mossimage",
@@ -5072,7 +5018,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
     "ideogram4",
     "krea2",
     "auraflow",
-    "pixart",
     "hunyuandit",
     "cascade",
     "kolors",
@@ -5121,15 +5066,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
-            | "flux3klein"
-            | "flux3kleinbase"
-            | "mossimage"
-            | "mossimagebase"
+        "flux2d" | "flux3klein" | "flux3kleinbase" | "mossimage" | "mossimagebase"
     ) {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
@@ -5149,7 +5086,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
 
-/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image, Flux 2 Klein 4B).
+/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image).
 /// Comfy-Org names it `qwen_3_4b*.safetensors`. Mirrored by
 /// `ZIMAGE_ENCODER_MARKERS` in ModelSelector.svelte.
 const QWEN3_4B_TEXT_ENCODER_MARKERS: [&str; 5] =
@@ -5224,18 +5161,6 @@ fn recommended_clip_from_available(
                     None
                 }
             })
-            .or_else(|| encoders.first().cloned());
-        return Some((preferred, "flux2"));
-    }
-
-    if matches!(family, "flux2klein9b" | "flux2klein9bbase") {
-        let preferred = find_first_text_encoder_matching(encoders, &["qwen3_8b", "qwen_3_8b"])
-            .or_else(|| encoders.first().cloned());
-        return Some((preferred, "flux2"));
-    }
-
-    if matches!(family, "flux2klein4b" | "flux2klein4bbase") {
-        let preferred = find_first_text_encoder_matching(encoders, &QWEN3_4B_TEXT_ENCODER_MARKERS)
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "flux2"));
     }
@@ -5396,6 +5321,51 @@ mod split_model_pairing_tests {
     }
 
     #[test]
+    fn flux2_tensor_keys_tell_klein_4b_9b_and_dev_apart() {
+        fn keys(singles: usize) -> Vec<String> {
+            let mut k = vec![
+                "double_stream_modulation_img.lin.weight".to_string(),
+                "double_stream_modulation_txt.lin.weight".to_string(),
+                "single_stream_modulation.lin.weight".to_string(),
+                "double_blocks.0.img_attn.qkv.weight".to_string(),
+            ];
+            for i in 0..singles {
+                k.push(format!("single_blocks.{i}.linear1.weight"));
+                k.push(format!("single_blocks.{i}.linear2.weight"));
+            }
+            k
+        }
+        for (singles, arch, family) in [
+            (20, "flux2_klein_4b", "flux2klein4b"),
+            (24, "flux2_klein_9b", "flux2klein9b"),
+            (48, "flux2_dev", "flux2d"),
+        ] {
+            let owned = keys(singles);
+            let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+            assert_eq!(
+                infer_architecture_from_key_names(&names).as_deref(),
+                Some(arch)
+            );
+            assert_eq!(family_from_architecture(arch), Some(family));
+        }
+        // A Klein 4B file named 9B is corrected by its weights; base vs
+        // distilled is left to the filename.
+        assert_ne!(
+            architecture_class("flux2klein9b"),
+            architecture_class("flux2klein4b")
+        );
+        assert_eq!(
+            architecture_class("flux2klein4bbase"),
+            architecture_class("flux2klein4b")
+        );
+        // Flux 1 keeps its own class.
+        assert_ne!(
+            architecture_class("flux1d"),
+            architecture_class("flux2klein4b")
+        );
+    }
+
+    #[test]
     fn flux3_klein_pairs_with_qwen3vl_4b_and_the_flux2_vae() {
         let encoders = list(&["qwen_3_4b.safetensors", "qwen3vl_4b_fp8_scaled.safetensors"]);
         for family in ["flux3klein", "flux3kleinbase"] {
@@ -5438,6 +5408,96 @@ mod split_model_pairing_tests {
             infer_architecture_from_key_names(&keys).as_deref(),
             Some("moss_image")
         );
+    }
+
+    #[test]
+    fn ming_image_repacks_resolve_by_config_and_marker() {
+        let header = |keys: &[&str]| -> serde_json::Map<String, Value> {
+            keys.iter().map(|k| (k.to_string(), json!({}))).collect()
+        };
+        let design = header(&[
+            "cap_embedder.1.weight",
+            "context_refiner.0.attention.out.weight",
+            "x_embedder.weight",
+        ]);
+        let layer = header(&[
+            "cap_embedder.1.weight",
+            "cap_pad_token",
+            "x_embedder.weight",
+        ]);
+        let config = json!(r#"{"transformer": {"image_model": "ming_image"}}"#);
+        assert_eq!(
+            architecture_from_repack_config(&config, &design),
+            Some("ming_image")
+        );
+        assert_eq!(
+            architecture_from_repack_config(&config, &layer),
+            Some("ming_image_layer")
+        );
+        let other = json!(r#"{"transformer": {"image_model": "z_image"}}"#);
+        assert_eq!(architecture_from_repack_config(&other, &design), None);
+        assert_eq!(
+            architecture_from_repack_config(&json!("not json"), &design),
+            None
+        );
+
+        assert_eq!(
+            infer_architecture_from_key_names(&["__ming_image__", "x_embedder.weight"]).as_deref(),
+            Some("ming_image")
+        );
+        assert_eq!(
+            infer_architecture_from_key_names(&[
+                "model.diffusion_model.__ming_image__",
+                "model.diffusion_model.cap_pad_token",
+                "model.diffusion_model.x_embedder.weight",
+                "model.diffusion_model.x_embedder.bias",
+                "model.diffusion_model.cap_embedder.1.weight",
+                "model.diffusion_model.final_layer.linear.weight",
+            ])
+            .as_deref(),
+            Some("ming_image_layer")
+        );
+        assert_eq!(family_from_architecture("ming_image"), Some("mingimage"));
+        assert_eq!(
+            family_from_architecture("ming_image_layer"),
+            Some("mingimagelayer")
+        );
+        assert!(family_requires_separate_clip("mingimagelayer"));
+    }
+
+    #[test]
+    fn pixart_tensor_keys_tell_sigma_from_alpha_in_both_layouts() {
+        // Diffusers `transformer/` safetensors (what the Model Hub downloads).
+        let sigma = [
+            "adaln_single.emb.timestep_embedder.linear_1.bias",
+            "pos_embed.proj.bias",
+            "transformer_blocks.0.attn1.to_q.weight",
+        ];
+        let mut alpha = sigma.to_vec();
+        alpha.push("adaln_single.emb.resolution_embedder.linear_1.weight");
+        // Original PixArt layout, as the `.pth` releases and ComfyUI save it.
+        let original_sigma = [
+            "t_block.1.weight",
+            "y_embedder.y_embedding",
+            "blocks.0.attn.qkv.weight",
+        ];
+        let mut original_alpha = original_sigma.to_vec();
+        original_alpha.push("ar_embedder.mlp.0.weight");
+        for (keys, arch, family) in [
+            (sigma.to_vec(), "pixart", "pixart"),
+            (alpha, "pixart_alpha", "pixartalpha"),
+            (original_sigma.to_vec(), "pixart", "pixart"),
+            (original_alpha, "pixart_alpha", "pixartalpha"),
+        ] {
+            assert_eq!(
+                infer_architecture_from_key_names(&keys).as_deref(),
+                Some(arch),
+                "{keys:?}"
+            );
+            assert_eq!(family_from_architecture(arch), Some(family));
+        }
+        assert!(family_requires_separate_clip("pixart"));
+        assert!(family_requires_separate_clip("pixartalpha"));
     }
 
     #[test]
@@ -6843,6 +6903,18 @@ pub(crate) fn read_safetensors_modelspec(
         result.insert("header_v_pred".to_string(), "true".to_string());
     }
 
+    // Comfy-Org's repacks declare the model in a `config` metadata entry. Ming
+    // shares Z-Image's tensor layout, so this is what tells a renamed file
+    // apart (and the Layer checkpoint from the Design one).
+    if !result.contains_key("architecture") {
+        if let (Some(config), Some(Value::Object(top))) = (metadata.get("config"), Some(&header)) {
+            if let Some(arch) = architecture_from_repack_config(config, top) {
+                result.insert("architecture".to_string(), arch.to_string());
+                result.insert("architecture_inferred".to_string(), "true".to_string());
+            }
+        }
+    }
+
     // If no modelspec.architecture, infer from tensor key patterns in the header
     if let Some(Value::Object(top)) = Some(&header) {
         if !result.contains_key("architecture") {
@@ -7144,6 +7216,40 @@ fn dominant_tensor_key_prefix(names: &[&str]) -> &'static str {
     }
 }
 
+/// `ming_image_layer` for the Layer checkpoint (learned pad tokens), else
+/// `ming_image`.
+fn ming_image_architecture(has_pad_token: bool) -> &'static str {
+    if has_pad_token {
+        "ming_image_layer"
+    } else {
+        "ming_image"
+    }
+}
+
+/// Architecture named by a Comfy-Org repack's `config` metadata entry
+/// (`{"transformer": {"image_model": "ming_image"}}`), with the tensor keys
+/// to tell variants apart. `None` for anything not mapped here.
+fn architecture_from_repack_config(
+    config: &Value,
+    header: &serde_json::Map<String, Value>,
+) -> Option<&'static str> {
+    let parsed: Value = match config {
+        Value::String(text) => serde_json::from_str(text).ok()?,
+        other => other.clone(),
+    };
+    match parsed.pointer("/transformer/image_model")?.as_str()? {
+        "ming_image" => {
+            let names: Vec<&str> = header.keys().map(String::as_str).collect();
+            let prefix = dominant_tensor_key_prefix(&names);
+            let pad = names
+                .iter()
+                .any(|k| k.strip_prefix(prefix).unwrap_or(k) == "cap_pad_token");
+            Some(ming_image_architecture(pad))
+        }
+        _ => None,
+    }
+}
+
 /// Infer model architecture from safetensors header keys.
 ///
 /// Thin wrapper over [`infer_architecture_from_key_names`] that projects the
@@ -7175,6 +7281,13 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     let starts_with = |p: &str| bare.iter().any(|k| k.starts_with(p));
     let contains = |s: &str| bare.iter().any(|k| k.contains(s));
     let has_key = |name: &str| bare.contains(&name);
+
+    // Ming-Image: ComfyUI saves its Lumina-family DiT with a `__ming_image__`
+    // marker buffer (Z-Image has none). The Layer checkpoint learned its pad
+    // tokens; Design has none.
+    if has_key("__ming_image__") {
+        return Some(ming_image_architecture(has_key("cap_pad_token")).to_string());
+    }
 
     // MiniMax-H3-Image: the H3 DiT (video patch embed plus the conditioning
     // projection) without the audio stream, as in ComfyUI's
@@ -7221,6 +7334,27 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("moss_image".to_string());
     }
 
+    // Flux 2: Flux-style blocks plus shared stream modulations, as in ComfyUI's
+    // detect_unet_config. The single-block count tells the sizes apart
+    // (Klein 4B 20, Klein 9B 24, Dev 48); base and distilled share their keys.
+    if has_key("double_stream_modulation_img.lin.weight") {
+        let singles = bare
+            .iter()
+            .filter_map(|k| k.strip_prefix("single_blocks."))
+            .filter_map(|rest| rest.split('.').next())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        return Some(
+            match singles {
+                20 => "flux2_klein_4b",
+                24 => "flux2_klein_9b",
+                48 => "flux2_dev",
+                _ => "flux2",
+            }
+            .to_string(),
+        );
+    }
+
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
@@ -7262,9 +7396,14 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("stable_cascade".to_string());
     }
 
-    // PixArt: alpha/sigma share the adaln_single conditioning stack
-    if starts_with("adaln_single.") {
-        return Some("pixart".to_string());
+    // PixArt: diffusers files carry the `adaln_single.` conditioning stack,
+    // original and ComfyUI-saved ones `t_block.1.weight` (ComfyUI's own marker).
+    // Alpha adds a resolution / aspect micro-condition that Sigma lacks, and
+    // decodes with the SD 1.5 VAE instead of the SDXL one.
+    if starts_with("adaln_single.") || has_key("t_block.1.weight") {
+        let alpha =
+            starts_with("adaln_single.emb.resolution_embedder.") || starts_with("ar_embedder.");
+        return Some(if alpha { "pixart_alpha" } else { "pixart" }.to_string());
     }
 
     // Kolors: ChatGLM-based text encoder
@@ -7431,11 +7570,13 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
+        // Flux.2 Klein's flux2_klein_4b / flux2_klein_9b are registered
+        // (architectures/flux2_klein.rs).
+        "flux2_dev" => Some("flux2d"),
         "moss_image" => Some("mossimage"),
         "qwen_image" => Some("qwen"),
         "stable-diffusion-3-medium" => Some("sd3"),
         "auraflow" => Some("auraflow"),
-        "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
         "stable_cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
@@ -7469,6 +7610,9 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // so they correct a filename that names the other checkpoint.
         "flux3klein" => Some("flux3_flowmap"),
         "flux3kleinbase" => Some("flux3"),
+        // Flux 2 sizes are told apart by their keys (Klein's classes come from
+        // the registry), so a Klein file named Dev is corrected and vice versa.
+        "flux2d" => Some("flux2_dev"),
         // SFT and Base share every tensor key: one class for both.
         "mossimage" | "mossimagebase" => Some("moss_image"),
         "anima" => Some("anima"),
@@ -7476,7 +7620,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         "qwen" => Some("qwen_image"),
         "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
-        "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
         "cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
