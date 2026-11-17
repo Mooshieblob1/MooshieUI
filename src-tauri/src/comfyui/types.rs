@@ -225,6 +225,11 @@ pub struct GenerationParams {
     /// `templates::txt2img::moody_moss_hd_active`.
     #[serde(default)]
     pub moody_moss_hd: bool,
+    /// Ask for a transparent background. Ming-Image puts its fixed RGBA phrase
+    /// in front of the prompt (`architectures::ming_image`); other models
+    /// ignore it.
+    #[serde(default)]
+    pub transparent_background: bool,
     /// The rest of the Moody Moss 4K HD workflow: its face and area
     /// detailers, skin contrast pass and SeedVR2 final. Sent only for a Moody
     /// Moss Mix model; see `templates::moody_moss`.

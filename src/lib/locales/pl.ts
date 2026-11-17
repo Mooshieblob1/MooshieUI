@@ -1077,6 +1077,8 @@ const pl: Record<string, string> = {
   "generation.dimensions.reset": "Resetuj do {res}",
   "generation.dimensions.recommended": "Zalecane dla {model}: {res}",
   "generation.dimensions.result": "Wynik",
+  "generation.dimensions.transparent": "Przezroczyste tło",
+  "generation.dimensions.transparent_tip": "Prosi model o przezroczyste tło. Skalowanie, poprawa twarzy i detal segmentów wymagają nieprzezroczystego obrazu, więc przy nich tło zostaje wypełnione.",
   "generation.swap_panels": "Zamień lewy/prawy panel",
   "generation.batch_fewer": "Mniej obrazów",
   "generation.batch_more": "Więcej obrazów",
