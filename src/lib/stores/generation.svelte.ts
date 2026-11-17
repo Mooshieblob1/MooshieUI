@@ -2932,18 +2932,6 @@ class GenerationStore {
         };
         break;
 
-      // Stable Cascade keeps a simple scheduler preset for the base stage.
-      case "cascade":
-        preset = {
-          steps: 20,
-          cfg: 4.0,
-          samplerName: "euler",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
       // SD 1.5 keeps the smaller canvas and classic DPM++/Karras combo.
       case "sd15":
         preset = {
@@ -3985,6 +3973,8 @@ class GenerationStore {
    * it is dropped and the run completes.
    */
   get effectivePauseAtStep(): number {
+    // Stable Cascade samples in two separate stages, which can't pause.
+    if (this.isCascade) return 0;
     const step = Math.floor(this.pauseAtStep);
     if (!Number.isFinite(step) || step <= this.pausedEndStep || step >= this.steps) return 0;
     return step;

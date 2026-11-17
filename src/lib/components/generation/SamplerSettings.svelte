@@ -1157,7 +1157,7 @@
     {/if}
   {/if}
 
-  {#if generation.mode === "txt2img" && !generation.isNovelAi}
+  {#if generation.mode === "txt2img" && !generation.isNovelAi && !generation.isCascade}
     <!-- Pause at step: stop partway so prompt, CFG, sampler or LoRAs can change before the rest of the schedule runs. -->
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
