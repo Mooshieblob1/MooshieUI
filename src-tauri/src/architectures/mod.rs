@@ -32,9 +32,11 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 mod flux2_klein;
+mod qwen_image_21;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
+    &qwen_image_21::SPEC,
     // Distilled before Base: a purely structural match picks the first.
     &flux2_klein::SPEC_9B,
     &flux2_klein::SPEC_9B_BASE,
@@ -175,6 +177,10 @@ pub struct FamilySpec {
     pub text_encoder: Option<EncoderSpec>,
     /// Per-family override of [`ArchitectureSpec::vae`].
     pub vae: Option<VaeSpec>,
+    /// A fixed sigma schedule (`ManualSigmas` text, high to low) the family
+    /// was distilled for. A full-denoise main sampler then runs as
+    /// `SamplerCustomAdvanced` on these sigmas instead of steps + scheduler.
+    pub manual_sigmas: Option<&'static str>,
 }
 
 /// A third-party ComfyUI custom node pack, installed pinned at ComfyUI startup.
@@ -615,6 +621,76 @@ pub fn apply_text_encode(workflow: &mut Map<String, Value>, params: &GenerationP
     }
 }
 
+/// Run the main sampler on the family's fixed sigma schedule
+/// ([`FamilySpec::manual_sigmas`]). Called by `templates::build_image_stage`
+/// after every injection has wired the sampler, so the model, conditioning,
+/// latent and seed it ends up with carry over unchanged. Only a full-denoise
+/// `KSampler` is converted: a partial denoise (img2img, inpaint) cannot keep
+/// its strength on a fixed schedule, so it stays on steps + scheduler.
+pub fn apply_manual_sigmas(result: &mut WorkflowResult, params: &GenerationParams) {
+    let Some(sigmas) = find(&params.model_architecture).and_then(|(_, f)| f.manual_sigmas) else {
+        return;
+    };
+    if params.stage.is_some() {
+        return;
+    }
+    convert_to_manual_sigmas(result, sigmas);
+}
+
+fn convert_to_manual_sigmas(result: &mut WorkflowResult, sigmas: &str) {
+    let Some(sampler) = result.workflow.get(&result.sampler_id) else {
+        return;
+    };
+    if sampler.get("class_type").and_then(Value::as_str) != Some("KSampler") {
+        return;
+    }
+    let inputs = sampler.get("inputs").cloned().unwrap_or_else(|| json!({}));
+    let denoise = inputs.get("denoise").and_then(Value::as_f64).unwrap_or(1.0);
+    if denoise < 0.999 {
+        return;
+    }
+
+    let add = |result: &mut WorkflowResult, node: Value| -> String {
+        let id = result.next_id.to_string();
+        result.next_id += 1;
+        result.workflow.insert(id.clone(), node);
+        id
+    };
+    let noise = add(
+        result,
+        json!({"class_type": "RandomNoise", "inputs": {"noise_seed": inputs["seed"]}}),
+    );
+    let guider = add(
+        result,
+        json!({"class_type": "CFGGuider", "inputs": {
+            "model": inputs["model"],
+            "positive": inputs["positive"],
+            "negative": inputs["negative"],
+            "cfg": inputs["cfg"]
+        }}),
+    );
+    let select = add(
+        result,
+        json!({"class_type": "KSamplerSelect", "inputs": {"sampler_name": inputs["sampler_name"]}}),
+    );
+    let schedule = add(
+        result,
+        json!({"class_type": "ManualSigmas", "inputs": {"sigmas": sigmas}}),
+    );
+    // Same node id, so everything reading the sampler's output 0 (the
+    // latent) keeps working.
+    result.workflow.insert(
+        result.sampler_id.clone(),
+        json!({"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": [noise, 0],
+            "guider": [guider, 0],
+            "sampler": [select, 0],
+            "sigmas": [schedule, 0],
+            "latent_image": inputs["latent_image"]
+        }}),
+    );
+}
+
 // ── Custom nodes ────────────────────────────────────────────────────────────
 
 /// Every node pack the registered architectures need, deduplicated by URL.
@@ -699,6 +775,7 @@ mod tests {
                 recommended: &[],
                 text_encoder: None,
                 vae: None,
+                manual_sigmas: None,
             },
             FamilySpec {
                 family: "fixture",
@@ -713,6 +790,7 @@ mod tests {
                 recommended: &[],
                 text_encoder: None,
                 vae: None,
+                manual_sigmas: None,
             },
         ],
         split_only: true,
@@ -901,6 +979,48 @@ mod tests {
         assert_eq!(workflow["2"]["inputs"]["clip"], json!(["8", 1]));
         assert_eq!(workflow["2"]["inputs"]["width"], 1024);
         assert_eq!(workflow["3"]["class_type"], "KSampler");
+    }
+
+    #[test]
+    fn manual_sigmas_replace_a_full_denoise_ksampler_in_place() {
+        let sampler = json!({"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0],
+            "latent_image": ["4", 0], "seed": 7, "steps": 8, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0
+        }});
+        let mut workflow = Map::new();
+        workflow.insert("5".into(), sampler.clone());
+        let mut result = WorkflowResult {
+            workflow,
+            next_id: 6,
+            image_output: ("6".into(), 0),
+            model_source: ("1".into(), 0),
+            clip_source: ("1".into(), 1),
+            positive_source: ("2".into(), 0),
+            negative_source: ("3".into(), 0),
+            vae_source: ("1".into(), 2),
+            sampler_id: "5".into(),
+            refiner_model_source: None,
+            base_sources: None,
+        };
+        convert_to_manual_sigmas(&mut result, "1.0, 0.5, 0");
+        let wf = &result.workflow;
+        assert_eq!(wf["5"]["class_type"], "SamplerCustomAdvanced");
+        assert_eq!(wf["5"]["inputs"]["latent_image"], json!(["4", 0]));
+        let guider = wf["5"]["inputs"]["guider"][0].as_str().unwrap();
+        assert_eq!(wf[guider]["inputs"]["positive"], json!(["2", 0]));
+        assert_eq!(wf[guider]["inputs"]["model"], json!(["1", 0]));
+        let noise = wf["5"]["inputs"]["noise"][0].as_str().unwrap();
+        assert_eq!(wf[noise]["inputs"]["noise_seed"], 7);
+        let sigmas = wf["5"]["inputs"]["sigmas"][0].as_str().unwrap();
+        assert_eq!(wf[sigmas]["inputs"]["sigmas"], "1.0, 0.5, 0");
+
+        // A partial denoise keeps its KSampler.
+        let mut partial = sampler;
+        partial["inputs"]["denoise"] = json!(0.6);
+        result.workflow.insert("5".into(), partial);
+        convert_to_manual_sigmas(&mut result, "1.0, 0.5, 0");
+        assert_eq!(result.workflow["5"]["class_type"], "KSampler");
     }
 
     #[test]
