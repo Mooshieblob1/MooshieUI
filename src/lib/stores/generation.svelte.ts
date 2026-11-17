@@ -1046,6 +1046,10 @@ class GenerationStore {
   /** Turbo LoRA filename inside `models/loras/`. Defaults to the recommended
    *  checkpoint; the custom tier lets users swap in any installed LoRA. */
   videoTurboLora = $state(H3_TURBO_LORA.filename);
+  /** The user's own MiniMax H3 LoRAs (style, character, camera, ...), kept
+   *  apart from `loras`, which belong to the image model. Model-only: only
+   *  `strength_model` is used, and `strength_clip` mirrors it. */
+  videoLoras = $state<LoraEntry[]>([]);
   /** KSamplerSelect override for the custom tier. Null means preset default
    *  (res_multistep). Ignored when Turbo is on (Turbo ships its own sampler). */
   videoSampler = $state<string | null>(null);
@@ -3272,6 +3276,14 @@ class GenerationStore {
       );
     if (saved.videoModelTier !== undefined) this.videoModelTier = saved.videoModelTier;
     if (saved.videoTurboLora !== undefined) this.videoTurboLora = saved.videoTurboLora;
+    if (Array.isArray(saved.videoLoras)) {
+      this.videoLoras = saved.videoLoras
+        .filter((l: any) => l && typeof l.name === "string")
+        .map((l: any) => {
+          const strength = Number.isFinite(l.strength_model) ? l.strength_model : 1.0;
+          return { name: l.name, strength_model: strength, strength_clip: strength, enabled: l.enabled ?? true };
+        });
+    }
     if (saved.videoSampler !== undefined) this.videoSampler = saved.videoSampler;
     if (saved.videoScheduler !== undefined) this.videoScheduler = saved.videoScheduler;
     if (saved.videoDiffusionModel !== undefined)
@@ -3621,6 +3633,7 @@ class GenerationStore {
         videoLivePreview: this.videoLivePreview,
         videoModelTier: this.videoModelTier,
         videoTurboLora: this.videoTurboLora,
+        videoLoras: this.videoLoras,
         videoSampler: this.videoSampler,
         videoScheduler: this.videoScheduler,
         videoDiffusionModel: this.videoDiffusionModel,
@@ -3816,6 +3829,7 @@ class GenerationStore {
       videoLivePreview: this.videoLivePreview,
       videoModelTier: this.videoModelTier,
       videoTurboLora: this.videoTurboLora,
+      videoLoras: this.videoLoras,
       videoSampler: this.videoSampler,
       videoScheduler: this.videoScheduler,
       videoDiffusionModel: this.videoDiffusionModel,
@@ -4668,6 +4682,9 @@ class GenerationStore {
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.effectiveVideoTurboPreset.steps ?? this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? (this.effectiveVideoTurboPreset.id === "larryvrh" ? this.videoTurboLora : (this.videoPresetLora ?? this.effectiveVideoTurboPreset.file.filename)) : null,
+      video_loras: this.videoLoras
+        .filter((l) => l.enabled && l.name)
+        .map(({ name, strength_model }) => ({ name, strength_model, strength_clip: strength_model })),
       video_teacache_enabled: this.videoTeacacheEnabled,
       video_live_preview: this.videoLivePreview,
       video_model_tier: this.videoModelTier,
@@ -4711,6 +4728,41 @@ class GenerationStore {
       Object.assign(params, options.overrides);
     }
     return params;
+  }
+
+  /** Add an H3 video LoRA row, switched on, or switch on the row it already has. */
+  addVideoLora(name = "") {
+    if (name) {
+      const idx = this.videoLoras.findIndex((l) => l.name === name);
+      if (idx >= 0) {
+        this.videoLoras = this.videoLoras.map((l, i) => (i === idx ? { ...l, enabled: true } : l));
+        return;
+      }
+    }
+    this.videoLoras = [
+      ...this.videoLoras,
+      { name, strength_model: 1.0, strength_clip: 1.0, enabled: true },
+    ];
+  }
+
+  removeVideoLora(index: number) {
+    this.videoLoras = this.videoLoras.filter((_, i) => i !== index);
+  }
+
+  /** Patch one H3 video LoRA row; strength is written to both fields. */
+  updateVideoLora(index: number, patch: { name?: string; strength?: number; enabled?: boolean }) {
+    if (!this.videoLoras[index]) return;
+    this.videoLoras = this.videoLoras.map((l, i) => {
+      if (i !== index) return l;
+      const strength = patch.strength ?? l.strength_model;
+      return {
+        ...l,
+        name: patch.name ?? l.name,
+        enabled: patch.enabled ?? l.enabled,
+        strength_model: strength,
+        strength_clip: strength,
+      };
+    });
   }
 
   addLora() {

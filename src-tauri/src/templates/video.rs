@@ -7,7 +7,7 @@
 
 use serde_json::{json, Value};
 
-use crate::comfyui::types::GenerationParams;
+use crate::comfyui::types::{GenerationParams, LoraParam};
 
 /// Filename markers identifying MiniMax H3 model files (matched as lowercase
 /// substrings, any-match). Consumed by the video arm of
@@ -53,34 +53,100 @@ pub fn lora_preset(params: &GenerationParams) -> Option<(&'static str, u32, f64)
     if acceleration(params) != "turbo" {
         return None;
     }
-    match params.video_turbo_preset.as_str() {
-        "lightx2v_fl2v_4" => Some((
-            "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
-            4,
-            6.0,
-        )),
-        "lightx2v_fl2v_8" => Some((
-            "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-            8,
-            6.0,
-        )),
-        "lightx2v_ref2v_8" => Some((
-            "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-            8,
-            12.0,
-        )),
-        "pdd_fl2va_8" => Some((
-            "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors",
-            8,
-            12.0,
-        )),
-        "pdd_ref2va_8" => Some((
-            "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors",
-            8,
-            12.0,
-        )),
-        _ => None,
-    }
+    LORA_PRESETS
+        .iter()
+        .find(|(id, ..)| *id == params.video_turbo_preset)
+        .map(|&(_, file, steps, shift)| (file, steps, shift))
+}
+
+/// `(preset id, adapter filename, steps, video sigma shift)` for every
+/// LoRA-loaded Turbo preset. See [`lora_preset`].
+const LORA_PRESETS: [(&str, &str, u32, f64); 5] = [
+    (
+        "lightx2v_fl2v_4",
+        "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
+        4,
+        6.0,
+    ),
+    (
+        "lightx2v_fl2v_8",
+        "minimax_h3_fl2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        8,
+        6.0,
+    ),
+    (
+        "lightx2v_ref2v_8",
+        "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+        8,
+        12.0,
+    ),
+    (
+        "pdd_fl2va_8",
+        "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors",
+        8,
+        12.0,
+    ),
+    (
+        "pdd_ref2va_8",
+        "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors",
+        8,
+        12.0,
+    ),
+];
+
+fn lora_basename(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
+}
+
+/// True when `name` is one of the acceleration adapters the sampling-mode
+/// picker loads itself (any Turbo preset, the default Turbo LoRA, or the
+/// Turbo LoRA the user chose). Added again as a user LoRA it would be applied
+/// twice, or carry a distilled schedule into a graph that is not built for it.
+fn is_acceleration_adapter(params: &GenerationParams, name: &str) -> bool {
+    let base = lora_basename(name);
+    LORA_PRESETS
+        .iter()
+        .any(|(_, file, ..)| base.eq_ignore_ascii_case(file))
+        || base.eq_ignore_ascii_case(crate::comfyui::nodes::H3_TURBO_LORA_FILENAME)
+        || params
+            .video_turbo_lora
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some_and(|turbo| base.eq_ignore_ascii_case(lora_basename(turbo)))
+}
+
+/// The user's H3 LoRAs that actually change the model: named, with a
+/// non-zero strength, and not an acceleration adapter (see
+/// [`is_acceleration_adapter`]). Shared by the main graph, retake and 2x
+/// refinement so a character or style LoRA stays on for every pass.
+pub(crate) fn user_loras(params: &GenerationParams) -> Vec<&LoraParam> {
+    params
+        .video_loras
+        .iter()
+        .filter(|l| !l.name.trim().is_empty())
+        .filter(|l| l.strength_model.is_finite() && l.strength_model != 0.0)
+        .filter(|l| !is_acceleration_adapter(params, &l.name))
+        .collect()
+}
+
+/// `LoraLoaderModelOnly` node inputs for one user LoRA on top of `model`.
+pub(crate) fn user_lora_inputs(model: &str, lora: &LoraParam) -> Value {
+    json!({
+        "model": [model, 0],
+        "lora_name": lora.name.trim(),
+        "strength_model": lora.strength_model
+    })
+}
+
+/// `name:strength, ...` for the metadata `loras` field, the format Image Info
+/// and the gallery search already read for images.
+fn user_loras_metadata(params: &GenerationParams) -> String {
+    user_loras(params)
+        .iter()
+        .map(|l| format!("{}:{}", l.name.trim(), l.strength_model))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// True for the PDD presets. Their heads change every step, so anything that
@@ -224,6 +290,7 @@ pub(crate) fn video_metadata_params(
             params.video_vdn_precision.checkpoint().to_string(),
         );
     }
+    put("loras", user_loras_metadata(params));
     put("mooshie_video_variant", params.video_variant.clone());
     put("mooshie_video_fps", format!("{fps}"));
     put(
@@ -306,6 +373,22 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     );
     next_id += 1;
 
+    // The user's own H3 LoRAs (style, character, camera motion, ...): model-only
+    // and straight on the DiT, so every acceleration adapter below patches the
+    // already-styled model. Weight patches add up, so the order among them does
+    // not matter; Turbo/VDN hooks and the sigma shift stay last, next to the
+    // sampler, as in the published workflows.
+    let mut dit_id = unet_id;
+    for lora in user_loras(params) {
+        let id = next_id.to_string();
+        workflow.insert(
+            id.clone(),
+            json!({"class_type": "LoraLoaderModelOnly", "inputs": user_lora_inputs(&dit_id, lora)}),
+        );
+        next_id += 1;
+        dit_id = id;
+    }
+
     // MiniMax-H3 Turbo LoRA (optional): a distilled adapter that collapses
     // sampling to 4-8 steps. It sits between the DiT and both MODEL consumers
     // (`BasicScheduler` and `BasicGuider`) — re-pointing only one of them would
@@ -317,7 +400,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
             json!({
                 "class_type": "ApplyVDNH3",
                 "inputs": {
-                    "model": [unet_id.as_str(), 0],
+                    "model": [dit_id.as_str(), 0],
                     "vdn_checkpoint": params.video_vdn_precision.checkpoint(),
                     "apply_turbo_adapter": true,
                     "strength": 1.0,
@@ -334,7 +417,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
     } else if let Some((filename, _, shift)) = lora_preset(params) {
         let lora_id = next_id.to_string();
         workflow.insert(lora_id.clone(), json!({"class_type": "LoraLoaderModelOnly", "inputs": {
-            "model": [unet_id.as_str(), 0], "lora_name": params.video_turbo_lora.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(filename), "strength_model": 1.0
+            "model": [dit_id.as_str(), 0], "lora_name": params.video_turbo_lora.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or(filename), "strength_model": 1.0
         }}));
         next_id += 1;
         let shift_id = next_id.to_string();
@@ -353,7 +436,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
             json!({
                 "class_type": "MiniMaxH3TurboLoRA",
                 "inputs": {
-                    "model": [unet_id.as_str(), 0],
+                    "model": [dit_id.as_str(), 0],
                     "lora_name": params
                         .video_turbo_lora
                         .as_deref()
@@ -371,7 +454,7 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         next_id += 1;
         lora_id
     } else {
-        unet_id.clone()
+        dit_id
     };
 
     // CLIPLoaderGGUF for GGUF-quantized text encoders (e.g. Qwen3-VL in GGUF).
@@ -2216,5 +2299,179 @@ mod tests {
             .contains("GGUF"));
         params.video_acceleration = "standard".into();
         assert!(super::super::validate_generation_params(&params).is_ok());
+    }
+
+    fn with_user_loras(mut params: GenerationParams, loras: &[(&str, f64)]) -> GenerationParams {
+        params.video_loras = loras
+            .iter()
+            .map(|&(name, strength)| LoraParam {
+                name: name.into(),
+                strength_model: strength,
+                strength_clip: strength,
+            })
+            .collect();
+        params
+    }
+
+    /// `[source id, 0]` of a node's `model` input.
+    fn model_source(node: &Value) -> String {
+        node["inputs"]["model"][0]
+            .as_str()
+            .expect("model input is a link")
+            .to_string()
+    }
+
+    /// The user LoRA nodes, in chain order from the DiT outwards.
+    fn user_lora_chain<'a>(workflow: &'a Value, from: &str) -> Vec<(&'a String, &'a Value)> {
+        let nodes = workflow.as_object().expect("workflow is an object");
+        let mut chain = Vec::new();
+        let mut current = from.to_string();
+        while let Some((id, node)) = nodes.iter().find(|(_, n)| {
+            n["class_type"] == "LoraLoaderModelOnly" && n["inputs"]["model"][0] == current.as_str()
+        }) {
+            chain.push((id, node));
+            current = id.clone();
+        }
+        chain
+    }
+
+    #[test]
+    fn user_loras_chain_on_the_dit_before_every_acceleration_mode() {
+        let loras = [
+            ("h3/orbit.safetensors", 0.8),
+            ("h3_antiburn_universal_v1.safetensors", 1.2),
+        ];
+        let modes: [(&str, &str, &str); 4] = [
+            ("standard", "", "BasicGuider"),
+            ("turbo", "larryvrh", "MiniMaxH3TurboLoRA"),
+            ("turbo", "pdd_fl2va_8", "MiniMaxH3SigmaShift"),
+            ("vdn", "", "ApplyVDNH3"),
+        ];
+        for (acceleration, preset, consumer) in modes {
+            let mut params = with_user_loras(video_params("fl2va"), &loras);
+            params.video_acceleration = acceleration.into();
+            params.video_turbo_preset = preset.into();
+            let workflow = build(&params, 7, true);
+            let unet_id = node_id_of_class(&workflow, "UNETLoader");
+            let chain = user_lora_chain(&workflow, &unet_id);
+            // The PDD adapter is a LoraLoaderModelOnly too, the last in the chain.
+            let pdd = preset == "pdd_fl2va_8";
+            assert_eq!(
+                chain.len(),
+                if pdd { 3 } else { 2 },
+                "{acceleration}/{preset}"
+            );
+            assert_eq!(chain[0].1["inputs"]["lora_name"], "h3/orbit.safetensors");
+            assert_eq!(chain[0].1["inputs"]["strength_model"], 0.8);
+            assert_eq!(
+                chain[1].1["inputs"]["lora_name"],
+                "h3_antiburn_universal_v1.safetensors"
+            );
+            assert_eq!(chain[1].1["inputs"]["strength_model"], 1.2);
+            let last = chain[1].0.clone();
+
+            // Whatever comes next reads the styled model, never the bare DiT.
+            let next: Vec<&Value> = workflow
+                .as_object()
+                .unwrap()
+                .values()
+                .filter(|n| n["inputs"]["model"][0] == last.as_str())
+                .collect();
+            assert!(!next.is_empty(), "{acceleration}/{preset}");
+            if pdd {
+                // The PDD adapter sits between the user LoRAs and the shift.
+                let adapter = next[0];
+                assert_eq!(adapter["class_type"], "LoraLoaderModelOnly");
+                assert_eq!(
+                    adapter["inputs"]["lora_name"],
+                    lora_preset(&params).unwrap().0
+                );
+                let shift = nodes_of_class(&workflow, consumer)[0];
+                assert_ne!(model_source(shift), unet_id);
+            } else {
+                assert!(
+                    next.iter().any(|n| n["class_type"] == consumer),
+                    "{acceleration}/{preset}: {next:?}"
+                );
+            }
+            for node in workflow.as_object().unwrap().values() {
+                if node["class_type"] != "LoraLoaderModelOnly" {
+                    assert_ne!(
+                        node["inputs"]["model"][0],
+                        unet_id.as_str(),
+                        "{acceleration}/{preset}: {} skips the user LoRAs",
+                        node["class_type"]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn user_loras_skip_empty_zero_and_acceleration_adapters() {
+        let mut params = with_user_loras(
+            video_params("fl2va"),
+            &[
+                ("", 1.0),
+                ("muted.safetensors", 0.0),
+                (
+                    "loras/MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors",
+                    1.0,
+                ),
+                (crate::comfyui::nodes::H3_TURBO_LORA_FILENAME, 1.0),
+                ("my_custom_turbo.safetensors", 1.0),
+                ("style.safetensors", 0.6),
+            ],
+        );
+        params.video_acceleration = "turbo".into();
+        params.video_turbo_lora = Some("sub/my_custom_turbo.safetensors".into());
+        let names: Vec<&str> = user_loras(&params)
+            .iter()
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(names, ["style.safetensors"]);
+
+        // The custom Turbo LoRA is only an adapter while it is the one in use.
+        params.video_turbo_lora = None;
+        let names: Vec<&str> = user_loras(&params)
+            .iter()
+            .map(|l| l.name.as_str())
+            .collect();
+        assert_eq!(names, ["my_custom_turbo.safetensors", "style.safetensors"]);
+    }
+
+    #[test]
+    fn no_user_loras_leaves_the_graph_unchanged() {
+        let params = video_params("ref2va");
+        let workflow = build(&params, 3, true);
+        assert!(nodes_of_class(&workflow, "LoraLoaderModelOnly").is_empty());
+        assert!(!video_metadata_params(&params, 3).contains_key("loras"));
+    }
+
+    #[test]
+    fn user_loras_are_recorded_in_the_metadata() {
+        let params = with_user_loras(
+            video_params("fl2va"),
+            &[("h3/orbit.safetensors", 0.8), ("off.safetensors", 0.0)],
+        );
+        let meta = video_metadata_params(&params, 9);
+        assert_eq!(meta["loras"], "h3/orbit.safetensors:0.8");
+        assert!(video_metadata_json(&params, 9).contains("h3/orbit.safetensors:0.8"));
+    }
+
+    #[test]
+    fn retake_and_refine_keep_the_user_loras() {
+        let params = with_user_loras(video_params("fl2va"), &[("style.safetensors", 0.7)]);
+        for workflow in [
+            crate::templates::video_retake::build(&params, "draft", "clip.mp4", 0, 24, 8, 1),
+            crate::templates::video_refine::build(&params, "draft", "clip.mp4", 512, 288, 8, 0.6),
+        ] {
+            let unet_id = node_id_of_class(&workflow, "UNETLoader");
+            let chain = user_lora_chain(&workflow, &unet_id);
+            assert_eq!(chain.len(), 1);
+            assert_eq!(chain[0].1["inputs"]["strength_model"], 0.7);
+            let shift = nodes_of_class(&workflow, "MiniMaxH3SigmaShift")[0];
+            assert_eq!(&model_source(shift), chain[0].0);
+        }
     }
 }

@@ -1188,6 +1188,15 @@ export async function detectModelKind(category: string, filename: string): Promi
   return ipcInvoke("detect_model_kind", { category, filename });
 }
 
+/**
+ * Which of these LoRA filenames are MiniMax H3 video LoRAs, from their headers
+ * (names alone with a remote ComfyUI). Never hashed, cheap enough to run on
+ * every model refresh.
+ */
+export async function detectH3VideoLoras(filenames: string[]): Promise<string[]> {
+  return ipcInvoke("detect_h3_video_loras", { filenames });
+}
+
 export interface LoraCivitaiImage {
   url: string;
   width?: number;

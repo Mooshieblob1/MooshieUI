@@ -78,11 +78,12 @@
   });
 
   const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "wildcards", "characters", "artists", "styles", "style_creator", "schedule", "compare", "notes"];
-  // Video mode keeps only the tabs that mean something for H3: session output,
-  // prompt history and notes. LoRAs and checkpoints do not apply to the H3
-  // stack, and artists / artist styles / scheduling / compare are all booru-tag
-  // or image-grid features with no video equivalent.
-  const videoTabs: TabId[] = ["images", "prompts", "timeline", "notes"];
+  // Video mode keeps only the tabs that mean something for H3: its own LoRAs
+  // (the tab then lists MiniMax H3 LoRAs only), session output, prompt history
+  // and notes. Checkpoints do not apply to the H3 stack, and artists / artist
+  // styles / scheduling / compare are all booru-tag or image-grid features with
+  // no video equivalent.
+  const videoTabs: TabId[] = ["loras", "images", "prompts", "timeline", "notes"];
   // NovelAI generates server-side: no LoRA support, and the compare grid and
   // scheduled-batch runner are local-ComfyUI features, so all three tabs are
   // hidden entirely while a NAI model is selected.
@@ -146,7 +147,7 @@
 
   // Badge counts
   const activeLoraCount = $derived(
-    generation.loras.filter((l) => l.enabled && l.name).length
+    (isVideoMode ? generation.videoLoras : generation.loras).filter((l) => l.enabled && l.name).length
   );
   // Video mode shows only this session's videos, so the "Videos" tab never
   // lists images left over from an earlier image-mode run.
