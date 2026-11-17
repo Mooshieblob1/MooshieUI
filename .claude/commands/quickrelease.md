@@ -1,5 +1,5 @@
 ---
-description: Fast release skipping local checks and bot triage (pre-verified changes only)
+description: Fast release gated on required checks + dependency audit (pre-verified changes only)
 argument-hint: "Version number (e.g. 0.4.3) and a brief summary of changes"
 ---
 

@@ -1,21 +1,24 @@
 ---
 name: release
-description: Cut a new MooshieUI release — bump versions, update release notes, validate, tag, and push
+description: Cut a new MooshieUI release: bump versions, update release notes, gate on CI, tag, and watch the release build
 argument-hint: "Version number (e.g. 0.4.3) and a brief summary of changes"
 agent: agent
 ---
 
-
 # Release (MooshieUI)
 
-Full release path: **repo hygiene → pre-commit → version bump → changelog → build validation → PR → GlassWorm → bot triage (all relevant PRs) → merge → tag → CI**.
+Full release path: **preflight → version bump → notes → release PR → full CI gate → merge → tag merge commit → watch Build & Release → wiki pass**.
+
+The release PR's CI is the build validation. It touches `package.json` and `src-tauri/Cargo.toml`, so it runs every check: Guardrails (`npm run build`, i18n, types), Rust desktop (fmt, clippy, `cargo test --locked`), Rust server, Dependency audit (`scripts/audit-deps.sh`) and the Apple Silicon build. Don't repeat those locally; wait for them.
+
+Use **quickrelease** when the code on `main` is already verified and you only need the bump, notes and tag.
 
 ## Inputs
 
 | Field | Default if omitted |
 |-------|-------------------|
 | Version `X.Y.Z` | Read `package.json`, patch+1 (no `v` prefix in files) |
-| Summary | `git log` since last `v*` tag |
+| Summary | `git log` since the last `v*` tag |
 
 ## Windows git (required)
 
@@ -23,247 +26,198 @@ Full release path: **repo hygiene → pre-commit → version bump → changelog 
 git -c core.hooksPath=/dev/null ...
 ```
 
-Pre-commit hook hangs in PowerShell without this.
+The pre-commit hook is bash and hangs in PowerShell without this.
+
+## Cloud sessions
+
+Pushing a `v*` tag returns 403 from a cloud session, and `gh` may be unavailable there. In the cloud, do steps 1 to 7 with the GitHub tools, then stop and give the user the one-line tag command from step 8 (tag the merge SHA, push it). Don't look for another route.
 
 ## Workflow
 
-### 1. Repo hygiene — branches and open PRs [BLOCKING before new release branch]
-
-Refresh remotes, inventory branches/PRs, and resolve conflicts **before** creating `release/vX.Y.Z`.
+### 1. Preflight [BLOCKING]
 
 ```powershell
-git fetch --prune origin
-git branch -vv
-git branch -r
-gh pr list --state open --base main --json number,title,headRefName,updatedAt,isDraft
-gh api repos/Mooshieblob1/MooshieUI/branches?per_page=100 --jq '.[].name'
+git fetch --prune --tags origin
+git describe --tags --abbrev=0 origin/main          # last release tag
+gh pr list --state open --base main --json number,title,headRefName,isDraft
+gh run list --workflow macos-native.yml --branch main --limit 1
+gh run list --workflow release.yml --limit 1
 ```
 
-**Release / stale branch handling**
+- **Open PRs**: if one the user expects in this release is still open or in CI, merge it first (or ask). A release cut while a PR is mid-CI ships without it.
+- **Existing `release/vX.Y.Z`** on the remote: continue that PR if it is open and current; never open a second one for the same version.
+- **Version already used**: if tag `vX.Y.Z` exists (even with no published release, as with v2.3.50), pick the next patch. Tags are protected and can't be moved or deleted.
+- **Last Build & Release run failed?** Find out why before cutting another (see step 9).
+- **Bot review comments**: review bots don't currently comment on this repo. If any PR merged since the last tag does have bot comments (`gh api repos/Mooshieblob1/MooshieUI/pulls/N/comments`), triage them with [docs/BOT_REVIEW_TRIAGE.md](../../../docs/BOT_REVIEW_TRIAGE.md) (Fix / Skip / Defer). Otherwise skip this.
 
-| Situation | Action |
-|-----------|--------|
-| Remote `release/vX.Y.Z` already exists for **this** release | If PR is merged or abandoned: delete remote branch. If PR is still open and current: check out and continue on it (do not create a duplicate). |
-| Remote `release/v*` for an **older** version, PR merged | Delete remote branch: `git -c core.hooksPath=/dev/null push origin --delete release/vOLD` |
-| Remote `release/v*` with **closed** PR and no further work | Delete remote branch |
-| Local tracking branches for deleted remotes | `git fetch --prune` then delete stale locals |
-| Open PR targeting `main` that is superseded by this release | Close with a short comment, or merge first if it must ship in this release |
-| Open PR with failing **GlassWorm** or blocking CI | Fix on that branch/PR or close before cutting the release |
+### 2. Uncommitted code changes
 
-**Do not** force-push `main` or protected tags. Do not delete branches that still have unmerged work the user intends to ship.
+A release cut from clean `main` has none, so skip this. If the user wants uncommitted changes in the release, land them through a normal PR first (**push** skill, which runs **pre-commit-check**), then come back.
 
-Report a short table: branch/PR, status, action taken.
-
-### 2. Bot review sweep — open PRs and recent merges
-
-Before version bump, triage bot feedback on PRs that could block or duplicate this release.
-
-**Bots to read** (non-exhaustive): `gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`, `github-actions[bot]` (only when comment contains a concrete fix).
+### 3. Version bump
 
 ```powershell
-# Open PRs targeting main
-gh pr list --state open --base main --json number,title,headRefName
-
-# Per PR (replace N):
-gh pr view N --json reviews,comments,state,mergedAt
-gh api repos/Mooshieblob1/MooshieUI/pulls/N/comments
-gh api repos/Mooshieblob1/MooshieUI/pulls/N/reviews
+git checkout main
+git pull origin main
+git checkout -b release/vX.Y.Z
+npm version X.Y.Z --no-git-tag-version --ignore-scripts   # package.json + package-lock.json
 ```
 
-Also check **recently merged** PRs since the last `v*` tag (bots sometimes comment late or on squash-merge commits):
-
-```powershell
-$lastTag = git describe --tags --abbrev=0
-gh pr list --state merged --base main --limit 20 --json number,title,mergedAt
-```
-
-Classify every bot comment using [docs/BOT_REVIEW_TRIAGE.md](../../../docs/BOT_REVIEW_TRIAGE.md):
-
-| Verdict | Action |
-|---------|--------|
-| **Fix** | Correctness, safety, MIME mismatches, consistency — fix on that PR's branch if still open, or on `main`/release branch if merged and release-blocking |
-| **Skip** | Premature abstraction, nits, factually wrong bot claims — note rationale in release PR body or user summary |
-| **Defer** | Valid but not release-blocking — document for follow-up; do not block tag |
-
-**Release-blocking** bot findings on open PRs must be resolved (fix or explicit skip with verification) before creating the release PR. If a fix belongs on another open PR, land it there first or cherry-pick into the release branch.
-
-### 3. Pre-commit-check
-
-Run **pre-commit-check** on current tree. Fix blockers; re-run until ✅.
-
-### 4. Version bump (all three must match)
+Then edit by hand:
 
 | File | Field |
 |------|-------|
-| `package.json` | `"version": "X.Y.Z"` |
 | `src-tauri/Cargo.toml` | `version = "X.Y.Z"` under `[package]` |
 | `src-tauri/tauri.conf.json` | `"version": "X.Y.Z"` |
 
-Verify:
+Refresh `Cargo.lock` (CI's Rust jobs run `--locked` and fail on a stale lock), then verify with the same script the release build runs:
 
 ```powershell
-Select-String -Pattern '"X.Y.Z"|version = "X.Y.Z"' package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json
+cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 > $null
+git diff --stat   # expect package.json, package-lock.json, Cargo.toml, Cargo.lock, tauri.conf.json
+node scripts/verify-release-version.mjs vX.Y.Z
 ```
 
-### 5. Changelog files
+`cargo metadata` only rewrites the `comfyui-desktop` entry in `Cargo.lock`. If the diff shows other crates changing, revert the lock and investigate.
 
-Prepend to **both** `docs/RELEASE_NOTES.md` and `CHANGELOG.md`:
+### 4. Release notes
+
+Prepend the same section to **both** `docs/RELEASE_NOTES.md` (top of file) and `CHANGELOG.md` (directly under `# Changelog`):
 
 ```markdown
 ## What's New in vX.Y.Z
 
 ### Group title
-- Detail
+- **Feature name**: what changed, in user terms.
 
 ---
 
 ## What's New in vPREVIOUS
 ```
 
-`CHANGELOG.md`: new section goes directly under `# Changelog`.
+Build & Release copies this section into the GitHub release body with `sed`, from the `## What's New in vX.Y.Z` line to the first `---` line. So:
 
-### 6. Build validation [BLOCKING]
+- The heading must be exactly `## What's New in vX.Y.Z` (with the `v`), or the release body has no notes.
+- Never put a `---` line inside the section; it ends the extract early.
+- Use the shipped UI labels (grep `src/lib/locales/en.ts`), not branch names or PR titles.
 
-```powershell
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run build
-& "$env:ProgramFiles\Git\bin\bash.exe" scripts/audit-deps.sh   # same npm + cargo audit the release build runs
-```
-
-The audit catches advisories published since the last merge, which otherwise only fail the tagged **Build & Release** run. If it reports a vulnerability, find what pulls the crate in (`cargo tree -i <crate>@<version>`) and update that (`cargo update -p <parent>`; check open Dependabot PRs, they often already carry the fix). Ignore an advisory in `scripts/audit-deps.sh` only when no fixed release is reachable, with the reason. Needs `cargo install cargo-audit --locked` once. Call Git Bash by path: plain `bash` in PowerShell is WSL, which has no `cargo` (exit 127).
-
-### 7. Release branch and PR
-
-Confirm step 1: no conflicting `release/vX.Y.Z` on remote (unless intentionally continuing that PR).
+### 5. Commit, push, open the PR
 
 ```powershell
-git checkout main
-git pull origin main
-git checkout -b release/vX.Y.Z
-git add -A
+git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json docs/RELEASE_NOTES.md CHANGELOG.md
 git -c core.hooksPath=/dev/null commit -m "vX.Y.Z: Short summary"
 git -c core.hooksPath=/dev/null push -u origin release/vX.Y.Z
-gh pr create --base main --head release/vX.Y.Z --title "vX.Y.Z: Short summary" --body "<bullet list of changes; note any bot triage from steps 1-2>"
+gh pr create --base main --head release/vX.Y.Z --title "vX.Y.Z: Short summary" --body "<bullet list of changes, with PR numbers>"
 ```
 
-### 8. CI
+### 6. Full CI gate [BLOCKING]
 
 ```powershell
 gh pr checks <PR_NUMBER> --watch --interval 30
 ```
 
-Wait for **GlassWorm Infection Audit** SUCCESS (5 min timeout).
+Wait for **every** check, including **Apple Silicon build and runtime** (about 25 to 30 minutes). That job is not required by branch protection, but Build & Release only publishes when the Mac build passes, and a tag whose build fails burns the version (v2.3.50: its release PR's Apple Silicon check was red, it was tagged anyway, and it never published).
 
-### 9. Bot review triage — release PR (and late comments)
+- Any failure: fix it on a normal PR, merge that, then update this branch. Don't merge the release PR red.
+- **Branch behind main** (merge refused with "required status checks are expected", or `mergeStateStatus` is `BEHIND`): `main` requires up-to-date branches. Run `gh pr update-branch <PR_NUMBER>`, add whatever merged meanwhile to the notes, and wait for the checks again.
 
-Wait ~60s after CI green. Re-fetch **all** bot threads on the release PR:
-
-```powershell
-gh pr view <PR_NUMBER> --json reviews,comments,state
-gh api repos/Mooshieblob1/MooshieUI/pulls/<PR_NUMBER>/comments
-gh api repos/Mooshieblob1/MooshieUI/pulls/<PR_NUMBER>/reviews
-```
-
-Repeat classification (Fix / Skip / Defer). Present a summary table: bot, file, verdict, one-line rationale.
-
-Apply fixes only for **Fix**; then:
-
-```powershell
-git add -A
-git -c core.hooksPath=/dev/null commit -m "address bot review feedback"
-git -c core.hooksPath=/dev/null push
-gh pr checks <PR_NUMBER> --watch --interval 30
-```
-
-If bots post **after** a green run (common on squash-merge), re-poll comments once more before merge. Do not merge with unaddressed **Fix** items on the release PR.
-
-### 10. Merge and sync main
+### 7. Merge
 
 ```powershell
 gh pr merge <PR_NUMBER> --squash --delete-branch
-git checkout main
+```
+
+`--admin` does not help: admins are included in branch protection. The repo doesn't delete merged branches on its own, so keep `--delete-branch`.
+
+### 8. Tag the merge commit
+
+Tag the release PR's merge commit, not local `main` (another PR may have merged right after it, and its changes aren't in the notes):
+
+```powershell
+$sha = gh pr view <PR_NUMBER> --json mergeCommit --jq .mergeCommit.oid
 git fetch origin main
-git reset --hard origin/main
-```
-
-### 11. Post-merge bot pass (before tag)
-
-On the merged release PR, fetch comments again in case bots reviewed the squash commit:
-
-```powershell
-gh pr view <PR_NUMBER> --json comments,reviews,mergedAt
-gh api repos/Mooshieblob1/MooshieUI/pulls/<PR_NUMBER>/comments
-```
-
-- **Fix** on `main`: commit directly on `main` only if policy allows; otherwise open a tiny follow-up PR. For release workflow, prefer a fast follow-up commit on `main` before tagging when the fix is trivial and release-blocking.
-- If a **Fix** requires re-tagging content, complete the fix, then tag (never move/delete an existing tag).
-
-### 12. Tag (after merge only)
-
-Tags are protected — no force/delete. Tag must point at merged `main`:
-
-```powershell
-git tag vX.Y.Z
+git tag vX.Y.Z $sha
 git -c core.hooksPath=/dev/null push origin vX.Y.Z
 ```
 
-`v*` tag triggers **Build & Release** ([`.github/workflows/release.yml`](../../../.github/workflows/release.yml)).
-
-### 13. Verify CI
-
-```powershell
-gh run list --workflow=release.yml --limit 3
-```
-
-Tell user: https://github.com/Mooshieblob1/MooshieUI/actions
-
-### 14. Fallback
-
-If tag push fails or workflow does not start:
+The `v*` tag starts **Build & Release** ([`.github/workflows/release.yml`](../../../.github/workflows/release.yml)). Only if the push succeeded but no run started within a minute:
 
 ```powershell
 gh workflow run release.yml -f tag=vX.Y.Z
 ```
 
-### 15. Cleanup
+### 9. Watch Build & Release until the release is published
 
 ```powershell
-git fetch --prune origin
-git -c core.hooksPath=/dev/null push origin --delete release/vX.Y.Z
+$run = gh run list --workflow release.yml --branch vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId'
+gh run watch $run --interval 60
+gh release view vX.Y.Z --json url,assets --jq '{url, assets: [.assets[].name]}'
 ```
 
-Confirm no duplicate `release/v*` branches remain for this version. Prune stale local branches.
+A run takes about 35 to 50 minutes. The GitHub release is created only after the Windows, Linux and Mac builds and updater signing pass. Then:
+
+| What failed | Release published? | Do this |
+|-------------|--------------------|---------|
+| `build`, `build-macos` or `sign-updaters` | No | Flaky (runner, network): `gh run rerun $run --failed`. Code problem: fix on a normal PR, then release the next patch. |
+| `release` (Create or update GitHub Release) after it was already published | Yes, and immutable | Never re-run to add or replace assets (v2.3.48 and v2.3.49 re-runs failed this way). Ship the next patch instead. |
+| `linux-repo`, `publish-aur`, Docker or server jobs | Yes | Doesn't block the release. Report it (for example a `REPO_GPG_PRIVATE_KEY` passphrase error) so it gets fixed before the next one. |
+
+Check the release body contains this version's notes (if it shows only the installer blurb, the heading didn't match).
+
+### 10. Cleanup
+
+```powershell
+git checkout main
+git pull origin main
+git fetch --prune origin
+git branch -D release/vX.Y.Z
+```
+
+`--delete-branch` already removed the remote branch. Stale feature branches are the **cleanup** skill's job.
+
+### 11. Wiki pass [user-facing changes only]
+
+Skip this if the release is purely internal (CI, refactors, deps). Otherwise update the GitHub wiki, a **separate repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours (the Sync wiki workflow in `Mooshieblob1/mooshieui-site`; run it by hand to publish sooner), so a page that only exists on the site is deleted at the next sync.
+
+1. Clone **outside** the main repo: `git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki`
+2. Find the page for each user-facing item in the new `## What's New in vX.Y.Z` section (`Upscaling-and-Face-Fix`, `Models-and-the-Model-Hub`, `Prompt-Assistant`, `Settings-and-Accessibility`, `Prompting-Guide`, `Generation-Basics`, `FAQ`, ...). A new area may need a new page plus a `_Sidebar.md` entry.
+3. **Verify exact UI labels against current code** (`src/lib/locales/en.ts` + the component). Match the wiki's concise, present-tense voice; don't paste changelog prose.
+4. Fix anything the release makes stale (counts, removed toggles, renamed settings).
+5. Commit and push (no `Co-Authored-By`, no em dashes):
+   ```powershell
+   git -c core.hooksPath=/dev/null commit -am "Document vX.Y.Z: <short summary>"
+   git -c core.hooksPath=/dev/null push origin master
+   ```
+
+Report the pages touched, or that the pass was skipped as internal-only.
 
 ## About UI
 
-No manual About edit — version from `__APP_VERSION__`; release notes from GitHub Releases API at runtime.
+No manual About edit: the version comes from `__APP_VERSION__` and release notes from the GitHub Releases API at runtime.
 
 ## Checklist
 
 ```
-- [ ] Stale/existing branches and open PRs reviewed; release/* cleaned up or continued intentionally
-- [ ] Bot comments triaged on open PRs + recent merges (Fix/Skip/Defer documented)
-- [ ] Pre-commit-check passed
-- [ ] Three version files match X.Y.Z
-- [ ] docs/RELEASE_NOTES.md + CHANGELOG.md updated
-- [ ] cargo check + npm run build + scripts/audit-deps.sh passed
-- [ ] Release PR merged to main
-- [ ] Post-merge bot pass completed (no unaddressed Fix items)
-- [ ] Tag vX.Y.Z pushed
-- [ ] Release workflow running
-- [ ] Remote release/vX.Y.Z branch deleted
+- [ ] Preflight: expected PRs merged, version unused, last release run understood
+- [ ] package.json, package-lock.json, Cargo.toml, Cargo.lock, tauri.conf.json at X.Y.Z; verify-release-version.mjs passes
+- [ ] docs/RELEASE_NOTES.md + CHANGELOG.md have "## What's New in vX.Y.Z"
+- [ ] Every check on the release PR green, Apple Silicon included
+- [ ] Release PR merged; tag vX.Y.Z on its merge commit pushed
+- [ ] Build & Release finished; GitHub release published with notes and assets
+- [ ] Local release branch deleted
+- [ ] Wiki pass done for user-facing changes (or skipped as internal-only)
 ```
 
 ## Mistakes to avoid
 
-1. Missing one of the three version files
-2. Skipping `cargo check` (stale `Cargo.lock` breaks CI)
-3. Tag before PR merge
-4. `git` without `core.hooksPath=/dev/null` on Windows
-5. Force-updating tags — use `workflow_dispatch` instead
-6. Creating a second `release/vX.Y.Z` while an open PR already exists for the same version
-7. Merging the release PR while another open PR has release-blocking bot **Fix** items still unresolved
-8. Ignoring late bot comments posted after CI goes green
-9. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments — never attribute AI assistance in any git or GitHub output
+1. Tagging while the release PR's Apple Silicon check is failing (the release never publishes, and the version is burned)
+2. Leaving `Cargo.lock` at the old version (`--locked` CI jobs fail)
+3. A notes heading that isn't exactly `## What's New in vX.Y.Z`, or a `---` inside the section
+4. Tagging local `main` instead of the release PR's merge commit
+5. Re-running a release job after the release published (immutable; ship the next patch)
+6. `gh pr merge --admin` (admins are enforced; it can't bypass checks)
+7. `git` without `core.hooksPath=/dev/null` on Windows
+8. Force-updating or deleting tags (protected; use the next patch)
+9. A second `release/vX.Y.Z` while one is already open
+10. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments; never attribute AI assistance in git or GitHub output
+11. Shipping user-facing features without a wiki pass, or documenting a label that no longer matches `en.ts`
