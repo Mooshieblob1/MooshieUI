@@ -1010,6 +1010,8 @@ const es: Record<string, string> = {
   "generation.dimensions.reset": "Restablecer a {res}",
   "generation.dimensions.recommended": "Recomendado para {model}: {res}",
   "generation.dimensions.result": "Resultado",
+  "generation.dimensions.transparent": "Fondo transparente",
+  "generation.dimensions.transparent_tip": "Pide al modelo un fondo transparente. El escalado, la corrección de caras y el detalle por segmentos necesitan una imagen opaca, así que con ellos el fondo se rellena.",
   "generation.swap_panels": "Intercambiar paneles izquierdo/derecho",
   "generation.batch_fewer": "Menos imágenes",
   "generation.batch_more": "Más imágenes",
@@ -1205,7 +1207,7 @@ const es: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Edición de imagen",
   "generation.image_edit.hint": "Describe el cambio en el prompt (por ejemplo, \"pon el cielo morado\"). El modelo edita tu imagen de referencia en lugar de generar desde cero.",
-  "generation.image_edit.wrong_model": "El modelo seleccionado no admite edición de imágenes. Elige un modelo Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Krea 2 o Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "El modelo seleccionado no admite edición de imágenes. Elige un modelo Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein, Krea 2 o Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Imagen de referencia",
   "generation.image_edit.reference_image_n": "Imagen de referencia {n}",
   "generation.image_edit.reference_set": "Imagen de referencia establecida",

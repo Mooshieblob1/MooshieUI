@@ -960,6 +960,8 @@ const ko: Record<string, string> = {
   "generation.dimensions.reset": "{res}(으)로 초기화",
   "generation.dimensions.recommended": "{model} 권장: {res}",
   "generation.dimensions.result": "결과",
+  "generation.dimensions.transparent": "투명 배경",
+  "generation.dimensions.transparent_tip": "모델에 투명한 배경을 요청합니다. 업스케일, 얼굴 보정, 세그먼트 디테일은 불투명한 이미지가 필요하므로 켜면 배경이 채워집니다.",
   "generation.swap_panels": "왼쪽/오른쪽 패널 전환",
   "generation.batch_fewer": "이미지 수 줄이기",
   "generation.batch_more": "이미지 수 늘리기",
@@ -1152,7 +1154,7 @@ const ko: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "이미지 편집",
   "generation.image_edit.hint": "프롬프트에 변경 사항을 설명하세요 (예: \"하늘을 보라색으로 만들어\"). 모델은 처음부터 생성하는 대신 참조 이미지를 편집합니다.",
-  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Krea 2 또는 Flux.1 Kontext 모델을 선택하세요.",
+  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein, Krea 2 또는 Flux.1 Kontext 모델을 선택하세요.",
   "generation.image_edit.reference_image": "참조 이미지",
   "generation.image_edit.reference_image_n": "참조 이미지 {n}",
   "generation.image_edit.reference_set": "참조 이미지 설정됨",

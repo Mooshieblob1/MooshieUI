@@ -1077,6 +1077,8 @@ const pl: Record<string, string> = {
   "generation.dimensions.reset": "Resetuj do {res}",
   "generation.dimensions.recommended": "Zalecane dla {model}: {res}",
   "generation.dimensions.result": "Wynik",
+  "generation.dimensions.transparent": "Przezroczyste tło",
+  "generation.dimensions.transparent_tip": "Prosi model o przezroczyste tło. Skalowanie, poprawa twarzy i detal segmentów wymagają nieprzezroczystego obrazu, więc przy nich tło zostaje wypełnione.",
   "generation.swap_panels": "Zamień lewy/prawy panel",
   "generation.batch_fewer": "Mniej obrazów",
   "generation.batch_more": "Więcej obrazów",
@@ -1282,7 +1284,7 @@ const pl: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Edycja obrazu",
   "generation.image_edit.hint": "Opisz zmianę w prompcie (na przykład \"zmień niebo na fioletowe\"). Model edytuje podany obraz referencyjny zamiast generować od zera.",
-  "generation.image_edit.wrong_model": "Wybrany model nie obsługuje edycji obrazów. Wybierz model Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Krea 2 lub Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "Wybrany model nie obsługuje edycji obrazów. Wybierz model Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein, Krea 2 lub Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Obraz referencyjny",
   "generation.image_edit.reference_image_n": "Obraz referencyjny {n}",
   "generation.image_edit.reference_set": "Obraz referencyjny ustawiony",

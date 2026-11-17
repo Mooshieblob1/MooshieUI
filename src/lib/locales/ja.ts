@@ -972,6 +972,8 @@ const ja: Record<string, string> = {
   "generation.dimensions.reset": "{res}にリセット",
   "generation.dimensions.recommended": "{model}の推奨: {res}",
   "generation.dimensions.result": "結果",
+  "generation.dimensions.transparent": "透明な背景",
+  "generation.dimensions.transparent_tip": "モデルに透明な背景を指定します。アップスケール、顔補正、セグメント補正は不透明な画像が必要なため、有効にすると背景が塗りつぶされます。",
   "generation.swap_panels": "左右パネルを入れ替える",
   "generation.batch_fewer": "枚数を減らす",
   "generation.batch_more": "枚数を増やす",
@@ -1167,7 +1169,7 @@ const ja: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "画像編集",
   "generation.image_edit.hint": "変更内容をプロンプトに記述してください（例：\"空を紫にする\"）。モデルはゼロから生成するのではなく、参照画像を編集します。",
-  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、FLUX 3 Klein、Krea 2、またはFlux.1 Kontextモデルを選択してください。",
+  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、Flux.2 Klein、FLUX 3 Klein、Krea 2、またはFlux.1 Kontextモデルを選択してください。",
   "generation.image_edit.reference_image": "参照画像",
   "generation.image_edit.reference_image_n": "参照画像 {n}",
   "generation.image_edit.reference_set": "参照画像を設定しました",

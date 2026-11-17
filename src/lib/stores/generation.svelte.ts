@@ -778,6 +778,9 @@ class GenerationStore {
   /** Moody Moss 4K HD two-pass sampling for Moody Moss Mix (see
    *  `moodyMossHdActive`). On by default: it is the author's own workflow. */
   moodyMossHd = $state(true);
+  /** Ask for a transparent background (Ming-Image Design, see
+   *  `transparentBackgroundActive`). */
+  transparentBackground = $state(false);
   /** The rest of the Moody Moss workflow (detailers, skin contrast, SeedVR2 final). */
   moodyMoss = $state<MoodyMossSettings>({ ...MOODY_MOSS_FINISH_DEFAULTS });
   smartGuidance = $state(false);
@@ -1307,6 +1310,16 @@ class GenerationStore {
     return isMoodyMossFilename(this.useSplitModel ? this.diffusionModel : this.checkpoint);
   }
 
+  /** Whether the model can be asked for a transparent background. */
+  get supportsTransparentBackground(): boolean {
+    return this.modelFamily === "mingimage";
+  }
+
+  /** Whether the next generation asks for a transparent background. */
+  get transparentBackgroundActive(): boolean {
+    return this.supportsTransparentBackground && this.transparentBackground;
+  }
+
   /** Whether the next generation runs the Moody Moss 4K HD two passes (txt2img only). */
   get moodyMossHdActive(): boolean {
     return this.isMoodyMossMix && this.moodyMossHd && this.mode === "txt2img";
@@ -1496,9 +1509,9 @@ class GenerationStore {
 
   /**
    * Number of reference-image slots the current edit family accepts: 10 for
-   * FLUX 3 Klein (FLUX3_MAX_REFERENCES in templates/image_edit.rs), 3 for
+   * FLUX 3 Klein (KLEIN_MAX_REFERENCES in templates/image_edit.rs), 3 for
    * Qwen Edit Plus, 2 for Krea 2 (scene + person, or two style references),
-   * else 1.
+   * else 1. Registered families declare their own.
    */
   get editReferenceSlotCount(): number {
     const registered = registeredMode(this.modelFamily, "image_edit");
@@ -1581,8 +1594,6 @@ class GenerationStore {
       "flux1s",
       "flux1krea",
       "zit",
-      "flux2klein9b",
-      "flux2klein4b",
       "flux3klein",
     ].includes(this.modelFamily);
   }
@@ -2789,10 +2800,8 @@ class GenerationStore {
         };
         break;
 
-      // Flux.2 base.
+      // Flux.2 Dev.
       case "flux2d":
-      case "flux2klein9bbase":
-      case "flux2klein4bbase":
         preset = {
           steps: 20,
           cfg: 4.0,
@@ -2844,19 +2853,6 @@ class GenerationStore {
           steps: 25,
           cfg: 2.5,
           samplerName: "er_sde",
-          scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Flux.2 klein.
-      case "flux2klein9b":
-      case "flux2klein4b":
-        preset = {
-          steps: 9,
-          cfg: 1.5,
-          samplerName: "euler",
           scheduler: "simple",
           width: 1024,
           height: 1024,
@@ -3165,6 +3161,7 @@ class GenerationStore {
     if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
     if (saved.vpredRescaleCfg !== undefined) this.vpredRescaleCfg = saved.vpredRescaleCfg;
     if (saved.moodyMossHd !== undefined) this.moodyMossHd = saved.moodyMossHd;
+    if (saved.transparentBackground !== undefined) this.transparentBackground = saved.transparentBackground;
     if (saved.moodyMoss !== undefined) this.moodyMoss = restoreMoodyMossSettings(saved.moodyMoss);
     if (saved.vpredRescaleCfgMultiplier !== undefined) this.vpredRescaleCfgMultiplier = saved.vpredRescaleCfgMultiplier;
     if (saved.nagEnabled !== undefined) this.nagEnabled = saved.nagEnabled;
@@ -3483,6 +3480,7 @@ class GenerationStore {
         savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
         moodyMossHd: this.moodyMossHd,
+        transparentBackground: this.transparentBackground,
         moodyMoss: $state.snapshot(this.moodyMoss),
         vpredRescaleCfg: this.vpredRescaleCfg,
         vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
@@ -3677,6 +3675,7 @@ class GenerationStore {
       savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
       moodyMossHd: this.moodyMossHd,
+      transparentBackground: this.transparentBackground,
       moodyMoss: $state.snapshot(this.moodyMoss),
       vpredRescaleCfg: this.vpredRescaleCfg,
       vpredRescaleCfgMultiplier: this.vpredRescaleCfgMultiplier,
@@ -4526,6 +4525,7 @@ class GenerationStore {
       save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
       moody_moss_hd: this.moodyMossHdActive,
+      transparent_background: this.transparentBackgroundActive,
       moody_moss: this.isMoodyMossMix ? moodyMossFinishPayload(this.moodyMoss) : undefined,
       vpred_rescale_cfg: this.vpredRescaleCfg,
       vpred_rescale_cfg_multiplier: this.vpredRescaleCfgMultiplier,
