@@ -793,15 +793,24 @@ class MooshieSaveImage:
         return {"ui": {"images": []}}
 
     @staticmethod
-    def _encode_png_8bit(frame):
+    def _to_rgba(pixels, opaque):
+        """Pack an HxWxC array (C = 3 or 4) as HxWx4, keeping a 4th channel
+        when the image has one and filling alpha with ``opaque`` otherwise."""
+        h, w, c = pixels.shape
+        if c == 4:
+            return np.ascontiguousarray(pixels)
+        rgba = np.full((h, w, 4), opaque, dtype=pixels.dtype)
+        rgba[:, :, :3] = pixels[:, :, :3]
+        return rgba
+
+    @classmethod
+    def _encode_png_8bit(cls, frame):
         from PIL import Image
 
         img_np = (255.0 * frame).clip(0, 255).astype(np.uint8)
-        # Output RGBA (alpha=255) so the PNG has an alpha channel.
-        h, w, _ = img_np.shape
-        rgba = np.full((h, w, 4), 255, dtype=np.uint8)
-        rgba[:, :, :3] = img_np[:, :, :3]
-        img = Image.fromarray(rgba, "RGBA")
+        # Output RGBA so the PNG has an alpha channel: the model's own alpha
+        # when it made one (Ming-Image, Qwen-Image 2.1), else opaque.
+        img = Image.fromarray(cls._to_rgba(img_np, 255), "RGBA")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
@@ -828,16 +837,12 @@ class MooshieSaveImage:
 
         if bit_depth == "16bit":
             fmt_tag = cls.FMT_RAW_RGBA16
-            rgb_u16 = (65535.0 * frame).clip(0, 65535).astype(np.uint16)
-            rgba = np.full((h, w, 4), 0xFFFF, dtype=np.uint16)
-            rgba[:, :, :3] = rgb_u16[:, :, :3]
+            rgba = cls._to_rgba((65535.0 * frame).clip(0, 65535).astype(np.uint16), 0xFFFF)
             depth = 16
             pixels = rgba.tobytes()  # native endian, matches zune-jpegxl 16-bit input
         else:
             fmt_tag = cls.FMT_RAW_RGBA8
-            rgb_u8 = (255.0 * frame).clip(0, 255).astype(np.uint8)
-            rgba = np.full((h, w, 4), 255, dtype=np.uint8)
-            rgba[:, :, :3] = rgb_u8[:, :, :3]
+            rgba = cls._to_rgba((255.0 * frame).clip(0, 255).astype(np.uint8), 255)
             depth = 8
             pixels = rgba.tobytes()
 
@@ -853,18 +858,23 @@ class MooshieSaveImage:
         """
         arr = np.nan_to_num(image_tensor.cpu().numpy(), nan=0.0)
         arr = (65535.0 * arr).clip(0, 65535).astype(np.uint16)
+        # Keep a model-made alpha channel (RGBA, colour type 6); plain RGB
+        # images stay 16-bit RGB (colour type 2) as before.
+        has_alpha = arr.shape[-1] == 4
+        if not has_alpha:
+            arr = np.ascontiguousarray(arr[:, :, :3])
 
         try:
             import cv2
-            # OpenCV expects BGR; our tensor is RGB
-            bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            # OpenCV expects BGR(A); our tensor is RGB(A)
+            bgr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGRA if has_alpha else cv2.COLOR_RGB2BGR)
             ok, encoded = cv2.imencode(".png", bgr)
             if ok and encoded is not None:
                 return encoded.tobytes()
         except ImportError:
             pass
 
-        # Pure-Python fallback: write a valid 16-bit RGB PNG using zlib.
+        # Pure-Python fallback: write a valid 16-bit RGB(A) PNG using zlib.
         # PIL cannot write 16-bit RGB, so we build the PNG manually.
         import zlib
 
@@ -872,7 +882,7 @@ class MooshieSaveImage:
         # Convert to big-endian (PNG stores 16-bit values as BE)
         arr_be = arr.astype(">u2")
 
-        # Build raw image data: each row = filter_byte(0) + 6 bytes per pixel
+        # Build raw image data: each row = filter_byte(0) + 6 or 8 bytes per pixel
         raw_rows = []
         for y in range(h):
             raw_rows.append(b"\x00")  # filter: none
@@ -887,8 +897,8 @@ class MooshieSaveImage:
 
         buf = io.BytesIO()
         buf.write(b"\x89PNG\r\n\x1a\n")  # PNG signature
-        # IHDR: width, height, bit_depth=16, color_type=2 (RGB)
-        ihdr_data = struct.pack(">IIBBBBB", w, h, 16, 2, 0, 0, 0)
+        # IHDR: width, height, bit_depth=16, color_type=6 (RGBA) or 2 (RGB)
+        ihdr_data = struct.pack(">IIBBBBB", w, h, 16, 6 if has_alpha else 2, 0, 0, 0)
         buf.write(_png_chunk(b"IHDR", ihdr_data))
         buf.write(_png_chunk(b"IDAT", compressed))
         buf.write(_png_chunk(b"IEND", b""))
