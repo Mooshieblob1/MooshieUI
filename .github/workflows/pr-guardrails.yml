@@ -144,6 +144,11 @@ jobs:
           npx esbuild scripts/tests/splitVae.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/splitVae.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/splitVae.test.mjs"
 
+      - name: Model architecture registry tests
+        run: |
+          npx esbuild scripts/tests/architectures.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/architectures.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/architectures.test.mjs"
+
       - name: Moody Moss Mix detection tests
         run: |
           npx esbuild scripts/tests/moodyMoss.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/moodyMoss.test.mjs" --log-level=warning

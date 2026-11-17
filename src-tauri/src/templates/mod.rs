@@ -4,6 +4,7 @@ pub mod facefix;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
+pub mod krea2_edit;
 pub mod mesh3d;
 pub mod moody_moss;
 pub mod music;
@@ -35,6 +36,9 @@ use crate::comfyui::types::{BaseSources, GenerationParams, PromptSegment, StageC
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
     validate_pause_resume(params)?;
+    // Registered architectures: supported modes, strict encoder and model
+    // slots, INT8-Fast and reference count (see `crate::architectures`).
+    crate::architectures::validate(params)?;
 
     // Video mode has its own parameter set; validate it and return early so
     // image-only guards (input images, ControlNet, style transfer) never
@@ -107,6 +111,12 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             .map(str::trim)
             .unwrap_or("");
         let diffusion_lower = diffusion.to_lowercase();
+        if crate::architectures::family_from_text(diffusion).is_some() {
+            return Err(format!(
+                "\"{}\" is an image model, not a MiniMax H3 video model. Pick an H3 video diffusion model for video, or load this one in Text to Image.",
+                diffusion
+            ));
+        }
         if !video::H3_DIFFUSION_MARKERS
             .iter()
             .any(|marker| diffusion_lower.contains(marker))
@@ -210,8 +220,20 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     // ignores the reference image entirely.
     if params.mode == "image_edit" && !image_edit::supports_family(&params.model_architecture) {
         return Err(format!(
-            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
+            "Image Edit mode needs a Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein, Krea 2 or Anima model. The selected model family ('{}') cannot edit images — pick one of those or switch mode.",
             params.model_architecture
+        ));
+    }
+
+    // Krea 2 edits through an edit LoRA, which the frontend resolves to an
+    // installed file. Without one the graph would load an empty LoRA name.
+    if params.mode == "image_edit"
+        && params.model_architecture == "krea2"
+        && params.krea2_edit_lora.trim().is_empty()
+    {
+        return Err(format!(
+            "Krea 2 {} needs its edit LoRA. Download it from the Image Edit panel, then generate again.",
+            krea2_edit::method(params).label()
         ));
     }
 
@@ -535,6 +557,15 @@ fn check_locked(
 /// latent was sampled with (see `pause_locked_settings`). Steps and
 /// scheduler are locked too, except on a final stage that finishes the run.
 fn validate_pause_resume(params: &GenerationParams) -> Result<(), String> {
+    // A registered architecture's dedicated txt2img graph has no stages to
+    // stop between.
+    if pause_resume_active(params) && crate::architectures::builder(params).is_some() {
+        let label = crate::architectures::find(&params.model_architecture)
+            .map_or("This model", |(_, family)| family.label);
+        return Err(format!(
+            "{label} cannot pause partway through a generation. Clear the pause step and generate again."
+        ));
+    }
     if params.mode != "txt2img" {
         if !params.resume_stages.is_empty() {
             return Err(
@@ -665,6 +696,9 @@ fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
 /// families the node does not support, which causes `validate_params` to
 /// reject the combination before workflow construction.
 fn int8_fast_model_type(family: &str) -> Option<&'static str> {
+    if let Some(model_type) = crate::architectures::int8_fast_model_type(family) {
+        return model_type;
+    }
     match family {
         // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
         "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
@@ -735,6 +769,16 @@ pub fn load_model_nodes(
             vae_source,
             next_id,
         };
+    } else if let Some(loader) =
+        crate::architectures::loader(params).filter(|_| params.use_split_model)
+    {
+        // A registered architecture with its own loaders (several encoders,
+        // a custom loader node, ...). The LoRA chain below runs on them.
+        let loaded = loader(workflow, next_id, params);
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else if params.use_split_model {
         // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
         // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
@@ -961,22 +1005,29 @@ pub fn build_workflow(
         return video::build(params, seed, video_metadata_supported);
     }
 
-    if pause_resume_active(params) {
-        return build_paused_workflow(params, seed);
-    }
-
-    if params.style_transfer_enabled && params.model_architecture == "anima" {
+    let workflow = if pause_resume_active(params) {
+        build_paused_workflow(params, seed)
+    } else if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
-        return finish_workflow(result, params, seed);
-    }
-
-    if moody_moss::area_detail_active(params) {
+        finish_workflow(result, params, seed)
+    } else if moody_moss::area_detail_active(params) {
         let result = moody_moss::build_area_detail(params, seed);
-        return finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed);
-    }
+        finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed)
+    } else {
+        let result = build_image_stage(params, seed);
+        finish_workflow(result, params, seed)
+    };
+    apply_architecture_text_encode(workflow, params)
+}
 
-    let result = build_image_stage(params, seed);
-    finish_workflow(result, params, seed)
+/// Rewrite prompt encoders for a registered architecture whose text encoder
+/// needs its own node. Runs on the finished graph so every template and
+/// appended chain (hires fix, face fix, segment detail) is covered.
+fn apply_architecture_text_encode(mut workflow: Value, params: &GenerationParams) -> Value {
+    if let Some(map) = workflow.as_object_mut() {
+        crate::architectures::apply_text_encode(map, params);
+    }
+    workflow
 }
 
 /// Whether this request pauses partway through sampling or resumes a paused run.
@@ -1091,11 +1142,17 @@ fn build_paused_workflow(params: &GenerationParams, seed: i64) -> Value {
 /// Build one image template plus the model/conditioning patches that every
 /// image mode shares. `finish_workflow` appends the post-process chains.
 fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
-    let mut result = match params.mode.as_str() {
-        "img2img" => img2img::build(params, seed),
-        "inpainting" => inpainting::build(params, seed),
-        "image_edit" => image_edit::build(params, seed),
-        _ => txt2img::build(params, seed),
+    // A registered architecture's dedicated graph for this mode, else the
+    // generic template.
+    let mut result = if let Some(build) = crate::architectures::builder(params) {
+        build(params, seed)
+    } else {
+        match params.mode.as_str() {
+            "img2img" => img2img::build(params, seed),
+            "inpainting" => inpainting::build(params, seed),
+            "image_edit" => image_edit::build(params, seed),
+            _ => txt2img::build(params, seed),
+        }
     };
 
     // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)
@@ -1149,6 +1206,9 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // Resumed stage extras (sigma tail, painted edit). Last, because they
     // read the schedule off the fully patched model the injects above built.
     inject_resume_stage(&mut result, params, seed);
+
+    // A registered family distilled for a fixed sigma schedule (Turbo models).
+    crate::architectures::apply_manual_sigmas(&mut result, params);
 
     // The patches above rewire only the main sampler, which for Moody Moss
     // 4K HD is the second pass. The first pass must see the same model and
@@ -1863,6 +1923,22 @@ mod validation_and_seed_tests {
             p.model_architecture = arch.to_string();
             assert!(validate_generation_params(&p).is_ok(), "{arch}");
         }
+    }
+
+    #[test]
+    fn krea2_image_edit_needs_an_edit_lora() {
+        let mut p = params("image_edit", "krea2");
+        p.edit_reference_images = vec!["ref.png".to_string()];
+        p.krea2_edit_method = "identity".to_string();
+        let err = validate_generation_params(&p).unwrap_err();
+        assert!(err.contains("Identity Edit needs its edit LoRA"), "{err}");
+
+        p.krea2_edit_lora = "krea2_identity_edit_v2_r128.safetensors".to_string();
+        assert!(validate_generation_params(&p).is_ok());
+
+        // txt2img on Krea 2 never needs one.
+        let p = params("txt2img", "krea2");
+        assert!(validate_generation_params(&p).is_ok());
     }
 
     #[test]

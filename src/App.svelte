@@ -3,6 +3,7 @@
   import { onMount, onDestroy, untrack } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
+  import { architectures } from "./lib/stores/architectures.svelte.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
@@ -2668,6 +2669,9 @@
     // Start heartbeat in browser mode to keep backend alive
     startHeartbeat();
     idle.start();
+    // Registered model architectures (labels, presets, downloads). Static
+    // data from the backend; ModelSelector retries if this runs before login.
+    void architectures.load();
 
     // Native drag-drop wiring for the interrogate sidebar button (Tauri only).
     setupInterrogateTauriDragDrop();

@@ -17,7 +17,7 @@ back side included. It has two methods, picked at the top of the form:
   It makes a cloud of soft points that looks right from every side, but only
   splat tools open it. It is faster and lighter.
 
-Both need ComfyUI v0.41 or newer (the managed runtime is pinned at v0.43.0).
+Both need ComfyUI v0.41 or newer (the managed runtime is pinned at v0.45.0).
 
 ## Pixal3D (textured mesh)
 

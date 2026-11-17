@@ -93,6 +93,16 @@ pub async fn get_models(
     state.get_models_list(&category).await
 }
 
+/// The registered model architectures (`crate::architectures`) for the
+/// frontend: labels, detection-free metadata, sampling defaults, Model Hub
+/// entries, encoder / VAE / slot downloads and supported modes.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_model_architectures(
+) -> Result<Vec<&'static crate::architectures::ArchitectureSpec>, AppError> {
+    Ok(crate::architectures::list())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_samplers(state: State<'_, Arc<AppState>>) -> Result<SamplerInfo, AppError> {
@@ -4538,6 +4548,10 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.is_empty() {
         return "unknown";
     }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&bm) {
+        return family;
+    }
 
     if bm.contains("nanosaur") {
         return "nanosaur";
@@ -4670,6 +4684,10 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     let name = filename.trim().to_lowercase();
     if name.is_empty() {
         return None;
+    }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&name) {
+        return Some(family);
     }
 
     if name.contains("nanosaur") {
@@ -4994,6 +5012,9 @@ fn companion_text_encoder(model_filename: &str, encoders: &[String]) -> Option<S
 /// [`src/lib/utils/modelFamily.ts`](../../../src/lib/utils/modelFamily.ts) — keep
 /// the two in sync.
 pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
+    if let Some(split_only) = crate::architectures::requires_separate_clip(family) {
+        return split_only;
+    }
     matches!(
         family,
         "anima"
@@ -5021,6 +5042,55 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
     )
 }
 
+/// Families with hand-written arms in this file and the templates, mirrored
+/// by `MODEL_FAMILIES` in `src/lib/utils/modelFamily.ts`. A registered
+/// architecture (`crate::architectures`) must not reuse one of these ids.
+#[cfg(test)]
+pub(crate) fn is_legacy_family(family: &str) -> bool {
+    LEGACY_FAMILIES.contains(&family)
+}
+
+#[cfg(test)]
+pub(crate) const LEGACY_FAMILIES: [&str; 37] = [
+    "anima",
+    "sdxl",
+    "illustrious",
+    "pony",
+    "sd15",
+    "sd3",
+    "flux",
+    "flux1d",
+    "flux1s",
+    "flux1krea",
+    "flux2d",
+    "flux2klein9b",
+    "flux2klein9bbase",
+    "flux2klein4b",
+    "flux2klein4bbase",
+    "flux3klein",
+    "flux3kleinbase",
+    "mossimage",
+    "mossimagebase",
+    "chroma",
+    "zib",
+    "zit",
+    "wan",
+    "qwen",
+    "qwen_edit",
+    "qwen_edit_plus",
+    "flux1kontext",
+    "ideogram4",
+    "krea2",
+    "auraflow",
+    "pixart",
+    "hunyuandit",
+    "cascade",
+    "kolors",
+    "mugen",
+    "nanosaur",
+    "unknown",
+];
+
 /// The Flux 1 VAE, as Black Forest Labs and Comfy-Org name it (`ae.safetensors`)
 /// or under any `flux` name that is not the incompatible 32-channel Flux 2 VAE.
 fn find_flux1_vae(vaes: &[String]) -> Option<String> {
@@ -5037,6 +5107,9 @@ fn find_flux1_vae(vaes: &[String]) -> Option<String> {
 fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String]) -> Option<String> {
     if category != "diffusion_models" || vaes.is_empty() {
         return None;
+    }
+    if let Some(recommended) = crate::architectures::recommended_vae(family, vaes) {
+        return recommended;
     }
 
     if matches!(
@@ -5132,6 +5205,9 @@ fn recommended_clip_from_available(
 ) -> Option<(Option<String>, &'static str)> {
     if category != "diffusion_models" || encoders.is_empty() {
         return None;
+    }
+    if let Some(recommended) = crate::architectures::recommended_clip(family, encoders) {
+        return Some(recommended);
     }
 
     if family == "anima" {
@@ -5376,6 +5452,82 @@ mod split_model_pairing_tests {
             infer_architecture_from_key_names(&keys).as_deref(),
             Some("moss_image")
         );
+    }
+
+    #[test]
+    fn minimax_h3_image_tensor_keys_are_not_the_video_model() {
+        let image = [
+            "video_patch_proj.weight",
+            "condition_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+            "final_layer.video_out.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&image).as_deref(),
+            Some("minimax_h3_image")
+        );
+        assert_eq!(
+            family_from_architecture("minimax_h3_image"),
+            Some("minimaxh3image")
+        );
+        let video = [
+            "video_patch_proj.weight",
+            "audio_patch_proj.weight",
+            "condition_proj.weight",
+            "blocks.0.attn.qkv_proj.weight",
+        ];
+        assert_ne!(
+            infer_architecture_from_key_names(&video).as_deref(),
+            Some("minimax_h3_image")
+        );
+        assert_eq!(
+            model_family_from_filename("minimax_h3_image_pruned_int8_convrot.safetensors"),
+            Some("minimaxh3image")
+        );
+        assert!(family_requires_separate_clip("minimaxh3image"));
+    }
+
+    #[test]
+    fn qwen_image_21_tensor_keys_are_not_qwen_image_1() {
+        let v21 = [
+            "txt_in.text_norm.weight",
+            "modulation.1.weight",
+            "img_in.weight",
+            "proj_out.weight",
+            "transformer_blocks.0.attn.norm_q.weight",
+            "transformer_blocks.0.img_mlp.gate_up.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&v21).as_deref(),
+            Some("qwen_image21")
+        );
+        assert_eq!(
+            family_from_architecture("qwen_image21"),
+            Some("qwenimage21")
+        );
+        assert_eq!(
+            architecture_class("qwenimage21turbo"),
+            architecture_class("qwenimage21")
+        );
+        let v1 = [
+            "txt_norm.weight",
+            "img_in.weight",
+            "transformer_blocks.0.attn.norm_q.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&v1).as_deref(),
+            Some("qwen_image")
+        );
+        // The filename no longer lands in the Qwen-Image 1 bucket.
+        assert_eq!(
+            model_family_from_filename("qwen_image_2.1_int8_convrot.safetensors"),
+            Some("qwenimage21")
+        );
+        assert_eq!(
+            model_family_from_filename("qwen_image_fp8_e4m3fn.safetensors"),
+            Some("qwen")
+        );
+        assert!(family_requires_separate_clip("qwenimage21"));
     }
 
     #[test]
@@ -7038,6 +7190,17 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     let contains = |s: &str| bare.iter().any(|k| k.contains(s));
     let has_key = |name: &str| bare.contains(&name);
 
+    // MiniMax-H3-Image: the H3 DiT (video patch embed plus the conditioning
+    // projection) without the audio stream, as in ComfyUI's
+    // `model_detection` (`minimax_h3_image` when `audio_patch_proj` is absent).
+    // The audio-video H3 model is a video-mode model and keeps falling through.
+    if has_key("video_patch_proj.weight")
+        && has_key("condition_proj.weight")
+        && !has_key("audio_patch_proj.weight")
+    {
+        return Some("minimax_h3_image".to_string());
+    }
+
     // Anima: a Cosmos-Predict2 backbone plus a Qwen3 LLM adapter. Checked before
     // plain Cosmos because it shares that backbone — the adapter is what makes
     // it Anima, and what makes it require the Qwen3-0.6B text encoder.
@@ -7075,6 +7238,17 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
+    }
+
+    // Qwen-Image 2.1: a text projection with its own norm and one shared
+    // modulation (ComfyUI's model_detection `qwen_image21_keys`). Checked
+    // before Qwen-Image 1, whose encoder and VAE it cannot use.
+    if has_key("txt_in.text_norm.weight")
+        && has_key("modulation.1.weight")
+        && has_key("img_in.weight")
+        && starts_with("transformer_blocks.")
+    {
+        return Some("qwen_image21".to_string());
     }
 
     // Qwen-Image: MMDiT with a dedicated text-stream norm
@@ -7262,6 +7436,9 @@ fn gguf_is_text_model(general_arch: Option<&str>, names: &[&str]) -> bool {
 /// stock SDXL, so those resolve to the generic family and are only ever used to
 /// fill in a family that other detection left unknown.
 fn family_from_architecture(architecture: &str) -> Option<&'static str> {
+    if let Some(family) = crate::architectures::family_from_tensor_architecture(architecture) {
+        return Some(family);
+    }
     match architecture {
         "anima" => Some("anima"),
         "wan2.1" => Some("wan"),
@@ -7292,6 +7469,9 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
 /// variants). This keeps the veto conservative: it only fires when the file's
 /// weights prove a *different, known* class than the filename claimed.
 fn architecture_class(family: &str) -> Option<&'static str> {
+    if let Some(class) = crate::architectures::architecture_class(family) {
+        return Some(class);
+    }
     match family {
         // Classic SDXL-shaped UNets. Mugen is SDXL-shaped too (it is driven with
         // SDXL-style sampling in templates/mod.rs), so a mugen-by-filename tag is

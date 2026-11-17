@@ -29,6 +29,9 @@ struct RequiredCustomNodePackage {
     requirements_file: &'static str,
 }
 
+/// comfyui-krea2edit v2.0.0 (Krea 2 Identity / General Edit).
+pub const KREA2_EDIT_PACK_REV: &str = "13ef60f20828949becada815d3cbc371eb5ccaab";
+
 const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "snapref",
@@ -74,6 +77,18 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         git_rev: "bd1e094a2592f40b085e423a1a507b4c288ba9f1",
         source_subdir: None,
         verify_nodes: &["AnimaRefAdapter"],
+        requirements_file: "requirements.txt",
+    },
+    // Krea 2 Identity Edit / General Edit (image_edit mode): a model patch
+    // that adds the reference as clean in-context tokens, and an encoder that
+    // shows Qwen3-VL the reference with the instruction. Apache-2.0,
+    // pure Python, no requirements file. v2.0.0 (reference placement).
+    RequiredCustomNodePackage {
+        name: "comfyui-krea2edit",
+        git_url: "https://github.com/lbouaraba/comfyui-krea2edit.git",
+        git_rev: KREA2_EDIT_PACK_REV,
+        source_subdir: None,
+        verify_nodes: &["Krea2EditModelPatch", "Krea2EditGroundedEncode"],
         requirements_file: "requirements.txt",
     },
 ];
@@ -709,7 +724,7 @@ pub async fn ensure_required_style_transfer_nodes(
     } else {
         log::warn!(
             "Some style transfer custom node packages could not be installed ({}). \
-             Anima Untwisting RoPE style transfer and/or the Anima ReStyler are \
+             Anima style transfer, the Anima ReStyler and/or Krea 2 Identity/General Edit are \
              unavailable until these install.",
             failures.join("; ")
         );
@@ -763,6 +778,97 @@ pub async fn ensure_required_gguf_nodes(
              GGUF (.gguf) models are unavailable until these install.",
             failures.join("; ")
         );
+    }
+    Ok(())
+}
+
+/// Node packs the registered model architectures need
+/// (`crate::architectures`), in the install shape of the hand-written lists.
+fn architecture_packages() -> Vec<RequiredCustomNodePackage> {
+    crate::architectures::node_packs()
+        .into_iter()
+        .map(|pack| RequiredCustomNodePackage {
+            name: pack.name,
+            git_url: pack.git_url,
+            git_rev: pack.git_rev,
+            source_subdir: pack.source_subdir,
+            verify_nodes: pack.verify_nodes,
+            requirements_file: pack.requirements_file,
+        })
+        .collect()
+}
+
+/// Ensure the custom node packs of every registered model architecture are
+/// installed at their pinned commits. Failures are logged as warnings and do
+/// not block startup: only that architecture is unavailable until they
+/// install, and generating with it says so (`verify_architecture_nodes_for_generation`).
+pub async fn ensure_required_architecture_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let packages = architecture_packages();
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    let mut failures = Vec::new();
+    for package in packages {
+        if let Err(e) = ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            package,
+        )
+        .await
+        {
+            log::warn!(
+                "Model architecture custom node '{}' setup failed (optional): {}",
+                package.name,
+                e
+            );
+            failures.push(format!("{}: {}", package.name, e));
+        }
+    }
+
+    if failures.is_empty() {
+        log::info!("Ensured model architecture custom node packages");
+    } else {
+        log::warn!(
+            "Some model architecture custom node packages could not be installed ({}). \
+             The models that need them are unavailable until these install.",
+            failures.join("; ")
+        );
+    }
+    Ok(())
+}
+
+/// Before generating with a registered architecture, check that ComfyUI has
+/// the node classes its graph uses (its custom packs and the core nodes that
+/// need a minimum ComfyUI version), so a missing one is reported with the fix
+/// instead of ComfyUI's raw prompt-validation error.
+pub async fn verify_architecture_nodes_for_generation(
+    client: &reqwest::Client,
+    base_url: &str,
+    params: &GenerationParams,
+) -> Result<(), String> {
+    let required = crate::architectures::required_node_classes(params)
+        .into_iter()
+        .chain(crate::templates::krea2_edit::required_node_classes(params));
+    for (class, fix) in required {
+        if !object_info_has_node_class(client, base_url, class).await? {
+            return Err(fix);
+        }
     }
     Ok(())
 }
@@ -2282,6 +2388,7 @@ mod tests {
             H3_TEACACHE_PACKAGES,
             INT8_FAST_PACKAGES,
             IPADAPTER_PLUS_PACKAGES,
+            &architecture_packages(),
         ]
         .concat()
     }

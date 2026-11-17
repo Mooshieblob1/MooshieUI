@@ -3042,6 +3042,7 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(result))
         }
+        "list_model_architectures" => Ok(serde_json::json!(crate::architectures::list())),
         "get_samplers" => {
             let result = state
                 .get_samplers_and_schedulers()
@@ -3492,6 +3493,12 @@ async fn dispatch_command(
             crate::templates::upscale_standalone::rewrite_novelai_request(&mut params)?;
             crate::templates::validate_generation_params(&params)?;
             crate::comfyui::nodes::verify_snapref_for_generation(
+                &state.http_client,
+                &state.base_url().await,
+                &params,
+            )
+            .await?;
+            crate::comfyui::nodes::verify_architecture_nodes_for_generation(
                 &state.http_client,
                 &state.base_url().await,
                 &params,
