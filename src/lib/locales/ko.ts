@@ -1151,7 +1151,7 @@ const ko: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "이미지 편집",
   "generation.image_edit.hint": "프롬프트에 변경 사항을 설명하세요 (예: \"하늘을 보라색으로 만들어\"). 모델은 처음부터 생성하는 대신 참조 이미지를 편집합니다.",
-  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Krea 2 또는 Flux.1 Kontext 모델을 선택하세요.",
+  "generation.image_edit.wrong_model": "선택한 모델은 이미지 편집을 지원하지 않습니다. Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein, Krea 2 또는 Flux.1 Kontext 모델을 선택하세요.",
   "generation.image_edit.reference_image": "참조 이미지",
   "generation.image_edit.reference_image_n": "참조 이미지 {n}",
   "generation.image_edit.reference_set": "참조 이미지 설정됨",

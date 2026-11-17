@@ -32,6 +32,7 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 mod cascade;
+mod flux2_klein;
 mod ming_image;
 mod minimax_h3_image;
 mod pixart;
@@ -46,6 +47,11 @@ pub static ALL: &[&ArchitectureSpec] = &[
     // PixArt Alpha before Sigma: its filename markers are the narrower ones.
     &pixart::ALPHA_SPEC,
     &pixart::SPEC,
+    // Distilled before Base: a purely structural match picks the first.
+    &flux2_klein::SPEC_9B,
+    &flux2_klein::SPEC_9B_BASE,
+    &flux2_klein::SPEC_4B,
+    &flux2_klein::SPEC_4B_BASE,
     &cascade::SPEC,
 ];
 

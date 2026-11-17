@@ -120,6 +120,37 @@
       category: "upscale_models",
     },
     {
+      label: "Flux.2 Klein 4B FP8",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
+      filename: "flux-2-klein-4b-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Flux.2 Klein 4B Base FP8",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4b-fp8/resolve/main/flux-2-klein-base-4b-fp8.safetensors",
+      filename: "flux-2-klein-base-4b-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      // Gated: needs an HF_TOKEN that has accepted the FLUX Non-Commercial License.
+      label: "Flux.2 Klein 9B FP8 (HF access)",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors",
+      filename: "flux-2-klein-9b-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Flux.2 Klein 9B KV FP8 (HF access)",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv-fp8/resolve/main/flux-2-klein-9b-kv-fp8.safetensors",
+      filename: "flux-2-klein-9b-kv-fp8.safetensors",
+      category: "diffusion_models",
+    },
+    {
+      label: "Qwen3 8B FP8 (Flux.2 Klein 9B)",
+      url: "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+      filename: "qwen_3_8b_fp8mixed.safetensors",
+      category: "text_encoders",
+    },
+    {
       // Gated: needs an HF_TOKEN that has accepted the FLUX Kommunity License.
       label: "FLUX 3 Klein INT8 (HF access)",
       url: "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/main/diffusion_models/flux3-image-klein-int8-convrot.safetensors",

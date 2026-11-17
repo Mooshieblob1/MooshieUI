@@ -1151,7 +1151,7 @@ const zhTw: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "圖像編輯",
   "generation.image_edit.hint": "在提示詞中描述要修改的內容（例如「將天空改為紫色」）。模型將依據您的參考圖像進行編輯，而非從頭生成。",
-  "generation.image_edit.wrong_model": "所選模型不支援圖像編輯。請選擇 Qwen Image Edit、Qwen Image Edit Plus、FLUX 3 Klein、Krea 2 或 Flux.1 Kontext 模型。",
+  "generation.image_edit.wrong_model": "所選模型不支援圖像編輯。請選擇 Qwen Image Edit、Qwen Image Edit Plus、Flux.2 Klein、FLUX 3 Klein、Krea 2 或 Flux.1 Kontext 模型。",
   "generation.image_edit.reference_image": "參考圖像",
   "generation.image_edit.reference_image_n": "參考圖像 {n}",
   "generation.image_edit.reference_set": "參考圖像已設定",

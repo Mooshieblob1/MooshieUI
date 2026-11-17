@@ -1166,7 +1166,7 @@ const ja: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "画像編集",
   "generation.image_edit.hint": "変更内容をプロンプトに記述してください（例：\"空を紫にする\"）。モデルはゼロから生成するのではなく、参照画像を編集します。",
-  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、FLUX 3 Klein、Krea 2、またはFlux.1 Kontextモデルを選択してください。",
+  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、Flux.2 Klein、FLUX 3 Klein、Krea 2、またはFlux.1 Kontextモデルを選択してください。",
   "generation.image_edit.reference_image": "参照画像",
   "generation.image_edit.reference_image_n": "参照画像 {n}",
   "generation.image_edit.reference_set": "参照画像を設定しました",

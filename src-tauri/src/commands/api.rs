@@ -4562,18 +4562,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if let Some(family) = moss_image_family_from_text(&bm) {
         return family;
     }
-    if bm == "flux.2 klein 9b-base" {
-        return "flux2klein9bbase";
-    }
-    if bm == "flux.2 klein 9b" {
-        return "flux2klein9b";
-    }
-    if bm == "flux.2 klein 4b-base" {
-        return "flux2klein4bbase";
-    }
-    if bm == "flux.2 klein 4b" {
-        return "flux2klein4b";
-    }
     if bm == "flux.2 d" {
         return "flux2d";
     }
@@ -4696,36 +4684,8 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if let Some(family) = moss_image_family_from_text(&name) {
         return Some(family);
     }
-    if name.contains("flux.2 klein 9b-base")
-        || name.contains("flux2klein9bbase")
-        || (name.contains("flux")
-            && name.contains("klein")
-            && name.contains("9b")
-            && name.contains("base"))
-    {
-        return Some("flux2klein9bbase");
-    }
-    if name.contains("flux.2 klein 9b")
-        || name.contains("flux2klein9b")
-        || (name.contains("flux") && name.contains("klein") && name.contains("9b"))
-    {
-        return Some("flux2klein9b");
-    }
-    if name.contains("flux.2 klein 4b-base")
-        || name.contains("flux2klein4bbase")
-        || (name.contains("flux")
-            && name.contains("klein")
-            && name.contains("4b")
-            && name.contains("base"))
-    {
-        return Some("flux2klein4bbase");
-    }
-    if name.contains("flux.2 klein 4b")
-        || name.contains("flux2klein4b")
-        || (name.contains("flux") && name.contains("klein") && name.contains("4b"))
-    {
-        return Some("flux2klein4b");
-    }
+    // Flux.2 Klein is registered (architectures/flux2_klein.rs) and matched
+    // above, so a remaining Flux 2 name is Dev.
     if name.contains("flux.2 d")
         || name.contains("flux2d")
         || (name.contains("flux") && name.contains("2") && name.contains("d"))
@@ -5016,10 +4976,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "flux1krea"
             | "flux1kontext"
             | "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
             | "flux3klein"
             | "flux3kleinbase"
             | "mossimage"
@@ -5039,7 +4995,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 35] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 31] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5051,10 +5007,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 35] = [
     "flux1s",
     "flux1krea",
     "flux2d",
-    "flux2klein9b",
-    "flux2klein9bbase",
-    "flux2klein4b",
-    "flux2klein4bbase",
     "flux3klein",
     "flux3kleinbase",
     "mossimage",
@@ -5117,15 +5069,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
-            | "flux3klein"
-            | "flux3kleinbase"
-            | "mossimage"
-            | "mossimagebase"
+        "flux2d" | "flux3klein" | "flux3kleinbase" | "mossimage" | "mossimagebase"
     ) {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
@@ -5148,7 +5092,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
 
-/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image, Flux 2 Klein 4B).
+/// Text-encoder filename markers accepted for Qwen3-4B (Z-Image).
 /// Comfy-Org names it `qwen_3_4b*.safetensors`. Mirrored by
 /// `ZIMAGE_ENCODER_MARKERS` in ModelSelector.svelte.
 const QWEN3_4B_TEXT_ENCODER_MARKERS: [&str; 5] =
@@ -5223,18 +5167,6 @@ fn recommended_clip_from_available(
                     None
                 }
             })
-            .or_else(|| encoders.first().cloned());
-        return Some((preferred, "flux2"));
-    }
-
-    if matches!(family, "flux2klein9b" | "flux2klein9bbase") {
-        let preferred = find_first_text_encoder_matching(encoders, &["qwen3_8b", "qwen_3_8b"])
-            .or_else(|| encoders.first().cloned());
-        return Some((preferred, "flux2"));
-    }
-
-    if matches!(family, "flux2klein4b" | "flux2klein4bbase") {
-        let preferred = find_first_text_encoder_matching(encoders, &QWEN3_4B_TEXT_ENCODER_MARKERS)
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "flux2"));
     }
@@ -5392,6 +5324,51 @@ mod split_model_pairing_tests {
         assert_eq!(
             model_family_from_base_model("Flux.3 Klein Base"),
             "flux3kleinbase"
+        );
+    }
+
+    #[test]
+    fn flux2_tensor_keys_tell_klein_4b_9b_and_dev_apart() {
+        fn keys(singles: usize) -> Vec<String> {
+            let mut k = vec![
+                "double_stream_modulation_img.lin.weight".to_string(),
+                "double_stream_modulation_txt.lin.weight".to_string(),
+                "single_stream_modulation.lin.weight".to_string(),
+                "double_blocks.0.img_attn.qkv.weight".to_string(),
+            ];
+            for i in 0..singles {
+                k.push(format!("single_blocks.{i}.linear1.weight"));
+                k.push(format!("single_blocks.{i}.linear2.weight"));
+            }
+            k
+        }
+        for (singles, arch, family) in [
+            (20, "flux2_klein_4b", "flux2klein4b"),
+            (24, "flux2_klein_9b", "flux2klein9b"),
+            (48, "flux2_dev", "flux2d"),
+        ] {
+            let owned = keys(singles);
+            let names: Vec<&str> = owned.iter().map(String::as_str).collect();
+            assert_eq!(
+                infer_architecture_from_key_names(&names).as_deref(),
+                Some(arch)
+            );
+            assert_eq!(family_from_architecture(arch), Some(family));
+        }
+        // A Klein 4B file named 9B is corrected by its weights; base vs
+        // distilled is left to the filename.
+        assert_ne!(
+            architecture_class("flux2klein9b"),
+            architecture_class("flux2klein4b")
+        );
+        assert_eq!(
+            architecture_class("flux2klein4bbase"),
+            architecture_class("flux2klein4b")
+        );
+        // Flux 1 keeps its own class.
+        assert_ne!(
+            architecture_class("flux1d"),
+            architecture_class("flux2klein4b")
         );
     }
 
@@ -7364,6 +7341,27 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("moss_image".to_string());
     }
 
+    // Flux 2: Flux-style blocks plus shared stream modulations, as in ComfyUI's
+    // detect_unet_config. The single-block count tells the sizes apart
+    // (Klein 4B 20, Klein 9B 24, Dev 48); base and distilled share their keys.
+    if has_key("double_stream_modulation_img.lin.weight") {
+        let singles = bare
+            .iter()
+            .filter_map(|k| k.strip_prefix("single_blocks."))
+            .filter_map(|rest| rest.split('.').next())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        return Some(
+            match singles {
+                20 => "flux2_klein_4b",
+                24 => "flux2_klein_9b",
+                48 => "flux2_dev",
+                _ => "flux2",
+            }
+            .to_string(),
+        );
+    }
+
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
@@ -7579,6 +7577,9 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
+        // Flux.2 Klein's flux2_klein_4b / flux2_klein_9b are registered
+        // (architectures/flux2_klein.rs).
+        "flux2_dev" => Some("flux2d"),
         "moss_image" => Some("mossimage"),
         "qwen_image" => Some("qwen"),
         "stable-diffusion-3-medium" => Some("sd3"),
@@ -7615,6 +7616,9 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // so they correct a filename that names the other checkpoint.
         "flux3klein" => Some("flux3_flowmap"),
         "flux3kleinbase" => Some("flux3"),
+        // Flux 2 sizes are told apart by their keys (Klein's classes come from
+        // the registry), so a Klein file named Dev is corrected and vice versa.
+        "flux2d" => Some("flux2_dev"),
         // SFT and Base share every tensor key: one class for both.
         "mossimage" | "mossimagebase" => Some("moss_image"),
         "anima" => Some("anima"),
