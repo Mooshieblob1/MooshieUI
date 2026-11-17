@@ -27,6 +27,7 @@ pub mod log_buffer;
 pub mod mcp;
 pub mod media_tools;
 pub mod metadata;
+pub mod model_hash_cache;
 pub mod model_requests;
 pub mod notifications;
 pub mod novelai;

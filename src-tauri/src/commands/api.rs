@@ -16,7 +16,15 @@ use crate::state::AppState;
 /// Compute the full SHA256 hash of a file (uppercase hex).
 /// Compatible with CivitAI's hash database.
 /// For large model files (2-10 GB) this can take a few seconds.
+///
+/// Reuses the remembered hash while the file's size and modification time are
+/// unchanged (see `model_hash_cache`).
 pub(crate) fn full_sha256(path: &std::path::Path) -> Result<String, AppError> {
+    crate::model_hash_cache::sha256(path)
+}
+
+/// Read the whole file and hash it, ignoring the cache.
+pub(crate) fn sha256_uncached(path: &std::path::Path) -> Result<String, AppError> {
     const BUF_SIZE: usize = 8 * 1024 * 1024; // 8 MB read buffer
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
