@@ -2,6 +2,13 @@
  * Shared helpers for model-family detection and related metadata signals.
  */
 
+import {
+  findFamily,
+  isRegisteredFamily,
+  registeredFamilies,
+  registeredFamilyLabel,
+} from "./architectures.js";
+
 export const MODEL_FAMILIES = [
   "anima",
   "sdxl",
@@ -42,7 +49,42 @@ export const MODEL_FAMILIES = [
   "unknown",
 ] as const;
 
-export type ModelFamily = typeof MODEL_FAMILIES[number];
+/** Families with hand-written support. Mirrored by `LEGACY_FAMILIES` in commands/api.rs. */
+export type LegacyModelFamily = typeof MODEL_FAMILIES[number];
+
+/**
+ * A hand-written family, or one declared in the backend's architecture
+ * registry (`src-tauri/src/architectures/`, see `utils/architectures.ts`),
+ * whose ids are only known at runtime.
+ */
+export type ModelFamily = LegacyModelFamily | (string & {});
+
+/** True for a hand-written family or a registered one. */
+export function isKnownModelFamily(value: unknown): value is ModelFamily {
+  return (
+    typeof value === "string" &&
+    ((MODEL_FAMILIES as readonly string[]).includes(value) || isRegisteredFamily(value))
+  );
+}
+
+/** Every family the app knows: hand-written ones, then registered ones. */
+export function allModelFamilies(): ModelFamily[] {
+  return [...MODEL_FAMILIES, ...registeredFamilies()];
+}
+
+/** Display name of a family (registered or hand-written), if it has one. */
+export function modelFamilyLabel(family: ModelFamily | null | undefined): string | undefined {
+  if (!family) return undefined;
+  return registeredFamilyLabel(family) ?? MODEL_FAMILY_LABELS[family];
+}
+
+/** True when a family is prompted with Danbooru-style tags. */
+export function familyUsesTagPrompts(family: ModelFamily | null | undefined): boolean {
+  if (!family) return false;
+  const registered = findFamily(family);
+  if (registered) return registered.arch.prompt_style === "tags";
+  return TAG_PROMPT_FAMILIES.has(family);
+}
 
 /**
  * Families whose prompts are written as Danbooru-style tags. Everything else
@@ -186,6 +228,8 @@ export const SPLIT_ONLY_FAMILIES: ReadonlySet<ModelFamily> = new Set([
 
 /** True when a family requires a separate text encoder (no baked CLIP). */
 export function familyRequiresSeparateClip(family: ModelFamily | null | undefined): boolean {
+  const registered = findFamily(family);
+  if (registered) return registered.arch.split_only;
   return !!family && SPLIT_ONLY_FAMILIES.has(family);
 }
 
