@@ -91,6 +91,7 @@ import {
 } from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import { shouldKeepSplitVae } from "../utils/splitVae.js";
+import { findWanLowNoisePartner, WAN_LOW_NOISE_SLOT, wanSamplingPreset, wanVariant } from "../utils/wanModels.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
@@ -1365,6 +1366,21 @@ class GenerationStore {
     return this.modelFamily === "zit";
   }
 
+  /**
+   * Wan 2.2 A14B: the installed low-noise expert that finishes the selected
+   * high-noise model. Null for every other model, or when none is installed.
+   */
+  get wanLowNoisePartner(): string | null {
+    if (!this.isWan || !this.useSplitModel) return null;
+    return findWanLowNoisePartner(this.diffusionModel, models.diffusionModels);
+  }
+
+  /** Extra model files the architecture loads, by slot (`architecture_files`). */
+  get architectureFiles(): Record<string, string> {
+    const lowNoise = this.wanLowNoisePartner;
+    return lowNoise ? { [WAN_LOW_NOISE_SLOT]: lowNoise } : {};
+  }
+
   /** True when the selected model is a Wan variant. */
   get isWan(): boolean {
     return this.modelFamily === "wan";
@@ -1975,7 +1991,7 @@ class GenerationStore {
     // Keep a pick that is installed and decodes this family's latents, such as a
     // sharpened Qwen Image VAE on Anima or Krea 2. Only an empty, missing or
     // mismatched VAE (an SDXL VAE left over on Anima, say) gets replaced.
-    if (shouldKeepSplitVae(current, this.modelFamily, vaes)) return;
+    if (shouldKeepSplitVae(current, this.modelFamily, vaes, this.diffusionModel)) return;
     this.vae = recommended;
     if (save) this.saveSettings();
   }
@@ -2939,7 +2955,15 @@ class GenerationStore {
             };
         break;
 
+      // Wan 2.x per checkpoint line, from Comfy-Org's templates.
       case "wan":
+        preset = {
+          ...wanSamplingPreset(wanVariant(this.diffusionModel ?? this.checkpoint)),
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
       case "qwen":
         preset = {
           steps: 30,
@@ -4474,6 +4498,7 @@ class GenerationStore {
       diffusion_model: this.diffusionModel,
       clip_model: this.clipModel,
       clip_type: this.clipType,
+      architecture_files: this.architectureFiles,
       model_source_category: this.modelSourceCategory,
       controlnet: this.controlnetEnabled
         ? {

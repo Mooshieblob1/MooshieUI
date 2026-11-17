@@ -5039,9 +5039,13 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
         return None;
     }
 
+    if family == "wan" {
+        return recommended_wan_vae("", vaes);
+    }
+
     if matches!(
         family,
-        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan" | "krea2"
+        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "krea2"
     ) {
         // The stock file first: decoder fine-tunes such as
         // `qwen_image_sharp_vae_bf16` sort ahead of it but are an opt-in look,
@@ -5087,6 +5091,20 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     }
 
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
+}
+
+/// VAE for a Wan diffusion model. Strict, so a missing VAE is downloaded
+/// rather than an unrelated one decoding noise: TI2V 5B needs the 48-channel
+/// Wan 2.2 VAE; every other Wan checkpoint the 16-channel Wan 2.1 VAE, or the
+/// Qwen Image VAE fine-tuned from it.
+fn recommended_wan_vae(model_filename: &str, vaes: &[String]) -> Option<String> {
+    use crate::templates::wan::{WanVariant, WAN21_VAE_MARKERS, WAN22_VAE_MARKERS};
+    if WanVariant::from_filename(model_filename) == WanVariant::Ti2v5b {
+        return find_first_vae_matching(vaes, &WAN22_VAE_MARKERS);
+    }
+    find_first_vae_matching(vaes, &WAN21_VAE_MARKERS)
+        .or_else(|| find_vae_by_basename(vaes, QWEN_IMAGE_VAE_FILE))
+        .or_else(|| find_first_vae_matching(vaes, &["qwen_image_vae", "qwen-image-vae"]))
 }
 
 /// Text-encoder filename markers accepted for Qwen3-4B (Z-Image, Flux 2 Klein 4B).
@@ -5144,7 +5162,17 @@ fn recommended_clip_from_available(
         return Some((preferred, "wan"));
     }
 
-    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan") {
+    if family == "wan" {
+        // Strict: Wan 2.x conditions on umT5-XXL (4096-dim); a Qwen or CLIP
+        // encoder fails with a shape mismatch inside the first block.
+        let preferred = find_first_text_encoder_matching(
+            encoders,
+            &crate::templates::wan::TEXT_ENCODER_MARKERS,
+        );
+        return Some((preferred, "wan"));
+    }
+
+    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen2.5-vl", "qwen_2.5_vl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "qwen_image"));
@@ -5232,6 +5260,74 @@ fn recommended_clip_from_available(
     }
 
     Some((Some(encoders.first()?.clone()), "wan"))
+}
+
+#[cfg(test)]
+mod wan_pairing_tests {
+    use super::*;
+
+    fn list(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn wan_gets_umt5_never_the_qwen_image_encoder() {
+        let encoders = list(&[
+            "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        ]);
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "wan", &encoders),
+            Some((
+                Some("umt5_xxl_fp8_e4m3fn_scaled.safetensors".to_string()),
+                "wan"
+            ))
+        );
+        // Without umT5, no stand-in: the frontend downloads it.
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "wan", &encoders[..1]),
+            Some((None, "wan"))
+        );
+        // Qwen Image keeps its own encoder.
+        assert_eq!(
+            recommended_clip_from_available("diffusion_models", "qwen", &encoders),
+            Some((
+                Some("qwen_2.5_vl_7b_fp8_scaled.safetensors".to_string()),
+                "qwen_image"
+            ))
+        );
+    }
+
+    #[test]
+    fn wan_vae_follows_the_checkpoint() {
+        let vaes = list(&[
+            "sdxl_vae.safetensors",
+            "qwen_image_vae.safetensors",
+            "wan2.2_vae.safetensors",
+            "wan_2.1_vae.safetensors",
+        ]);
+        assert_eq!(
+            recommended_wan_vae("wan2.2_ti2v_5B_fp16.safetensors", &vaes).as_deref(),
+            Some("wan2.2_vae.safetensors")
+        );
+        assert_eq!(
+            recommended_wan_vae("wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", &vaes)
+                .as_deref(),
+            Some("wan_2.1_vae.safetensors")
+        );
+        assert_eq!(
+            recommended_wan_vae("wan2.1_t2v_14B_fp16.safetensors", &vaes[..3]).as_deref(),
+            Some("qwen_image_vae.safetensors")
+        );
+        assert_eq!(
+            recommended_wan_vae("wan2.2_ti2v_5B_fp16.safetensors", &vaes[..2]),
+            None
+        );
+        assert_eq!(
+            recommended_wan_vae("wan2.1_t2v_14B_fp16.safetensors", &vaes[..1]),
+            None
+        );
+    }
 }
 
 #[cfg(test)]
@@ -6452,8 +6548,13 @@ pub(crate) async fn read_modelspec_internal(
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
         if let Ok(vaes) = state.get_models_list("vae").await {
-            if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes)
-            {
+            let recommended = if family == "wan" {
+                // Which Wan VAE depends on the checkpoint, not just the family.
+                recommended_wan_vae(&filename, &vaes)
+            } else {
+                recommended_vae_from_available(category, &family, &vaes)
+            };
+            if let Some(recommended_vae) = recommended {
                 result.insert("recommended_vae".to_string(), recommended_vae);
             }
         }

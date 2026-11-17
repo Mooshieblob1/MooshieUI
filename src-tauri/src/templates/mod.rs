@@ -19,6 +19,7 @@ pub mod video;
 pub mod video_interpolate;
 pub mod video_refine;
 pub mod video_retake;
+pub mod wan;
 
 use serde_json::{json, Value};
 
@@ -418,6 +419,8 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
+    wan::validate(params)?;
+
     // INT8-Fast guard: when enabled for a split-model family, the family must
     // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
     // are incompatible with the INT8-Fast loader (they route through
@@ -683,6 +686,62 @@ fn int8_fast_model_type(family: &str) -> Option<&'static str> {
     }
 }
 
+/// Loader node for a split diffusion model: GGUF, a file outside its folder
+/// (by absolute path), INT8-Fast, or the stock `UNETLoader`.
+///
+/// GGUF quantized models cannot be loaded by core UNETLoader, so they go
+/// through the ComfyUI-GGUF custom node (installed at ComfyUI setup).
+pub(crate) fn unet_loader_node(
+    unet_name: &str,
+    misplaced_path: Option<&str>,
+    params: &GenerationParams,
+) -> Value {
+    if unet_name.to_ascii_lowercase().ends_with(".gguf") {
+        json!({
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {
+                "unet_name": unet_name
+            }
+        })
+    } else if let Some(path) = misplaced_path {
+        // Split-file model physically stored in another folder (usually
+        // checkpoints/). UNETLoader validates unet_name against its own folder
+        // listing and would reject it, so load by absolute path instead.
+        json!({
+            "class_type": "MooshieDiffusionLoaderPath",
+            "inputs": {
+                "unet_path": path,
+                "weight_dtype": "default"
+            }
+        })
+    } else if params.int8_fast_enabled {
+        // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
+        // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
+        // family has a known model_type mapping before we reach here.
+        let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
+        json!({
+            "class_type": "OTUNetLoaderW8A8",
+            "inputs": {
+                "unet_name": unet_name,
+                "weight_dtype": "default",
+                "model_type": model_type,
+                "on_the_fly_quantization": false,
+                "enable_convrot": params.int8_fast_convrot,
+                "lora_mode": "None"
+            }
+        })
+    } else {
+        json!({
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": unet_name,
+                "model_name": unet_name,
+                "weight_dtype": "default"
+            }
+        })
+    }
+}
+
 /// Load model nodes — either a single CheckpointLoaderSimple or split UNETLoader + CLIPLoader + VAELoader.
 /// Also handles the LoRA chain and optional separate VAE override.
 pub fn load_model_nodes(
@@ -740,52 +799,18 @@ pub fn load_model_nodes(
         // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
         // GGUF quantized models cannot be loaded by core UNETLoader — route them
         // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
-        let unet_name = params.diffusion_model.as_deref().unwrap_or("");
-        let unet_id = next_id.to_string();
-        let unet_node = if unet_name.to_ascii_lowercase().ends_with(".gguf") {
-            json!({
-                "class_type": "UnetLoaderGGUF",
-                "inputs": {
-                    "unet_name": unet_name
-                }
-            })
-        } else if let Some(path) = misplaced_model_path(params) {
-            // Split-file model physically stored in another folder (usually
-            // checkpoints/). UNETLoader validates unet_name against its own folder
-            // listing and would reject it, so load by absolute path instead.
-            json!({
-                "class_type": "MooshieDiffusionLoaderPath",
-                "inputs": {
-                    "unet_path": path,
-                    "weight_dtype": "default"
-                }
-            })
-        } else if params.int8_fast_enabled {
-            // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
-            // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
-            // family has a known model_type mapping before we reach here.
-            let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
-            json!({
-                "class_type": "OTUNetLoaderW8A8",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "weight_dtype": "default",
-                    "model_type": model_type,
-                    "on_the_fly_quantization": false,
-                    "enable_convrot": params.int8_fast_convrot,
-                    "lora_mode": "None"
-                }
-            })
+        // Wan 2.2 A14B: every pass but the txt2img high-noise start runs on
+        // the low-noise expert (see templates/wan.rs), so it is the main model.
+        let low_noise_expert = wan::low_noise_model(params);
+        let unet_name =
+            low_noise_expert.unwrap_or_else(|| params.diffusion_model.as_deref().unwrap_or(""));
+        let misplaced = if low_noise_expert.is_some() {
+            None
         } else {
-            json!({
-                "class_type": "UNETLoader",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "model_name": unet_name,
-                    "weight_dtype": "default"
-                }
-            })
+            misplaced_model_path(params)
         };
+        let unet_id = next_id.to_string();
+        let unet_node = unet_loader_node(unet_name, misplaced, params);
         workflow.insert(unet_id.clone(), unet_node);
         model_source = (unet_id, 0);
         next_id += 1;
@@ -861,6 +886,11 @@ pub fn load_model_nodes(
             log::warn!(
                 "Skipping LoRA with empty name — this should have been filtered by the frontend"
             );
+            continue;
+        }
+        // Wan 2.2 A14B LoRAs come as high/low-noise pairs; a high-noise half
+        // only belongs on the high-noise expert (templates/wan.rs).
+        if !wan::lora_applies_to_main_model(params, &lora.name) {
             continue;
         }
         let lora_id = next_id.to_string();
@@ -1095,6 +1125,7 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
         "img2img" => img2img::build(params, seed),
         "inpainting" => inpainting::build(params, seed),
         "image_edit" => image_edit::build(params, seed),
+        _ if wan::two_expert_active(params) => wan::build_txt2img(params, seed),
         _ => txt2img::build(params, seed),
     };
 
@@ -1155,6 +1186,9 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     // conditioning.
     if txt2img::moody_moss_hd_active(params) {
         sync_moody_moss_first_pass(&mut result);
+    }
+    if wan::two_expert_active(params) {
+        wan::sync_high_noise_pass(&mut result);
     }
 
     result

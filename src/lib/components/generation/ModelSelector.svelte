@@ -26,6 +26,7 @@
   import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
   import { isFlux1VaeName } from "../../utils/splitVae.js";
+  import { isWan21Vae, isWan22Vae, isWanEncoder, wanVariant } from "../../utils/wanModels.js";
 
   interface ModelFile {
     filename: string;
@@ -796,6 +797,48 @@
     vaeFile: MOSS_IMAGE_VAE_FILE,
   };
 
+  // Wan 2.x: umT5-XXL for every checkpoint; the VAE depends on which one.
+  // Comfy-Org's repackaged files, as their Wan templates load them.
+  const WAN_REPO = "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files";
+  const WAN_ENCODER_FILE: ModelFile = {
+    filename: "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    url: `${WAN_REPO}/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`,
+    category: "text_encoders",
+  };
+  const WAN21_REQUIREMENT: RequiredSplitEncoder = {
+    label: "Wan",
+    clipType: "wan",
+    isEncoder: isWanEncoder,
+    encoderFile: WAN_ENCODER_FILE,
+    isVae: isWan21Vae,
+    vaeFile: {
+      filename: "wan_2.1_vae.safetensors",
+      url: `${WAN_REPO}/vae/wan_2.1_vae.safetensors`,
+      category: "vae",
+    },
+  };
+  const WAN22_5B_REQUIREMENT: RequiredSplitEncoder = {
+    label: "Wan 2.2 5B",
+    clipType: "wan",
+    isEncoder: isWanEncoder,
+    encoderFile: WAN_ENCODER_FILE,
+    isVae: isWan22Vae,
+    vaeFile: {
+      filename: "wan2.2_vae.safetensors",
+      url: `${WAN_REPO}/vae/wan2.2_vae.safetensors`,
+      category: "vae",
+    },
+  };
+
+  function requiredSplitEncoderFor(family: ModelFamily): RequiredSplitEncoder | undefined {
+    if (family === "wan") {
+      const variant = wanVariant(generation.diffusionModel);
+      if (variant === "notTextToImage") return undefined;
+      return variant === "ti2v5b" ? WAN22_5B_REQUIREMENT : WAN21_REQUIREMENT;
+    }
+    return REQUIRED_SPLIT_ENCODERS[family];
+  }
+
   const REQUIRED_SPLIT_ENCODERS: Partial<Record<ModelFamily, RequiredSplitEncoder>> = {
     krea2: {
       label: "Krea 2",
@@ -907,7 +950,7 @@
   // this panel is collapsed). The encoder download stays here because it drives
   // this component's progress rows, so it only runs while the panel is open.
   $effect(() => {
-    const req = REQUIRED_SPLIT_ENCODERS[generation.modelFamily];
+    const req = requiredSplitEncoderFor(generation.modelFamily);
     if (req && generation.useSplitModel) {
       void ensureRequiredSplitEncoder(req);
     }
@@ -932,6 +975,13 @@
    * (so AMD/Intel/CPU users don't see entries they can't run).
    */
   let computeCapability = $state<number | null>(null);
+
+  // Wan 2.2 A14B: say which low-noise file finishes the high-noise model, or
+  // that one is missing. Image-to-video Wan files cannot make an image at all.
+  const wanSplitVariant = $derived(
+    generation.useSplitModel && generation.isWan ? wanVariant(generation.diffusionModel) : null,
+  );
+  const wanPairedLowNoise = $derived(wanSplitVariant === "a14bHigh" ? generation.wanLowNoisePartner : null);
 
   // NVFP4 weights only run natively on Blackwell (compute capability 10.0+).
   // Warn owners of older NVIDIA GPUs that they need the FP8 build instead.
@@ -1944,6 +1994,21 @@
             </div>
           {/if}
         {/each}
+      </div>
+    {/if}
+    {#if wanSplitVariant === "a14bHigh"}
+      {#if wanPairedLowNoise}
+        <div class="mt-2 rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-[11px] text-neutral-300">
+          {locale.t('generation.model.wan_low_noise_paired', { file: wanPairedLowNoise.split(/[\\/]/).pop() ?? wanPairedLowNoise })}
+        </div>
+      {:else}
+        <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+          {locale.t('generation.model.wan_low_noise_missing')}
+        </div>
+      {/if}
+    {:else if wanSplitVariant === "notTextToImage"}
+      <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+        {locale.t('generation.model.wan_not_text_to_image')}
       </div>
     {/if}
     {#if showNvfp4Warning}
