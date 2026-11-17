@@ -49,6 +49,7 @@ Tools that take an image accept a gallery filename or the picture itself as base
 - `generate_image` with `source_image` runs img2img (`denoise`, default 0.6). The size follows the source's aspect ratio at the setup's pixel count unless `width`/`height` are given. On NovelAI this is NovelAI img2img, still inside the free window.
 - `generate_image` with `reference_images` (one or two) turns on the model's style reference: the Anima Reference Adapter, Flux Redux or IP-Adapter, with the setup's reference settings. When the owner's Anima setup uses SnapRef, it takes up to 8 images of the same character instead, at strength 1. Local models only.
 - `edit_image` edits the first image with an instruction on an Image Edit model; more images are references.
+- On a Ming-Image Layer setup, `edit_image` splits the image into transparent layers instead, one result per layer; the instruction names the count ("Decompose this image into 5 layers", default 4).
 - `upscale_image` runs Refine: upscales by `scale` (1 to 4) and refines with the local model that made the image (or the one given), guided by the image's own prompt.
 
 ## Download links
@@ -87,7 +88,7 @@ A page takes several minutes, so with `wait: false`, or after the tunnel's 75 se
 |------|--------------|
 | `get_status` | ComfyUI status and GPUs, queue length, the last five image, comic and music jobs, and the saved setups. |
 | `list_models` | Installed checkpoints, diffusion models (with `has_setup`), LoRAs, upscale models, or YuE2 music checkpoints. |
-| `generate_image` | txt2img from a setup, local or NovelAI. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`, `characters`, `styles`, `chunks`, `use_active_styles`, `source_image` + `denoise` (img2img), `reference_images`. Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
+| `generate_image` | txt2img from a setup, local or NovelAI. Optional: `negative_prompt`, `model`, `width`, `height`, `steps`, `cfg`, `seed`, `batch_size` (1 to 8), `sampler`, `scheduler`, `loras`, `characters`, `styles`, `chunks`, `use_active_styles`, `source_image` + `denoise` (img2img), `reference_images`, `transparent_background` (Ming-Image Design). Waits up to 10 minutes and returns JPEG previews, or returns a job id with `wait: false`. |
 | `generate_music` | A YuE2 song from `style`, with optional `lyrics` (omit for instrumental), `duration_seconds` (1 to 360), `checkpoint`, `planning` (`full`, `melody`, `off`), `score` (ABC to follow), `steps` and `seed`. Waits up to 10 minutes, or returns a job id with `wait: false`. |
 | `create_comic` | A comic page: `layout` or `rows`, `panels` (prompt, `dialogue`, `cast`, `characters`, `setting`), `cast`, `style`, `setting`, `page_shape`, `right_to_left`, `gutter`, `mode` (`panels` or `one_image`) and the `generate_image` settings. Generates every panel, assembles the page and returns its preview and links. |
 | `redo_comic_panels` | Remakes `panels` (or `changes` with new prompts or dialogue) of a finished comic and assembles a new page. |

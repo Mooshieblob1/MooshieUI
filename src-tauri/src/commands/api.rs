@@ -5448,6 +5448,61 @@ mod split_model_pairing_tests {
     }
 
     #[test]
+    fn ming_image_repacks_resolve_by_config_and_marker() {
+        let header = |keys: &[&str]| -> serde_json::Map<String, Value> {
+            keys.iter().map(|k| (k.to_string(), json!({}))).collect()
+        };
+        let design = header(&[
+            "cap_embedder.1.weight",
+            "context_refiner.0.attention.out.weight",
+            "x_embedder.weight",
+        ]);
+        let layer = header(&[
+            "cap_embedder.1.weight",
+            "cap_pad_token",
+            "x_embedder.weight",
+        ]);
+        let config = json!(r#"{"transformer": {"image_model": "ming_image"}}"#);
+        assert_eq!(
+            architecture_from_repack_config(&config, &design),
+            Some("ming_image")
+        );
+        assert_eq!(
+            architecture_from_repack_config(&config, &layer),
+            Some("ming_image_layer")
+        );
+        let other = json!(r#"{"transformer": {"image_model": "z_image"}}"#);
+        assert_eq!(architecture_from_repack_config(&other, &design), None);
+        assert_eq!(
+            architecture_from_repack_config(&json!("not json"), &design),
+            None
+        );
+
+        assert_eq!(
+            infer_architecture_from_key_names(&["__ming_image__", "x_embedder.weight"]).as_deref(),
+            Some("ming_image")
+        );
+        assert_eq!(
+            infer_architecture_from_key_names(&[
+                "model.diffusion_model.__ming_image__",
+                "model.diffusion_model.cap_pad_token",
+                "model.diffusion_model.x_embedder.weight",
+                "model.diffusion_model.x_embedder.bias",
+                "model.diffusion_model.cap_embedder.1.weight",
+                "model.diffusion_model.final_layer.linear.weight",
+            ])
+            .as_deref(),
+            Some("ming_image_layer")
+        );
+        assert_eq!(family_from_architecture("ming_image"), Some("mingimage"));
+        assert_eq!(
+            family_from_architecture("ming_image_layer"),
+            Some("mingimagelayer")
+        );
+        assert!(family_requires_separate_clip("mingimagelayer"));
+    }
+
+    #[test]
     fn pixart_tensor_keys_tell_sigma_from_alpha_in_both_layouts() {
         // Diffusers `transformer/` safetensors (what the Model Hub downloads).
         let sigma = [
@@ -6885,6 +6940,18 @@ pub(crate) fn read_safetensors_modelspec(
         result.insert("header_v_pred".to_string(), "true".to_string());
     }
 
+    // Comfy-Org's repacks declare the model in a `config` metadata entry. Ming
+    // shares Z-Image's tensor layout, so this is what tells a renamed file
+    // apart (and the Layer checkpoint from the Design one).
+    if !result.contains_key("architecture") {
+        if let (Some(config), Some(Value::Object(top))) = (metadata.get("config"), Some(&header)) {
+            if let Some(arch) = architecture_from_repack_config(config, top) {
+                result.insert("architecture".to_string(), arch.to_string());
+                result.insert("architecture_inferred".to_string(), "true".to_string());
+            }
+        }
+    }
+
     // If no modelspec.architecture, infer from tensor key patterns in the header
     if let Some(Value::Object(top)) = Some(&header) {
         if !result.contains_key("architecture") {
@@ -7186,6 +7253,40 @@ fn dominant_tensor_key_prefix(names: &[&str]) -> &'static str {
     }
 }
 
+/// `ming_image_layer` for the Layer checkpoint (learned pad tokens), else
+/// `ming_image`.
+fn ming_image_architecture(has_pad_token: bool) -> &'static str {
+    if has_pad_token {
+        "ming_image_layer"
+    } else {
+        "ming_image"
+    }
+}
+
+/// Architecture named by a Comfy-Org repack's `config` metadata entry
+/// (`{"transformer": {"image_model": "ming_image"}}`), with the tensor keys
+/// to tell variants apart. `None` for anything not mapped here.
+fn architecture_from_repack_config(
+    config: &Value,
+    header: &serde_json::Map<String, Value>,
+) -> Option<&'static str> {
+    let parsed: Value = match config {
+        Value::String(text) => serde_json::from_str(text).ok()?,
+        other => other.clone(),
+    };
+    match parsed.pointer("/transformer/image_model")?.as_str()? {
+        "ming_image" => {
+            let names: Vec<&str> = header.keys().map(String::as_str).collect();
+            let prefix = dominant_tensor_key_prefix(&names);
+            let pad = names
+                .iter()
+                .any(|k| k.strip_prefix(prefix).unwrap_or(k) == "cap_pad_token");
+            Some(ming_image_architecture(pad))
+        }
+        _ => None,
+    }
+}
+
 /// Infer model architecture from safetensors header keys.
 ///
 /// Thin wrapper over [`infer_architecture_from_key_names`] that projects the
@@ -7217,6 +7318,13 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     let starts_with = |p: &str| bare.iter().any(|k| k.starts_with(p));
     let contains = |s: &str| bare.iter().any(|k| k.contains(s));
     let has_key = |name: &str| bare.contains(&name);
+
+    // Ming-Image: ComfyUI saves its Lumina-family DiT with a `__ming_image__`
+    // marker buffer (Z-Image has none). The Layer checkpoint learned its pad
+    // tokens; Design has none.
+    if has_key("__ming_image__") {
+        return Some(ming_image_architecture(has_key("cap_pad_token")).to_string());
+    }
 
     // MiniMax-H3-Image: the H3 DiT (video patch embed plus the conditioning
     // projection) without the audio stream, as in ComfyUI's
