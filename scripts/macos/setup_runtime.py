@@ -79,11 +79,16 @@ def main():
             fields = package.group(1)
             name = re.search(r'name:\s*"([^"]+)"', fields).group(1)
             url = re.search(r'git_url:\s*"([^"]+)"', fields).group(1)
-            rev = re.search(r'git_rev:\s*(?:"([^"]+)"|([A-Z0-9_]+))', fields)
-            if rev.group(1) is None:
-                # A named constant, e.g. `git_rev: KREA2_EDIT_PACK_REV`.
-                rev = re.search(rf'const {rev.group(2)}:\s*&str\s*=\s*"([^"]+)"', nodes_source)
-            rev = rev.group(1)
+            # A pin is a string literal or a `const NAME: &str = "..."` in nodes.rs.
+            rev_match = re.search(r'git_rev:\s*(?:"([^"]+)"|([A-Z][A-Z0-9_]*))', fields)
+            if not rev_match:
+                raise RuntimeError(f"Cannot read git_rev for {name}")
+            rev = rev_match.group(1)
+            if rev is None:
+                const = re.search(rf'const {rev_match.group(2)}:\s*&str\s*=\s*"([^"]+)";', nodes_source)
+                if not const:
+                    raise RuntimeError(f"Cannot resolve {rev_match.group(2)} for {name}")
+                rev = const.group(1)
             subdir = re.search(r'source_subdir:\s*Some\("([^"]+)"\)', fields)
             req_file = re.search(r'requirements_file:\s*"([^"]+)"', fields).group(1)
             classes = re.search(r'verify_nodes:\s*&\[(.*?)\]', fields, re.S).group(1)
