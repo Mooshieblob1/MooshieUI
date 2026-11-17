@@ -288,6 +288,8 @@ export interface NovelAiParams {
   local_clip_type: string | null;
   /** VAE for the split load. */
   local_vae: string | null;
+  /** Extra files a registered architecture's split load needs (Flux.1's CLIP-L), by model slot. */
+  local_architecture_files?: Record<string, string>;
   /**
    * Sampler for the local pass, filled from the picked model's recommendation.
    * Steps and denoise are deliberately absent: those come from the upscale and

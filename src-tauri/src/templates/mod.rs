@@ -689,6 +689,61 @@ fn int8_fast_model_type(family: &str) -> Option<&'static str> {
     }
 }
 
+/// The diffusion-model loader node for a split model: `UnetLoaderGGUF` for a
+/// GGUF, the path loader for a file in another folder, `OTUNetLoaderW8A8` for
+/// INT8-Fast, else `UNETLoader`. Shared with the registry loader hooks
+/// (`crate::architectures`). Passes both `unet_name` and `model_name` for
+/// compatibility across standard ComfyUI and custom nodes (e.g.
+/// ComfyUI-Flow-Control). GGUF quantized models cannot be loaded by core
+/// UNETLoader, so they go through ComfyUI-GGUF (installed at ComfyUI setup).
+pub(crate) fn split_diffusion_model_node(params: &GenerationParams) -> Value {
+    let unet_name = params.diffusion_model.as_deref().unwrap_or("");
+    if unet_name.to_ascii_lowercase().ends_with(".gguf") {
+        json!({
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {
+                "unet_name": unet_name
+            }
+        })
+    } else if let Some(path) = misplaced_model_path(params) {
+        // Split-file model physically stored in another folder (usually
+        // checkpoints/). UNETLoader validates unet_name against its own folder
+        // listing and would reject it, so load by absolute path instead.
+        json!({
+            "class_type": "MooshieDiffusionLoaderPath",
+            "inputs": {
+                "unet_path": path,
+                "weight_dtype": "default"
+            }
+        })
+    } else if params.int8_fast_enabled {
+        // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
+        // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
+        // family has a known model_type mapping before we reach here.
+        let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
+        json!({
+            "class_type": "OTUNetLoaderW8A8",
+            "inputs": {
+                "unet_name": unet_name,
+                "weight_dtype": "default",
+                "model_type": model_type,
+                "on_the_fly_quantization": false,
+                "enable_convrot": params.int8_fast_convrot,
+                "lora_mode": "None"
+            }
+        })
+    } else {
+        json!({
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": unet_name,
+                "model_name": unet_name,
+                "weight_dtype": "default"
+            }
+        })
+    }
+}
+
 /// Load model nodes — either a single CheckpointLoaderSimple or split UNETLoader + CLIPLoader + VAELoader.
 /// Also handles the LoRA chain and optional separate VAE override.
 pub fn load_model_nodes(
@@ -752,56 +807,9 @@ pub fn load_model_nodes(
         vae_source = loaded.vae;
         next_id = loaded.next_id;
     } else if params.use_split_model {
-        // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
-        // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
-        // GGUF quantized models cannot be loaded by core UNETLoader — route them
-        // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
-        let unet_name = params.diffusion_model.as_deref().unwrap_or("");
+        // Diffusion model (UNETLoader, or GGUF / path / INT8-Fast loaders).
         let unet_id = next_id.to_string();
-        let unet_node = if unet_name.to_ascii_lowercase().ends_with(".gguf") {
-            json!({
-                "class_type": "UnetLoaderGGUF",
-                "inputs": {
-                    "unet_name": unet_name
-                }
-            })
-        } else if let Some(path) = misplaced_model_path(params) {
-            // Split-file model physically stored in another folder (usually
-            // checkpoints/). UNETLoader validates unet_name against its own folder
-            // listing and would reject it, so load by absolute path instead.
-            json!({
-                "class_type": "MooshieDiffusionLoaderPath",
-                "inputs": {
-                    "unet_path": path,
-                    "weight_dtype": "default"
-                }
-            })
-        } else if params.int8_fast_enabled {
-            // INT8/ConvRot pre-quantized model: requires OTUNetLoaderW8A8 from
-            // ComfyUI-INT8-Fast (NVIDIA only). validate_params guarantees the
-            // family has a known model_type mapping before we reach here.
-            let model_type = int8_fast_model_type(&params.model_architecture).unwrap_or("flux2");
-            json!({
-                "class_type": "OTUNetLoaderW8A8",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "weight_dtype": "default",
-                    "model_type": model_type,
-                    "on_the_fly_quantization": false,
-                    "enable_convrot": params.int8_fast_convrot,
-                    "lora_mode": "None"
-                }
-            })
-        } else {
-            json!({
-                "class_type": "UNETLoader",
-                "inputs": {
-                    "unet_name": unet_name,
-                    "model_name": unet_name,
-                    "weight_dtype": "default"
-                }
-            })
-        };
+        let unet_node = split_diffusion_model_node(params);
         workflow.insert(unet_id.clone(), unet_node);
         model_source = (unet_id, 0);
         next_id += 1;
