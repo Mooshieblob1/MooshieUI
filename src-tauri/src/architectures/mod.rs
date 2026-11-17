@@ -32,11 +32,13 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 mod flux2_klein;
+mod minimax_h3_image;
 mod qwen_image_21;
 
 /// Every registered architecture. Add one line per architecture file.
 pub static ALL: &[&ArchitectureSpec] = &[
     &qwen_image_21::SPEC,
+    &minimax_h3_image::SPEC,
     // Distilled before Base: a purely structural match picks the first.
     &flux2_klein::SPEC_9B,
     &flux2_klein::SPEC_9B_BASE,

@@ -31,8 +31,12 @@
 //!     loaded, sampling is otherwise plain txt2img from an empty latent at the
 //!     same size (the temporal concat requires matching spatial dims).
 //!
+//!   * Krea 2 (`krea2`) — edit-LoRA recipes (Identity Edit, General Edit,
+//!     Style Reference), built in `krea2_edit.rs`.
+//!
 //! Qwen/Kontext/Klein use only core ComfyUI nodes; Anima additionally needs the
-//! ComfyUI-Cosmos-Reference custom node package.
+//! ComfyUI-Cosmos-Reference custom node package, and Krea 2's Identity/General
+//! Edit the comfyui-krea2edit package.
 
 use serde_json::json;
 
@@ -51,7 +55,13 @@ pub fn supports_family(arch: &str) -> bool {
     }
     matches!(
         arch,
-        "flux1kontext" | "qwen_edit" | "qwen_edit_plus" | "flux3klein" | "flux3kleinbase" | "anima"
+        "flux1kontext"
+            | "qwen_edit"
+            | "qwen_edit_plus"
+            | "flux3klein"
+            | "flux3kleinbase"
+            | "anima"
+            | "krea2"
     )
 }
 
@@ -94,6 +104,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         "qwen_edit" | "qwen_edit_plus" => build_qwen(params, seed),
         "flux3klein" | "flux3kleinbase" => build_klein(params, seed),
         "anima" => build_anima_restyler(params, seed),
+        "krea2" => super::krea2_edit::build(params, seed),
         // Validation guarantees a supported edit family reaches here; fall back to
         // txt2img defensively rather than panicking on an unexpected architecture.
         _ => super::txt2img::build(params, seed),
