@@ -487,6 +487,8 @@ export interface GenerationParams {
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
+  /** Extra files of a registered architecture, keyed by model slot (src-tauri/src/architectures). */
+  architecture_files?: Record<string, string>;
   /** Anima ReStyler reference adherence: 1.0 full, lower restyles harder. */
   edit_reference_strength?: number;
   /** Anima ReStyler drastic restyle: split-screen inpaint of a 2x-wide composite, right half cropped as output. */

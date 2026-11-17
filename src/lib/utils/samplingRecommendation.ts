@@ -11,6 +11,8 @@
  * rather than inside a component because both callers need it.
  */
 
+import { registeredSampling } from "./architectures.js";
+
 export interface SamplingRecommendation {
   steps: number;
   cfg: number;
@@ -184,6 +186,16 @@ export function recommendedSamplingFor(
 ): SamplingRecommendation | null {
   const name = (filename ?? "").toLowerCase();
   const fam = (family ?? "").toLowerCase();
+  // A registered architecture (src-tauri/src/architectures) declares its own.
+  const registered = registeredSampling(family);
+  if (registered) {
+    return {
+      steps: registered.steps,
+      cfg: registered.cfg,
+      samplerName: registered.sampler,
+      scheduler: registered.scheduler,
+    };
+  }
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
   if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
   if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;

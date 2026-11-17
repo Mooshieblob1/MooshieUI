@@ -1133,6 +1133,7 @@ const de: Record<string, string> = {
   "generation.model.downloading_refusal_lora": "LoRA zur Ablehnungsreduktion wird heruntergeladen",
   "generation.model.nvfp4_warning": "NVFP4-Modelle laufen nativ nur auf NVIDIA-Blackwell-GPUs (RTX-50-Serie). Ihre GPU ist älter, laden Sie daher stattdessen die FP8-Version dieses Modells herunter.",
   "generation.model.downloading_vae": "VAE wird heruntergeladen...",
+  "generation.model.downloading_file": "{name} wird heruntergeladen...",
   "generation.model.downloading_checkpoint": "Checkpoint wird heruntergeladen...",
   "generation.model.auto_download": "Automatischer Download",
   "generation.model.cloud_badge": "Cloud",

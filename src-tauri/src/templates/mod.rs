@@ -36,6 +36,9 @@ use crate::comfyui::types::{BaseSources, GenerationParams, PromptSegment, StageC
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
     validate_pause_resume(params)?;
+    // Registered architectures: supported modes, strict encoder and model
+    // slots, INT8-Fast and reference count (see `crate::architectures`).
+    crate::architectures::validate(params)?;
 
     // Video mode has its own parameter set; validate it and return early so
     // image-only guards (input images, ControlNet, style transfer) never
@@ -678,6 +681,9 @@ fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
 /// families the node does not support, which causes `validate_params` to
 /// reject the combination before workflow construction.
 fn int8_fast_model_type(family: &str) -> Option<&'static str> {
+    if let Some(model_type) = crate::architectures::int8_fast_model_type(family) {
+        return model_type;
+    }
     match family {
         // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
         "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
@@ -748,6 +754,16 @@ pub fn load_model_nodes(
             vae_source,
             next_id,
         };
+    } else if let Some(loader) =
+        crate::architectures::loader(params).filter(|_| params.use_split_model)
+    {
+        // A registered architecture with its own loaders (several encoders,
+        // a custom loader node, ...). The LoRA chain below runs on them.
+        let loaded = loader(workflow, next_id, params);
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else if params.use_split_model {
         // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
         // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
@@ -974,22 +990,29 @@ pub fn build_workflow(
         return video::build(params, seed, video_metadata_supported);
     }
 
-    if pause_resume_active(params) {
-        return build_paused_workflow(params, seed);
-    }
-
-    if params.style_transfer_enabled && params.model_architecture == "anima" {
+    let workflow = if pause_resume_active(params) {
+        build_paused_workflow(params, seed)
+    } else if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
-        return finish_workflow(result, params, seed);
-    }
-
-    if moody_moss::area_detail_active(params) {
+        finish_workflow(result, params, seed)
+    } else if moody_moss::area_detail_active(params) {
         let result = moody_moss::build_area_detail(params, seed);
-        return finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed);
-    }
+        finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed)
+    } else {
+        let result = build_image_stage(params, seed);
+        finish_workflow(result, params, seed)
+    };
+    apply_architecture_text_encode(workflow, params)
+}
 
-    let result = build_image_stage(params, seed);
-    finish_workflow(result, params, seed)
+/// Rewrite prompt encoders for a registered architecture whose text encoder
+/// needs its own node. Runs on the finished graph so every template and
+/// appended chain (hires fix, face fix, segment detail) is covered.
+fn apply_architecture_text_encode(mut workflow: Value, params: &GenerationParams) -> Value {
+    if let Some(map) = workflow.as_object_mut() {
+        crate::architectures::apply_text_encode(map, params);
+    }
+    workflow
 }
 
 /// Whether this request pauses partway through sampling or resumes a paused run.
@@ -1104,11 +1127,17 @@ fn build_paused_workflow(params: &GenerationParams, seed: i64) -> Value {
 /// Build one image template plus the model/conditioning patches that every
 /// image mode shares. `finish_workflow` appends the post-process chains.
 fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
-    let mut result = match params.mode.as_str() {
-        "img2img" => img2img::build(params, seed),
-        "inpainting" => inpainting::build(params, seed),
-        "image_edit" => image_edit::build(params, seed),
-        _ => txt2img::build(params, seed),
+    // A registered architecture's dedicated graph for this mode, else the
+    // generic template.
+    let mut result = if let Some(build) = crate::architectures::builder(params) {
+        build(params, seed)
+    } else {
+        match params.mode.as_str() {
+            "img2img" => img2img::build(params, seed),
+            "inpainting" => inpainting::build(params, seed),
+            "image_edit" => image_edit::build(params, seed),
+            _ => txt2img::build(params, seed),
+        }
     };
 
     // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)

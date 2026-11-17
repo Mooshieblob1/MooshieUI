@@ -542,6 +542,11 @@ pub struct GenerationParams {
     /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
     #[serde(default)]
     pub edit_reference_images: Vec<String>,
+    /// Extra model files a registered architecture loads, keyed by its
+    /// `ModelSlot::key` (a second text encoder, a second expert, a stage B...).
+    /// See `crate::architectures`.
+    #[serde(default)]
+    pub architecture_files: std::collections::BTreeMap<String, String>,
     /// Anima ReStyler: how strongly the output follows the reference image.
     /// Scales the reference latent before the Cosmos temporal concat; 1.0 is
     /// full adherence, lower values let the prompt/style diverge more.
