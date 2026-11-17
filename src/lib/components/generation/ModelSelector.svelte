@@ -82,6 +82,8 @@
     minComputeCapability?: number;
     /** Hint shown next to the size in the dropdown to explain the gate. */
     gateHint?: string;
+    /** Translation key of a licence or usage note shown under the entry. */
+    noticeKey?: string;
     /**
      * When true, the entry is shown only if all components are detected
      * locally (by hash or filename). Used for models we can't redistribute
@@ -909,6 +911,9 @@
             }
           : undefined,
       };
+      // A registered architecture can carry a licence note, keyed by its id.
+      const noticeKey = `generation.model.notice.${arch.id}`;
+      if (locale.t(noticeKey) !== noticeKey) entry.noticeKey = noticeKey;
       return [entry];
     });
     return [...builtinRecommendedModels, ...registered];
@@ -1690,6 +1695,7 @@
     localOnly?: boolean;
     size?: string;
     gateHint?: string;
+    noticeKey?: string;
   }
 
   function matchesRecommendedModel(rec: RecommendedModel): boolean {
@@ -1766,6 +1772,7 @@
           localOnly,
           size: rec.sizeKey ? locale.t(rec.sizeKey) : rec.size,
           gateHint: rec.gateHint,
+          noticeKey: rec.noticeKey,
         });
       }
     }
@@ -2233,6 +2240,9 @@
                   <span class="block text-[10px] {item.localOnly ? 'text-amber-300' : 'text-neutral-500'}">
                     {locale.t(item.installed ? "generation.model.available_server" : item.localOnly ? "generation.model.local_unavailable" : models.remote ? "generation.model.unavailable_server" : "generation.model.auto_download")}
                   </span>
+                  {#if item.noticeKey}
+                    <span class="block text-[10px] text-amber-300/90">{locale.t(item.noticeKey)}</span>
+                  {/if}
                 </span>
                 {#if item.size}
                   <span class="text-[10px] text-neutral-500 shrink-0">{item.size}</span>

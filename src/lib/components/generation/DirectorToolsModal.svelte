@@ -7,7 +7,7 @@
    * entry) and none of those live next to the generation settings.
    *
    * The `novelaiAugment` call lives here and not in the store, the same way
-   * `NaiEnhanceModal` owns its rewrite: `directorTools` is a feature store and
+   * the Enhance chat (`enhanceChatRunner`) owns its rewrite: `directorTools` is a feature store and
    * keeps to being a state machine over this one form.
    *
    * Nothing here waits for the result. The backend reports through the same
