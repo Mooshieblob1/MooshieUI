@@ -156,3 +156,37 @@ export function mergeNovelAiTags(prompt: string, tags: string, where: "before" |
   // label itself, in which case the block needs one to stay on its own line.
   return text.startsWith("\n") ? `${merged}${text}` : `${merged}\n${text}`;
 }
+
+/**
+ * Merge a system tag fragment (auto quality tags, style preset, Artist Style,
+ * Prompt Chunk) into a ComfyUI prompt, in front of it or after it.
+ *
+ * Only the incoming tags are deduped: one already in the prompt, or earlier in
+ * the fragment, is skipped (case-insensitive). The prompt's own tags all stay,
+ * in their order, repeats included. A multi-character prompt repeats tags on
+ * purpose (`2girls, A, long hair, smile, B, long hair, smile`), and dropping the
+ * second copy leaves that trait on the first character only, which reads as
+ * the characters' tags bleeding together.
+ */
+export function mergeComfyTags(prompt: string, tags: string, where: "before" | "after"): string {
+  if (!tags) return prompt;
+  const own = splitTags(prompt);
+  const seen = new Set(own.map((tag) => tag.toLowerCase()));
+  const fresh: string[] = [];
+  for (const tag of splitTags(tags)) {
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    fresh.push(tag);
+  }
+  if (fresh.length === 0) return prompt;
+  return (where === "before" ? [...fresh, ...own] : [...own, ...fresh]).join(", ");
+}
+
+/** Tags split on commas, trimmed, empties dropped. */
+function splitTags(text: string): string[] {
+  return text
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}

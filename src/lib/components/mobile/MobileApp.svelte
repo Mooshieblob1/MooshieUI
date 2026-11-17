@@ -120,7 +120,7 @@
     {:else if page === "scene"}
       <ScenePage onOpenSettings={() => go("settings")} />
     {:else if page === "comic"}
-      <ComicPage onOpenGenerate={() => go("generate")} />
+      <ComicPage />
     {:else if page === "gallery"}
       <GalleryPage onSwitchToGenerate={() => (page = "generate")} {onMake3D} />
     {:else if page === "modelhub" && canUseModelhub}

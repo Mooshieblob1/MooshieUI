@@ -70,6 +70,10 @@ jobs:
         run: |
           npx esbuild scripts/tests/promptComments.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptComments.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptComments.test.mjs"
+      - name: Prompt tag merge tests
+        run: |
+          npx esbuild scripts/tests/promptMerge.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptMerge.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/promptMerge.test.mjs"
       - name: Prompt tag weight syntax tests
         run: |
           npx esbuild scripts/tests/promptTagAffixes.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptTagAffixes.test.mjs" --log-level=warning

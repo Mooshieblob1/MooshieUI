@@ -42,7 +42,7 @@
     role="tablist"
     aria-label={locale.t("generation.tabs.label")}
   >
-    {#each generationTabs.tabs as tab, index (tab.id)}
+    {#each generationTabs.stripTabs as tab, index (tab.id)}
       {@const active = tab.id === generationTabs.activeId}
       {@const info = generationTabs.label(tab)}
       <div

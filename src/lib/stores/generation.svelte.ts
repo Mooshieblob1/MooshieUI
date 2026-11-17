@@ -10,6 +10,7 @@ import {
 import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
 import {
   joinPromptBoxes,
+  mergeComfyTags,
   mergeNovelAiTags,
   sanitizePromptForSend,
 } from "../utils/promptSanitize.js";
@@ -2174,43 +2175,18 @@ class GenerationStore {
     return STYLE_PRESETS;
   }
 
-  private splitTags(text: string): string[] {
-    return text
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => !!part);
-  }
-
-  private mergeTagPrompts(base: string, extra: string): string {
-    if (!extra) return base;
-    const existing = this.splitTags(base);
-    const seen = new Set(existing.map((tag) => tag.toLowerCase()));
-    const merged = [...existing];
-
-    for (const tag of this.splitTags(extra)) {
-      const normalized = tag.toLowerCase();
-      if (!seen.has(normalized)) {
-        seen.add(normalized);
-        merged.push(tag);
-      }
-    }
-
-    return merged.join(", ");
-  }
-
   /**
-   * Merge a system tag fragment (style preset, Artist Style, Prompt Chunk)
-   * into a prompt. ComfyUI prompts are flat tag lists, so `mergeTagPrompts`
-   * may re-tokenize them freely. NovelAI prompts carry layout that matters
-   * (a `Text:` block on its own line, blank lines between rendered strings,
-   * prose lines), so they go through `mergeNovelAiTags`, which splices the
-   * new tags in ahead of the `Text:` block and leaves the rest untouched.
+   * Merge a system tag fragment (quality tags, style preset, Artist Style,
+   * Prompt Chunk) into a prompt. ComfyUI prompts are flat tag lists, so
+   * `mergeComfyTags` may re-tokenize them on commas. NovelAI prompts carry
+   * layout that matters (a `Text:` block on its own line, blank lines between
+   * rendered strings, prose lines), so they go through `mergeNovelAiTags`,
+   * which splices the new tags in ahead of the `Text:` block and leaves the
+   * rest untouched. Both only dedupe the incoming tags, never the prompt's own.
    */
   private mergeIntoPrompt(prompt: string, tags: string, where: "before" | "after"): string {
     if (this.isNovelAi) return mergeNovelAiTags(prompt, tags, where);
-    return where === "before"
-      ? this.mergeTagPrompts(tags, prompt)
-      : this.mergeTagPrompts(prompt, tags);
+    return mergeComfyTags(prompt, tags, where);
   }
 
   private loadPromptHistory() {
@@ -4300,7 +4276,7 @@ class GenerationStore {
     }
 
     // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
-    // pick a random choice per generation — mergeTagPrompts dedupes against
+    // pick a random choice per generation — mergeComfyTags dedupes them against
     // whatever the user has already typed.
     const preset = ownPrompts
       ? { prepend: "", append: "" }
@@ -4361,26 +4337,26 @@ class GenerationStore {
     if (!isVideo && !this.isNovelAi && this.autoQualityTags) {
       // Anima models (positive before, negative after)
       if (this.usesAnimaQualityTags) {
-        positivePrompt = this.mergeTagPrompts(this.animaPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.animaNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.animaPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.animaNegativeQuality, "after");
       }
 
       // Illustrious/NoobAI family (positive before, negative after)
       if (this.isIllustrious) {
-        positivePrompt = this.mergeTagPrompts(this.customIllustriousPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customIllustriousNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.customIllustriousPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.customIllustriousNegativeQuality, "after");
       }
 
       // Pony Diffusion (score-based quality tags)
       if (this.isPony) {
-        positivePrompt = this.mergeTagPrompts(this.customPonyPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customPonyNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.customPonyPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.customPonyNegativeQuality, "after");
       }
 
       // Nanosaur (newest/oldest quality tags)
       if (this.isNanosaur) {
-        positivePrompt = this.mergeTagPrompts(this.customNanosaurPositiveQuality, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customNanosaurNegativeQuality);
+        positivePrompt = mergeComfyTags(positivePrompt, this.customNanosaurPositiveQuality, "before");
+        negativePrompt = mergeComfyTags(negativePrompt, this.customNanosaurNegativeQuality, "after");
       }
     }
 

@@ -1332,30 +1332,38 @@
     const cached = loadCachedHashes();
     const resolved: Record<string, string> = {};
 
-    const lookups = allFiles.map(async (f) => {
-      if (!f.hash) return;
+    // One lookup per category and hash: several entries share an encoder or VAE.
+    const pending = new Map<string, ModelFile>();
+    for (const f of allFiles) {
+      if (!f.hash) continue;
       const key = `${f.category}::${f.hash}`;
-
-      // First check cached mapping
       if (cached[key]) {
         resolved[key] = cached[key];
-        return;
+      } else if (!pending.has(key)) {
+        pending.set(key, f);
       }
+    }
+    if (scope === models.cacheScope) hashResolved = { ...resolved };
 
-      // Otherwise scan the directory by hash
+    // Each lookup hashes a whole model folder on the host. Run them one at a
+    // time: in browser mode every request holds one of the browser's six
+    // connections to the server, and a dozen parallel scans left none for
+    // starting ComfyUI or loading the model lists.
+    for (const [key, f] of pending) {
+      if (scope !== models.cacheScope) return;
       try {
-        const found = await findModelByHash(f.category, f.hash);
+        const found = await findModelByHash(f.category, f.hash!);
         if (found) {
           resolved[key] = found;
-          if (scope === models.cacheScope) cacheHash(f.category, found, f.hash);
+          if (scope === models.cacheScope) {
+            cacheHash(f.category, found, f.hash!);
+            hashResolved = { ...resolved };
+          }
         }
       } catch (e) {
         console.warn(`Hash lookup failed for ${f.filename}:`, e);
       }
-    });
-
-    await Promise.all(lookups);
-    if (scope === models.cacheScope) hashResolved = resolved;
+    }
   }
 
   $effect(() => {
