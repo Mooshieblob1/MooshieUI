@@ -187,6 +187,59 @@
       filename: "qwen3vl_4b_fp8_scaled.safetensors",
       category: "text_encoders",
     },
+    // SD3 / SD3.5 split files. city96's GGUFs are ungated diffusion models;
+    // Stability's own files need an HF_TOKEN that accepted their license. The
+    // three encoders are Comfy-Org's ungated copies (TripleCLIPLoader).
+    {
+      label: "SD3.5 Large Turbo Q8 GGUF",
+      url: "https://huggingface.co/city96/stable-diffusion-3.5-large-turbo-gguf/resolve/main/sd3.5_large_turbo-Q8_0.gguf",
+      filename: "sd3.5_large_turbo-Q8_0.gguf",
+      category: "diffusion_models",
+    },
+    {
+      // Holds its own VAE, so it needs only the three encoders below.
+      label: "SD3.5 Large Turbo (HF access)",
+      url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-large-turbo/resolve/main/sd3.5_large_turbo.safetensors",
+      filename: "sd3.5_large_turbo.safetensors",
+      category: "checkpoints",
+    },
+    {
+      label: "SD3.5 Large Q8 GGUF",
+      url: "https://huggingface.co/city96/stable-diffusion-3.5-large-gguf/resolve/main/sd3.5_large-Q8_0.gguf",
+      filename: "sd3.5_large-Q8_0.gguf",
+      category: "diffusion_models",
+    },
+    {
+      label: "SD3.5 Medium Q8 GGUF",
+      url: "https://huggingface.co/city96/stable-diffusion-3.5-medium-gguf/resolve/main/sd3.5_medium-Q8_0.gguf",
+      filename: "sd3.5_medium-Q8_0.gguf",
+      category: "diffusion_models",
+    },
+    {
+      label: "CLIP-L (SD3)",
+      url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/clip_l.safetensors",
+      filename: "clip_l.safetensors",
+      category: "text_encoders",
+    },
+    {
+      label: "CLIP-G (SD3)",
+      url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/clip_g.safetensors",
+      filename: "clip_g.safetensors",
+      category: "text_encoders",
+    },
+    {
+      label: "T5-XXL FP8 (SD3)",
+      url: "https://huggingface.co/Comfy-Org/stable-diffusion-3.5/resolve/main/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+      filename: "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      category: "text_encoders",
+    },
+    {
+      // Needed by the GGUFs above, which carry no VAE.
+      label: "SD3.5 VAE (HF access)",
+      url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-large/resolve/main/vae/diffusion_pytorch_model.safetensors",
+      filename: "sd3.5_vae.safetensors",
+      category: "vae",
+    },
     {
       label: "Krea 2 - Identity Edit V2 LoRA r128 (Image Edit)",
       url: KREA2_EDIT_LORAS.identity.url,

@@ -37,6 +37,9 @@
 //! Qwen/Kontext/Klein use only core ComfyUI nodes; Anima additionally needs the
 //! ComfyUI-Cosmos-Reference custom node package, and Krea 2's Identity/General
 //! Edit the comfyui-krea2edit package.
+//!
+//! Registered architectures (`crate::architectures`) bring their own edit graph
+//! (`ModeSpec::build`) and never reach [`build`].
 
 use serde_json::json;
 
@@ -112,7 +115,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
 }
 
 /// Non-empty reference-image filenames (ComfyUI input names), slot 0 first.
-fn reference_images(params: &GenerationParams) -> Vec<&str> {
+pub(crate) fn reference_images(params: &GenerationParams) -> Vec<&str> {
     params
         .edit_reference_images
         .iter()

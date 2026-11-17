@@ -1202,6 +1202,7 @@ const de: Record<string, string> = {
   "generation.image_edit.krea2_refs_note": "Bild 1 ist das zu bearbeitende Bild. Füge eine Person als Bild 2 hinzu, um sie einzusetzen (\"setze die Person aus dem zweiten Bild an den Tisch\"). Bei höchstens 2 MP bleiben.",
   "generation.image_edit.krea2_style_note": "Ein oder zwei Stilbilder verwenden; der Prompt beschreibt das neue Bild.",
   "generation.image_edit.flux3_note": "FLUX 3 Klein nimmt bis zu 10 Referenzbilder. Nenne sie im Prompt nach ihrer Reihenfolge (das erste Bild, das zweite Bild) und beschreibe das ganze Ergebnis, nicht nur die Änderung.",
+  "generation.image_edit.registered_note": "{model} nimmt bis zu {n} Referenzbilder. Beschreibe nur die Änderung und sage, wofür jedes weitere Bild ist (zum Beispiel \"das Outfit aus Bild 2\").",
   "generation.image_edit.camera.title": "Kamerawinkel",
   "generation.image_edit.camera.tip": "Nimmt die Referenz aus einem anderen Winkel neu auf. Setzt eine Einstellungsbeschreibung an den Anfang deines Prompts und, falls installiert, die Multiple-Angles-LoRA (trainiert auf Qwen Image Edit 2511).",
   "generation.image_edit.camera.direction": "Richtung",
@@ -1224,6 +1225,7 @@ const de: Record<string, string> = {
   "generation.image_edit.anima_note":
     "ReStyler zeichnet die Figur aus deinem Referenzbild im Anima-Stil neu. Die Ausgabe entspricht der Referenzgröße. Benötigt das Anima Edit LoRA (Civitai-Download; API-Schlüssel oder VPN kann nötig sein).",
   "generation.image_edit.anima_lora_download": "Anima Edit LoRA herunterladen (350 MB)",
+  "generation.image_edit.required_download": "{file} herunterladen",
   "generation.image_edit.reference_strength": "Referenzstärke",
   "generation.image_edit.reference_strength_tip":
     "Wie genau das Ergebnis dem Referenzbild folgt. 1.0 erhält Komposition und Details; niedrigere Werte (etwa 0.5-0.8) lassen Prompt und Stil das Bild stärker verändern.",
