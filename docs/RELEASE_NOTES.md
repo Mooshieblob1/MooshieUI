@@ -1,4 +1,4 @@
-## What's New in v2.3.50
+## What's New in v2.3.51
 
 ### Comic pages
 - **Enhance V5 for panels**: on a NovelAI V5 model, "Write prompts from beats" writes each panel by the Enhance V5 rules, and a new per-panel Enhance button rewrites one panel with the rest of the page as context.
@@ -17,6 +17,7 @@
 - **Moody Moss Mix**: support for the MOSS-Image fine-tune, with its full 4K HD workflow rebuilt in MooshieUI and a matching preset.
 - **Anima Style Reference: Art style**: a third method that takes a picture's palette, shading and texture without its subject. No downloads needed.
 - **Qwen-Image 2.1 and Turbo**: detected correctly now (they were treated as Qwen-Image 1 and could not generate), with the right encoder and VAE, a Model Hub download, and Image Edit with up to 10 references. Turbo runs on its 8-step schedule.
+- **MiniMax-H3-Image**: txt2img and Image Edit (up to 16 references) for the 33B model, with INT8 and W4A8 Model Hub downloads and the pDMD 2-step mode.
 - **Krea 2 in Image Edit**: pick General Edit, Identity Edit or Style Reference under Edit LoRA, with 1 or 2 reference images.
 - **Transparent backgrounds kept**: images with a real alpha channel now save with their transparency instead of being made opaque.
 
@@ -37,6 +38,8 @@
 
 ### Fixes
 - Apple Silicon build check fixed for node packs that live in a subfolder (SnapRef).
+- Apple Silicon build fixed for node packs pinned through a named constant (Krea 2 edit). This failure stopped v2.3.50 from publishing, so v2.3.51 carries all of its changes.
+- Managed ComfyUI updated to v0.45.0.
 
 ---
 
