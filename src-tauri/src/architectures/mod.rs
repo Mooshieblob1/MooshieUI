@@ -25,6 +25,8 @@
 //!
 //! Compiled in both the desktop and the server build: no `tauri` here.
 
+mod ming_image;
+
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -32,7 +34,7 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 /// Every registered architecture. Add one line per architecture file.
-pub static ALL: &[&ArchitectureSpec] = &[];
+pub static ALL: &[&ArchitectureSpec] = &[&ming_image::SPEC, &ming_image::LAYER_SPEC];
 
 /// How prompts for a family are written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

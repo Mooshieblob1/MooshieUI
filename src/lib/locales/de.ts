@@ -981,6 +981,8 @@ const de: Record<string, string> = {
   "generation.dimensions.reset": "Auf {res} zurücksetzen",
   "generation.dimensions.recommended": "Empfohlen für {model}: {res}",
   "generation.dimensions.result": "Ergebnis",
+  "generation.dimensions.transparent": "Transparenter Hintergrund",
+  "generation.dimensions.transparent_tip": "Bittet das Modell um einen durchsichtigen Hintergrund. Hochskalieren, Gesichtskorrektur und Segment-Detail brauchen ein deckendes Bild, daher wird der Hintergrund mit ihnen gefüllt.",
   "generation.swap_panels": "Linkes/rechtes Panel tauschen",
   "generation.batch_fewer": "Weniger Bilder",
   "generation.batch_more": "Mehr Bilder",

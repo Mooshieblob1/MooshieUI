@@ -960,6 +960,8 @@ const it: Record<string, string> = {
   "generation.dimensions.reset": "Reimposta a {res}",
   "generation.dimensions.recommended": "Consigliato per {model}: {res}",
   "generation.dimensions.result": "Risultato",
+  "generation.dimensions.transparent": "Sfondo trasparente",
+  "generation.dimensions.transparent_tip": "Chiede al modello uno sfondo trasparente. Upscale, correzione volti e dettaglio per segmenti richiedono un'immagine opaca, quindi con loro attivi lo sfondo viene riempito.",
   "generation.swap_panels": "Scambia pannelli sinistra/destra",
   "generation.batch_fewer": "Meno immagini",
   "generation.batch_more": "Più immagini",

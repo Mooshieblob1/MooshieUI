@@ -1010,6 +1010,8 @@ const es: Record<string, string> = {
   "generation.dimensions.reset": "Restablecer a {res}",
   "generation.dimensions.recommended": "Recomendado para {model}: {res}",
   "generation.dimensions.result": "Resultado",
+  "generation.dimensions.transparent": "Fondo transparente",
+  "generation.dimensions.transparent_tip": "Pide al modelo un fondo transparente. El escalado, la corrección de caras y el detalle por segmentos necesitan una imagen opaca, así que con ellos el fondo se rellena.",
   "generation.swap_panels": "Intercambiar paneles izquierdo/derecho",
   "generation.batch_fewer": "Menos imágenes",
   "generation.batch_more": "Más imágenes",

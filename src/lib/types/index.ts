@@ -426,6 +426,8 @@ export interface GenerationParams {
   vpred_rescale_cfg?: boolean;
   /** Moody Moss 4K HD two-pass txt2img (MOSS-Image only). */
   moody_moss_hd?: boolean;
+  /** Ask for a transparent background (Ming-Image Design only). */
+  transparent_background?: boolean;
   moody_moss?: import("../utils/moodyMoss.js").MoodyMossFinishPayload;
   /** RescaleCFG blend (0 = plain CFG, 0.7 = recommended, 1 = full rescale). */
   vpred_rescale_cfg_multiplier?: number;

@@ -960,6 +960,8 @@ const ko: Record<string, string> = {
   "generation.dimensions.reset": "{res}(으)로 초기화",
   "generation.dimensions.recommended": "{model} 권장: {res}",
   "generation.dimensions.result": "결과",
+  "generation.dimensions.transparent": "투명 배경",
+  "generation.dimensions.transparent_tip": "모델에 투명한 배경을 요청합니다. 업스케일, 얼굴 보정, 세그먼트 디테일은 불투명한 이미지가 필요하므로 켜면 배경이 채워집니다.",
   "generation.swap_panels": "왼쪽/오른쪽 패널 전환",
   "generation.batch_fewer": "이미지 수 줄이기",
   "generation.batch_more": "이미지 수 늘리기",

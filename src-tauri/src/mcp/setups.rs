@@ -304,6 +304,9 @@ pub struct Overrides {
     pub scheduler: Option<String>,
     /// Replaces the setup's LoRAs when present; `[]` removes them all.
     pub loras: Option<Vec<LoraOverride>>,
+    /// Ask for a transparent background (models that support it, Ming-Image
+    /// Design; ignored by the rest).
+    pub transparent_background: Option<bool>,
 }
 
 pub const MIN_SIDE: u32 = 256;
@@ -445,6 +448,9 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
         if !nai {
             p.loras = out;
         }
+    }
+    if let Some(t) = o.transparent_background {
+        p.transparent_background = t;
     }
     if let Some(block) = p.novelai.as_mut() {
         // Face crops shrunk into the free window, never paid ones.
@@ -628,6 +634,27 @@ mod tests {
             "b.safetensors"
         );
         assert!(find(&setups, Some("b"), Purpose::Edit).is_err());
+    }
+
+    #[test]
+    fn transparent_background_is_an_override_and_otherwise_kept() {
+        let mut base = GenerationParams {
+            model_architecture: "mingimage".into(),
+            ..Default::default()
+        };
+        let o = |t: Option<bool>| Overrides {
+            prompt: "a logo".into(),
+            transparent_background: t,
+            ..Default::default()
+        };
+        assert!(apply(&base, &o(Some(true))).unwrap().transparent_background);
+        base.transparent_background = true;
+        assert!(apply(&base, &o(None)).unwrap().transparent_background);
+        assert!(
+            !apply(&base, &o(Some(false)))
+                .unwrap()
+                .transparent_background
+        );
     }
 
     #[test]
