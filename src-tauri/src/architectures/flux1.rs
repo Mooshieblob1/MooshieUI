@@ -126,6 +126,7 @@ const fn family(family: &'static str, label: &'static str, turbo: bool) -> Famil
         recommended: &[],
         text_encoder: None,
         vae: None,
+        manual_sigmas: None,
     }
 }
 

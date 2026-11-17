@@ -20,7 +20,7 @@ Three kinds of run make a setup, one per model each:
 
 - **txt2img on a local model.** Used by `generate_image`.
 - **txt2img on NovelAI**, keyed by the NovelAI model id (`nai-diffusion-4-5-full`, `nai-diffusion-5-full`, ...). It keeps the quality tags, UC preset, sampler, effort and the local post-process, and drops the character prompts, vibes and precise references (they belong to one image, and a vibe costs Anlas to encode).
-- **Image Edit on a local model.**
+- **Image Edit on a local model.** A Krea 2 setup keeps its edit recipe (Identity Edit, General Edit or Style Reference) and its fidelity settings, and uses the first two images.
 
 A model is usable over MCP once it has been used for one such run in MooshieUI. `generate_image` with `source_image` (img2img) and `upscale_image` reuse the txt2img setup; `edit_image` needs an Image Edit one. NovelAI img2img, inpainting and upscale, local img2img and inpainting, and video runs don't create setups. Prompts are kept out of a setup, including the Moody Moss face and area detail prompts.
 
