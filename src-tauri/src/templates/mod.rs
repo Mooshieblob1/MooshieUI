@@ -2647,6 +2647,102 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
 
+    fn kolors_params() -> serde_json::Value {
+        let mut value = serde_json::to_value(klein_int8_params("kolors", false)).unwrap();
+        value["diffusion_model"] = json!("kolors_unet_fp16.safetensors");
+        value["clip_model"] = json!("kolors_chatglm3.fp16-00001-of-00003.safetensors");
+        value["clip_type"] = json!("kolors");
+        value["vae"] = json!("kolors_vae_fp16.safetensors");
+        value["cfg"] = json!(5.0);
+        value["loras"] = json!([{"name": "kolors_style.safetensors", "strength_model": 0.8, "strength_clip": 1.0}]);
+        value
+    }
+
+    /// Kolors (architectures/kolors.rs) runs through the bundled MooshieKolorsLoader (UNet + ChatGLM3),
+    /// a stock VAELoader, and core CLIPTextEncode/KSampler/LoraLoader.
+    #[test]
+    fn kolors_txt2img_uses_the_bundled_loader() {
+        let params: GenerationParams = serde_json::from_value(kolors_params()).unwrap();
+        assert!(validate_generation_params(&params).is_ok());
+        let workflow = build_workflow(&params, 42, false);
+        let loaders = nodes_of(&workflow, "MooshieKolorsLoader");
+        assert_eq!(loaders.len(), 1, "{workflow}");
+        let (loader_id, loader) = loaders[0];
+        assert_eq!(
+            loader["inputs"]["unet_name"],
+            json!("kolors_unet_fp16.safetensors")
+        );
+        assert_eq!(
+            loader["inputs"]["text_encoder_name"],
+            json!("kolors_chatglm3.fp16-00001-of-00003.safetensors")
+        );
+        assert_eq!(loader["inputs"]["unet_path"], json!(""));
+        for class in ["UNETLoader", "CLIPLoader", "CheckpointLoaderSimple"] {
+            assert!(
+                nodes_of(&workflow, class).is_empty(),
+                "{class} must not be emitted"
+            );
+        }
+        let vaes = nodes_of(&workflow, "VAELoader");
+        assert_eq!(
+            vaes[0].1["inputs"]["vae_name"],
+            json!("kolors_vae_fp16.safetensors")
+        );
+        // The LoRA chains off the loader's MODEL and CLIP outputs.
+        let lora = nodes_of(&workflow, "LoraLoader")[0].1;
+        assert_eq!(lora["inputs"]["model"], json!([loader_id, 0]));
+        assert_eq!(lora["inputs"]["clip"], json!([loader_id, 1]));
+        assert_eq!(
+            nodes_of(&workflow, "KSampler")[0].1["inputs"]["cfg"],
+            json!(5.0)
+        );
+    }
+
+    #[test]
+    fn kolors_unet_in_checkpoints_loads_by_path() {
+        let mut value = kolors_params();
+        value["model_source_category"] = json!("checkpoints");
+        value["resolved_model_path"] = json!("/models/checkpoints/kolors_unet_fp16.safetensors");
+        let params: GenerationParams = serde_json::from_value(value).unwrap();
+        let workflow = build_workflow(&params, 42, false);
+        let loader = nodes_of(&workflow, "MooshieKolorsLoader")[0].1;
+        assert_eq!(
+            loader["inputs"]["unet_path"],
+            json!("/models/checkpoints/kolors_unet_fp16.safetensors")
+        );
+    }
+
+    #[test]
+    fn kolors_rejects_what_cannot_work() {
+        let check = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let mut value = kolors_params();
+            edit(&mut value);
+            let params: GenerationParams = serde_json::from_value(value).unwrap();
+            validate_generation_params(&params)
+        };
+        assert!(check(&|v| v["use_split_model"] = json!(false))
+            .unwrap_err()
+            .contains("separate files"));
+        assert!(check(&|v| v["clip_model"] = json!("qwen_3_4b.safetensors"))
+            .unwrap_err()
+            .contains("kolors_chatglm3.fp16-00001-of-00003.safetensors"));
+        assert!(check(&|v| v["clip_model"] = json!(null))
+            .unwrap_err()
+            .contains("none is selected"));
+        assert!(check(&|v| {
+            v["controlnet"] = json!({
+                "enabled": true,
+                "image": "pose.png",
+                "controlnet_model": "sdxl_canny.safetensors",
+                "strength": 1.0,
+                "start_percent": 0.0,
+                "end_percent": 1.0
+            })
+        })
+        .unwrap_err()
+        .contains("ControlNet"));
+    }
+
     fn nodes_of<'a>(workflow: &'a Value, class: &str) -> Vec<(&'a String, &'a Value)> {
         workflow
             .as_object()
