@@ -9,7 +9,7 @@ charter is [SCOPE.md](SCOPE.md); user instructions live in the
 
 | # | Topic | Current status |
 |---|-------|----------------|
-| 1 | Image Edit mode | **Implemented.** Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein, MOSS-Image (edit LoRA, up to 4 references) and Anima ReStyler. |
+| 1 | Image Edit mode | **Implemented.** Qwen Image Edit, Qwen Image Edit Plus, Flux.1 Kontext, FLUX 3 Klein, Krea 2 (edit LoRAs), MOSS-Image (edit LoRA, up to 4 references) and Anima ReStyler. |
 | 2 | Completion notifications | **Implemented.** Desktop/Web Notifications for image batches, videos and errors, with an optional unfocused-window restriction. The original optional chime is not a documented control. |
 | 3 | Random prompt syntax | **Implemented.** Alternation, multiple choices, weights and nesting, resolved using the generation seed. See [RANDOM_PROMPTS.md](RANDOM_PROMPTS.md). |
 | 4 | LoRA trigger words | **Implemented.** Trigger-word chips insert and highlight tags; disabling or removing the LoRA removes the words it inserted. |

@@ -100,6 +100,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
                 base_models: &[],
             },
             turbo: false,
+            manual_sigmas: None,
             sampling: Some(SAMPLING),
             recommended: &[RecommendedModel {
                 label: "MOSS-Image (INT8)",
@@ -125,6 +126,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
                 base_models: &[],
             },
             turbo: false,
+            manual_sigmas: None,
             sampling: Some(SAMPLING),
             recommended: &[RecommendedModel {
                 label: "MOSS-Image Base (INT8)",

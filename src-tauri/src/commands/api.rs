@@ -5396,6 +5396,49 @@ mod split_model_pairing_tests {
     }
 
     #[test]
+    fn qwen_image_21_tensor_keys_are_not_qwen_image_1() {
+        let v21 = [
+            "txt_in.text_norm.weight",
+            "modulation.1.weight",
+            "img_in.weight",
+            "proj_out.weight",
+            "transformer_blocks.0.attn.norm_q.weight",
+            "transformer_blocks.0.img_mlp.gate_up.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&v21).as_deref(),
+            Some("qwen_image21")
+        );
+        assert_eq!(
+            family_from_architecture("qwen_image21"),
+            Some("qwenimage21")
+        );
+        assert_eq!(
+            architecture_class("qwenimage21turbo"),
+            architecture_class("qwenimage21")
+        );
+        let v1 = [
+            "txt_norm.weight",
+            "img_in.weight",
+            "transformer_blocks.0.attn.norm_q.weight",
+        ];
+        assert_eq!(
+            infer_architecture_from_key_names(&v1).as_deref(),
+            Some("qwen_image")
+        );
+        // The filename no longer lands in the Qwen-Image 1 bucket.
+        assert_eq!(
+            model_family_from_filename("qwen_image_2.1_int8_convrot.safetensors"),
+            Some("qwenimage21")
+        );
+        assert_eq!(
+            model_family_from_filename("qwen_image_fp8_e4m3fn.safetensors"),
+            Some("qwen")
+        );
+        assert!(family_requires_separate_clip("qwenimage21"));
+    }
+
+    #[test]
     fn flux3_tensor_keys_tell_distilled_from_base() {
         let base = [
             "content_mode_blocks.image.0.attn_out.weight",
@@ -7092,6 +7135,17 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
     // Flux: uses double_blocks / single_blocks (DiT architecture)
     if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
+    }
+
+    // Qwen-Image 2.1: a text projection with its own norm and one shared
+    // modulation (ComfyUI's model_detection `qwen_image21_keys`). Checked
+    // before Qwen-Image 1, whose encoder and VAE it cannot use.
+    if has_key("txt_in.text_norm.weight")
+        && has_key("modulation.1.weight")
+        && has_key("img_in.weight")
+        && starts_with("transformer_blocks.")
+    {
+        return Some("qwen_image21".to_string());
     }
 
     // Qwen-Image: MMDiT with a dedicated text-stream norm
