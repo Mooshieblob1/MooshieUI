@@ -79,7 +79,11 @@ def main():
             fields = package.group(1)
             name = re.search(r'name:\s*"([^"]+)"', fields).group(1)
             url = re.search(r'git_url:\s*"([^"]+)"', fields).group(1)
-            rev = re.search(r'git_rev:\s*"([^"]+)"', fields).group(1)
+            # A pin is either a literal or a named `pub const NAME: &str`
+            # (Krea 2's edit pack shares its rev with the template builder).
+            rev_field = re.search(r'git_rev:\s*(?:"([^"]+)"|([A-Z0-9_]+))', fields)
+            rev = rev_field.group(1) or re.search(
+                rf'const {rev_field.group(2)}:\s*&str\s*=\s*"([^"]+)"', nodes_source).group(1)
             subdir = re.search(r'source_subdir:\s*Some\("([^"]+)"\)', fields)
             req_file = re.search(r'requirements_file:\s*"([^"]+)"', fields).group(1)
             classes = re.search(r'verify_nodes:\s*&\[(.*?)\]', fields, re.S).group(1)

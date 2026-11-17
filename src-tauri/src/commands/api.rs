@@ -4638,9 +4638,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("auraflow") || bm.contains("aura flow") {
         return "auraflow";
     }
-    if bm.contains("pixart") {
-        return "pixart";
-    }
     if bm.contains("hunyuan") {
         return "hunyuandit";
     }
@@ -4816,9 +4813,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     }
     if name.contains("auraflow") || name.contains("aura flow") {
         return Some("auraflow");
-    }
-    if name.contains("pixart") {
-        return Some("pixart");
     }
     if name.contains("hunyuan") {
         return Some("hunyuandit");
@@ -5007,7 +5001,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 33] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 32] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -5034,7 +5028,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 33] = [
     "ideogram4",
     "krea2",
     "auraflow",
-    "pixart",
     "hunyuandit",
     "cascade",
     "kolors",
@@ -5429,6 +5422,41 @@ mod split_model_pairing_tests {
             infer_architecture_from_key_names(&keys).as_deref(),
             Some("moss_image")
         );
+    }
+
+    #[test]
+    fn pixart_tensor_keys_tell_sigma_from_alpha_in_both_layouts() {
+        // Diffusers `transformer/` safetensors (what the Model Hub downloads).
+        let sigma = [
+            "adaln_single.emb.timestep_embedder.linear_1.bias",
+            "pos_embed.proj.bias",
+            "transformer_blocks.0.attn1.to_q.weight",
+        ];
+        let mut alpha = sigma.to_vec();
+        alpha.push("adaln_single.emb.resolution_embedder.linear_1.weight");
+        // Original PixArt layout, as the `.pth` releases and ComfyUI save it.
+        let original_sigma = [
+            "t_block.1.weight",
+            "y_embedder.y_embedding",
+            "blocks.0.attn.qkv.weight",
+        ];
+        let mut original_alpha = original_sigma.to_vec();
+        original_alpha.push("ar_embedder.mlp.0.weight");
+        for (keys, arch, family) in [
+            (sigma.to_vec(), "pixart", "pixart"),
+            (alpha, "pixart_alpha", "pixartalpha"),
+            (original_sigma.to_vec(), "pixart", "pixart"),
+            (original_alpha, "pixart_alpha", "pixartalpha"),
+        ] {
+            assert_eq!(
+                infer_architecture_from_key_names(&keys).as_deref(),
+                Some(arch),
+                "{keys:?}"
+            );
+            assert_eq!(family_from_architecture(arch), Some(family));
+        }
+        assert!(family_requires_separate_clip("pixart"));
+        assert!(family_requires_separate_clip("pixartalpha"));
     }
 
     #[test]
@@ -7274,9 +7302,14 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("stable_cascade".to_string());
     }
 
-    // PixArt: alpha/sigma share the adaln_single conditioning stack
-    if starts_with("adaln_single.") {
-        return Some("pixart".to_string());
+    // PixArt: diffusers files carry the `adaln_single.` conditioning stack,
+    // original and ComfyUI-saved ones `t_block.1.weight` (ComfyUI's own marker).
+    // Alpha adds a resolution / aspect micro-condition that Sigma lacks, and
+    // decodes with the SD 1.5 VAE instead of the SDXL one.
+    if starts_with("adaln_single.") || has_key("t_block.1.weight") {
+        let alpha =
+            starts_with("adaln_single.emb.resolution_embedder.") || starts_with("ar_embedder.");
+        return Some(if alpha { "pixart_alpha" } else { "pixart" }.to_string());
     }
 
     // Kolors: ChatGLM-based text encoder
@@ -7450,7 +7483,6 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "qwen_image" => Some("qwen"),
         "stable-diffusion-3-medium" => Some("sd3"),
         "auraflow" => Some("auraflow"),
-        "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
         "stable_cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
@@ -7494,7 +7526,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         "qwen" => Some("qwen_image"),
         "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),
-        "pixart" => Some("pixart"),
         "hunyuandit" => Some("hunyuandit"),
         "cascade" => Some("cascade"),
         "kolors" => Some("kolors"),
