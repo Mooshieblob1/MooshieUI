@@ -34,6 +34,7 @@ use crate::comfyui::types::GenerationParams;
 use crate::templates::WorkflowResult;
 
 mod flux2_klein;
+mod kolors;
 mod ming_image;
 mod minimax_h3_image;
 mod moss_image;
@@ -56,6 +57,7 @@ pub static ALL: &[&ArchitectureSpec] = &[
     &flux2_klein::SPEC_4B,
     &flux2_klein::SPEC_4B_BASE,
     &wan::SPEC,
+    &kolors::SPEC,
 ];
 
 /// How prompts for a family are written.
@@ -293,6 +295,9 @@ pub struct ArchitectureSpec {
     /// models). Served to the frontend; a build hook rounds to it as well,
     /// since the size controls do not snap to it yet.
     pub resolution_multiple: u32,
+    /// False when no ControlNet fits the model; requests with ControlNet on
+    /// are then refused.
+    pub controlnet: bool,
     #[serde(skip)]
     pub loader: Option<LoaderFn>,
     #[serde(skip)]
@@ -499,6 +504,21 @@ fn validate_in(registry: &[&ArchitectureSpec], params: &GenerationParams) -> Res
             family.label,
             params.mode,
             modes.join(", ")
+        ));
+    }
+    // A family with its own loader node cannot load through the checkpoint
+    // loader at all. Without one, a single-file checkpoint may still work
+    // (an all-in-one repack), so it is left to ComfyUI.
+    if checked_mode && arch.split_only && arch.loader.is_some() && !params.use_split_model {
+        return Err(format!(
+            "{} loads as separate files, not as a checkpoint: put the model in models/diffusion_models and pick it there with its text encoder. The Model Hub entry downloads all of them.",
+            family.label
+        ));
+    }
+    if checked_mode && !arch.controlnet && params.controlnet.as_ref().is_some_and(|cn| cn.enabled) {
+        return Err(format!(
+            "ControlNet is not available for {}. Turn ControlNet off to generate with it.",
+            family.label
         ));
     }
     if params.use_split_model {
@@ -765,6 +785,10 @@ mod tests {
         unreachable!("not called in these tests")
     }
 
+    fn fixture_loader(_: &mut Map<String, Value>, _: u32, _: &GenerationParams) -> LoaderOutput {
+        unreachable!("not called in these tests")
+    }
+
     fn fixture_encode(params: &GenerationParams, clip: &Value, text: &str) -> Value {
         json!({
             "class_type": "FixtureEncode",
@@ -849,6 +873,7 @@ mod tests {
         int8_fast_model_type: None,
         negative_prompt: true,
         resolution_multiple: 16,
+        controlnet: false,
         modes: &[
             ModeSpec::generic("txt2img"),
             ModeSpec {
@@ -960,6 +985,28 @@ mod tests {
         let mut p = params("fixture", "txt2img");
         p.architecture_files.clear();
         assert!(validate_in(&r, &p).unwrap_err().contains("second expert"));
+
+        let mut p = params("fixture", "txt2img");
+        p.use_split_model = false;
+        p.architecture_files.clear();
+        assert!(
+            validate_in(&r, &p).is_ok(),
+            "no loader hook: a checkpoint may work"
+        );
+        let with_loader: &'static ArchitectureSpec = Box::leak(Box::new(ArchitectureSpec {
+            loader: Some(fixture_loader),
+            ..FIXTURE
+        }));
+        assert!(validate_in(&[with_loader], &p)
+            .unwrap_err()
+            .contains("separate files"));
+
+        let mut p = params("fixture", "txt2img");
+        p.controlnet = Some(
+            serde_json::from_value(json!({"enabled": true, "controlnet_model": null, "image": null, "preprocessor": null}))
+                .unwrap(),
+        );
+        assert!(validate_in(&r, &p).unwrap_err().contains("ControlNet"));
 
         let mut p = params("fixture", "txt2img");
         p.int8_fast_enabled = true;

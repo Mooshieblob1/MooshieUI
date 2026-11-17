@@ -48,6 +48,7 @@ const mossImage: ArchitectureSpec = {
   ],
   negative_prompt: true,
   resolution_multiple: 16,
+  controlnet: false,
 };
 setArchitectures([mossImage]);
 import {

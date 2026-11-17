@@ -191,6 +191,9 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     ],
     negative_prompt: true,
     resolution_multiple: 16,
+    // No ControlNet has been released for MOSS-Image, so a request with one on
+    // gets a clear refusal instead of a ComfyUI shape error.
+    controlnet: false,
     loader: None,
     text_encode: None,
 };

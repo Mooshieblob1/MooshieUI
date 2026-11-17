@@ -257,6 +257,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     // Guidance-distilled at CFG 1: the negative prompt does nothing.
     negative_prompt: false,
     resolution_multiple: CANVAS_MULTIPLE,
+    controlnet: true,
     loader: None,
     text_encode: Some(text_encode),
 };

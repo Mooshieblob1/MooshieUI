@@ -63,6 +63,7 @@ const fixture: ArchitectureSpec = {
   ],
   negative_prompt: true,
   resolution_multiple: 16,
+  controlnet: true,
 };
 
 test("registered families are known, labelled and split-only", () => {

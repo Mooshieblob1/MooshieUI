@@ -206,6 +206,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     // Both checkpoints sample at CFG 1, where the negative prompt does nothing.
     negative_prompt: false,
     resolution_multiple: 16,
+    controlnet: true,
     loader: None,
     text_encode: Some(text_encode),
 };

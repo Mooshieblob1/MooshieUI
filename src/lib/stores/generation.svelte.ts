@@ -1552,11 +1552,6 @@ class GenerationStore {
     return this.modelFamily === "cascade";
   }
 
-  /** True when the selected model is Kolors. */
-  get isKolors(): boolean {
-    return this.modelFamily === "kolors";
-  }
-
   /** True when the selected model is Mugen (SDXL with Flux2 VAE + rectified flow). */
   get isMugen(): boolean {
     return this.modelFamily === "mugen";
@@ -2916,18 +2911,6 @@ class GenerationStore {
           cfg: 4.0,
           samplerName: "euler",
           scheduler: "simple",
-          width: 1024,
-          height: 1024,
-        };
-        break;
-
-      // Kolors stays in the SDXL-like resolution bucket with a slightly higher CFG.
-      case "kolors":
-        preset = {
-          steps: 25,
-          cfg: 5.0,
-          samplerName: "euler",
-          scheduler: "normal",
           width: 1024,
           height: 1024,
         };
