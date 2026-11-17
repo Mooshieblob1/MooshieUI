@@ -4514,35 +4514,6 @@ fn flux3_klein_family_from_text(lower: &str) -> Option<&'static str> {
     })
 }
 
-/// MOSS-Image (OpenMOSS), from a lowercase filename or CivitAI base-model name.
-///
-/// Comfy-Org ships `moss_image_{sft,base}_*`; community repos use
-/// `MOSS-Image-SFT-*` / `MOSS-Image-Base-*`. SFT is the default checkpoint: only
-/// a `base` marker selects the pretraining one. Tensor keys cannot tell the two
-/// apart, so a misnamed Base file reads as SFT (same graph, other preset).
-fn moss_image_family_from_text(lower: &str) -> Option<&'static str> {
-    let is_moss = [
-        "moss_image",
-        "moss-image",
-        "moss image",
-        "mossimage",
-        "moss.image",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
-        // Moody Moss Mix, a MOSS-Image SFT fine-tune whose files are named
-        // `Moody-Moss-Mix-V4.1_00001__clean-fp8.safetensors` and the like.
-        || (lower.contains("moody") && lower.contains("moss"));
-    if !is_moss {
-        return None;
-    }
-    Some(if lower.contains("base") {
-        "mossimagebase"
-    } else {
-        "mossimage"
-    })
-}
-
 fn model_family_from_base_model(base_model: &str) -> &'static str {
     let bm = base_model.trim().to_lowercase();
     if bm.is_empty() {
@@ -4557,9 +4528,6 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
         return "nanosaur";
     }
     if let Some(family) = flux3_klein_family_from_text(&bm) {
-        return family;
-    }
-    if let Some(family) = moss_image_family_from_text(&bm) {
         return family;
     }
     if bm == "flux.2 d" {
@@ -4671,9 +4639,6 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     // "flux" and "klein", which the 9b/4b token tests below would otherwise
     // misread once a quantisation suffix adds a stray digit.
     if let Some(family) = flux3_klein_family_from_text(&name) {
-        return Some(family);
-    }
-    if let Some(family) = moss_image_family_from_text(&name) {
         return Some(family);
     }
     // Flux.2 Klein is registered (architectures/flux2_klein.rs) and matched
@@ -4961,8 +4926,6 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
             | "flux2d"
             | "flux3klein"
             | "flux3kleinbase"
-            | "mossimage"
-            | "mossimagebase"
             | "chroma"
             | "ideogram4"
             | "krea2"
@@ -4978,7 +4941,7 @@ pub(crate) fn is_legacy_family(family: &str) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) const LEGACY_FAMILIES: [&str; 29] = [
+pub(crate) const LEGACY_FAMILIES: [&str; 27] = [
     "anima",
     "sdxl",
     "illustrious",
@@ -4991,8 +4954,6 @@ pub(crate) const LEGACY_FAMILIES: [&str; 29] = [
     "flux2d",
     "flux3klein",
     "flux3kleinbase",
-    "mossimage",
-    "mossimagebase",
     "chroma",
     "zib",
     "zit",
@@ -5048,10 +5009,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
             .or_else(|| vaes.first().cloned());
     }
 
-    if matches!(
-        family,
-        "flux2d" | "flux3klein" | "flux3kleinbase" | "mossimage" | "mossimagebase"
-    ) {
+    if matches!(family, "flux2d" | "flux3klein" | "flux3kleinbase") {
         return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
             .or_else(|| vaes.first().cloned());
     }
@@ -5093,17 +5051,6 @@ pub const KREA2_TEXT_ENCODER_MARKERS: [&str; 5] = [
 /// Comfy-Org (for Krea 2) ship the same stock Qwen3-VL-4B-Instruct weights, so
 /// the markers are Krea 2's. Shared with the generate-time guard in templates/mod.rs.
 pub const FLUX3_TEXT_ENCODER_MARKERS: [&str; 5] = KREA2_TEXT_ENCODER_MARKERS;
-
-/// MOSS-Image conditions on the stock Qwen3.5 9B (`qwen3.5_9b_*` from Comfy-Org).
-/// ComfyUI only builds the MOSS encoder for that model under CLIP type
-/// `moss_image`, so nothing else may be paired with it.
-pub const MOSS_IMAGE_TEXT_ENCODER_MARKERS: [&str; 5] = [
-    "qwen3.5_9b",
-    "qwen3.5-9b",
-    "qwen35_9b",
-    "qwen3_5_9b",
-    "qwen3.5 9b",
-];
 
 /// Returns (recommended encoder filename if a compatible one exists, CLIP type).
 /// A `None` filename with `Some` type means: the family's CLIP type is known but
@@ -5190,13 +5137,6 @@ fn recommended_clip_from_available(
         // It is the same stock encoder Krea 2 loads, so either release's file works.
         let preferred = find_first_text_encoder_matching(encoders, &FLUX3_TEXT_ENCODER_MARKERS);
         return Some((preferred, "flux3"));
-    }
-
-    if matches!(family, "mossimage" | "mossimagebase") {
-        // Strict: MOSS-Image reads the last hidden state of Qwen3.5 9B.
-        let preferred =
-            find_first_text_encoder_matching(encoders, &MOSS_IMAGE_TEXT_ENCODER_MARKERS);
-        return Some((preferred, "moss_image"));
     }
 
     if family == "krea2" {
@@ -7751,7 +7691,6 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         // Flux.2 Klein's flux2_klein_4b / flux2_klein_9b are registered
         // (architectures/flux2_klein.rs).
         "flux2_dev" => Some("flux2d"),
-        "moss_image" => Some("mossimage"),
         "qwen_image" => Some("qwen"),
         "auraflow" => Some("auraflow"),
         "hunyuandit" => Some("hunyuandit"),
@@ -7790,8 +7729,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // Flux 2 sizes are told apart by their keys (Klein's classes come from
         // the registry), so a Klein file named Dev is corrected and vice versa.
         "flux2d" => Some("flux2_dev"),
-        // SFT and Base share every tensor key: one class for both.
-        "mossimage" | "mossimagebase" => Some("moss_image"),
         "anima" => Some("anima"),
         "qwen" => Some("qwen_image"),
         "auraflow" => Some("auraflow"),

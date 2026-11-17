@@ -107,17 +107,6 @@ export const FLUX3_KLEIN_BASE_SAMPLING: SamplingRecommendation = {
 };
 
 /**
- * MOSS-Image (SFT and Base): Comfy-Org's bundled templates, 25 steps at CFG 2.5
- * with er_sde on the simple schedule. Matches the store's MOSS preset.
- */
-export const MOSS_IMAGE_SAMPLING: SamplingRecommendation = {
-  steps: 25,
-  cfg: 2.5,
-  samplerName: "er_sde",
-  scheduler: "simple",
-};
-
-/**
  * Moody Moss Mix (catlover1937), a MOSS-Image fine-tune. Its "25STEPS CFG3"
  * versions and the author's Moody Moss 4K HD ComfyUI workflow sample with
  * Euler on the simple schedule, 25 steps at CFG 3.
@@ -186,6 +175,11 @@ export function recommendedSamplingFor(
 ): SamplingRecommendation | null {
   const name = (filename ?? "").toLowerCase();
   const fam = (family ?? "").toLowerCase();
+  // Moody Moss Mix is a MOSS-Image fine-tune with its author's own settings;
+  // the registered MOSS-Image defaults would otherwise win.
+  if ((fam === "mossimage" || fam === "mossimagebase") && isMoodyMossFilename(name)) {
+    return MOODY_MOSS_SAMPLING;
+  }
   // A registered architecture (src-tauri/src/architectures) declares its own.
   const registered = registeredSampling(family);
   if (registered) {
@@ -199,9 +193,6 @@ export function recommendedSamplingFor(
   if (fam === "krea2") return turbo ? KREA2_TURBO_SAMPLING : KREA2_SAMPLING;
   if (fam === "flux3klein") return FLUX3_KLEIN_SAMPLING;
   if (fam === "flux3kleinbase") return FLUX3_KLEIN_BASE_SAMPLING;
-  if (fam === "mossimage" || fam === "mossimagebase") {
-    return isMoodyMossFilename(name) ? MOODY_MOSS_SAMPLING : MOSS_IMAGE_SAMPLING;
-  }
   if (fam === "anima" || name.includes("anima")) return ANIMA_SAMPLING;
   if (name.includes("nanosaur")) return NANOSAUR_SAMPLING;
   if (

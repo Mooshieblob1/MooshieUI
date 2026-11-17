@@ -49,5 +49,5 @@ test("families without a VAE rule keep the pick", () => {
 test("the Wan 2.1 VAE fits the Qwen latent families", () => {
   assert.equal(splitVaeFitsFamily("wan_2.1_vae.safetensors", "anima"), true);
   assert.equal(splitVaeFitsFamily("ae.safetensors", "flux1d"), true);
-  assert.equal(splitVaeFitsFamily("flux2-vae_small.safetensors", "mossimage"), true);
+  assert.equal(splitVaeFitsFamily("flux2-vae_small.safetensors", "flux3klein"), true);
 });

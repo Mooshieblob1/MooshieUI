@@ -167,8 +167,6 @@ fn is_prose_family(family: &str) -> bool {
             | "flux2d"
             | "flux3klein"
             | "flux3kleinbase"
-            | "mossimage"
-            | "mossimagebase"
             | "chroma"
             | "zib"
             | "zit"
