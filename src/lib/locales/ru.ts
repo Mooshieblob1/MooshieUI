@@ -1115,6 +1115,7 @@ const ru: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "Это половина Wan 2.2 A14B с высоким шумом. Положите подходящую модель с низким шумом в diffusion_models, чтобы завершать изображения, или выберите только модель с низким шумом.",
   "generation.model.wan_not_text_to_image": "Эта модель Wan превращает изображения или видео в видео и не может создать изображение по промпту. Выберите модель Wan «текст в видео» (Wan 2.1 T2V, Wan 2.2 TI2V 5B или Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Скачивание VAE...",
+  "generation.model.downloading_file": "Скачивание {name}...",
   "generation.model.downloading_checkpoint": "Скачивание чекпоинта...",
   "generation.model.auto_download": "Автоскачивание",
   "generation.model.cloud_badge": "Облако",

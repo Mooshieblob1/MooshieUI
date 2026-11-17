@@ -1167,6 +1167,7 @@ const es: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "Esta es la mitad de ruido alto de Wan 2.2 A14B. Coloca el modelo de ruido bajo correspondiente en diffusion_models para terminar sus imágenes, o elige solo el modelo de ruido bajo.",
   "generation.model.wan_not_text_to_image": "Este modelo Wan convierte imágenes o vídeo en vídeo y no puede crear una imagen a partir de un prompt. Elige un modelo Wan de texto a vídeo (Wan 2.1 T2V, Wan 2.2 TI2V 5B o Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Descargando VAE...",
+  "generation.model.downloading_file": "Descargando {name}...",
   "generation.model.downloading_checkpoint": "Descargando checkpoint...",
   "generation.model.auto_download": "descarga automática",
   "generation.model.cloud_badge": "Nube",

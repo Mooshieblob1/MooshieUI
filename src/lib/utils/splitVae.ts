@@ -9,7 +9,7 @@
  * say) shares the latent format and must survive model reloads and reconnects.
  */
 import type { ModelFamily } from "./modelFamily.js";
-import { isWan21Vae, isWan22Vae, wanVariant } from "./wanModels.js";
+import { findFamily, registeredVae, vaeMatches } from "./architectures.js";
 
 /** Anima, Qwen Image and Krea 2 decode with the 16-channel Qwen Image VAE (a Wan 2.1 VAE fine-tune). */
 const QWEN_LATENT_FAMILIES: ReadonlySet<ModelFamily> = new Set([
@@ -58,16 +58,11 @@ export function isFlux1VaeName(filename: string): boolean {
  * plainly does not, null when the family has no known VAE rule. Uses the same
  * name markers the backend recommends with.
  */
-export function splitVaeFitsFamily(
-  vae: string,
-  family: ModelFamily | null | undefined,
-  diffusionModel?: string | null,
-): boolean | null {
+export function splitVaeFitsFamily(vae: string, family: ModelFamily | null | undefined): boolean | null {
   if (!family) return null;
-  if (family === "wan") {
-    // Which Wan VAE fits depends on the checkpoint: only TI2V 5B takes the
-    // 48-channel Wan 2.2 VAE.
-    return wanVariant(diffusionModel) === "ti2v5b" ? isWan22Vae(vae) : isWan21Vae(vae);
+  if (findFamily(family)) {
+    const spec = registeredVae(family);
+    return spec ? vaeMatches(spec, vae) : null;
   }
   const lower = vae.toLowerCase();
   if (QWEN_LATENT_FAMILIES.has(family)) {
@@ -92,10 +87,9 @@ export function shouldKeepSplitVae(
   current: string,
   family: ModelFamily | null | undefined,
   installedVaes: readonly string[],
-  diffusionModel?: string | null,
 ): boolean {
   const pick = current.trim();
   if (!pick) return false;
   if (installedVaes.length > 0 && !installedVaes.some((vae) => samePath(vae, pick))) return false;
-  return splitVaeFitsFamily(pick, family, diffusionModel) !== false;
+  return splitVaeFitsFamily(pick, family) !== false;
 }

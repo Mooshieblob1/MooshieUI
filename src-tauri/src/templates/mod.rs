@@ -19,7 +19,6 @@ pub mod video;
 pub mod video_interpolate;
 pub mod video_refine;
 pub mod video_retake;
-pub mod wan;
 
 use serde_json::{json, Value};
 
@@ -36,6 +35,11 @@ use crate::comfyui::types::{BaseSources, GenerationParams, PromptSegment, StageC
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
     validate_pause_resume(params)?;
+    // Registered architectures: supported modes, strict encoder and model
+    // slots, INT8-Fast and reference count (see `crate::architectures`).
+    // Wan first: an image-to-video file should hear that, not an encoder hint.
+    crate::architectures::wan::validate(params)?;
+    crate::architectures::validate(params)?;
 
     // Video mode has its own parameter set; validate it and return early so
     // image-only guards (input images, ControlNet, style transfer) never
@@ -419,8 +423,6 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
-    wan::validate(params)?;
-
     // INT8-Fast guard: when enabled for a split-model family, the family must
     // have a known OTUNetLoaderW8A8 model_type mapping. GGUF diffusion models
     // are incompatible with the INT8-Fast loader (they route through
@@ -655,7 +657,7 @@ pub struct ModelLoadResult {
 /// model; `resolved_model_path` is filled in by the `generate` command. Both are
 /// required — without the resolved path there is nothing for the path loaders to
 /// open, so the caller falls back to the stock loaders.
-fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
+pub(crate) fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
     params.model_source_category.as_deref()?;
     params
         .resolved_model_path
@@ -668,6 +670,9 @@ fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
 /// families the node does not support, which causes `validate_params` to
 /// reject the combination before workflow construction.
 fn int8_fast_model_type(family: &str) -> Option<&'static str> {
+    if let Some(model_type) = crate::architectures::int8_fast_model_type(family) {
+        return model_type;
+    }
     match family {
         // Flux.2 Klein (all variants: 4b, 4b-base, 9b, 9b-base) and Flux.2 Dev
         "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase" => {
@@ -742,6 +747,71 @@ pub(crate) fn unet_loader_node(
     }
 }
 
+/// The stock split-model loaders: the diffusion model (`unet_name`, through
+/// [`unet_loader_node`]), `CLIPLoader` (or `CLIPLoaderGGUF`) and `VAELoader`.
+/// UNETLoader gets both unet_name and model_name for compatibility across
+/// standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+pub(crate) fn split_loader_nodes(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    params: &GenerationParams,
+    unet_name: &str,
+    misplaced_path: Option<&str>,
+) -> crate::architectures::LoaderOutput {
+    // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
+    // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+    // GGUF quantized models cannot be loaded by core UNETLoader — route them
+    // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
+    let unet_id = next_id.to_string();
+    let unet_node = unet_loader_node(unet_name, misplaced_path, params);
+    workflow.insert(unet_id.clone(), unet_node);
+    let model_source = (unet_id, 0);
+    next_id += 1;
+
+    // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
+    let clip_id = next_id.to_string();
+    let clip_type = params.clip_type.as_deref().unwrap_or("wan");
+    let clip_name = params.clip_model.as_deref().unwrap_or("");
+    let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
+        "CLIPLoaderGGUF"
+    } else {
+        "CLIPLoader"
+    };
+    workflow.insert(
+        clip_id.clone(),
+        json!({
+            "class_type": clip_class,
+            "inputs": {
+                "clip_name": clip_name,
+                "type": clip_type
+            }
+        }),
+    );
+    let clip_source = (clip_id, 0);
+    next_id += 1;
+
+    // VAELoader — always needed for split models (use params.vae or a default)
+    let vae_id = next_id.to_string();
+    let vae_name = params.vae.as_deref().unwrap_or("");
+    workflow.insert(
+        vae_id.clone(),
+        json!({
+            "class_type": "VAELoader",
+            "inputs": {
+                "vae_name": vae_name
+            }
+        }),
+    );
+    let vae_source = (vae_id, 0);
+    next_id += 1;
+    crate::architectures::LoaderOutput {
+        model: model_source,
+        clip: clip_source,
+        vae: vae_source,
+        next_id,
+    }
+}
+
 /// Load model nodes — either a single CheckpointLoaderSimple or split UNETLoader + CLIPLoader + VAELoader.
 /// Also handles the LoRA chain and optional separate VAE override.
 pub fn load_model_nodes(
@@ -794,63 +864,28 @@ pub fn load_model_nodes(
             vae_source,
             next_id,
         };
+    } else if let Some(loader) =
+        crate::architectures::loader(params).filter(|_| params.use_split_model)
+    {
+        // A registered architecture with its own loaders (several encoders,
+        // a custom loader node, ...). The LoRA chain below runs on them.
+        let loaded = loader(workflow, next_id, params);
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else if params.use_split_model {
-        // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
-        // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
-        // GGUF quantized models cannot be loaded by core UNETLoader — route them
-        // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
-        // Wan 2.2 A14B: every pass but the txt2img high-noise start runs on
-        // the low-noise expert (see templates/wan.rs), so it is the main model.
-        let low_noise_expert = wan::low_noise_model(params);
-        let unet_name =
-            low_noise_expert.unwrap_or_else(|| params.diffusion_model.as_deref().unwrap_or(""));
-        let misplaced = if low_noise_expert.is_some() {
-            None
-        } else {
-            misplaced_model_path(params)
-        };
-        let unet_id = next_id.to_string();
-        let unet_node = unet_loader_node(unet_name, misplaced, params);
-        workflow.insert(unet_id.clone(), unet_node);
-        model_source = (unet_id, 0);
-        next_id += 1;
-
-        // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
-        let clip_id = next_id.to_string();
-        let clip_type = params.clip_type.as_deref().unwrap_or("wan");
-        let clip_name = params.clip_model.as_deref().unwrap_or("");
-        let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
-            "CLIPLoaderGGUF"
-        } else {
-            "CLIPLoader"
-        };
-        workflow.insert(
-            clip_id.clone(),
-            json!({
-                "class_type": clip_class,
-                "inputs": {
-                    "clip_name": clip_name,
-                    "type": clip_type
-                }
-            }),
+        let loaded = split_loader_nodes(
+            workflow,
+            next_id,
+            params,
+            params.diffusion_model.as_deref().unwrap_or(""),
+            misplaced_model_path(params),
         );
-        clip_source = (clip_id, 0);
-        next_id += 1;
-
-        // VAELoader — always needed for split models (use params.vae or a default)
-        let vae_id = next_id.to_string();
-        let vae_name = params.vae.as_deref().unwrap_or("");
-        workflow.insert(
-            vae_id.clone(),
-            json!({
-                "class_type": "VAELoader",
-                "inputs": {
-                    "vae_name": vae_name
-                }
-            }),
-        );
-        vae_source = (vae_id, 0);
-        next_id += 1;
+        model_source = loaded.model;
+        clip_source = loaded.clip;
+        vae_source = loaded.vae;
+        next_id = loaded.next_id;
     } else {
         // Standard CheckpointLoaderSimple, or the path-based Mooshie loader when the
         // checkpoint physically lives outside models/checkpoints/.
@@ -889,8 +924,8 @@ pub fn load_model_nodes(
             continue;
         }
         // Wan 2.2 A14B LoRAs come as high/low-noise pairs; a high-noise half
-        // only belongs on the high-noise expert (templates/wan.rs).
-        if !wan::lora_applies_to_main_model(params, &lora.name) {
+        // only belongs on the high-noise expert (architectures/wan.rs).
+        if !crate::architectures::wan::lora_applies_to_main_model(params, &lora.name) {
             continue;
         }
         let lora_id = next_id.to_string();
@@ -991,22 +1026,29 @@ pub fn build_workflow(
         return video::build(params, seed, video_metadata_supported);
     }
 
-    if pause_resume_active(params) {
-        return build_paused_workflow(params, seed);
-    }
-
-    if params.style_transfer_enabled && params.model_architecture == "anima" {
+    let workflow = if pause_resume_active(params) {
+        build_paused_workflow(params, seed)
+    } else if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
-        return finish_workflow(result, params, seed);
-    }
-
-    if moody_moss::area_detail_active(params) {
+        finish_workflow(result, params, seed)
+    } else if moody_moss::area_detail_active(params) {
         let result = moody_moss::build_area_detail(params, seed);
-        return finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed);
-    }
+        finish_workflow(result, &moody_moss::area_detail_finish_params(params), seed)
+    } else {
+        let result = build_image_stage(params, seed);
+        finish_workflow(result, params, seed)
+    };
+    apply_architecture_text_encode(workflow, params)
+}
 
-    let result = build_image_stage(params, seed);
-    finish_workflow(result, params, seed)
+/// Rewrite prompt encoders for a registered architecture whose text encoder
+/// needs its own node. Runs on the finished graph so every template and
+/// appended chain (hires fix, face fix, segment detail) is covered.
+fn apply_architecture_text_encode(mut workflow: Value, params: &GenerationParams) -> Value {
+    if let Some(map) = workflow.as_object_mut() {
+        crate::architectures::apply_text_encode(map, params);
+    }
+    workflow
 }
 
 /// Whether this request pauses partway through sampling or resumes a paused run.
@@ -1121,12 +1163,17 @@ fn build_paused_workflow(params: &GenerationParams, seed: i64) -> Value {
 /// Build one image template plus the model/conditioning patches that every
 /// image mode shares. `finish_workflow` appends the post-process chains.
 fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
-    let mut result = match params.mode.as_str() {
-        "img2img" => img2img::build(params, seed),
-        "inpainting" => inpainting::build(params, seed),
-        "image_edit" => image_edit::build(params, seed),
-        _ if wan::two_expert_active(params) => wan::build_txt2img(params, seed),
-        _ => txt2img::build(params, seed),
+    // A registered architecture's dedicated graph for this mode, else the
+    // generic template.
+    let mut result = if let Some(build) = crate::architectures::builder(params) {
+        build(params, seed)
+    } else {
+        match params.mode.as_str() {
+            "img2img" => img2img::build(params, seed),
+            "inpainting" => inpainting::build(params, seed),
+            "image_edit" => image_edit::build(params, seed),
+            _ => txt2img::build(params, seed),
+        }
     };
 
     // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)
@@ -1187,8 +1234,8 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
     if txt2img::moody_moss_hd_active(params) {
         sync_moody_moss_first_pass(&mut result);
     }
-    if wan::two_expert_active(params) {
-        wan::sync_high_noise_pass(&mut result);
+    if crate::architectures::wan::two_expert_active(params) {
+        crate::architectures::wan::sync_high_noise_pass(&mut result);
     }
 
     result
@@ -1511,7 +1558,6 @@ pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
             | "qwen_edit_plus"
             | "flux1kontext"
             | "anima"
-            | "wan"
             | "krea2"
     )
 }

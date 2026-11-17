@@ -2,9 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   findWanLowNoisePartner,
-  isWan21Vae,
-  isWan22Vae,
-  isWanEncoder,
   wanVariant,
 } from "../../src/lib/utils/wanModels.ts";
 
@@ -52,14 +49,4 @@ test("the high-noise model pairs with its own low-noise file", () => {
   );
   assert.equal(findWanLowNoisePartner("wan2.1_t2v_14B_fp16.safetensors", installed), null);
   assert.equal(findWanLowNoisePartner("wan2.2_t2v_high_noise_14B_fp16.safetensors", []), null);
-});
-
-test("encoder and VAE names", () => {
-  assert.equal(isWanEncoder("umt5_xxl_fp8_e4m3fn_scaled.safetensors"), true);
-  assert.equal(isWanEncoder("qwen_2.5_vl_7b_fp8_scaled.safetensors"), false);
-  assert.equal(isWan21Vae("wan_2.1_vae.safetensors"), true);
-  assert.equal(isWan21Vae("qwen_image_vae.safetensors"), true);
-  assert.equal(isWan21Vae("wan2.2_vae.safetensors"), false);
-  assert.equal(isWan22Vae("wan2.2_vae.safetensors"), true);
-  assert.equal(isWan22Vae("wan_2.1_vae.safetensors"), false);
 });

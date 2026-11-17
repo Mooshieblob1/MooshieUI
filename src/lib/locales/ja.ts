@@ -1129,6 +1129,7 @@ const ja: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "これは Wan 2.2 A14B のハイノイズ側です。画像を仕上げるには対応するローノイズモデルを diffusion_models に置くか、ローノイズモデルだけを選んでください。",
   "generation.model.wan_not_text_to_image": "この Wan モデルは画像や動画から動画を作るもので、プロンプトから画像は作れません。Wan のテキストから動画モデル(Wan 2.1 T2V、Wan 2.2 TI2V 5B、Wan 2.2 T2V A14B)を選んでください。",
   "generation.model.downloading_vae": "VAEをダウンロード中...",
+  "generation.model.downloading_file": "{name} をダウンロード中...",
   "generation.model.downloading_checkpoint": "チェックポイントをダウンロード中...",
   "generation.model.auto_download": "自動ダウンロード",
   "generation.model.cloud_badge": "クラウド",

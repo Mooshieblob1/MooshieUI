@@ -3,7 +3,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
-  import { MODEL_FAMILY_LABELS, type ModelFamily } from "../../utils/modelFamily.js";
+  import { modelFamilyLabel, type ModelFamily } from "../../utils/modelFamily.js";
   import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
@@ -310,7 +310,7 @@
         : `${recommended.min}–${recommended.max}`
       : ""
   );
-  const familyLabel = $derived(MODEL_FAMILY_LABELS[generation.modelFamily] ?? "");
+  const familyLabel = $derived(modelFamilyLabel(generation.modelFamily) ?? "");
 
   /** Fit a w:h ratio into a max bounding box for preset preview chips. */
   function aspectPreviewSize(w: number, h: number, boxPx = 12): { w: number; h: number } {

@@ -1115,6 +1115,7 @@ const ko: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "Wan 2.2 A14B의 하이 노이즈 절반입니다. 이미지를 마무리하려면 짝이 되는 로우 노이즈 모델을 diffusion_models에 넣거나, 로우 노이즈 모델만 선택하세요.",
   "generation.model.wan_not_text_to_image": "이 Wan 모델은 이미지나 영상을 영상으로 바꾸는 모델이라 프롬프트로 이미지를 만들 수 없습니다. Wan 텍스트-투-비디오 모델(Wan 2.1 T2V, Wan 2.2 TI2V 5B, Wan 2.2 T2V A14B)을 선택하세요.",
   "generation.model.downloading_vae": "VAE 다운로드 중...",
+  "generation.model.downloading_file": "{name} 다운로드 중...",
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
   "generation.model.auto_download": "자동 다운로드",
   "generation.model.cloud_badge": "클라우드",

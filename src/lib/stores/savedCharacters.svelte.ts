@@ -1,6 +1,7 @@
 import { triggerSync } from "../utils/syncTrigger.js";
 import { userScopedKey } from "../utils/ipc.js";
-import { MODEL_FAMILY_LABELS, TAG_PROMPT_FAMILIES, type ModelFamily } from "../utils/modelFamily.js";
+import { MODEL_FAMILY_LABELS, familyUsesTagPrompts, modelFamilyLabel } from "../utils/modelFamily.js";
+import { registeredFamilies } from "../utils/architectures.js";
 import { novelAiMaxCharacters } from "../utils/novelaiModels.js";
 import type { CharacterPromptStyle } from "../utils/characterExtract.js";
 import {
@@ -89,23 +90,20 @@ function joinPrompt(current: string, text: string): string {
   return base ? `${base}, ${text}` : text;
 }
 
-/** Architectures whose prompts are written as Danbooru-style tags. */
-const TAG_ARCHITECTURES = new Set<string>([NOVELAI_ARCHITECTURE, ...TAG_PROMPT_FAMILIES]);
-
 /** How a character is written for `architecture`: tags, or natural language. */
 export function architecturePromptStyle(architecture: string): CharacterPromptStyle {
-  return TAG_ARCHITECTURES.has(architecture) ? "tags" : "natural";
+  return architecture === NOVELAI_ARCHITECTURE || familyUsesTagPrompts(architecture) ? "tags" : "natural";
 }
 
 /** Every architecture a card can be copied to, NovelAI first. */
 export function characterArchitectures(): string[] {
-  return [NOVELAI_ARCHITECTURE, ...Object.keys(MODEL_FAMILY_LABELS)];
+  return [NOVELAI_ARCHITECTURE, ...Object.keys(MODEL_FAMILY_LABELS), ...registeredFamilies()];
 }
 
 /** Display name of an architecture bucket. */
 export function architectureLabel(architecture: string): string {
   if (architecture === NOVELAI_ARCHITECTURE) return "NovelAI";
-  return MODEL_FAMILY_LABELS[architecture as ModelFamily] ?? architecture;
+  return modelFamilyLabel(architecture) ?? architecture;
 }
 
 function clampCardSize(size: number): number {

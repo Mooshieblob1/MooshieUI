@@ -1115,6 +1115,7 @@ const zhTw: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "這是 Wan 2.2 A14B 的高雜訊部分。請把對應的低雜訊模型放進 diffusion_models 來完成圖像，或者單獨選擇低雜訊模型。",
   "generation.model.wan_not_text_to_image": "這個 Wan 模型是把圖像或影片變成影片的，無法根據提示詞產生圖像。請選擇 Wan 文字轉影片模型（Wan 2.1 T2V、Wan 2.2 TI2V 5B 或 Wan 2.2 T2V A14B）。",
   "generation.model.downloading_vae": "正在下載 VAE...",
+  "generation.model.downloading_file": "正在下載 {name}...",
   "generation.model.downloading_checkpoint": "正在下載檢查點...",
   "generation.model.auto_download": "自動下載",
   "generation.model.cloud_badge": "雲端",

@@ -1115,6 +1115,7 @@ const it: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "Questa è la metà ad alto rumore di Wan 2.2 A14B. Metti il modello a basso rumore corrispondente in diffusion_models per completare le immagini, oppure scegli solo il modello a basso rumore.",
   "generation.model.wan_not_text_to_image": "Questo modello Wan trasforma immagini o video in video e non può creare un'immagine da un prompt. Scegli un modello Wan da testo a video (Wan 2.1 T2V, Wan 2.2 TI2V 5B o Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Download VAE...",
+  "generation.model.downloading_file": "Download di {name}...",
   "generation.model.downloading_checkpoint": "Download checkpoint...",
   "generation.model.auto_download": "Download automatico",
   "generation.model.cloud_badge": "Cloud",

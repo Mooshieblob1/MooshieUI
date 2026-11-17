@@ -402,8 +402,6 @@ export interface GenerationParams {
   diffusion_model: string | null;
   clip_model: string | null;
   clip_type: string | null;
-  /** Extra model files by slot, e.g. `low_noise_model` for Wan 2.2 A14B. */
-  architecture_files?: Record<string, string>;
   /** Folder the active model physically lives in when it contradicts its detected
    *  kind ("checkpoints" / "diffusion_models"); null when correctly placed. The
    *  backend resolves it to an absolute path for the Mooshie path loader nodes. */
@@ -489,6 +487,8 @@ export interface GenerationParams {
   anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
+  /** Extra files of a registered architecture, keyed by model slot (src-tauri/src/architectures). */
+  architecture_files?: Record<string, string>;
   /** Anima ReStyler reference adherence: 1.0 full, lower restyles harder. */
   edit_reference_strength?: number;
   /** Anima ReStyler drastic restyle: split-screen inpaint of a 2x-wide composite, right half cropped as output. */

@@ -1258,6 +1258,7 @@ const en: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "This is the high-noise half of Wan 2.2 A14B. Put the matching low-noise model in diffusion_models to finish its images, or pick the low-noise model on its own.",
   "generation.model.wan_not_text_to_image": "This Wan model turns images or video into video and cannot make an image from a prompt. Pick a Wan text-to-video model (Wan 2.1 T2V, Wan 2.2 TI2V 5B or Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Downloading VAE...",
+  "generation.model.downloading_file": "Downloading {name}...",
   "generation.model.downloading_checkpoint": "Downloading checkpoint...",
   "generation.model.auto_download": "auto-download",
   "generation.model.cloud_badge": "cloud",

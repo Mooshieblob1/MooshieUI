@@ -1,6 +1,7 @@
 import { getAuthToken, ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import type { ExportFormat } from "./videoExport.js";
+import type { ArchitectureSpec } from "./architectures.js";
 import type { ChatMessage } from "./enhancerSession.js";
 import { locale } from "../stores/locale.svelte.js";
 import type { CoverTranscriptionStatus, MusicCapabilities, MusicJob, MusicParams, MusicStatus } from "../types/music.js";
@@ -178,6 +179,11 @@ import type {
 
 export async function getModels(category: string): Promise<string[]> {
   return ipcInvoke("get_models", { category });
+}
+
+/** Registered model architectures (src-tauri/src/architectures). */
+export async function listModelArchitectures(): Promise<ArchitectureSpec[]> {
+  return ipcInvoke("list_model_architectures");
 }
 
 export async function getSamplers(): Promise<SamplerInfo> {

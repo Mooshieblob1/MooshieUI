@@ -1240,6 +1240,7 @@ const pl: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "To jest część wysokiego szumu Wan 2.2 A14B. Umieść pasujący model niskiego szumu w diffusion_models, aby kończyć obrazy, albo wybierz sam model niskiego szumu.",
   "generation.model.wan_not_text_to_image": "Ten model Wan zamienia obrazy lub wideo w wideo i nie potrafi stworzyć obrazu z promptu. Wybierz model Wan tekst na wideo (Wan 2.1 T2V, Wan 2.2 TI2V 5B lub Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Pobieranie VAE...",
+  "generation.model.downloading_file": "Pobieranie {name}...",
   "generation.model.downloading_checkpoint": "Pobieranie Checkpointu...",
   "generation.model.auto_download": "automatyczne pobieranie",
   "generation.model.cloud_badge": "Chmura",

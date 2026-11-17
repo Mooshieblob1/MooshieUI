@@ -1129,6 +1129,7 @@ const fr: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "Ceci est la moitié à bruit élevé de Wan 2.2 A14B. Placez le modèle à bruit faible correspondant dans diffusion_models pour terminer ses images, ou choisissez le modèle à bruit faible seul.",
   "generation.model.wan_not_text_to_image": "Ce modèle Wan transforme des images ou des vidéos en vidéo et ne peut pas créer d'image à partir d'un prompt. Choisissez un modèle Wan texte vers vidéo (Wan 2.1 T2V, Wan 2.2 TI2V 5B ou Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "Téléchargement du VAE...",
+  "generation.model.downloading_file": "Téléchargement de {name}...",
   "generation.model.downloading_checkpoint": "Téléchargement du checkpoint...",
   "generation.model.auto_download": "téléchargement auto",
   "generation.model.cloud_badge": "Cloud",

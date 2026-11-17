@@ -1,35 +1,256 @@
 //! Wan 2.x as an image model: a one-frame text-to-video run.
 //!
 //! Three checkpoint lines are usable for images, all through core ComfyUI
-//! nodes with the umT5-XXL text encoder (CLIP type `wan`):
-//! - **Wan 2.1 T2V** (1.3B / 14B) and fine-tunes: one model, Wan 2.1 VAE.
-//! - **Wan 2.2 TI2V 5B**: one model, the 48-channel Wan 2.2 VAE. The empty
+//! nodes with the umT5-XXL text encoder (CLIP type `wan`), one family each:
+//! - `wan`: **Wan 2.1 T2V** (1.3B / 14B) and fine-tunes, Wan 2.1 VAE. Also
+//!   whatever tensor-key detection finds (`head.modulation`).
+//! - `wan22ti2v`: **Wan 2.2 TI2V 5B**, the 48-channel Wan 2.2 VAE. The empty
 //!   latent stays the generic one; ComfyUI resizes an empty latent to the
 //!   model's channel count and 16x downscale before sampling.
-//! - **Wan 2.2 A14B T2V**: a mixture of two experts. The high-noise model
-//!   lays out the image over the first half of the schedule and the
-//!   low-noise model finishes it, as in Comfy-Org's Wan 2.2 template. The
-//!   frontend pairs the low-noise file into the `low_noise_model` slot.
+//! - `wan22a14b`: **Wan 2.2 A14B T2V**, a mixture of two experts. The
+//!   high-noise model lays out the image over the first half of the schedule
+//!   and the low-noise model finishes it, as in Comfy-Org's Wan 2.2 template.
+//!   The frontend pairs the low-noise file into the `low_noise_model` slot.
 //!
 //! Image-to-video, Fun, VACE, S2V and Animate checkpoints need inputs a text
 //! prompt cannot give them, so [`validate`] turns them away with a clear
 //! message instead of a shape error from deep inside ComfyUI.
+//!
+//! CivitAI files tagged "Wan Video ..." stay mapped to Anima on purpose (Anima
+//! fine-tunes were uploaded under that base model); no base-model name is
+//! listed here, and tensor keys correct a real Wan file either way.
 
 use serde_json::json;
 
 use super::{
-    build_scheduled_conditioning, insert_vae_decode, load_model_nodes, misplaced_model_path,
-    unet_loader_node, WorkflowResult,
+    ArchitectureSpec, Detect, EncoderSpec, FamilySpec, LoaderOutput, ModeSpec, ModelFile,
+    ModelSlot, PromptStyle, RecommendedModel, Sampling, VaeSpec,
 };
 use crate::comfyui::types::GenerationParams;
+use crate::templates::{
+    build_scheduled_conditioning, insert_vae_decode, load_model_nodes, misplaced_model_path,
+    split_loader_nodes, txt2img, unet_loader_node, WorkflowResult,
+};
+
+const ENCODER: ModelFile = ModelFile {
+    filename: "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    url: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    category: "text_encoders",
+    size: Some("~6.7 GB"),
+    sha256: None,
+};
+
+const WAN21_VAE: ModelFile = ModelFile {
+    filename: "wan_2.1_vae.safetensors",
+    url: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+    category: "vae",
+    size: Some("~0.25 GB"),
+    sha256: None,
+};
+
+const WAN22_VAE: ModelFile = ModelFile {
+    filename: "wan2.2_vae.safetensors",
+    url: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors",
+    category: "vae",
+    size: Some("~1.4 GB"),
+    sha256: None,
+};
+
+pub static SPEC: ArchitectureSpec = ArchitectureSpec {
+    id: "wan",
+    label: "Wan",
+    families: &[
+        // First: tensor-key detection resolves to it.
+        FamilySpec {
+            family: "wan",
+            label: "Wan 2.1",
+            detect: Detect {
+                all_of: &[&["wan2"], &["wan 2"], &["wan_2."], &["wan-2."]],
+                none_of: &[
+                    "ti2v", "5b", "high_noise", "highnoise", "high-noise", "low_noise",
+                    "lownoise", "low-noise", "_vae",
+                ],
+                base_models: &[],
+            },
+            turbo: false,
+            sampling: Some(Sampling {
+                steps: 30,
+                cfg: 6.0,
+                sampler: "uni_pc",
+                scheduler: "simple",
+                width: 1024,
+                height: 1024,
+            }),
+            recommended: &[RecommendedModel {
+                label: "Wan 2.1 T2V 1.3B",
+                size: "~9.8 GB",
+                diffusion_model: ModelFile {
+                    filename: "wan2.1_t2v_1.3B_fp16.safetensors",
+                    url: "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+                    category: "diffusion_models",
+                    size: Some("~2.8 GB"),
+                    sha256: None,
+                },
+                min_compute_capability: None,
+            }],
+            text_encoder: None,
+            vae: None,
+        },
+        FamilySpec {
+            family: "wan22a14b",
+            label: "Wan 2.2 A14B",
+            detect: Detect {
+                all_of: &[
+                    &["wan", "high_noise"],
+                    &["wan", "highnoise"],
+                    &["wan", "high-noise"],
+                    &["wan", "low_noise"],
+                    &["wan", "lownoise"],
+                    &["wan", "low-noise"],
+                ],
+                none_of: &["_vae"],
+                base_models: &[],
+            },
+            turbo: false,
+            sampling: Some(Sampling {
+                steps: 20,
+                cfg: 3.5,
+                sampler: "euler",
+                scheduler: "simple",
+                width: 1024,
+                height: 1024,
+            }),
+            recommended: &[],
+            text_encoder: None,
+            vae: None,
+        },
+        FamilySpec {
+            family: "wan22ti2v",
+            label: "Wan 2.2 TI2V 5B",
+            detect: Detect {
+                all_of: &[
+                    &["wan", "ti2v"],
+                    &["wan2", "5b"],
+                    &["wan 2", "5b"],
+                    &["wan_2", "5b"],
+                ],
+                none_of: &["_vae"],
+                base_models: &[],
+            },
+            turbo: false,
+            sampling: Some(Sampling {
+                steps: 20,
+                cfg: 5.0,
+                sampler: "uni_pc",
+                scheduler: "simple",
+                width: 1024,
+                height: 1024,
+            }),
+            recommended: &[RecommendedModel {
+                label: "Wan 2.2 TI2V 5B",
+                size: "~18.1 GB",
+                diffusion_model: ModelFile {
+                    filename: "wan2.2_ti2v_5B_fp16.safetensors",
+                    url: "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+                    category: "diffusion_models",
+                    size: Some("~10 GB"),
+                    sha256: None,
+                },
+                min_compute_capability: None,
+            }],
+            text_encoder: None,
+            vae: Some(VaeSpec {
+                basenames: &["wan2.2_vae.safetensors"],
+                markers: &WAN22_VAE_MARKERS,
+                strict: true,
+                download: Some(WAN22_VAE),
+            }),
+        },
+    ],
+    split_only: true,
+    prompt_style: PromptStyle::Natural,
+    tensor_architecture: Some("wan2.1"),
+    text_encoder: Some(EncoderSpec {
+        clip_type: "wan",
+        markers: &TEXT_ENCODER_MARKERS,
+        strict: true,
+        download: Some(ENCODER),
+    }),
+    vae: Some(VaeSpec {
+        // The Qwen Image VAE is a decoder fine-tune of the Wan 2.1 VAE.
+        basenames: &["wan_2.1_vae.safetensors", "qwen_image_vae.safetensors"],
+        markers: &WAN21_VAE_MARKERS,
+        strict: true,
+        download: Some(WAN21_VAE),
+    }),
+    // Picked by name in the frontend (`findWanLowNoisePartner`). Never
+    // downloaded on its own: it is a 14 GB file the user chooses.
+    model_slots: &[ModelSlot {
+        key: LOW_NOISE_MODEL_SLOT,
+        label: "Wan 2.2 low-noise model",
+        category: "diffusion_models",
+        markers: &["t2v_low_noise", "t2v-low-noise", "lownoise"],
+        strict: false,
+        download: None,
+    }],
+    custom_nodes: &[],
+    core_nodes: &[],
+    min_comfyui: None,
+    int8_fast_model_type: None,
+    modes: &[
+        ModeSpec {
+            mode: "txt2img",
+            max_references: 0,
+            required_files: &[],
+            sampling: None,
+            build: Some(build_txt2img_hook),
+        },
+        ModeSpec::generic("img2img"),
+        ModeSpec::generic("inpainting"),
+    ],
+    negative_prompt: true,
+    resolution_multiple: 16,
+    loader: Some(loader),
+    text_encode: None,
+};
+
+/// The Wan families.
+pub const FAMILIES: [&str; 3] = ["wan", "wan22a14b", "wan22ti2v"];
+
+/// The stock split loaders, with the A14B low-noise expert as the main model
+/// when one is paired (see [`low_noise_model`]).
+fn loader(
+    workflow: &mut serde_json::Map<String, serde_json::Value>,
+    next_id: u32,
+    params: &GenerationParams,
+) -> LoaderOutput {
+    match low_noise_model(params) {
+        Some(low) => split_loader_nodes(workflow, next_id, params, low, None),
+        None => split_loader_nodes(
+            workflow,
+            next_id,
+            params,
+            params.diffusion_model.as_deref().unwrap_or(""),
+            misplaced_model_path(params),
+        ),
+    }
+}
+
+/// txt2img: the two-expert graph for a paired A14B, the generic one otherwise.
+fn build_txt2img_hook(params: &GenerationParams, seed: i64) -> WorkflowResult {
+    if two_expert_active(params) {
+        build_txt2img(params, seed)
+    } else {
+        txt2img::build(params, seed)
+    }
+}
 
 /// `GenerationParams::architecture_files` slot holding the Wan 2.2 A14B
 /// low-noise expert.
 pub const LOW_NOISE_MODEL_SLOT: &str = "low_noise_model";
 
 /// Text-encoder filename marker for Wan's umT5-XXL (`umt5_xxl_fp8_e4m3fn_scaled`,
-/// `umt5_xxl_fp16`, GGUF `umt5-xxl-encoder-Q8_0`). Shared with the
-/// recommendation in commands/api.rs.
+/// `umt5_xxl_fp16`, GGUF `umt5-xxl-encoder-Q8_0`).
 pub const TEXT_ENCODER_MARKERS: [&str; 1] = ["umt5"];
 
 /// VAE filename markers for the 16-channel Wan 2.1 VAE. The Qwen Image VAE is
@@ -101,7 +322,7 @@ impl WanVariant {
 
 /// A Wan split model, as the frontend resolved it.
 fn is_wan_split(params: &GenerationParams) -> bool {
-    params.model_architecture == "wan" && params.use_split_model
+    FAMILIES.contains(&params.model_architecture.as_str()) && params.use_split_model
 }
 
 /// The selected diffusion model's variant, for a Wan split model.
@@ -436,6 +657,7 @@ mod tests {
 
     fn a14b_params() -> GenerationParams {
         let mut params = wan_params("wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors");
+        params.model_architecture = "wan22a14b".into();
         params.architecture_files.insert(
             LOW_NOISE_MODEL_SLOT.into(),
             "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors".into(),
@@ -505,6 +727,72 @@ mod tests {
         ] {
             assert_eq!(WanVariant::from_filename(name), expected, "{name}");
         }
+    }
+
+    #[test]
+    fn registry_picks_family_encoder_and_vae() {
+        use crate::architectures::{family_from_text, recommended_clip, recommended_vae};
+        for (name, family) in [
+            ("wan2.1_t2v_14B_fp8_e4m3fn.safetensors", Some("wan")),
+            ("Wan2.1-T2V-1.3B-Q8_0.gguf", Some("wan")),
+            (
+                "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+                Some("wan22a14b"),
+            ),
+            ("smoothMixWan22_lowNoise.safetensors", Some("wan22a14b")),
+            ("wan2.2_ti2v_5B_fp16.safetensors", Some("wan22ti2v")),
+            ("wan_2.1_vae.safetensors", None),
+            ("anima-base-v1.0.safetensors", None),
+            // CivitAI base models stay with the Anima mapping in commands/api.rs.
+            ("Wan Video 14B t2v", None),
+            ("Wan Video 2.2 T2V-A14B", None),
+        ] {
+            assert_eq!(family_from_text(name), family, "{name}");
+        }
+
+        let encoders: Vec<String> = [
+            "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        ]
+        .map(String::from)
+        .to_vec();
+        for family in FAMILIES {
+            assert_eq!(
+                recommended_clip(family, &encoders),
+                Some((
+                    Some("umt5_xxl_fp8_e4m3fn_scaled.safetensors".to_string()),
+                    "wan"
+                ))
+            );
+            // No stand-in encoder: the model panel downloads umT5.
+            assert_eq!(
+                recommended_clip(family, &encoders[..1]),
+                Some((None, "wan"))
+            );
+        }
+
+        let vaes: Vec<String> = [
+            "sdxl_vae.safetensors",
+            "qwen_image_vae.safetensors",
+            "wan2.2_vae.safetensors",
+            "wan_2.1_vae.safetensors",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            recommended_vae("wan22ti2v", &vaes),
+            Some(Some("wan2.2_vae.safetensors".to_string()))
+        );
+        assert_eq!(
+            recommended_vae("wan22a14b", &vaes),
+            Some(Some("wan_2.1_vae.safetensors".to_string()))
+        );
+        assert_eq!(
+            recommended_vae("wan", &vaes[..3]),
+            Some(Some("qwen_image_vae.safetensors".to_string()))
+        );
+        assert_eq!(recommended_vae("wan22ti2v", &vaes[..2]), Some(None));
+        assert_eq!(recommended_vae("wan", &vaes[..1]), Some(None));
     }
 
     #[test]

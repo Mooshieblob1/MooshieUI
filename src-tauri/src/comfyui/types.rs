@@ -242,12 +242,6 @@ pub struct GenerationParams {
     /// CLIP model type for CLIPLoader (e.g. "wan", "sd3", etc.)
     #[serde(default)]
     pub clip_type: Option<String>,
-    /// Extra model files an architecture loads beside the diffusion model,
-    /// text encoder and VAE, keyed by slot name. Wan 2.2 A14B uses
-    /// `low_noise_model` for the low-noise expert that finishes what the
-    /// selected high-noise model starts.
-    #[serde(default)]
-    pub architecture_files: std::collections::BTreeMap<String, String>,
     /// Folder the active model physically lives in, set only when it disagrees
     /// with what the file actually is (a diffusion model in `checkpoints/`, or a
     /// full checkpoint in `diffusion_models/`). `None` for correctly-placed files.
@@ -548,6 +542,11 @@ pub struct GenerationParams {
     /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
     #[serde(default)]
     pub edit_reference_images: Vec<String>,
+    /// Extra model files a registered architecture loads, keyed by its
+    /// `ModelSlot::key` (a second text encoder, a second expert, a stage B...).
+    /// See `crate::architectures`.
+    #[serde(default)]
+    pub architecture_files: std::collections::BTreeMap<String, String>,
     /// Anima ReStyler: how strongly the output follows the reference image.
     /// Scales the reference latent before the Cosmos temporal concat; 1.0 is
     /// full adherence, lower values let the prompt/style diverge more.

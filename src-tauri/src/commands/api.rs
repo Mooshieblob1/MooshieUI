@@ -93,6 +93,16 @@ pub async fn get_models(
     state.get_models_list(&category).await
 }
 
+/// The registered model architectures (`crate::architectures`) for the
+/// frontend: labels, detection-free metadata, sampling defaults, Model Hub
+/// entries, encoder / VAE / slot downloads and supported modes.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_model_architectures(
+) -> Result<Vec<&'static crate::architectures::ArchitectureSpec>, AppError> {
+    Ok(crate::architectures::list())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_samplers(state: State<'_, Arc<AppState>>) -> Result<SamplerInfo, AppError> {
@@ -4538,6 +4548,10 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.is_empty() {
         return "unknown";
     }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&bm) {
+        return family;
+    }
 
     if bm.contains("nanosaur") {
         return "nanosaur";
@@ -4670,6 +4684,10 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     let name = filename.trim().to_lowercase();
     if name.is_empty() {
         return None;
+    }
+    // Registered architectures first: they are the specific ones.
+    if let Some(family) = crate::architectures::family_from_text(&name) {
+        return Some(family);
     }
 
     if name.contains("nanosaur") {
@@ -4994,10 +5012,12 @@ fn companion_text_encoder(model_filename: &str, encoders: &[String]) -> Option<S
 /// [`src/lib/utils/modelFamily.ts`](../../../src/lib/utils/modelFamily.ts) — keep
 /// the two in sync.
 pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
+    if let Some(split_only) = crate::architectures::requires_separate_clip(family) {
+        return split_only;
+    }
     matches!(
         family,
         "anima"
-            | "wan"
             | "qwen"
             | "qwen_edit"
             | "qwen_edit_plus"
@@ -5021,6 +5041,54 @@ pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
     )
 }
 
+/// Families with hand-written arms in this file and the templates, mirrored
+/// by `MODEL_FAMILIES` in `src/lib/utils/modelFamily.ts`. A registered
+/// architecture (`crate::architectures`) must not reuse one of these ids.
+#[cfg(test)]
+pub(crate) fn is_legacy_family(family: &str) -> bool {
+    LEGACY_FAMILIES.contains(&family)
+}
+
+#[cfg(test)]
+pub(crate) const LEGACY_FAMILIES: [&str; 36] = [
+    "anima",
+    "sdxl",
+    "illustrious",
+    "pony",
+    "sd15",
+    "sd3",
+    "flux",
+    "flux1d",
+    "flux1s",
+    "flux1krea",
+    "flux2d",
+    "flux2klein9b",
+    "flux2klein9bbase",
+    "flux2klein4b",
+    "flux2klein4bbase",
+    "flux3klein",
+    "flux3kleinbase",
+    "mossimage",
+    "mossimagebase",
+    "chroma",
+    "zib",
+    "zit",
+    "qwen",
+    "qwen_edit",
+    "qwen_edit_plus",
+    "flux1kontext",
+    "ideogram4",
+    "krea2",
+    "auraflow",
+    "pixart",
+    "hunyuandit",
+    "cascade",
+    "kolors",
+    "mugen",
+    "nanosaur",
+    "unknown",
+];
+
 /// The Flux 1 VAE, as Black Forest Labs and Comfy-Org name it (`ae.safetensors`)
 /// or under any `flux` name that is not the incompatible 32-channel Flux 2 VAE.
 fn find_flux1_vae(vaes: &[String]) -> Option<String> {
@@ -5038,9 +5106,8 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     if category != "diffusion_models" || vaes.is_empty() {
         return None;
     }
-
-    if family == "wan" {
-        return recommended_wan_vae("", vaes);
+    if let Some(recommended) = crate::architectures::recommended_vae(family, vaes) {
+        return recommended;
     }
 
     if matches!(
@@ -5093,20 +5160,6 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
 
-/// VAE for a Wan diffusion model. Strict, so a missing VAE is downloaded
-/// rather than an unrelated one decoding noise: TI2V 5B needs the 48-channel
-/// Wan 2.2 VAE; every other Wan checkpoint the 16-channel Wan 2.1 VAE, or the
-/// Qwen Image VAE fine-tuned from it.
-fn recommended_wan_vae(model_filename: &str, vaes: &[String]) -> Option<String> {
-    use crate::templates::wan::{WanVariant, WAN21_VAE_MARKERS, WAN22_VAE_MARKERS};
-    if WanVariant::from_filename(model_filename) == WanVariant::Ti2v5b {
-        return find_first_vae_matching(vaes, &WAN22_VAE_MARKERS);
-    }
-    find_first_vae_matching(vaes, &WAN21_VAE_MARKERS)
-        .or_else(|| find_vae_by_basename(vaes, QWEN_IMAGE_VAE_FILE))
-        .or_else(|| find_first_vae_matching(vaes, &["qwen_image_vae", "qwen-image-vae"]))
-}
-
 /// Text-encoder filename markers accepted for Qwen3-4B (Z-Image, Flux 2 Klein 4B).
 /// Comfy-Org names it `qwen_3_4b*.safetensors`. Mirrored by
 /// `ZIMAGE_ENCODER_MARKERS` in ModelSelector.svelte.
@@ -5151,6 +5204,9 @@ fn recommended_clip_from_available(
     if category != "diffusion_models" || encoders.is_empty() {
         return None;
     }
+    if let Some(recommended) = crate::architectures::recommended_clip(family, encoders) {
+        return Some(recommended);
+    }
 
     if family == "anima" {
         // Strict: Anima's llm_adapter is trained against Qwen3-0.6B, so any other
@@ -5159,16 +5215,6 @@ fn recommended_clip_from_available(
         // Matches the curated Anima recommended-model entries (CLIPLoader type "wan").
         let preferred =
             find_first_text_encoder_matching(encoders, &["qwen_3_06b_base", "qwen_3_06b"]);
-        return Some((preferred, "wan"));
-    }
-
-    if family == "wan" {
-        // Strict: Wan 2.x conditions on umT5-XXL (4096-dim); a Qwen or CLIP
-        // encoder fails with a shape mismatch inside the first block.
-        let preferred = find_first_text_encoder_matching(
-            encoders,
-            &crate::templates::wan::TEXT_ENCODER_MARKERS,
-        );
         return Some((preferred, "wan"));
     }
 
@@ -5260,74 +5306,6 @@ fn recommended_clip_from_available(
     }
 
     Some((Some(encoders.first()?.clone()), "wan"))
-}
-
-#[cfg(test)]
-mod wan_pairing_tests {
-    use super::*;
-
-    fn list(names: &[&str]) -> Vec<String> {
-        names.iter().map(|name| name.to_string()).collect()
-    }
-
-    #[test]
-    fn wan_gets_umt5_never_the_qwen_image_encoder() {
-        let encoders = list(&[
-            "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-        ]);
-        assert_eq!(
-            recommended_clip_from_available("diffusion_models", "wan", &encoders),
-            Some((
-                Some("umt5_xxl_fp8_e4m3fn_scaled.safetensors".to_string()),
-                "wan"
-            ))
-        );
-        // Without umT5, no stand-in: the frontend downloads it.
-        assert_eq!(
-            recommended_clip_from_available("diffusion_models", "wan", &encoders[..1]),
-            Some((None, "wan"))
-        );
-        // Qwen Image keeps its own encoder.
-        assert_eq!(
-            recommended_clip_from_available("diffusion_models", "qwen", &encoders),
-            Some((
-                Some("qwen_2.5_vl_7b_fp8_scaled.safetensors".to_string()),
-                "qwen_image"
-            ))
-        );
-    }
-
-    #[test]
-    fn wan_vae_follows_the_checkpoint() {
-        let vaes = list(&[
-            "sdxl_vae.safetensors",
-            "qwen_image_vae.safetensors",
-            "wan2.2_vae.safetensors",
-            "wan_2.1_vae.safetensors",
-        ]);
-        assert_eq!(
-            recommended_wan_vae("wan2.2_ti2v_5B_fp16.safetensors", &vaes).as_deref(),
-            Some("wan2.2_vae.safetensors")
-        );
-        assert_eq!(
-            recommended_wan_vae("wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", &vaes)
-                .as_deref(),
-            Some("wan_2.1_vae.safetensors")
-        );
-        assert_eq!(
-            recommended_wan_vae("wan2.1_t2v_14B_fp16.safetensors", &vaes[..3]).as_deref(),
-            Some("qwen_image_vae.safetensors")
-        );
-        assert_eq!(
-            recommended_wan_vae("wan2.2_ti2v_5B_fp16.safetensors", &vaes[..2]),
-            None
-        );
-        assert_eq!(
-            recommended_wan_vae("wan2.1_t2v_14B_fp16.safetensors", &vaes[..1]),
-            None
-        );
-    }
 }
 
 #[cfg(test)]
@@ -6548,13 +6526,8 @@ pub(crate) async fn read_modelspec_internal(
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
         if let Ok(vaes) = state.get_models_list("vae").await {
-            let recommended = if family == "wan" {
-                // Which Wan VAE depends on the checkpoint, not just the family.
-                recommended_wan_vae(&filename, &vaes)
-            } else {
-                recommended_vae_from_available(category, &family, &vaes)
-            };
-            if let Some(recommended_vae) = recommended {
+            if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes)
+            {
                 result.insert("recommended_vae".to_string(), recommended_vae);
             }
         }
@@ -7363,9 +7336,11 @@ fn gguf_is_text_model(general_arch: Option<&str>, names: &[&str]) -> bool {
 /// stock SDXL, so those resolve to the generic family and are only ever used to
 /// fill in a family that other detection left unknown.
 fn family_from_architecture(architecture: &str) -> Option<&'static str> {
+    if let Some(family) = crate::architectures::family_from_tensor_architecture(architecture) {
+        return Some(family);
+    }
     match architecture {
         "anima" => Some("anima"),
-        "wan2.1" => Some("wan"),
         "flux" => Some("flux"),
         "flux3_flowmap" => Some("flux3klein"),
         "flux3" => Some("flux3kleinbase"),
@@ -7393,6 +7368,9 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
 /// variants). This keeps the veto conservative: it only fires when the file's
 /// weights prove a *different, known* class than the filename claimed.
 fn architecture_class(family: &str) -> Option<&'static str> {
+    if let Some(class) = crate::architectures::architecture_class(family) {
+        return Some(class);
+    }
     match family {
         // Classic SDXL-shaped UNets. Mugen is SDXL-shaped too (it is driven with
         // SDXL-style sampling in templates/mod.rs), so a mugen-by-filename tag is
@@ -7407,7 +7385,6 @@ fn architecture_class(family: &str) -> Option<&'static str> {
         // SFT and Base share every tensor key: one class for both.
         "mossimage" | "mossimagebase" => Some("moss_image"),
         "anima" => Some("anima"),
-        "wan" => Some("wan"),
         "qwen" => Some("qwen_image"),
         "sd3" => Some("sd3"),
         "auraflow" => Some("auraflow"),

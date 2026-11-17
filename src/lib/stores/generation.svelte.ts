@@ -17,15 +17,15 @@ import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
 import { stripPromptComments } from "../utils/promptComments.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
-  MODEL_FAMILIES,
-  TAG_PROMPT_FAMILIES,
   TURBO_MODEL_VARIANTS,
+  familyUsesTagPrompts,
   signalsIndicateVPred,
   familyRequiresSeparateClip,
   familyIsSdxlLike,
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "../utils/api.js";
+import { findFamily, registeredMode, registeredSampling } from "../utils/architectures.js";
 import { locale } from "./locale.svelte.js";
 import {
   BETA57_SCHEDULER,
@@ -91,7 +91,7 @@ import {
 } from "../utils/novelaiEnhance.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import { shouldKeepSplitVae } from "../utils/splitVae.js";
-import { findWanLowNoisePartner, WAN_LOW_NOISE_SLOT, wanSamplingPreset, wanVariant } from "../utils/wanModels.js";
+import { findWanLowNoisePartner, WAN_LOW_NOISE_SLOT, wanVariant } from "../utils/wanModels.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
@@ -350,10 +350,6 @@ interface ModelPreset {
   fluxGuidance?: number;
   /** Sampler to use when `samplerName` is absent from the backend's enumerated list. Defaults to "euler". */
   samplerFallback?: string;
-}
-
-function isModelFamily(value: unknown): value is ModelFamily {
-  return typeof value === "string" && MODEL_FAMILIES.includes(value as ModelFamily);
 }
 
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
@@ -839,6 +835,9 @@ class GenerationStore {
   private componentKindCache = new Map<string, ModelKind | null>();
   clipModel = $state<string | null>(null);
   clipType = $state<string | null>(null);
+  /** Extra files a registered architecture loads, keyed by its model slot
+   *  (`architecture_files`; picked and downloaded by ModelSelector). */
+  architectureFiles = $state<Record<string, string>>({});
   stylePreset = $state<StylePresetId>("none");
   stylePresetsEnabled = $state(false);
   controlnetEnabled = $state(false);
@@ -1371,19 +1370,19 @@ class GenerationStore {
    * high-noise model. Null for every other model, or when none is installed.
    */
   get wanLowNoisePartner(): string | null {
-    if (!this.isWan || !this.useSplitModel) return null;
-    return findWanLowNoisePartner(this.diffusionModel, models.diffusionModels);
+    if (!this.isWan || !this.useSplitModel || wanVariant(this.diffusionModel) !== "a14bHigh") return null;
+    // The same-name partner first; else the model panel's slot pick, when it
+    // is a text-to-video low-noise file that is still installed.
+    const slotPick = this.architectureFiles[WAN_LOW_NOISE_SLOT];
+    return (
+      findWanLowNoisePartner(this.diffusionModel, models.diffusionModels) ??
+      (slotPick && wanVariant(slotPick) === "a14bLow" && models.diffusionModels.includes(slotPick) ? slotPick : null)
+    );
   }
 
-  /** Extra model files the architecture loads, by slot (`architecture_files`). */
-  get architectureFiles(): Record<string, string> {
-    const lowNoise = this.wanLowNoisePartner;
-    return lowNoise ? { [WAN_LOW_NOISE_SLOT]: lowNoise } : {};
-  }
-
-  /** True when the selected model is a Wan variant. */
+  /** True when the selected model is a Wan variant (Wan 2.1, 2.2 A14B, 2.2 TI2V 5B). */
   get isWan(): boolean {
-    return this.modelFamily === "wan";
+    return findFamily(this.modelFamily)?.arch.id === "wan";
   }
 
   /** True when the selected model is a Qwen variant. */
@@ -1452,6 +1451,8 @@ class GenerationStore {
 
   /** True when the selected model is an Image Edit family (or Anima, via the ReStyler). */
   get supportsImageEditMode(): boolean {
+    // A registered architecture (src-tauri/src/architectures) says so itself.
+    if (findFamily(this.modelFamily)) return registeredMode(this.modelFamily, "image_edit") !== null;
     return (
       this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext || this.isFlux3 || this.isAnima
     );
@@ -1463,6 +1464,8 @@ class GenerationStore {
    * Qwen Edit Plus, else 1.
    */
   get editReferenceSlotCount(): number {
+    const registered = registeredMode(this.modelFamily, "image_edit");
+    if (registered) return Math.max(1, Math.min(EDIT_REFERENCE_SLOTS, registered.max_references));
     if (this.isFlux3) return EDIT_REFERENCE_SLOTS;
     return this.isQwenEditPlus ? 3 : 1;
   }
@@ -1538,6 +1541,8 @@ class GenerationStore {
    */
   get disablesNegativePrompt(): boolean {
     if (this.mode === "video") return true;
+    const registered = findFamily(this.modelFamily);
+    if (registered) return !registered.arch.negative_prompt;
     return [
       "flux1d",
       "flux1s",
@@ -1573,7 +1578,7 @@ class GenerationStore {
   get promptStyle(): "tags" | "novelai" | "prose" {
     if (this._mode === "video") return "prose";
     if (this.isNovelAi) return "novelai";
-    if (this.modelFamily === "unknown" || TAG_PROMPT_FAMILIES.has(this.modelFamily)) return "tags";
+    if (this.modelFamily === "unknown" || familyUsesTagPrompts(this.modelFamily)) return "tags";
     return "prose";
   }
 
@@ -1991,7 +1996,7 @@ class GenerationStore {
     // Keep a pick that is installed and decodes this family's latents, such as a
     // sharpened Qwen Image VAE on Anima or Krea 2. Only an empty, missing or
     // mismatched VAE (an SDXL VAE left over on Anima, say) gets replaced.
-    if (shouldKeepSplitVae(current, this.modelFamily, vaes, this.diffusionModel)) return;
+    if (shouldKeepSplitVae(current, this.modelFamily, vaes)) return;
     this.vae = recommended;
     if (save) this.saveSettings();
   }
@@ -2672,6 +2677,21 @@ class GenerationStore {
 
     this.modelPresetAppliedKey = presetKey;
 
+    // A registered architecture declares its own defaults (per mode when the
+    // mode wants other settings, e.g. an edit LoRA).
+    const registered = registeredSampling(this.modelFamily, this._mode);
+    if (registered) {
+      this.applyResolvedPreset({
+        steps: registered.steps,
+        cfg: registered.cfg,
+        samplerName: registered.sampler,
+        scheduler: registered.scheduler,
+        width: registered.width,
+        height: registered.height,
+      });
+      return;
+    }
+
     let preset: ModelPreset;
     switch (this.modelFamily) {
       // Nanosaur uses a custom DiT/VAE combo and prefers a taller default canvas.
@@ -2953,15 +2973,6 @@ class GenerationStore {
               width: 1024,
               height: 1024,
             };
-        break;
-
-      // Wan 2.x per checkpoint line, from Comfy-Org's templates.
-      case "wan":
-        preset = {
-          ...wanSamplingPreset(wanVariant(this.diffusionModel ?? this.checkpoint)),
-          width: 1024,
-          height: 1024,
-        };
         break;
 
       case "qwen":
@@ -3352,7 +3363,9 @@ class GenerationStore {
     if (saved.modelFamilyOverrides && typeof saved.modelFamilyOverrides === "object") {
       this.modelFamilyOverrides = Object.fromEntries(
         Object.entries(saved.modelFamilyOverrides as Record<string, unknown>).filter(
-          ([key, value]) => !!key && isModelFamily(value) && value !== "unknown",
+          // Any family id: settings load before the architecture registry,
+          // so an override to a registered family must not be dropped here.
+          ([key, value]) => !!key && typeof value === "string" && !!value && value !== "unknown",
         ),
       ) as Record<string, ModelFamily>;
     }
@@ -4498,7 +4511,6 @@ class GenerationStore {
       diffusion_model: this.diffusionModel,
       clip_model: this.clipModel,
       clip_type: this.clipType,
-      architecture_files: this.architectureFiles,
       model_source_category: this.modelSourceCategory,
       controlnet: this.controlnetEnabled
         ? {
@@ -4563,6 +4575,16 @@ class GenerationStore {
       edit_reference_images: this.editReferenceImages
         .slice(0, this.editReferenceSlotCount)
         .filter((v): v is string => !!v),
+      // Only the current family's slots, so another family's files never ride along.
+      architecture_files: {
+        ...Object.fromEntries(
+          (findFamily(this.modelFamily)?.arch.model_slots ?? [])
+            .map((slot) => [slot.key, this.architectureFiles[slot.key] ?? ""] as const)
+            .filter(([, file]) => !!file),
+        ),
+        // Wan 2.2 A14B pairs the high-noise model with its own low-noise file.
+        ...(this.wanLowNoisePartner ? { [WAN_LOW_NOISE_SLOT]: this.wanLowNoisePartner } : {}),
+      },
       edit_reference_strength: this.editReferenceStrength,
       edit_split_screen: this.editSplitScreen,
       video_variant: this.videoVariant,

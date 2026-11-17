@@ -11,7 +11,16 @@
   import EditableValue from "../ui/EditableValue.svelte";
   import LoraTriggerInput from "./LoraTriggerInput.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
+  import { allModelFamilies, familyIsSdxlLike } from "../../utils/modelFamily.js";
+  import { architectures } from "../../stores/architectures.svelte.js";
+  import {
+    encoderMatches,
+    findFamily,
+    registeredRecommendedModels,
+    slotMatches,
+    vaeMatches,
+    type ArchitectureModelFile,
+  } from "../../utils/architectures.js";
   import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { resolveAvailableModel } from "../../utils/modelAvailability.js";
@@ -26,7 +35,7 @@
   import { installKrea2Uncensored, setKrea2Uncensored } from "../../utils/krea2UncensoredSetup.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
   import { isFlux1VaeName } from "../../utils/splitVae.js";
-  import { isWan21Vae, isWan22Vae, isWanEncoder, wanVariant } from "../../utils/wanModels.js";
+  import { wanVariant } from "../../utils/wanModels.js";
 
   interface ModelFile {
     filename: string;
@@ -128,7 +137,7 @@
     category: "vae",
   };
 
-  const recommendedModels: RecommendedModel[] = [
+  const builtinRecommendedModels: RecommendedModel[] = [
     {
       label: "Juice",
       size: "~6.9 GB",
@@ -768,7 +777,118 @@
     encoderFile: ModelFile;
     isVae: (filename: string) => boolean;
     vaeFile: ModelFile;
+    /** Further files a registered architecture needs: its model slots
+     *  (sent as `architecture_files[key]`) and the current mode's fixed files. */
+    extraFiles?: RequiredExtraFile[];
   }
+
+  interface RequiredExtraFile {
+    /** Model slot key; absent for a mode file loaded by its fixed name. */
+    key?: string;
+    label: string;
+    category: string;
+    matches: (filename: string) => boolean;
+    /** Absent when the file cannot be downloaded (the generate-time check explains). */
+    file?: ModelFile;
+  }
+
+  function architectureModelFile(file: ArchitectureModelFile): ModelFile {
+    return { filename: file.filename, url: file.url, category: file.category };
+  }
+
+  /** Installed files in a ComfyUI model folder. */
+  function installedIn(category: string): string[] {
+    switch (category) {
+      case "text_encoders":
+        return models.textEncoders;
+      case "vae":
+        return models.vaes;
+      case "diffusion_models":
+        return models.diffusionModels;
+      case "loras":
+        return models.loras;
+      case "checkpoints":
+        return models.checkpoints;
+      default:
+        return models.serverModels[category] ?? [];
+    }
+  }
+
+  /**
+   * The requirement of a registered architecture (src-tauri/src/architectures):
+   * its encoder and VAE when it ships downloads for them, plus its model slots
+   * and the current mode's fixed files. Null when it declares none of those.
+   */
+  function registeredRequirement(family: ModelFamily, mode: string): RequiredSplitEncoder | null {
+    const found = findFamily(family);
+    if (!found) return null;
+    const { arch } = found;
+    const encoder = found.family.text_encoder ?? arch.text_encoder;
+    const vae = found.family.vae ?? arch.vae;
+    const extraFiles: RequiredExtraFile[] = [
+      ...arch.model_slots.map((slot) => ({
+        key: slot.key,
+        label: slot.label,
+        category: slot.category,
+        matches: (filename: string) => slotMatches(slot, filename),
+        file: slot.download ? architectureModelFile(slot.download) : undefined,
+      })),
+      ...(arch.modes.find((m) => m.mode === mode)?.required_files ?? []).map((file) => ({
+        label: file.filename,
+        category: file.category,
+        matches: (filename: string) =>
+          (filename.split(/[\\/]/).pop() ?? filename).toLowerCase() === file.filename.toLowerCase(),
+        file: architectureModelFile(file),
+      })),
+    ];
+    if (!encoder?.download && extraFiles.length === 0) return null;
+    // Without an encoder download, keep whatever encoder is picked: the
+    // requirement then only covers the extra files.
+    const keepEncoder = !encoder?.download;
+    return {
+      label: found.family.label,
+      clipType: encoder?.clip_type ?? generation.clipType ?? "",
+      isEncoder: (filename) => (keepEncoder ? true : !!encoder && encoderMatches(encoder, filename)),
+      encoderFile: encoder?.download
+        ? architectureModelFile(encoder.download)
+        : { filename: "", url: "", category: "text_encoders" },
+      isVae: (filename) => (vae?.download ? vaeMatches(vae, filename) : true),
+      vaeFile: vae?.download
+        ? architectureModelFile(vae.download)
+        : { filename: "", url: "", category: "vae" },
+      extraFiles,
+    };
+  }
+
+  /** Curated entries plus the Model Hub entries of registered architectures. */
+  const recommendedModels: RecommendedModel[] = $derived.by(() => {
+    void architectures.version;
+    const registered = registeredRecommendedModels().flatMap(({ arch, family, model }) => {
+      const encoder = family.text_encoder ?? arch.text_encoder;
+      const vae = family.vae ?? arch.vae;
+      if (!encoder?.download || !vae?.download) return [];
+      const entry: RecommendedModel = {
+        label: model.label,
+        size: model.size,
+        minComputeCapability: model.min_compute_capability ?? undefined,
+        splitModel: {
+          diffusionModel: architectureModelFile(model.diffusion_model),
+          clipModel: { ...architectureModelFile(encoder.download), clipType: encoder.clip_type },
+          vaeModel: architectureModelFile(vae.download),
+        },
+        autoSettings: family.sampling
+          ? {
+              steps: family.sampling.steps,
+              cfg: family.sampling.cfg,
+              samplerName: family.sampling.sampler,
+              scheduler: family.sampling.scheduler,
+            }
+          : undefined,
+      };
+      return [entry];
+    });
+    return [...builtinRecommendedModels, ...registered];
+  });
 
   const ZIMAGE_REQUIREMENT: RequiredSplitEncoder = {
     label: "Z-Image",
@@ -796,48 +916,6 @@
     isVae: (filename) => /flux2[-_]vae/i.test(filename),
     vaeFile: MOSS_IMAGE_VAE_FILE,
   };
-
-  // Wan 2.x: umT5-XXL for every checkpoint; the VAE depends on which one.
-  // Comfy-Org's repackaged files, as their Wan templates load them.
-  const WAN_REPO = "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files";
-  const WAN_ENCODER_FILE: ModelFile = {
-    filename: "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-    url: `${WAN_REPO}/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`,
-    category: "text_encoders",
-  };
-  const WAN21_REQUIREMENT: RequiredSplitEncoder = {
-    label: "Wan",
-    clipType: "wan",
-    isEncoder: isWanEncoder,
-    encoderFile: WAN_ENCODER_FILE,
-    isVae: isWan21Vae,
-    vaeFile: {
-      filename: "wan_2.1_vae.safetensors",
-      url: `${WAN_REPO}/vae/wan_2.1_vae.safetensors`,
-      category: "vae",
-    },
-  };
-  const WAN22_5B_REQUIREMENT: RequiredSplitEncoder = {
-    label: "Wan 2.2 5B",
-    clipType: "wan",
-    isEncoder: isWanEncoder,
-    encoderFile: WAN_ENCODER_FILE,
-    isVae: isWan22Vae,
-    vaeFile: {
-      filename: "wan2.2_vae.safetensors",
-      url: `${WAN_REPO}/vae/wan2.2_vae.safetensors`,
-      category: "vae",
-    },
-  };
-
-  function requiredSplitEncoderFor(family: ModelFamily): RequiredSplitEncoder | undefined {
-    if (family === "wan") {
-      const variant = wanVariant(generation.diffusionModel);
-      if (variant === "notTextToImage") return undefined;
-      return variant === "ti2v5b" ? WAN22_5B_REQUIREMENT : WAN21_REQUIREMENT;
-    }
-    return REQUIRED_SPLIT_ENCODERS[family];
-  }
 
   const REQUIRED_SPLIT_ENCODERS: Partial<Record<ModelFamily, RequiredSplitEncoder>> = {
     krea2: {
@@ -873,13 +951,15 @@
     if (models.loading || !Object.keys(models.serverModels).length) return;
 
     const current = generation.clipModel;
-    const existing =
-      req === REQUIRED_SPLIT_ENCODERS.krea2
+    const keepsEncoder = !req.encoderFile.filename;
+    const existing = keepsEncoder
+      ? current
+      : req === REQUIRED_SPLIT_ENCODERS.krea2
         ? pickKrea2Encoder(models.textEncoders, current, generation.krea2UncensoredEncoder)
         : current && req.isEncoder(current) && models.textEncoders.includes(current)
           ? current
           : models.textEncoders.find((f) => req.isEncoder(f));
-    if (existing) {
+    if (existing && !keepsEncoder) {
       if (generation.clipModel !== existing || generation.clipType !== req.clipType) {
         generation.clipModel = existing;
         generation.clipType = req.clipType;
@@ -888,11 +968,29 @@
     }
 
     const files: { file: ModelFile; label: string }[] = [];
-    if (!existing) {
+    if (!existing && req.encoderFile.filename) {
       files.push({ file: req.encoderFile, label: locale.t('generation.model.downloading_text_encoder') });
     }
-    if (!models.vaes.some(req.isVae)) {
+    if (req.vaeFile.filename && !models.vaes.some(req.isVae)) {
       files.push({ file: req.vaeFile, label: locale.t('generation.model.downloading_vae') });
+    }
+    // Registered architecture slots: keep a matching pick, else the first
+    // matching installed file, else download it.
+    const slotPicks: Record<string, string> = {};
+    for (const extra of req.extraFiles ?? []) {
+      const installed = installedIn(extra.category);
+      const kept = extra.key ? generation.architectureFiles[extra.key] : undefined;
+      const pick =
+        kept && installed.includes(kept) && extra.matches(kept) ? kept : installed.find(extra.matches);
+      if (pick) {
+        if (extra.key) slotPicks[extra.key] = pick;
+      } else if (extra.file?.url) {
+        files.push({ file: extra.file, label: locale.t('generation.model.downloading_file', { name: extra.label }) });
+      }
+    }
+    const slotKeys = Object.keys(slotPicks);
+    if (slotKeys.some((key) => generation.architectureFiles[key] !== slotPicks[key])) {
+      generation.architectureFiles = { ...generation.architectureFiles, ...slotPicks };
     }
     if (files.length === 0) return;
 
@@ -920,12 +1018,21 @@
         }),
       );
       await models.refresh();
-      if (!existing) {
+      if (!existing && req.encoderFile.filename) {
         generation.clipModel = req.encoderFile.filename;
         generation.clipType = req.clipType;
       }
       if (files.some(({ file }) => file === req.vaeFile) && !req.isVae(generation.vae)) {
         generation.vae = req.vaeFile.filename;
+      }
+      const downloadedSlots: Record<string, string> = {};
+      for (const extra of req.extraFiles ?? []) {
+        if (extra.key && extra.file && files.some(({ file }) => file === extra.file)) {
+          downloadedSlots[extra.key] = extra.file.filename;
+        }
+      }
+      if (Object.keys(downloadedSlots).length) {
+        generation.architectureFiles = { ...generation.architectureFiles, ...downloadedSlots };
       }
       generation.saveSettings();
       downloading = null;
@@ -950,8 +1057,13 @@
   // this panel is collapsed). The encoder download stays here because it drives
   // this component's progress rows, so it only runs while the panel is open.
   $effect(() => {
-    const req = requiredSplitEncoderFor(generation.modelFamily);
-    if (req && generation.useSplitModel) {
+    void architectures.version;
+    const req =
+      REQUIRED_SPLIT_ENCODERS[generation.modelFamily] ??
+      registeredRequirement(generation.modelFamily, generation.mode);
+    // A Wan image-to-video file cannot make images: no encoder download for it.
+    const unusableWan = generation.isWan && wanVariant(generation.diffusionModel) === "notTextToImage";
+    if (req && generation.useSplitModel && !unusableWan) {
       void ensureRequiredSplitEncoder(req);
     }
   });
@@ -1308,6 +1420,8 @@
   }
 
   onMount(async () => {
+    // Retry if App.svelte's load ran before a browser-mode login.
+    void architectures.load();
     // Decides whether the NovelAI models are offered at all.
     void novelai.refresh();
     document.addEventListener("pointerdown", handleDocumentPointerDown);
@@ -1920,7 +2034,7 @@
               >
                 {locale.t("generation.model.architecture_auto")}
               </button>
-              {#each MODEL_FAMILIES.filter((family) => family !== "unknown") as family}
+              {#each allModelFamilies().filter((family) => family !== "unknown") as family}
                 <button
                   type="button"
                   class="block w-full rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"

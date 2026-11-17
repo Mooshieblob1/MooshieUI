@@ -1136,6 +1136,7 @@ const de: Record<string, string> = {
   "generation.model.wan_low_noise_missing": "Das ist die High-Noise-Hälfte von Wan 2.2 A14B. Lege das passende Low-Noise-Modell in diffusion_models, damit die Bilder fertig werden, oder wähle das Low-Noise-Modell allein.",
   "generation.model.wan_not_text_to_image": "Dieses Wan-Modell macht aus Bildern oder Videos ein Video und kann kein Bild aus einem Prompt erzeugen. Wähle ein Wan-Text-zu-Video-Modell (Wan 2.1 T2V, Wan 2.2 TI2V 5B oder Wan 2.2 T2V A14B).",
   "generation.model.downloading_vae": "VAE wird heruntergeladen...",
+  "generation.model.downloading_file": "{name} wird heruntergeladen...",
   "generation.model.downloading_checkpoint": "Checkpoint wird heruntergeladen...",
   "generation.model.auto_download": "Automatischer Download",
   "generation.model.cloud_badge": "Cloud",
