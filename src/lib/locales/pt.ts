@@ -1151,7 +1151,7 @@ const pt: Record<string, string> = {
   // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
   "generation.image_edit.title": "Edição de Imagem",
   "generation.image_edit.hint": "Descreva a alteração no prompt (por exemplo \"deixe o céu roxo\"). O modelo edita sua imagem de referência em vez de gerar do zero.",
-  "generation.image_edit.wrong_model": "O modelo selecionado não suporta edição de imagens. Escolha um modelo Qwen Image Edit, Qwen Image Edit Plus, FLUX 3 Klein, Krea 2 ou Flux.1 Kontext.",
+  "generation.image_edit.wrong_model": "O modelo selecionado não suporta edição de imagens. Escolha um modelo Qwen Image Edit, Qwen Image Edit Plus, Flux.2 Klein, FLUX 3 Klein, Krea 2 ou Flux.1 Kontext.",
   "generation.image_edit.reference_image": "Imagem de Referência",
   "generation.image_edit.reference_image_n": "Imagem de Referência {n}",
   "generation.image_edit.reference_set": "Imagem de referência definida",
