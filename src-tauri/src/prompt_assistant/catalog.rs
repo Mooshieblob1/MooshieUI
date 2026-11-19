@@ -264,8 +264,8 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
             best_for: "8-12 GB GPUs that want better results than the 4B.".into(),
             opt_in: true,
         },
-        // The most capable model llama.cpp's pinned release runs: a 30B
-        // mixture of experts with 3B active, non-thinking "2507" instruct.
+        // A 30B mixture of experts with 3B active, non-thinking "2507"
+        // instruct: text only, a little lighter than Qwen3.6 35B-A3B.
         // Fully on a 24 GB card, or with its experts in system RAM on a
         // smaller one (`cpu_moe_vram_mb`), where 3B active keeps it quick.
         LlmCatalogEntry {
@@ -291,11 +291,85 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                     "Qwen_Qwen3-30B-A3B-Instruct-2507-Q5_K_M.gguf",
                 ),
             ],
-            pros: "The best local model here: far more accurate Extract, Update and Enhance, close to a hosted model."
+            pros: "Far more accurate Extract, Update and Enhance than the small models, and quick with 3B active."
                 .into(),
             cons: "18-21 GB download. Below 24 GB VRAM it keeps its experts in RAM, so it needs 32 GB of system RAM."
                 .into(),
             best_for: "24 GB GPUs, or 6 GB+ GPUs with 32 GB RAM.".into(),
+            opt_in: true,
+        },
+        // Qwen3.6 35B-A3B: Qwen's newer mixture of experts (3B active),
+        // hybrid linear attention, and it reads images. Needs the `qwen35moe`
+        // architecture (llama.cpp b8000+). Thinks by default; the server
+        // turns that off per request. Runs fully on a 24 GB card at Q4, or
+        // with its experts in system RAM on a smaller one.
+        LlmCatalogEntry {
+            id: "qwen36-35b-a3b".into(),
+            name: "Qwen3.6 35B-A3B".into(),
+            purpose: "natural_language".into(),
+            families: vec!["*".into()],
+            variants: vec![
+                LlmVariant {
+                    cpu_moe_vram_mb: Some(3500),
+                    ..gguf_vision(
+                        "Q4_K_M",
+                        22110,
+                        23500,
+                        "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+                        "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+                        "mmproj-Qwen_Qwen3.6-35B-A3B-f16.gguf",
+                    )
+                },
+                LlmVariant {
+                    cpu_moe_vram_mb: Some(3800),
+                    ..gguf_vision(
+                        "Q5_K_M",
+                        25570,
+                        27000,
+                        "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+                        "Qwen_Qwen3.6-35B-A3B-Q5_K_M.gguf",
+                        "mmproj-Qwen_Qwen3.6-35B-A3B-f16.gguf",
+                    )
+                },
+            ],
+            pros: "Newer and smarter than Qwen3 30B-A3B, still quick with 3B active, and sees images."
+                .into(),
+            cons: "22-26 GB download. Below 24 GB VRAM it keeps its experts in RAM, so it needs 32 GB+ of system RAM."
+                .into(),
+            best_for: "24 GB GPUs, or 6 GB+ GPUs with 32 GB+ RAM.".into(),
+            opt_in: true,
+        },
+        // Qwen3.8 27B: the strongest Qwen that fits one consumer GPU. Dense,
+        // so it needs the whole model in VRAM (no experts to move to RAM).
+        // `qwen35` architecture, thinks by default (turned off per request).
+        LlmCatalogEntry {
+            id: "qwen38-27b".into(),
+            name: "Qwen3.8 27B".into(),
+            purpose: "natural_language".into(),
+            families: vec!["*".into()],
+            variants: vec![
+                gguf_vision(
+                    "Q4_K_M",
+                    17520,
+                    20000,
+                    "bartowski/Qwen3.8-27B-GGUF",
+                    "Qwen3.8-27B-Q4_K_M.gguf",
+                    "mmproj-Qwen3.8-27B-f16.gguf",
+                ),
+                gguf_vision(
+                    "Q5_K_M",
+                    20840,
+                    23300,
+                    "bartowski/Qwen3.8-27B-GGUF",
+                    "Qwen3.8-27B-Q5_K_M.gguf",
+                    "mmproj-Qwen3.8-27B-f16.gguf",
+                ),
+            ],
+            pros: "The most accurate local model here: best at Extract, Update and Enhance, and sees images."
+                .into(),
+            cons: "Dense 27B: needs ~20 GB of VRAM and is slower per word than the A3B models; 18-21 GB download."
+                .into(),
+            best_for: "24 GB GPUs that want the best local results.".into(),
             opt_in: true,
         },
         // Captioner only: trained to caption images for diffusion training,
@@ -342,6 +416,10 @@ pub fn context_overhead_mb(model_id: &str, context_tokens: u32) -> u64 {
     let bytes_per_token: u64 = match model_id {
         "qwen25-7b-instruct" => 2 * 28 * 4 * 128 * 2,
         "qwen3-30b-a3b-instruct" => 2 * 48 * 4 * 128 * 2,
+        // Hybrid models: only every fourth layer is full attention with a KV
+        // cache; the linear-attention layers keep a fixed-size state.
+        "qwen36-35b-a3b" => 2 * 10 * 2 * 256 * 2,
+        "qwen38-27b" => 2 * 16 * 4 * 256 * 2,
         "joycaption-beta-one" => 2 * 32 * 8 * 128 * 2, // Llama 3.1 8B
         _ => 2 * 36 * 8 * 128 * 2,                     // Qwen3-4B, and the fallback
     };
