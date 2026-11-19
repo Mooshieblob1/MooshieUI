@@ -9,6 +9,7 @@
  * model leaves it blank, which small local models often do.
  */
 import type { ExtractedCharacter } from "./characterExtract.js";
+import { promptTags } from "./galleryCharacters.js";
 
 export interface DuplicateCandidate {
   id: string;
@@ -36,6 +37,15 @@ function wordsContained(a: string[], b: string[]): boolean {
   return short.every((w) => long.includes(w));
 }
 
+/** Tags that count people rather than describe one. */
+const COUNT_TAG = /^(\d+\+?\s?(girl|boy|other)s?|multiple (girls|boys|others)|solo( focus)?|no humans)$/;
+
+/** How many describing tags two prompts share. */
+function sharedTags(a: string, b: string): number {
+  const other = new Set(promptTags(b));
+  return new Set(promptTags(a).filter((t) => !COUNT_TAG.test(t) && other.has(t))).size;
+}
+
 /** The saved character this extracted one duplicates, or null. */
 export function findDuplicate<T extends DuplicateCandidate>(
   item: ExtractedCharacter,
@@ -44,7 +54,15 @@ export function findDuplicate<T extends DuplicateCandidate>(
   const hint = item.sameAs.trim().toLowerCase();
   if (hint) {
     const byHint = saved.find((c) => c.name.trim().toLowerCase() === hint);
-    if (byHint) return byHint;
+    // Small models set same_as on characters who only look alike, so the
+    // hint needs backing: a shared name word, or two describing tags in
+    // common (a nickname, or an unnamed character drawn the same way).
+    if (
+      byHint &&
+      (wordsContained(nameWords(item.name), nameWords(byHint.name)) || sharedTags(item.prompt, byHint.prompt) >= 2)
+    ) {
+      return byHint;
+    }
   }
   const words = nameWords(item.name);
   const joined = words.join(" ");

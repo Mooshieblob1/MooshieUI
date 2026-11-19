@@ -82,6 +82,10 @@ jobs:
         run: |
           npx esbuild scripts/tests/relatedTags.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/relatedTags.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/relatedTags.test.mjs"
+      - name: Character extract grounding tests
+        run: |
+          npx esbuild scripts/tests/characterExtract.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/characterExtract.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/characterExtract.test.mjs"
 
       - name: Comic layout tests
         run: |

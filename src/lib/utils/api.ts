@@ -1940,6 +1940,18 @@ export async function setLlmXaiClient(
   return ipcInvoke("set_llm_xai_client", { clientId, scope });
 }
 
+
+/**
+ * Sampling for one `callExternalLlm` request. `temperature` replaces the
+ * usual 0.7 (for jobs that should copy rather than create); `json` holds the
+ * bundled local model to a JSON object reply. External providers only take
+ * the temperature.
+ */
+export interface LlmSampling {
+  temperature?: number;
+  json?: boolean;
+}
+
 /**
  * One system+user turn against whichever backend is configured — the external
  * provider when one is set up, otherwise the bundled local model. Used by the
@@ -1964,6 +1976,7 @@ export async function callExternalLlm(
   imageData?: string[] | null,
   history: ChatMessage[] = [],
   signal?: AbortSignal,
+  sampling?: LlmSampling,
 ): Promise<string> {
   return runPromptAssistant(
     "call_external_llm",
@@ -1974,6 +1987,8 @@ export async function callExternalLlm(
       imageFilename: imageFilename || undefined,
       imageData: imageData && imageData.length > 0 ? imageData : undefined,
       history,
+      temperature: sampling?.temperature,
+      json: sampling?.json,
     },
     signal,
   );

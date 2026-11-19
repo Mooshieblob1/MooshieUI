@@ -2,7 +2,7 @@
   import type { SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import type { ExtractedCharacter } from "../../utils/characterExtract.js";
 
-  export type DuplicateAction = "update" | "variant" | "disregard";
+  export type DuplicateAction = "update" | "variant" | "new" | "disregard";
 
   export interface DuplicateMatch {
     item: ExtractedCharacter;
@@ -13,6 +13,8 @@
     action: DuplicateAction;
     /** Card name for a variant. */
     variantName: string;
+    /** Card name when it is saved as a character of its own after all. */
+    newName: string;
   }
 
   /** A character that matched nothing saved, with the name the user gave it. */
@@ -30,7 +32,10 @@
    * character gets a name field prefilled with the prompt assistant's
    * suggestion and can be left out. Each one that looks already saved gets a
    * choice: merge the new details into the saved card, keep it as a variant
-   * card of its own, or disregard it.
+   * card, save it as a new character (the match was wrong), or disregard it.
+   * What was found is editable everywhere, so a wrong tag is fixed here
+   * rather than after saving. Only Cancel or the close button leave: a stray
+   * click outside does not throw away an extraction that took a while.
    */
   import { portal } from "../../utils/portal.js";
   import { untrack } from "svelte";
@@ -55,6 +60,7 @@
         ...m,
         action: m.item.variant ? "variant" : "update",
         variantName: `${m.saved.name} (${m.item.variant || locale.t("characters.dupes.variant_default")})`,
+        newName: m.item.name,
       })),
     ),
   );
@@ -66,12 +72,19 @@
   const choices: { action: DuplicateAction; key: string }[] = [
     { action: "update", key: "characters.dupes.update" },
     { action: "variant", key: "characters.dupes.variant" },
+    { action: "new", key: "characters.dupes.new" },
     { action: "disregard", key: "characters.dupes.disregard" },
   ];
 
   const canSave = $derived(
-    newRows.some((r) => r.keep && r.name.trim()) ||
-      rows.some((r) => r.action === "update" || (r.action === "variant" && r.variantName.trim())),
+    newRows.some((r) => r.keep && r.name.trim() && r.item.prompt.trim()) ||
+      rows.some(
+        (r) =>
+          r.item.prompt.trim() &&
+          (r.action === "update" ||
+            (r.action === "variant" && r.variantName.trim()) ||
+            (r.action === "new" && r.newName.trim())),
+      ),
   );
 
   /** Only new characters: the review is about naming them. */
@@ -89,6 +102,27 @@
   }
 </script>
 
+{#snippet editor(item: ExtractedCharacter, disabled: boolean)}
+  <div class="mt-2 space-y-1">
+    <textarea
+      bind:value={item.prompt}
+      {disabled}
+      rows="3"
+      aria-label={locale.t("characters.review.prompt")}
+      placeholder={locale.t("characters.review.prompt")}
+      class="block w-full resize-y rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 font-mono text-[11px] text-neutral-300 focus:outline-none focus:border-indigo-500 disabled:cursor-not-allowed"
+    ></textarea>
+    <textarea
+      bind:value={item.negative}
+      {disabled}
+      rows="1"
+      aria-label={locale.t("characters.review.negative")}
+      placeholder={locale.t("characters.review.negative")}
+      class="block w-full resize-y rounded border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-500 focus:outline-none focus:border-indigo-500 focus:text-neutral-300 disabled:cursor-not-allowed"
+    ></textarea>
+  </div>
+{/snippet}
+
 <div
   use:portal
   class="fixed inset-0 z-210 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
@@ -96,13 +130,6 @@
   aria-modal="true"
   aria-label={locale.t(namingOnly ? "characters.naming.title" : "characters.dupes.title")}
 >
-  <button
-    type="button"
-    class="absolute inset-0 h-full w-full cursor-default"
-    aria-label={locale.t("common.cancel")}
-    onclick={onclose}
-  ></button>
-
   <div class="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
     <div class="mb-3 flex items-start justify-between gap-3">
       <div>
@@ -111,6 +138,7 @@
         </h3>
         <p class="mt-1 text-[11px] text-neutral-500">
           {locale.t(namingOnly ? "characters.naming.desc" : "characters.dupes.desc")}
+          {locale.t("characters.review.edit_hint")}
         </p>
       </div>
       <button
@@ -148,14 +176,7 @@
                 onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }}
               />
             </div>
-            <div class="mt-2 max-h-24 overflow-y-auto rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 font-mono text-[11px] text-neutral-300">
-              <p class="whitespace-pre-wrap break-words">{row.item.prompt}</p>
-              {#if row.item.negative}
-                <p class="mt-1 whitespace-pre-wrap break-words text-neutral-500">
-                  {locale.t("characters.negative_prefix")} {row.item.negative}
-                </p>
-              {/if}
-            </div>
+            {@render editor(row.item, !row.keep)}
           </div>
         {/each}
         {#if !namingOnly}
@@ -168,22 +189,21 @@
             {locale.t("characters.dupes.looks_like", { name: row.item.name, saved: row.saved.name })}
           </p>
           <div class="mt-2 grid gap-2 sm:grid-cols-2">
-            {#each [
-              { label: locale.t("characters.dupes.saved"), prompt: row.saved.prompt, negative: row.saved.negative },
-              { label: locale.t("characters.dupes.found"), prompt: row.item.prompt, negative: row.item.negative },
-            ] as side (side.label)}
-              <div class="min-w-0">
-                <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{side.label}</p>
-                <div class="max-h-32 overflow-y-auto rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 font-mono text-[11px] text-neutral-300">
-                  <p class="whitespace-pre-wrap break-words">{side.prompt}</p>
-                  {#if side.negative}
-                    <p class="mt-1 whitespace-pre-wrap break-words text-neutral-500">
-                      {locale.t("characters.negative_prefix")} {side.negative}
-                    </p>
-                  {/if}
-                </div>
+            <div class="min-w-0">
+              <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("characters.dupes.saved")}</p>
+              <div class="max-h-32 overflow-y-auto rounded border border-neutral-800 bg-neutral-900 px-2 py-1.5 font-mono text-[11px] text-neutral-300">
+                <p class="whitespace-pre-wrap break-words">{row.saved.prompt}</p>
+                {#if row.saved.negative}
+                  <p class="mt-1 whitespace-pre-wrap break-words text-neutral-500">
+                    {locale.t("characters.negative_prefix")} {row.saved.negative}
+                  </p>
+                {/if}
               </div>
-            {/each}
+            </div>
+            <div class="min-w-0">
+              <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("characters.dupes.found")}</p>
+              {@render editor(row.item, row.action === "disregard")}
+            </div>
           </div>
           <div class="mt-2 flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label={row.item.name}>
             {#each choices as choice (choice.action)}
@@ -206,6 +226,15 @@
                 bind:value={row.variantName}
                 aria-label={locale.t("characters.dupes.variant_name")}
                 placeholder={locale.t("characters.dupes.variant_name")}
+                class="ml-1 min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
+              />
+            {:else if row.action === "new"}
+              <input
+                type="text"
+                bind:value={row.newName}
+                maxlength={80}
+                aria-label={locale.t("characters.dupes.new_name")}
+                placeholder={locale.t("characters.dupes.new_name")}
                 class="ml-1 min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
               />
             {/if}

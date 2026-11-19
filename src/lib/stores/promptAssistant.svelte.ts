@@ -98,9 +98,11 @@ import {
   CHARACTER_EXTRACT_RETRY,
   CHARACTER_UPDATE_RETRY,
   CHARACTER_CONVERT_RETRY,
+  CHARACTER_SAMPLING,
   characterConvertRequest,
   characterExtractRequest,
   characterUpdateRequest,
+  groundExtracted,
   parseCharacterUpdate,
   parseExtractedCharacters,
   type CharacterPromptStyle,
@@ -552,9 +554,10 @@ class PromptAssistantStore {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
           const parsed = parseExtractedCharacters(
-            await callExternalLlm(request.system, user, request.maxTokens),
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
           );
-          if (parsed) return parsed;
+          // Held to the prompt: what the prompt does not say is dropped.
+          if (parsed) return groundExtracted(parsed, prompt, negative);
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
         }
         throw new Error("invalid_character_extract");
@@ -614,7 +617,7 @@ class PromptAssistantStore {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
           const parsed = parseCharacterUpdate(
-            await callExternalLlm(request.system, user, request.maxTokens),
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
             character.negative,
             files,
           );
@@ -648,7 +651,7 @@ class PromptAssistantStore {
         let user = request.prompt;
         for (let attempt = 0; attempt < 2; attempt++) {
           const parsed = parseCharacterUpdate(
-            await callExternalLlm(request.system, user, request.maxTokens),
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
             character.negative,
           );
           if (parsed && parsed !== "missing") return parsed;

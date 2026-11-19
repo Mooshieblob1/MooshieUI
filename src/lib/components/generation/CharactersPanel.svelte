@@ -69,8 +69,6 @@
     arch: string;
     fresh: ExtractedCharacter[];
     matches: DuplicateMatch[];
-    source: string;
-    negative: string;
   } | null>(null);
 
   /** Top-level cards whose variants are showing. */
@@ -342,7 +340,7 @@
         gallery.showToast(locale.t("characters.toast.already_saved"), "info");
         return;
       }
-      extractReview = { arch, fresh, matches, source, negative };
+      extractReview = { arch, fresh, matches };
     } catch (e) {
       console.error("Character extraction failed:", e);
       const msg = String(e);
@@ -360,20 +358,25 @@
   /**
    * Carry out the extract review: new characters are saved under the names
    * the user gave them (an emptied name falls back to the suggested one),
-   * variants become cards, and each Update merges the prompt's details into
-   * the saved card the same way the card's own Update button does. One Undo
-   * covers every update.
+   * variants become cards, a wrong match saved as new becomes a card of its
+   * own, and each Update merges what the review shows (as the user left it)
+   * into the saved card. One Undo covers every update.
    */
   async function applyExtractReview(decisions: DuplicateDecision[], named: NewCharacterDecision[]) {
     const pending = extractReview;
     extractReview = null;
     if (!pending) return;
-    const { arch, source, negative } = pending;
-    const fresh = named
-      .filter((n) => n.keep)
-      .map((n) => ({ ...n.item, name: n.name.trim() || n.item.name }));
+    const { arch } = pending;
+    const fresh = [
+      ...named
+        .filter((n) => n.keep && n.item.prompt.trim())
+        .map((n) => ({ ...n.item, name: n.name.trim() || n.item.name })),
+      ...decisions
+        .filter((d) => d.action === "new" && d.newName.trim() && d.item.prompt.trim())
+        .map((d) => ({ ...d.item, name: d.newName.trim() })),
+    ];
     const variants = decisions
-      .filter((d) => d.action === "variant" && d.variantName.trim())
+      .filter((d) => d.action === "variant" && d.variantName.trim() && d.item.prompt.trim())
       .map((d) => ({
         name: d.variantName.trim(),
         prompt: d.item.prompt,
@@ -385,10 +388,13 @@
     const previous: { id: string; prompt: string; negative: string }[] = [];
     extracting = true;
     try {
-      for (const d of decisions.filter((x) => x.action === "update")) {
+      for (const d of decisions.filter((x) => x.action === "update" && x.item.prompt.trim())) {
         let next: { prompt: string; negative: string };
         try {
-          const merged = await promptAssistant.updateCharacter(d.saved, source, negative);
+          // Merged from the reviewed text, not the whole prompt: it is this
+          // character alone, already checked (and maybe corrected) by the
+          // user, so the model has nothing left to pick apart.
+          const merged = await promptAssistant.updateCharacter(d.saved, d.item.prompt, d.item.negative);
           // The duplicate check already placed this character in the prompt,
           // so a "not found" here means the model missed it: the extracted
           // text stands in.

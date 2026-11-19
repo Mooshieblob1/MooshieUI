@@ -625,24 +625,33 @@ pub async fn call_external_llm(
     image_data: Option<Vec<String>>,
     history: Option<Vec<crate::prompt_assistant::history::ChatMessage>>,
     request_id: Option<String>,
+    temperature: Option<f64>,
+    json: Option<bool>,
 ) -> Result<String, AppError> {
     // Complete score edits need more room than short prompt rewrites. Existing
     // callers keep their requested budgets; the upper bound remains explicit.
     let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 16384);
     let history = history.unwrap_or_default();
+    let sampling = crate::prompt_assistant::server::Sampling {
+        temperature,
+        json: json.unwrap_or(false),
+    };
     cancellable(request_id.as_deref(), async {
         let images =
             crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data)
                 .await;
-        chat_any(
-            &app,
-            &state,
-            &system,
-            &history,
-            &prompt,
-            max_tokens,
-            &images,
-            LocalPick::Assistant,
+        crate::prompt_assistant::server::with_sampling(
+            sampling,
+            chat_any(
+                &app,
+                &state,
+                &system,
+                &history,
+                &prompt,
+                max_tokens,
+                &images,
+                LocalPick::Assistant,
+            ),
         )
         .await
     })

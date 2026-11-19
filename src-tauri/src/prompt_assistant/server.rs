@@ -22,6 +22,48 @@ const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/dow
 /// `LOCAL_CONTEXT_TOKENS` in `enhancerSession.ts` must match.
 pub const LOCAL_CONTEXT_TOKENS: u32 = 16384;
 
+/// Temperature every chat request is sent with unless the caller asks for
+/// another through [`with_sampling`].
+pub const DEFAULT_TEMPERATURE: f64 = 0.7;
+
+/// Sampling a caller can ask for on one request, for jobs that should copy
+/// rather than create (pulling characters out of a prompt, say), where the
+/// usual 0.7 lets a small model drop and invent details.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Sampling {
+    /// Overrides [`DEFAULT_TEMPERATURE`], clamped to 0..=2.
+    pub temperature: Option<f64>,
+    /// Constrain the bundled llama-server to a JSON object. Only the bundled
+    /// server gets it: external OpenAI-compatible servers differ in which
+    /// `response_format` they accept, and some reject the request outright.
+    pub json: bool,
+}
+
+tokio::task_local! {
+    static SAMPLING: Sampling;
+}
+
+/// Run `work` with `sampling` applied to every chat request it sends. A
+/// task-local rather than one more argument on every chat function between
+/// the command and the wire, since only a few callers ever set it.
+pub async fn with_sampling<F: std::future::Future>(sampling: Sampling, work: F) -> F::Output {
+    SAMPLING.scope(sampling, work).await
+}
+
+/// The sampling in force for the current request.
+fn sampling() -> Sampling {
+    SAMPLING.try_with(|s| *s).unwrap_or_default()
+}
+
+/// The temperature to send, rounded to two places so an f32 from IPC does not
+/// show up as 0.20000000298.
+fn temperature() -> f64 {
+    match sampling().temperature {
+        Some(t) if t.is_finite() => (t.clamp(0.0, 2.0) * 100.0).round() / 100.0,
+        _ => DEFAULT_TEMPERATURE,
+    }
+}
+
 /// SHA-256 of every `LLAMA_RELEASE` asset [`assets_for`] can pick. The binary
 /// is executed, so a download that does not match is never extracted. Bumping
 /// `LLAMA_RELEASE` means replacing every entry; an asset missing from here is
@@ -486,12 +528,17 @@ impl LlamaServer {
         self.touch();
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
         // Callers pass images only to a model loaded with its projector.
-        let body = json!({
+        let mut body = json!({
             "messages": super::history::openai_messages(system, history, openai_user_content(user, images)),
-            "temperature": 0.7,
+            "temperature": temperature(),
             "max_tokens": max_tokens,
             "stream": false
         });
+        if sampling().json {
+            // llama-server turns this into a grammar, so a small model cannot
+            // wander off into prose or leave the object unclosed.
+            body["response_format"] = json!({ "type": "json_object" });
+        }
         let mut resp = match client
             .post(&url)
             .bearer_auth(&api_key)
@@ -864,7 +911,7 @@ fn openai_body(
     if tuning.openai_reasoning {
         body["max_completion_tokens"] = json!(limit);
     } else {
-        body["temperature"] = json!(0.7);
+        body["temperature"] = json!(temperature());
         body["max_tokens"] = json!(limit);
     }
     if let Some(effort) = &tuning.effort {
@@ -1179,7 +1226,7 @@ fn anthropic_body(
     });
     let mut limit = max_tokens;
     if claude.sampling {
-        body["temperature"] = json!(0.7);
+        body["temperature"] = json!(temperature());
     }
     if claude.thinks {
         let picked = r::pick(effort, &claude.efforts);
@@ -2004,7 +2051,10 @@ mod hardening_tests {
 #[cfg(test)]
 mod reasoning_body_tests {
     use super::super::reasoning::{anthropic, Setting};
-    use super::{anthropic_body, openai_body, tuning_for, Tuning};
+    use super::{
+        anthropic_body, openai_body, tuning_for, with_sampling, Sampling, Tuning,
+        DEFAULT_TEMPERATURE,
+    };
     use serde_json::json;
 
     fn tuning(provider: &str, model: &str, setting: Setting) -> Tuning {
@@ -2019,6 +2069,36 @@ mod reasoning_body_tests {
                 model,
                 setting,
             ))
+    }
+
+    #[test]
+    fn a_requested_temperature_applies_only_inside_its_scope() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let t = Tuning::default();
+        let low = Sampling {
+            temperature: Some(0.2),
+            json: true,
+        };
+        let body = rt.block_on(with_sampling(low, async {
+            openai_body("qwen3:8b", json!([]), 96, &t)
+        }));
+        assert_eq!(body["temperature"], 0.2);
+        // External servers never get the JSON constraint.
+        assert!(body.get("response_format").is_none());
+        let wild = Sampling {
+            temperature: Some(9.0),
+            json: false,
+        };
+        let body = rt.block_on(with_sampling(wild, async {
+            openai_body("qwen3:8b", json!([]), 96, &t)
+        }));
+        assert_eq!(body["temperature"], 2.0);
+        assert_eq!(
+            openai_body("qwen3:8b", json!([]), 96, &t)["temperature"],
+            DEFAULT_TEMPERATURE
+        );
     }
 
     #[test]
