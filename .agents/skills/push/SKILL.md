@@ -97,12 +97,12 @@ Remote branch is deleted by `--delete-branch` if merge succeeded. If not:
 git -c core.hooksPath=/dev/null push origin --delete chore/<slug>
 ```
 
-### 9. Wiki pass [only if user-facing behavior changed AND user approved]
+### 9. Wiki pass [only if user-facing behavior changed]
 
-Most pushes (docs, CI, refactors, internal fixes) need **nothing here** — skip. If this push adds, renames, or removes a user-facing feature or setting, note which wiki pages need updating and **ask for explicit approval before pushing** to the wiki (a **separate repo**: `https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). Only clone and push once approved:
+Most pushes (docs, CI, refactors, internal fixes) need **nothing here** — skip. Only if this push adds, renames, or removes a user-facing feature or setting, sync the wiki (a **separate repo**: `https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`).
 
 ```powershell
-git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki   # outside the main repo
+git clone -c core.autocrlf=false https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki   # outside the main repo
 ```
 
 Edit the relevant page(s), **verifying exact UI labels against current code** (`src/lib/locales/en.ts` + the component) rather than trusting the commit message — labels get renamed before ship. Match the wiki's concise, present-tense voice. Then:
@@ -112,7 +112,7 @@ git -c core.hooksPath=/dev/null commit -am "Document <feature>"
 git -c core.hooksPath=/dev/null push origin master
 ```
 
-No `Co-Authored-By`, no em dashes. Report pages touched (or that no wiki change was needed / awaits approval).
+Commit as `Mooshieblob <blob@mooshieblob.com>`. No `Co-Authored-By`, no em dashes. Report pages touched (or that no wiki change was needed).
 
 ## Checklist
 
@@ -122,7 +122,7 @@ No `Co-Authored-By`, no em dashes. Report pages touched (or that no wiki change 
 - [ ] GlassWorm + Guardrails SUCCESS (branch up to date with main)
 - [ ] Squash merged
 - [ ] Local main reset to origin/main
-- [ ] Wiki pass done if user-facing and user-approved (else noted/skipped)
+- [ ] Wiki pass done if the push changed user-facing behavior (else skipped)
 ```
 
 ## Mistakes to avoid

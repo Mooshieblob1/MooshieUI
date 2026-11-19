@@ -146,12 +146,12 @@ git fetch --prune origin
 git branch -D release/vX.Y.Z
 ```
 
-### 10. Wiki pass [user-facing changes only, with user approval]
+### 10. Wiki pass [user-facing changes only]
 
-Quick releases are usually fixes that need no docs; skip this then. If this release adds, renames, or removes a user-facing feature or setting, note the needed wiki updates and get explicit user approval before pushing to the GitHub wiki (a **separate repo**: `https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours.
+Quick releases are usually fixes that need no docs; skip this then. If this release adds, renames, or removes a user-facing feature or setting, update the GitHub wiki (a **separate repo**: `https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours.
 
 ```powershell
-git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki   # outside the main repo
+git clone -c core.autocrlf=false https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki   # outside the main repo
 ```
 
 Edit the page(s) for each user-facing item in the new section, **verifying exact UI labels against current code** (`src/lib/locales/en.ts` + the component). Match the wiki's concise, present-tense voice. Then:

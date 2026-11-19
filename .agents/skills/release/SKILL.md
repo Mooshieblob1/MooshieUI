@@ -180,11 +180,11 @@ git branch -D release/vX.Y.Z
 
 `--delete-branch` already removed the remote branch. Stale feature branches are the **cleanup** skill's job.
 
-### 11. Wiki pass [user-facing changes only, with user approval]
+### 11. Wiki pass [user-facing changes only]
 
-Skip this if the release is purely internal (CI, refactors, deps). Otherwise, pushing to the GitHub wiki requires explicit user approval (if unapproved, report which wiki edits are needed). The GitHub wiki is a **separate repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours (the Sync wiki workflow in `Mooshieblob1/mooshieui-site`; run it by hand to publish sooner), so a page that only exists on the site is deleted at the next sync.
+Skip this if the release is purely internal (CI, refactors, deps). Otherwise update the GitHub wiki, a **separate repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours (the Sync wiki workflow in `Mooshieblob1/mooshieui-site`; run it by hand to publish sooner), so a page that only exists on the site is deleted at the next sync.
 
-1. Clone **outside** the main repo: `git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki`
+1. Clone **outside** the main repo: `git clone -c core.autocrlf=false https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki`
 2. Find the page for each user-facing item in the new `## What's New in vX.Y.Z` section (`Upscaling-and-Face-Fix`, `Models-and-the-Model-Hub`, `Prompt-Assistant`, `Settings-and-Accessibility`, `Prompting-Guide`, `Generation-Basics`, `FAQ`, ...). A new area may need a new page plus a `_Sidebar.md` entry.
 3. **Verify exact UI labels against current code** (`src/lib/locales/en.ts` + the component). Match the wiki's concise, present-tense voice; don't paste changelog prose.
 4. Fix anything the release makes stale (counts, removed toggles, renamed settings).
