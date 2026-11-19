@@ -1,3 +1,12 @@
+## What's New in v2.4.4
+
+### Fixes and maintenance
+- **Enhance chat crash on Windows fixed**: sending a message in the Enhance chat window no longer crashes the app on Windows.
+- **NovelAI quality tags with in-image text**: when a prompt includes a `Text:` lettering block (written by hand or created from quoted text on V5), MooshieUI omits `no text` from the appended Quality tags preset so it does not fight the lettering, and matches `text:` / `TEXT:` labels case-insensitively.
+- **Model picker while ComfyUI restarts**: when ComfyUI is starting or restarting, the model picker waits for ComfyUI to list your models instead of showing download arrows and retries the model list automatically, so installed models no longer look uninstalled.
+
+---
+
 ## What's New in v2.4.3
 
 ### Character Extract
