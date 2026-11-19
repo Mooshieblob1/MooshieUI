@@ -41,5 +41,5 @@ description: MooshieUI project map, naming, docs index. Use when explaining the 
 
 ## Storage
 
-- Gallery: `.jxl` on disk (`jxl-oxide` / `jxl-encoder`).
+- Gallery: PNG (default), JPEG XL (`.jxl` via `jxl-oxide` / `jxl-encoder`), or WebP per output format setting.
 - Thumbnails: generated WebP, not separate files.

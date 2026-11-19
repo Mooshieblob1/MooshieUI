@@ -10,6 +10,8 @@ description: >-
 
 # Release (MooshieUI)
 
+Only run when the user explicitly asks to cut a release; do not bump versions, open release PRs, or push tags unprompted.
+
 Full release path: **preflight → version bump → notes → release PR → full CI gate → merge → tag merge commit → watch Build & Release → wiki pass**.
 
 The release PR's CI is the build validation. It touches `package.json` and `src-tauri/Cargo.toml`, so it runs every check: Guardrails (`npm run build`, i18n, types), Rust desktop (fmt, clippy, `cargo test --locked`), Rust server, Dependency audit (`scripts/audit-deps.sh`) and the Apple Silicon build. Don't repeat those locally; wait for them.
@@ -178,9 +180,9 @@ git branch -D release/vX.Y.Z
 
 `--delete-branch` already removed the remote branch. Stale feature branches are the **cleanup** skill's job.
 
-### 11. Wiki pass [user-facing changes only]
+### 11. Wiki pass [user-facing changes only, with user approval]
 
-Skip this if the release is purely internal (CI, refactors, deps). Otherwise update the GitHub wiki, a **separate repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours (the Sync wiki workflow in `Mooshieblob1/mooshieui-site`; run it by hand to publish sooner), so a page that only exists on the site is deleted at the next sync.
+Skip this if the release is purely internal (CI, refactors, deps). Otherwise, pushing to the GitHub wiki requires explicit user approval (if unapproved, report which wiki edits are needed). The GitHub wiki is a **separate repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours (the Sync wiki workflow in `Mooshieblob1/mooshieui-site`; run it by hand to publish sooner), so a page that only exists on the site is deleted at the next sync.
 
 1. Clone **outside** the main repo: `git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki`
 2. Find the page for each user-facing item in the new `## What's New in vX.Y.Z` section (`Upscaling-and-Face-Fix`, `Models-and-the-Model-Hub`, `Prompt-Assistant`, `Settings-and-Accessibility`, `Prompting-Guide`, `Generation-Basics`, `FAQ`, ...). A new area may need a new page plus a `_Sidebar.md` entry.
