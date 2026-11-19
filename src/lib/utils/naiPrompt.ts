@@ -254,7 +254,6 @@ TEXT AND COMIC TAGS
 - Lettering needs the text tag and its language tag, such as english text or japanese text.
 - Add speech bubble or thought bubble when the words sit in one, and border when the page is panelled.
 - Sound effects are ordinary tags or prose. They do not go in the Text: block unless you want them rendered as lettering.
-- If short lettering is the whole point of the image, the quality stack's own no text fights it. Say so in a NOTE: line and suggest turning the quality toggle off for that generation.
 
 DIALOGUE AND COMICS
 - The Text: block is not a script. Every character in it is drawn into the image, so a speaker label such as Aki: or a heading such as Page 2 or Panel 3 comes out inside a speech bubble. Write only the words the bubble says, exactly as lettered, one string per bubble, a blank line between bubbles, in reading order.
