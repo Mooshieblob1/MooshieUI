@@ -377,6 +377,7 @@ impl LlamaServer {
         mmproj_path: Option<&Path>,
         model_id: &str,
         n_gpu_layers: i32,
+        cpu_moe: bool,
     ) -> Result<u16, AppError> {
         // One start at a time; see `start_lock`. A second caller waits here and
         // then finds the server the first one started.
@@ -416,6 +417,11 @@ impl LlamaServer {
             .arg("--no-webui")
             .arg("-c")
             .arg(LOCAL_CONTEXT_TOKENS.to_string());
+        if cpu_moe {
+            // Expert weights stay in system RAM; attention and the KV cache
+            // still run on the GPU.
+            cmd.arg("--cpu-moe");
+        }
         if let Some(mmproj) = mmproj_path {
             cmd.arg("--mmproj").arg(mmproj);
             // On CPU the projector follows the weights, or a busy GPU this

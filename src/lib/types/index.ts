@@ -974,6 +974,11 @@ export interface LlmVariant {
   file: string;
   /** Vision projector loaded beside `file`; null for text-only models. */
   mmproj: string | null;
+  /**
+   * Mixture-of-experts models only: VRAM needed with the experts kept in
+   * system RAM, for cards too small for `vram_mb`. Null for dense models.
+   */
+  cpu_moe_vram_mb: number | null;
 }
 
 export interface LlmCatalogEntry {
@@ -986,6 +991,8 @@ export interface LlmCatalogEntry {
   pros: string;
   cons: string;
   best_for: string;
+  /** A large download offered to those who can run it, never recommended by default. */
+  opt_in: boolean;
 }
 
 export interface LlmStatus {

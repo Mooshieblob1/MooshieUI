@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyCharacterNames,
+  boxCharacters,
   characterExtractRequest,
+  characterNamingRequest,
   groundExtracted,
   isTagPrompt,
   relevantSavedHints,
@@ -107,4 +110,37 @@ test("a same_as hint needs a shared name or two shared tags to count", () => {
   );
   // A short form of the name still counts.
   assert.equal(findDuplicate(found("Miku", "aqua hair", "", "Hatsune Miku"), saved)?.id, "m");
+});
+
+test("NovelAI character boxes are read as they are, without counts, quality or general UC", () => {
+  const boxes = boxCharacters([
+    { prompt: "girl, red hair, {{fang}}, hoodie, masterpiece", negative: "lowres, blue hair, bad anatomy" },
+    { prompt: "  ", negative: "" },
+    { prompt: "boy, 1boy, glasses, artist:wlop, black hair", negative: "" },
+  ]);
+  assert.deepEqual(
+    boxes.map((b) => [b.prompt, b.negative]),
+    [
+      ["girl, red hair, {{fang}}, hoodie", "blue hair"],
+      ["boy, glasses, black hair", ""],
+    ],
+  );
+});
+
+test("names from the assistant fill in by index and never touch the prompts", () => {
+  const boxes = boxCharacters([{ prompt: "girl, hatsune miku, twintails", negative: "" }, { prompt: "boy, glasses", negative: "" }]);
+  const request = characterNamingRequest(boxes, [{ name: "Hatsune Miku", prompt: "hatsune miku, aqua hair, twintails" }]);
+  assert.ok(request.prompt.includes("1. girl, hatsune miku, twintails") && request.system.includes("same_as"));
+  const named = applyCharacterNames(
+    '{"names":[{"index":2,"name":"Glasses boy"},{"index":1,"name":"Hatsune Miku","same_as":"Hatsune Miku","prompt":"invented"}]}',
+    boxes,
+  );
+  assert.deepEqual(
+    named?.map((c) => [c.name, c.prompt, c.sameAs]),
+    [
+      ["Hatsune Miku", "girl, hatsune miku, twintails", "Hatsune Miku"],
+      ["Glasses boy", "boy, glasses", ""],
+    ],
+  );
+  assert.equal(applyCharacterNames("Sure! Here are the names.", boxes), null);
 });

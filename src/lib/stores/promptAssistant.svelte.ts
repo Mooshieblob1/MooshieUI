@@ -98,7 +98,10 @@ import {
   CHARACTER_EXTRACT_RETRY,
   CHARACTER_UPDATE_RETRY,
   CHARACTER_CONVERT_RETRY,
+  CHARACTER_NAMING_RETRY,
   CHARACTER_SAMPLING,
+  applyCharacterNames,
+  characterNamingRequest,
   characterConvertRequest,
   characterExtractRequest,
   characterUpdateRequest,
@@ -559,6 +562,37 @@ class PromptAssistantStore {
           // Held to the prompt: what the prompt does not say is dropped.
           if (parsed) return groundExtracted(parsed, prompt, negative);
           user = `${request.prompt}\n\n${CHARACTER_EXTRACT_RETRY}`;
+        }
+        throw new Error("invalid_character_extract");
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Name characters already read from NovelAI character boxes (and say which
+   * saved card each one is, if any). The prompts themselves are never sent
+   * back changed. One retry when the reply is not the JSON asked for.
+   */
+  async nameCharacters(
+    characters: ExtractedCharacter[],
+    saved: SavedCharacterHint[] = [],
+  ): Promise<ExtractedCharacter[]> {
+    if (this.isGenerating) throw new Error("busy_generation");
+    assertAllowedRequest(characters.map((c) => c.prompt));
+    const request = characterNamingRequest(characters, saved);
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        let user = request.prompt;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const named = applyCharacterNames(
+            await callExternalLlm(request.system, user, request.maxTokens, null, null, [], undefined, CHARACTER_SAMPLING),
+            characters,
+          );
+          if (named) return named;
+          user = `${request.prompt}\n\n${CHARACTER_NAMING_RETRY}`;
         }
         throw new Error("invalid_character_extract");
       });
