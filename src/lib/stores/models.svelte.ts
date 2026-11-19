@@ -23,7 +23,17 @@ class ModelsStore {
   cacheScope = $state("");
   serverModels = $state<Record<string, string[]>>({});
   localOnly = $state<Record<string, string[]>>({});
+  /**
+   * Whether ComfyUI answered the last model list request: null before the
+   * first answer, false while it is unreachable (starting, restarting after a
+   * node install or an update, or stopped). Until it is true the lists above
+   * are empty because nothing was asked, not because nothing is installed, so
+   * the model picker shows a waiting state instead of offering downloads.
+   */
+  reachable = $state<boolean | null>(null);
   private refreshId = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
 
   private clearInventory() {
     this.serverModels = {};
@@ -68,6 +78,33 @@ class ModelsStore {
     }
   }
 
+  /** True once ComfyUI has listed its models since it was last unreachable. */
+  get inventoryReady(): boolean {
+    return this.reachable === true;
+  }
+
+  /**
+   * Try again a few times after a failed refresh, backing off from 5 s to a
+   * minute. A ComfyUI restart that emits no ready event (or one missed while
+   * the app was busy) would otherwise leave the picker empty until the user
+   * restarts the app.
+   */
+  private scheduleRetry() {
+    if (this.retryTimer || this.retryAttempt >= 6) return;
+    const delay = Math.min(60_000, 5_000 * 2 ** this.retryAttempt);
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.refresh();
+    }, delay);
+  }
+
+  private clearRetry() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+  }
+
   async refresh(): Promise<boolean> {
     const refreshId = ++this.refreshId;
     this.loading = true;
@@ -75,7 +112,11 @@ class ModelsStore {
       const config = await getConfig();
       if (refreshId !== this.refreshId) return false;
       const cacheScope = JSON.stringify([config.server_url, config.comfyui_path, config.extra_model_paths]);
-      if (this.cacheScope !== cacheScope) this.clearInventory();
+      if (this.cacheScope !== cacheScope) {
+        // Another server or folder: nothing is known about it until it answers.
+        this.clearInventory();
+        this.reachable = null;
+      }
       this.remote = config.server_mode === "remote";
       this.serverUrl = config.server_url;
       this.cacheScope = cacheScope;
@@ -142,11 +183,15 @@ class ModelsStore {
       this.modelPatches = inventory.model_patches;
       this.samplers = samplerInfo.samplers;
       this.schedulers = samplerInfo.schedulers;
+      this.reachable = true;
+      this.clearRetry();
       return true;
     } catch (e) {
       console.error("Failed to refresh models:", e);
       if (refreshId === this.refreshId) {
         this.clearInventory();
+        this.reachable = false;
+        this.scheduleRetry();
       }
       return false;
     } finally {

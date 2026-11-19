@@ -1412,6 +1412,21 @@
     });
   }
 
+  /**
+   * ComfyUI has not listed its models yet (starting, restarting after an
+   * update or node install, or stopped). The inventory is empty because
+   * nothing answered, not because nothing is installed, so the picker must not
+   * read it as "download everything". NovelAI models don't need ComfyUI.
+   */
+  const waitingForComfyUi = $derived(!models.inventoryReady);
+
+  // Drop the "wait for ComfyUI" notice once it answers, so the next pick runs.
+  $effect(() => {
+    if (!waitingForComfyUi && downloadError === locale.t("generation.model.waiting_comfyui_download")) {
+      untrack(() => (downloadError = ""));
+    }
+  });
+
   const unavailableSelection = $derived.by(() => {
     if (generation.isNovelAi || models.loading || !Object.keys(models.serverModels).length) return [];
     const selections = generation.useSplitModel
@@ -1715,7 +1730,7 @@
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
-          label: installed || localOnly || models.remote ? rec.label : `⬇ ${rec.label}`,
+          label: installed || localOnly || models.remote || waitingForComfyUi ? rec.label : `⬇ ${rec.label}`,
           value: rec.label,
           rec,
           installed,
@@ -1864,6 +1879,13 @@
     downloadError = "";
     closeCheckpointDropdown();
     checkpointSearch = "";
+
+    // Without ComfyUI's list every file reads as missing, and downloading now
+    // would fetch gigabytes that are most likely already on disk.
+    if (waitingForComfyUi) {
+      downloadError = locale.t("generation.model.waiting_comfyui_download");
+      return;
+    }
 
     // Check each component individually and download only what's missing
     const missingFiles: { file: ModelFile; label: string }[] = [];
@@ -2106,6 +2128,9 @@
         {@render adultPill()}
       {/if}
     </button>
+    {#if waitingForComfyUi && !generation.isNovelAi}
+      <p class="mt-2 text-[11px] text-neutral-400">{locale.t("generation.model.waiting_comfyui")}</p>
+    {/if}
     {#if unavailableSelection.length > 0}
       <p class="mt-2 text-[11px] text-amber-300">{locale.t("generation.model.unavailable_server")}: {unavailableSelection.join(", ")}</p>
     {/if}
@@ -2203,7 +2228,7 @@
                     <span class="ml-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-0.5 align-middle text-[9px] uppercase tracking-wide text-emerald-300">{item.gateHint}</span>
                   {/if}
                   <span class="block text-[10px] {item.localOnly ? 'text-amber-300' : 'text-neutral-500'}">
-                    {locale.t(item.installed ? "generation.model.available_server" : item.localOnly ? "generation.model.local_unavailable" : models.remote ? "generation.model.unavailable_server" : "generation.model.auto_download")}
+                    {locale.t(item.installed ? "generation.model.available_server" : item.localOnly ? "generation.model.local_unavailable" : waitingForComfyUi ? "generation.model.waiting_comfyui_short" : models.remote ? "generation.model.unavailable_server" : "generation.model.auto_download")}
                   </span>
                   {#if item.noticeKey}
                     <span class="block text-[10px] text-amber-300/90">{locale.t(item.noticeKey)}</span>
