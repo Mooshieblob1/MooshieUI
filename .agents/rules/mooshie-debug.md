@@ -29,5 +29,5 @@ description: MooshieUI debugging — log buffers, browser /internal-api, silent 
 
 ## Gallery bugs
 
-- On-disk JXL is not displayable directly — use transcoding helpers.
+- Gallery files may be PNG, JXL, or WebP; JXL is not displayable directly — always use `loadGalleryImageDisplay()` / `loadGalleryImagePng()`.
 - `thumbnail://` / `gallery://` URLs differ by OS.

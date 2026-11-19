@@ -8,7 +8,7 @@ Apply only to **changed** files; check `+` lines in `git diff HEAD`.
 |------|----------|
 | No `<style>` blocks | ERROR |
 | No `on:click`, `on:input`, `on:change` (use `onclick`, etc.) | ERROR |
-| No direct `invoke()` from `@tauri-apps/api` | WARN |
+| No direct `invoke()` or `listen()` from `@tauri-apps/api` (use `ipcInvoke`/`ipcListen`) | ERROR |
 | Tailwind only; no inline `style=` except dynamic values | WARN |
 | `installPipPackage` args must include `==` | ERROR |
 
@@ -63,5 +63,4 @@ New user-facing literals should use `locale.t()`. Ignore: class names, console l
 
 ## Accepted patterns
 
-- Component-local `listen()` in `onMount` for download/install progress is OK
 - `.unwrap_or()` / `.unwrap_or_default()` / `.unwrap_or_else()` are OK
