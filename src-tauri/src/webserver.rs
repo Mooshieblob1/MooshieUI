@@ -6474,6 +6474,10 @@ async fn dispatch_command(
             )
             .await;
             let history = crate::prompt_assistant::history::history_from_args(&args["history"]);
+            let sampling = crate::prompt_assistant::server::Sampling {
+                temperature: args["temperature"].as_f64(),
+                json: args["json"].as_bool().unwrap_or(false),
+            };
 
             match args["requestId"].as_str() {
                 // Same SSE hand-off as enhance/compose: a long rewrite would
@@ -6487,14 +6491,17 @@ async fn dispatch_command(
                         let (event, payload) = match crate::prompt_assistant::cancel::run(
                             Some(&request_id),
                             owner.as_deref(),
-                            chat_any_headless(
-                                &state,
-                                &system,
-                                &history,
-                                &prompt,
-                                max_tokens,
-                                &images,
-                                crate::prompt_assistant::LocalPick::Assistant,
+                            crate::prompt_assistant::server::with_sampling(
+                                sampling,
+                                chat_any_headless(
+                                    &state,
+                                    &system,
+                                    &history,
+                                    &prompt,
+                                    max_tokens,
+                                    &images,
+                                    crate::prompt_assistant::LocalPick::Assistant,
+                                ),
                             ),
                         )
                         .await
@@ -6522,14 +6529,17 @@ async fn dispatch_command(
                     Ok(serde_json::json!({ "queued": true }))
                 }
                 None => {
-                    let text = chat_any_headless(
-                        &state,
-                        &system,
-                        &history,
-                        &prompt,
-                        max_tokens,
-                        &images,
-                        crate::prompt_assistant::LocalPick::Assistant,
+                    let text = crate::prompt_assistant::server::with_sampling(
+                        sampling,
+                        chat_any_headless(
+                            &state,
+                            &system,
+                            &history,
+                            &prompt,
+                            max_tokens,
+                            &images,
+                            crate::prompt_assistant::LocalPick::Assistant,
+                        ),
                     )
                     .await?;
                     Ok(serde_json::Value::String(text))

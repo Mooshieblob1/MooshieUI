@@ -11,6 +11,7 @@ import {
   type CharacterMemoryFile,
   type MemoryChange,
 } from "./characterMemory.js";
+import { normalizeTag, promptTags } from "./galleryCharacters.js";
 
 /** One character as the LLM returned it, before it is saved. */
 export interface ExtractedCharacter {
@@ -38,10 +39,22 @@ export interface SavedCharacterHint {
   prompt: string;
 }
 
-/** Most saved characters listed in one extraction request. */
-const MAX_SAVED_HINTS = 40;
+/**
+ * Most saved characters listed in one extraction request. Only the ones the
+ * prompt could be about are listed (see `relevantSavedHints`): a long list of
+ * unrelated cards is where a small model picks up traits that belong to
+ * none of the characters in the prompt.
+ */
+const MAX_SAVED_HINTS = 10;
 /** Longest saved prompt listed per character, in characters. */
 const SAVED_HINT_LENGTH = 300;
+
+/**
+ * Sampling for Extract, Update and Copy to. They copy details rather than
+ * write new ones, so a low temperature, and the bundled model is held to a
+ * JSON reply.
+ */
+export const CHARACTER_SAMPLING = { temperature: 0.2, json: true } as const;
 
 export const CHARACTER_EXTRACT_MAX_TOKENS = 1024;
 /** More than this is a crowd scene, not a cast worth saving one by one. */
@@ -78,6 +91,217 @@ Reply shape with same_as:
 export const CHARACTER_EXTRACT_RETRY =
   'The previous reply was not valid JSON in the required shape. Reply again with JSON only: {"characters":[{"name":"...","prompt":"...","negative":"...","same_as":""}]}';
 
+/** The "Character 2: " labels the extraction source puts before NovelAI character boxes. */
+const BOX_LABEL = /^[ \t]*character \d+:[ \t]*/gim;
+
+function withoutBoxLabels(text: string): string {
+  return text.replace(BOX_LABEL, "");
+}
+
+/**
+ * Tags that never belong on a character card: counts, quality and aesthetic
+ * filler, ratings, years and artist tags. Matched against normalized tags.
+ */
+const NOT_CHARACTER_TAG = new RegExp(
+  "^(?:" +
+    [
+      "\\d+\\+?\\s?(?:girl|boy|other)s?",
+      "multiple (?:girls|boys|others)",
+      "solo(?: focus)?",
+      "no humans",
+      "masterpiece",
+      "(?:best|amazing|great|high|good|normal|low|worst|bad) quality",
+      "(?:very )?aesthetic",
+      "(?:very )?displeasing",
+      "very awa",
+      "(?:incredibly )?absurdres",
+      "highres",
+      "lowres",
+      "newest|recent",
+      "year \\d{4}",
+      "score \\d+(?: up)?",
+      "rating\\s*:.*",
+      "safe|sensitive|nsfw|sfw|explicit|questionable",
+      "no text",
+      "high complexity|depthness",
+      "artist\\s*:.*",
+    ].join("|") +
+    ")$",
+);
+
+/** General negatives that keep any image clean, not one character right. */
+const GENERAL_NEGATIVE = new Set([
+  "bad anatomy", "bad hands", "bad proportions", "missing fingers", "extra digits", "fewer digits",
+  "extra fingers", "extra arms", "extra legs", "deformed", "disfigured", "mutated", "mutation",
+  "text", "error", "cropped", "jpeg artifacts", "signature", "watermark", "username", "artist name",
+  "blurry", "logo", "too many watermarks", "chromatic aberration", "noise", "dithering",
+  "scan artifacts", "worst aesthetic", "unfinished", "sketch", "censored", "mosaic censoring",
+]);
+
+/**
+ * Whether a prompt is written as comma-separated tags rather than sentences:
+ * at least three comma or line separated parts, short on average.
+ */
+export function isTagPrompt(text: string): boolean {
+  const parts = withoutBoxLabels(text)
+    .split(/[,\n]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 3) return false;
+  const words = parts.reduce((n, p) => n + p.split(/\s+/).length, 0);
+  return words / parts.length <= 4;
+}
+
+/** A source text's tags as a set, plus its normalized text for part-of-a-tag checks. */
+function tagIndex(text: string): { tags: Set<string>; text: string } {
+  const tags = promptTags(withoutBoxLabels(text));
+  return { tags: new Set(tags), text: ` ${tags.join(" , ")} ` };
+}
+
+/** Whether `tag` (normalized) is in the source: a whole tag, or whole words inside one. */
+function inSource(tag: string, index: { tags: Set<string>; text: string }): boolean {
+  if (index.tags.has(tag)) return true;
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\s(])${escaped}(?=[\\s)]|$)`).test(index.text);
+}
+
+/**
+ * Hold one tag list to the source: keep only tags the source has, drop the
+ * ones `drop` rules out, and drop repeats. Each kept tag keeps the model's
+ * own spelling of it.
+ */
+function keepSourceTags(
+  text: string,
+  index: { tags: Set<string>; text: string },
+  drop: (tag: string) => boolean,
+): string {
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const raw of withoutBoxLabels(text).split(/[,\n]/)) {
+    const part = raw.trim();
+    const tag = normalizeTag(part);
+    if (!tag || seen.has(tag) || drop(tag) || !inSource(tag, index)) continue;
+    seen.add(tag);
+    kept.push(part);
+  }
+  return kept.join(", ");
+}
+
+/**
+ * Tags that only one NovelAI character box has, by box, from an extraction
+ * source. Empty unless the source has two boxes or more.
+ */
+function boxOnlyTags(prompt: string): Set<string>[] {
+  const main = new Set<string>();
+  const boxes: Set<string>[] = [];
+  for (const line of prompt.split("\n")) {
+    const labelled = /^[ \t]*character \d+:/i.test(line);
+    const tags = promptTags(withoutBoxLabels(line));
+    if (labelled) boxes.push(new Set(tags));
+    else tags.forEach((t) => main.add(t));
+  }
+  if (boxes.length < 2) return [];
+  return boxes.map(
+    (box, i) =>
+      new Set([...box].filter((t) => !main.has(t) && !boxes.some((other, j) => j !== i && other.has(t)))),
+  );
+}
+
+/**
+ * Drop tags another character's box owns. The box the character's prompt
+ * draws most of its box-only tags from is taken as theirs; a tag found only
+ * in a different box belongs to that box's character.
+ */
+function withoutOtherBoxes(tags: string, owned: Set<string>[]): string {
+  if (owned.length === 0) return tags;
+  const parts = tags.split(", ");
+  const keys = parts.map(normalizeTag);
+  const counts = owned.map((box) => keys.filter((k) => box.has(k)).length);
+  const best = Math.max(...counts);
+  if (best === 0) return tags;
+  const home = counts.indexOf(best);
+  return parts.filter((_, i) => !owned.some((box, j) => j !== home && box.has(keys[i]))).join(", ");
+}
+
+/**
+ * Check what the model extracted against the prompt it was given, for a
+ * prompt written in tags: a tag the prompt does not have is invented and
+ * goes, as do counts, quality, rating and artist tags, any trait the
+ * negative prompt rules out, and on NovelAI any tag only another character's
+ * box has. Negatives keep only tags from the negative prompt, without the
+ * general ones. A character left with no prompt is dropped. A prompt written
+ * in sentences is returned as it came, since a descriptive phrase cannot be
+ * checked word for word.
+ */
+export function groundExtracted(
+  items: ExtractedCharacter[],
+  prompt: string,
+  negative: string,
+): ExtractedCharacter[] {
+  if (!isTagPrompt(prompt)) return items;
+  const positive = tagIndex(prompt);
+  const uc = tagIndex(negative);
+  const owned = boxOnlyTags(prompt);
+  const out: ExtractedCharacter[] = [];
+  for (const item of items) {
+    const kept = withoutOtherBoxes(
+      keepSourceTags(
+        item.prompt,
+        positive,
+        (tag) => NOT_CHARACTER_TAG.test(tag) || (uc.tags.has(tag) && !positive.tags.has(tag)),
+      ),
+      owned,
+    );
+    if (!kept) continue;
+    const keptNegative = keepSourceTags(
+      item.negative,
+      uc,
+      (tag) => NOT_CHARACTER_TAG.test(tag) || GENERAL_NEGATIVE.has(tag),
+    );
+    out.push({ ...item, prompt: kept, negative: keptNegative });
+  }
+  return out;
+}
+
+/**
+ * Lowercase words of a name worth matching on: three letters or longer, or
+ * the two-letter ones when the name has nothing longer ("Yu").
+ */
+function nameWords(name: string): string[] {
+  const words = name
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 2);
+  const long = words.filter((w) => w.length >= 3);
+  return long.length > 0 ? long : words;
+}
+
+/**
+ * The saved characters worth listing for one prompt, most likely first: each
+ * word of a card's name the prompt has counts three, each identity tag the
+ * two share counts one. Cards that share nothing with the prompt are left
+ * out, so a library of dozens of cards does not crowd the request.
+ */
+export function relevantSavedHints(
+  prompt: string,
+  saved: SavedCharacterHint[],
+  max = MAX_SAVED_HINTS,
+): SavedCharacterHint[] {
+  const source = tagIndex(prompt);
+  const words = new Set(source.text.split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const scored: { hint: SavedCharacterHint; score: number; order: number }[] = [];
+  saved.forEach((hint, order) => {
+    if (!hint.name.trim()) return;
+    let score = nameWords(hint.name).filter((w) => words.has(w)).length * 3;
+    for (const tag of new Set(promptTags(hint.prompt))) {
+      if (!NOT_CHARACTER_TAG.test(tag) && source.tags.has(tag)) score += 1;
+    }
+    if (score > 0) scored.push({ hint, score, order });
+  });
+  scored.sort((a, b) => b.score - a.score || a.order - b.order);
+  return scored.slice(0, max).map((s) => s.hint);
+}
+
 export function characterExtractRequest(
   prompt: string,
   negative: string,
@@ -88,9 +312,7 @@ export function characterExtractRequest(
   maxTokens: number;
 } {
   const uc = negative.trim();
-  const hints = saved
-    .filter((c) => c.name.trim())
-    .slice(0, MAX_SAVED_HINTS)
+  const hints = relevantSavedHints(prompt, saved)
     .map((c) => {
       const look = c.prompt.replace(/\s+/g, " ").trim();
       const clipped = look.length > SAVED_HINT_LENGTH ? `${look.slice(0, SAVED_HINT_LENGTH)} …` : look;
