@@ -39,6 +39,12 @@ fn build_desktop() {
         );
         attributes = attributes
             .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+
+        // The main thread runs the event loop and builds every async command's
+        // future before Tauri hands it to the runtime. Windows gives it 1 MB
+        // where macOS and Linux give 8 MB, so a large command future crashed
+        // the Windows app only (stack overflow, 0xc00000fd). Match the others.
+        println!("cargo:rustc-link-arg-bins=/STACK:8388608");
     }
 
     if let Err(error) = tauri_build::try_build(attributes) {

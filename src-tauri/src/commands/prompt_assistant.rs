@@ -138,10 +138,33 @@ pub async fn unload_llm(state: State<'_, Arc<AppState>>) -> Result<(), AppError>
 /// `images` only reach the external path. The bundled llama-server runs
 /// text-only models, so it drops them and answers from the prompt alone rather
 /// than failing.
+///
+/// The work is boxed. Its future (every provider, the fallback chain, the local
+/// server start) runs to a few hundred KB, and Tauri builds a command's future
+/// on the main thread before handing it to the runtime. Held inline, it pushed
+/// `call_external_llm` past the 1 MB main-thread stack on Windows and crashed
+/// the app as soon as a chat sent its first message.
 // The turn's own fields plus where it may run; a struct would only move the
 // same list somewhere else.
 #[allow(clippy::too_many_arguments)]
 async fn chat_any(
+    app: &AppHandle,
+    state: &State<'_, Arc<AppState>>,
+    system: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
+    user: &str,
+    max_tokens: u32,
+    images: &[crate::prompt_assistant::vision::VisionImage],
+    pick: LocalPick,
+) -> Result<String, AppError> {
+    Box::pin(chat_any_inline(
+        app, state, system, history, user, max_tokens, images, pick,
+    ))
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn chat_any_inline(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
     system: &str,
@@ -636,25 +659,30 @@ pub async fn call_external_llm(
         temperature,
         json: json.unwrap_or(false),
     };
-    cancellable(request_id.as_deref(), async {
-        let images =
-            crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data)
-                .await;
-        crate::prompt_assistant::server::with_sampling(
-            sampling,
-            chat_any(
-                &app,
-                &state,
-                &system,
-                &history,
-                &prompt,
-                max_tokens,
-                &images,
-                LocalPick::Assistant,
-            ),
-        )
-        .await
-    })
+    // Boxed: see `chat_any`. Tauri builds this command's future on the main
+    // thread, so an unboxed one this deep overflowed its 1 MB stack on Windows.
+    cancellable(
+        request_id.as_deref(),
+        Box::pin(async {
+            let images =
+                crate::prompt_assistant::vision::collect_images(&state, image_filename, image_data)
+                    .await;
+            crate::prompt_assistant::server::with_sampling(
+                sampling,
+                chat_any(
+                    &app,
+                    &state,
+                    &system,
+                    &history,
+                    &prompt,
+                    max_tokens,
+                    &images,
+                    LocalPick::Assistant,
+                ),
+            )
+            .await
+        }),
+    )
     .await
 }
 
