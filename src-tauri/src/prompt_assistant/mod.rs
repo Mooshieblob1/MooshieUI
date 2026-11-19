@@ -224,20 +224,23 @@ impl PromptAssistant {
         // never migrated back — so the next generation samples from RAM and
         // crawls. When the GPU is busy we fall back to CPU inference: a slower
         // enhance, but generation stays fast.
-        let variant_vram = catalog::entry(model_id)
-            .and_then(|e| {
-                e.variants
-                    .into_iter()
-                    .find(|v| self.variant_installed(model_id, v))
-            })
+        let variant = catalog::entry(model_id).and_then(|e| {
+            e.variants
+                .into_iter()
+                .find(|v| self.variant_installed(model_id, v))
+        });
+        // The catalog sizes were measured at a 4096 context; the server now
+        // runs with a larger one for persistent enhancer sessions.
+        let overhead = catalog::context_overhead_mb(model_id, server::LOCAL_CONTEXT_TOKENS);
+        let variant_vram = variant
+            .as_ref()
             .map(|v| v.vram_mb)
             .unwrap_or(u64::MAX)
-            // The catalog sizes were measured at a 4096 context; the server
-            // now runs with a larger one for persistent enhancer sessions.
-            .saturating_add(catalog::context_overhead_mb(
-                model_id,
-                server::LOCAL_CONTEXT_TOKENS,
-            ));
+            .saturating_add(overhead);
+        let cpu_moe_vram = variant
+            .as_ref()
+            .and_then(|v| v.cpu_moe_vram_mb)
+            .map(|mb| mb.saturating_add(overhead));
         // Free VRAM is NVIDIA-only (nvidia-smi). When unknown (AMD/Intel/Apple,
         // or no GPU) fall back to the total-VRAM decision so those hosts are not
         // needlessly forced onto CPU.
@@ -246,19 +249,23 @@ impl PromptAssistant {
                 .await
                 .ok()
                 .flatten();
-        let n_gpu_layers = if total_vram_mb < variant_vram {
-            0
-        } else {
-            match free_vram_mb {
-                Some(free) if free < variant_vram => {
-                    log::info!(
-                        "[prompt-assistant] GPU busy ({free} MB free < {variant_vram} MB needed); \
-                         loading LLM on CPU to avoid evicting ComfyUI's model"
-                    );
-                    0
-                }
-                _ => 999,
-            }
+        let offload = pick_offload(total_vram_mb, free_vram_mb, variant_vram, cpu_moe_vram);
+        match offload {
+            Offload::Cpu if total_vram_mb >= variant_vram => log::info!(
+                "[prompt-assistant] GPU busy ({} MB free < {variant_vram} MB needed); \
+                 loading LLM on CPU to avoid evicting ComfyUI's model",
+                free_vram_mb.unwrap_or(0)
+            ),
+            Offload::ExpertsInRam => log::info!(
+                "[prompt-assistant] {model_id} needs {variant_vram} MB on the GPU; \
+                 keeping its experts in system RAM instead"
+            ),
+            _ => {}
+        }
+        let (n_gpu_layers, cpu_moe) = match offload {
+            Offload::Gpu => (999, false),
+            Offload::ExpertsInRam => (999, true),
+            Offload::Cpu => (0, false),
         };
 
         let port = self
@@ -269,10 +276,43 @@ impl PromptAssistant {
                 mmproj_path.as_deref(),
                 model_id,
                 n_gpu_layers,
+                cpu_moe,
             )
             .await?;
         server::start_idle_watchdog(self.server.clone(), idle_timeout_secs);
         Ok(port)
+    }
+}
+
+/// Where the bundled model's weights go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Offload {
+    /// Every layer on the GPU.
+    Gpu,
+    /// A mixture-of-experts model with its experts in system RAM and the
+    /// rest on the GPU (`--cpu-moe`).
+    ExpertsInRam,
+    /// Everything on the CPU.
+    Cpu,
+}
+
+/// Decide offload from the card's total VRAM, the VRAM free right now (when
+/// known), what the model needs fully on the GPU and, for a mixture of
+/// experts, what it needs with its experts in RAM. Both GPU options must fit
+/// the card and what is free, so ComfyUI's model is never pushed out.
+fn pick_offload(
+    total_vram_mb: u64,
+    free_vram_mb: Option<u64>,
+    full_vram_mb: u64,
+    cpu_moe_vram_mb: Option<u64>,
+) -> Offload {
+    let fits = |need: u64| total_vram_mb >= need && free_vram_mb.is_none_or(|free| free >= need);
+    if fits(full_vram_mb) {
+        Offload::Gpu
+    } else if cpu_moe_vram_mb.is_some_and(fits) {
+        Offload::ExpertsInRam
+    } else {
+        Offload::Cpu
     }
 }
 
@@ -406,6 +446,40 @@ mod tests {
         ] {
             assert!(assistant.delete_model(id).is_err(), "{id:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod offload_tests {
+    use super::{pick_offload, Offload};
+
+    #[test]
+    fn a_model_that_fits_goes_on_the_gpu() {
+        assert_eq!(
+            pick_offload(24000, Some(22000), 20600, Some(3600)),
+            Offload::Gpu
+        );
+        // Free VRAM unknown (no nvidia-smi): the card's size decides.
+        assert_eq!(pick_offload(24000, None, 20600, None), Offload::Gpu);
+    }
+
+    #[test]
+    fn a_mixture_of_experts_keeps_its_experts_in_ram_on_a_smaller_card() {
+        assert_eq!(
+            pick_offload(12000, Some(10000), 20600, Some(3600)),
+            Offload::ExpertsInRam
+        );
+        // Busy card: even the expert-less part does not fit what is free.
+        assert_eq!(
+            pick_offload(12000, Some(2000), 20600, Some(3600)),
+            Offload::Cpu
+        );
+    }
+
+    #[test]
+    fn a_dense_model_too_big_or_a_busy_card_falls_back_to_cpu() {
+        assert_eq!(pick_offload(6000, Some(6000), 7500, None), Offload::Cpu);
+        assert_eq!(pick_offload(24000, Some(4000), 7500, None), Offload::Cpu);
     }
 }
 

@@ -17,6 +17,11 @@ pub struct LlmVariant {
     /// The vision projector a model that can see images loads beside `file`,
     /// from the same repo. `None` for text-only models.
     pub mmproj: Option<String>,
+    /// For a mixture-of-experts model: the VRAM it needs when its expert
+    /// weights stay in system RAM (llama-server `--cpu-moe`) and only the
+    /// rest goes on the GPU. Lets a card too small for `vram_mb` still run
+    /// it at a usable speed, given RAM for `size_mb`. `None` for dense models.
+    pub cpu_moe_vram_mb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +38,9 @@ pub struct LlmCatalogEntry {
     pub pros: String,
     pub cons: String,
     pub best_for: String,
+    /// Large downloads a user picks on purpose: never the automatic
+    /// recommendation, however much VRAM the host has.
+    pub opt_in: bool,
 }
 
 fn gguf(quant: &str, size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmVariant {
@@ -44,6 +52,23 @@ fn gguf(quant: &str, size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmV
         repo: repo.into(),
         file: file.into(),
         mmproj: None,
+        cpu_moe_vram_mb: None,
+    }
+}
+
+/// A mixture-of-experts GGUF variant that can also run with its experts in
+/// system RAM, needing only `cpu_moe_vram_mb` on the GPU.
+fn gguf_moe(
+    quant: &str,
+    size_mb: u64,
+    vram_mb: u64,
+    cpu_moe_vram_mb: u64,
+    repo: &str,
+    file: &str,
+) -> LlmVariant {
+    LlmVariant {
+        cpu_moe_vram_mb: Some(cpu_moe_vram_mb),
+        ..gguf(quant, size_mb, vram_mb, repo, file)
     }
 }
 
@@ -95,6 +120,7 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
             pros: "Tiny, fast, purpose-built for danbooru tags; runs on CPU.".into(),
             cons: "Tags only — cannot write natural-language prose.".into(),
             best_for: "Expanding a few tags into a fuller tag prompt.".into(),
+            opt_in: false,
         },
         // Small — modern non-thinking instruct, natural language + tags. Laptop default.
         LlmCatalogEntry {
@@ -134,6 +160,7 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                 .into(),
             cons: "Less nuanced than 7B+ models.".into(),
             best_for: "Laptops / 6-8 GB GPUs; Anima natural-language prompts.".into(),
+            opt_in: false,
         },
         // Medium — higher quality natural-language compose/enhance.
         LlmCatalogEntry {
@@ -171,6 +198,7 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
             pros: "High-quality compose/enhance; best prose of the GGUF lineup.".into(),
             cons: "Needs ~6-7 GB VRAM; slow on CPU.".into(),
             best_for: ">=12 GB GPUs; best compose quality.".into(),
+            opt_in: false,
         },
         // Small vision model: writes prompts like Qwen3 4B and also reads
         // images, so Describe in Interrogate and reference images in Enhance
@@ -202,6 +230,73 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                 .into(),
             cons: "Prose a little behind Qwen2.5 7B; may tone down explicit images.".into(),
             best_for: "Describing images and prompting from references without an API.".into(),
+            opt_in: false,
+        },
+        // Mid-size vision model: Qwen3-VL at 8B, a clear step up from the 4B
+        // and from Qwen2.5 7B for splitting prompts and following formats,
+        // and it still reads images. Qwen's own single-file GGUFs.
+        LlmCatalogEntry {
+            id: "qwen3-vl-8b-instruct".into(),
+            name: "Qwen3-VL 8B Instruct".into(),
+            purpose: "natural_language".into(),
+            families: vec!["*".into()],
+            variants: vec![
+                gguf_vision(
+                    "Q4_K_M",
+                    5520,
+                    7000,
+                    "Qwen/Qwen3-VL-8B-Instruct-GGUF",
+                    "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+                    "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
+                ),
+                gguf_vision(
+                    "Q8_0",
+                    9030,
+                    10500,
+                    "Qwen/Qwen3-VL-8B-Instruct-GGUF",
+                    "Qwen3VL-8B-Instruct-Q8_0.gguf",
+                    "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
+                ),
+            ],
+            pros: "Noticeably more accurate than the 4B models (character Extract, Update, Enhance) and sees images."
+                .into(),
+            cons: "Needs ~7 GB VRAM; ~5.5 GB download.".into(),
+            best_for: "8-12 GB GPUs that want better results than the 4B.".into(),
+            opt_in: true,
+        },
+        // The most capable model llama.cpp's pinned release runs: a 30B
+        // mixture of experts with 3B active, non-thinking "2507" instruct.
+        // Fully on a 24 GB card, or with its experts in system RAM on a
+        // smaller one (`cpu_moe_vram_mb`), where 3B active keeps it quick.
+        LlmCatalogEntry {
+            id: "qwen3-30b-a3b-instruct".into(),
+            name: "Qwen3 30B-A3B Instruct".into(),
+            purpose: "natural_language".into(),
+            families: vec!["*".into()],
+            variants: vec![
+                gguf_moe(
+                    "Q4_K_M",
+                    17770,
+                    19500,
+                    2500,
+                    "bartowski/Qwen_Qwen3-30B-A3B-Instruct-2507-GGUF",
+                    "Qwen_Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+                ),
+                gguf_moe(
+                    "Q5_K_M",
+                    20740,
+                    22500,
+                    2700,
+                    "bartowski/Qwen_Qwen3-30B-A3B-Instruct-2507-GGUF",
+                    "Qwen_Qwen3-30B-A3B-Instruct-2507-Q5_K_M.gguf",
+                ),
+            ],
+            pros: "The best local model here: far more accurate Extract, Update and Enhance, close to a hosted model."
+                .into(),
+            cons: "18-21 GB download. Below 24 GB VRAM it keeps its experts in RAM, so it needs 32 GB of system RAM."
+                .into(),
+            best_for: "24 GB GPUs, or 6 GB+ GPUs with 32 GB RAM.".into(),
+            opt_in: true,
         },
         // Captioner only: trained to caption images for diffusion training,
         // including explicit ones. Never offered as the prompt assistant model.
@@ -222,6 +317,7 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                 .into(),
             cons: "Only describes images, it can't enhance prompts; ~6 GB download.".into(),
             best_for: "The most faithful image descriptions.".into(),
+            opt_in: false,
         },
     ]
 }
@@ -245,6 +341,7 @@ const MEASURED_CONTEXT_TOKENS: u64 = 4096;
 pub fn context_overhead_mb(model_id: &str, context_tokens: u32) -> u64 {
     let bytes_per_token: u64 = match model_id {
         "qwen25-7b-instruct" => 2 * 28 * 4 * 128 * 2,
+        "qwen3-30b-a3b-instruct" => 2 * 48 * 4 * 128 * 2,
         "joycaption-beta-one" => 2 * 32 * 8 * 128 * 2, // Llama 3.1 8B
         _ => 2 * 36 * 8 * 128 * 2,                     // Qwen3-4B, and the fallback
     };
@@ -290,6 +387,8 @@ pub fn recommend_model_id(total_vram_mb: u64, system_ram_mb: u64) -> String {
         // A vision model is a deliberate pick for its images, not a default:
         // its projector costs VRAM a text-only prompt never uses.
         .filter(|e| !e.has_vision())
+        // Big downloads are offered, never picked for the user.
+        .filter(|e| !e.opt_in)
         .filter(|e| best_variant_for(e, available).is_some())
         .max_by_key(|e| {
             best_variant_for(e, available)

@@ -30,7 +30,7 @@
     type DuplicateMatch,
     type NewCharacterDecision,
   } from "./CharacterExtractReviewModal.svelte";
-  import type { ExtractedCharacter } from "../../utils/characterExtract.js";
+  import { boxCharacters, type ExtractedCharacter } from "../../utils/characterExtract.js";
   import { findDuplicate, sameContent } from "../../utils/characterDuplicates.js";
   import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
   import { progress } from "../../stores/progress.svelte.js";
@@ -304,10 +304,38 @@
     return parts.filter(Boolean).join("\n");
   }
 
+  /**
+   * On NovelAI with character boxes in use, each box is one character: read
+   * them as they are, and only ask the prompt assistant for names. Without an
+   * assistant, or if naming fails, they are numbered for the user to name in
+   * the review. Null when there are no boxes to read.
+   */
+  async function charactersFromBoxes(saved: SavedCharacter[]): Promise<ExtractedCharacter[] | null> {
+    if (!generation.isNovelAi) return null;
+    const boxes = boxCharacters(
+      generation.activeNovelAiCharacters.map((c) => ({ prompt: c.prompt, negative: c.negative_prompt })),
+    );
+    if (boxes.length === 0) return null;
+    let named = boxes;
+    if (promptAssistant.isAvailable) {
+      try {
+        named = await promptAssistant.nameCharacters(boxes, saved);
+      } catch (e) {
+        // The characters are already right; only their names are missing.
+        console.error("Naming extracted characters failed:", e);
+      }
+    }
+    return named.map((c, i) => ({
+      ...c,
+      name: c.name.trim() || locale.t("characters.extract_box_name", { n: String(i + 1) }),
+    }));
+  }
+
   async function extract() {
     const arch = architecture;
     if (!arch || extracting) return;
-    if (!promptAssistant.isAvailable) {
+    const hasBoxes = generation.isNovelAi && generation.activeNovelAiCharacters.some((c) => c.prompt.trim());
+    if (!hasBoxes && !promptAssistant.isAvailable) {
       promptAssistant.setupModalOpen = true;
       return;
     }
@@ -320,7 +348,8 @@
     try {
       const negative = extractionNegative();
       const saved = savedCharacters.currentCharacters;
-      const found = await promptAssistant.extractCharacters(source, negative, saved);
+      const found =
+        (await charactersFromBoxes(saved)) ?? (await promptAssistant.extractCharacters(source, negative, saved));
       if (found.length === 0) {
         gallery.showToast(locale.t("characters.toast.none_found"), "info");
         return;

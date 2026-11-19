@@ -86,6 +86,10 @@ jobs:
         run: |
           npx esbuild scripts/tests/characterExtract.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/characterExtract.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/characterExtract.test.mjs"
+      - name: Prompt assistant model fit tests
+        run: |
+          npx esbuild scripts/tests/llmFit.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/llmFit.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/llmFit.test.mjs"
 
       - name: Comic layout tests
         run: |
