@@ -5,6 +5,7 @@ This file provides guidance to agents when working with code in this repository.
 ## Non-Negotiable Behavioral Rules
 
 - **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance anywhere in git or GitHub output.
+- **No em dashes when writing as the owner**: Issue comments, PR comments, and external posts in the owner's voice must never contain em dashes. Use commas, periods, or parentheses instead.
 - **No `claude/` branches**: Never create or push a branch named `claude/...` (or after any AI tool), even when the session assigns one. Use `chore/<slug>` (the push skill's convention) or another descriptive prefix.
 - **Commit as the owner**: Author and commit as `Mooshieblob <blob@mooshieblob.com>`. Set the repo-local `git config user.name` and `user.email` before the first commit; an AI author on a branch commit becomes a `Co-authored-by` line when GitHub squash-merges the PR.
 
@@ -16,6 +17,7 @@ This file provides guidance to agents when working with code in this repository.
 
 ```bash
 npm install                  # Frontend dependencies
+npm run check                # Frontend gates: build, i18n parity, portal check, svelte-check
 npm run tauri dev            # Full dev (Tauri + Vite hot-reload on port 1420)
 npm run tauri build          # Production binary
 cargo check                  # Rust compile check, desktop features (run in src-tauri/)
@@ -35,7 +37,11 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 - **Gallery storage**: Gallery images are stored as PNG (the default), JPEG XL or WebP, per the output format setting. Display reads use `loadGalleryImageDisplay()` (transcodes to WebP), PNG export uses `loadGalleryImagePng()`. Never read gallery files directly.
 - **Custom URI schemes**: Tauri registers `thumbnail://` and `gallery://` protocols for loading images from the gallery directory.
 
-- **MCP server** (`src-tauri/src/mcp/`, [`docs/MCP.md`](docs/MCP.md)): opt-in, localhost-only, token-protected. It reuses the owner's last request per model (local txt2img, NovelAI txt2img, local Image Edit) and applies a few agent overrides. When adding or changing a feature, decide whether MCP has to follow: clear new per-image `GenerationParams` inputs in `setups::snapshot`, add assistant-controllable fields to `setups::Overrides` and the `generate_image` schema, consider a tool for new modes or gallery actions, and keep the `comfyui:*` events `mcp/jobs.rs` follows intact.
+- **MCP server** (`src-tauri/src/mcp/`, [`docs/MCP.md`](docs/MCP.md)): opt-in, localhost-only, token-protected (with optional Cloudflare quick tunnel in `mcp/tunnel.rs` or owner `public_url`). It reuses the owner's last request per model (local txt2img, NovelAI txt2img, local Image Edit) and applies bounded agent overrides. When adding or changing a feature, state the MCP decision in the PR: clear new per-image `GenerationParams` inputs in `setups::snapshot`, add assistant-controllable fields to `setups::Overrides` / `apply()` and the `generate_image` schema in `mcp/tools.rs`, consider a tool for new modes or gallery actions, keep the `comfyui:*` events and `save_to_gallery_in_dir` (`mcp/jobs.rs`) intact, update `mcp/music.rs` (`MusicParams`), and mirror changes across prompt expansion/library (`mcp/expand.rs`, `mcp/library.rs`) and comic layouts (`mcp/comic.rs`). Keep the tool table in [`docs/MCP.md`](docs/MCP.md) current.
+- **Model architectures**: new model families are declared once as an `ArchitectureSpec` in `src-tauri/src/architectures/<name>.rs`; the frontend reads `utils/architectures.ts` via `list_model_architectures`. Do not add new per-family match arms for a registered family (see [`docs/ARCHITECTURES.md`](docs/ARCHITECTURES.md)).
+- **Modals and popups (`use:portal`)**: put `use:portal` (`src/lib/utils/portal.ts`) on the outermost element of every `fixed` overlay or popup and keep it the sole top-level node of its `{#if}` branch (`node scripts/check-portals.mjs` in Guardrails CI enforces this; deliberate exceptions need `<!-- portal-exempt: reason -->`).
+- **External HTTP error bodies**: pass error bodies from external services through `src-tauri/src/http_error.rs` (`readable_body` / `detail_suffix`) and frontend `responseErrorText` (`src/lib/utils/ipc.ts`) so Cloudflare/proxy HTML never reaches the UI.
+- **CivitAI links**: route all "Open on CivitAI" model page links through `civitaiModelPageUrl()` (`src/lib/utils/civitaiUrl.ts`) so mature pages use `civitai.red` (API stays `civitai.com`).
 
 ## Release Process Gotchas
 
@@ -52,7 +58,7 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 - **Store files use `.svelte.ts` extension** — required for Svelte 5 rune compilation.
 - **Agent config (canonical):** [`.agents/README.md`](.agents/README.md)
   - **Skills:** `push`, `release`, `quickrelease`, `cleanup`, `pre-commit-check`, `add-tauri-command`, `add-generation-param`, `add-comfyui-node`, `workflow-template-builder` — [`.agents/skills/`](.agents/skills/)
-  - **Rules:** always-on + file-scoped — [`.agents/rules/`](.agents/rules/)
+  - **Rules:** glob-scoped + manual — [`.agents/rules/`](.agents/rules/)
   - **Claude Code mirror:** [`.claude/skills/`](.claude/skills/), [`.claude/commands/`](.claude/commands/) (synced from `.agents/`)
 - **Existing AI rules**: [`GEMINI.md`](GEMINI.md), [`.github/copilot-instructions.md`](.github/copilot-instructions.md), [`.github/instructions/`](.github/instructions/) (including [`mooshieui.instructions.md`](.github/instructions/mooshieui.instructions.md)), [`.github/agents/`](.github/agents/)
 - **Project docs**: [`docs/README.md`](docs/README.md) — bot triage, feature research, superpowers plans/specs
