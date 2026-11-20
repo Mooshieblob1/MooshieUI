@@ -10,6 +10,8 @@ description: >-
 
 # Quick Release (MooshieUI)
 
+Only run when the user explicitly asks to cut a release; do not bump versions, open release PRs, or push tags unprompted.
+
 Fast path: **sync main → version bump → notes → release PR → required checks + dependency audit → merge → tag merge commit → check the release run**.
 
 No local builds, lint or bot triage. The release PR's own CI covers the cheap gates; the tagged Build & Release run rebuilds everything. Use it when the code on `main` is already verified. When it isn't, or when the last release failed, use **release**.
@@ -149,7 +151,7 @@ git branch -D release/vX.Y.Z
 Quick releases are usually fixes that need no docs; skip this then. If this release adds, renames, or removes a user-facing feature or setting, update the GitHub wiki (a **separate repo**: `https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours.
 
 ```powershell
-git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki   # outside the main repo
+git clone -c core.autocrlf=false https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki   # outside the main repo
 ```
 
 Edit the page(s) for each user-facing item in the new section, **verifying exact UI labels against current code** (`src/lib/locales/en.ts` + the component). Match the wiki's concise, present-tense voice. Then:

@@ -10,6 +10,8 @@ description: >-
 
 # Release (MooshieUI)
 
+Only run when the user explicitly asks to cut a release; do not bump versions, open release PRs, or push tags unprompted.
+
 Full release path: **preflight → version bump → notes → release PR → full CI gate → merge → tag merge commit → watch Build & Release → wiki pass**.
 
 The release PR's CI is the build validation. It touches `package.json` and `src-tauri/Cargo.toml`, so it runs every check: Guardrails (`npm run build`, i18n, types), Rust desktop (fmt, clippy, `cargo test --locked`), Rust server, Dependency audit (`scripts/audit-deps.sh`) and the Apple Silicon build. Don't repeat those locally; wait for them.
@@ -182,7 +184,7 @@ git branch -D release/vX.Y.Z
 
 Skip this if the release is purely internal (CI, refactors, deps). Otherwise update the GitHub wiki, a **separate repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, branch `master`, top-level `*.md`, nav `_Sidebar.md`). mooshieui.com/wiki mirrors it every 6 hours (the Sync wiki workflow in `Mooshieblob1/mooshieui-site`; run it by hand to publish sooner), so a page that only exists on the site is deleted at the next sync.
 
-1. Clone **outside** the main repo: `git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki`
+1. Clone **outside** the main repo: `git clone -c core.autocrlf=false https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki`
 2. Find the page for each user-facing item in the new `## What's New in vX.Y.Z` section (`Upscaling-and-Face-Fix`, `Models-and-the-Model-Hub`, `Prompt-Assistant`, `Settings-and-Accessibility`, `Prompting-Guide`, `Generation-Basics`, `FAQ`, ...). A new area may need a new page plus a `_Sidebar.md` entry.
 3. **Verify exact UI labels against current code** (`src/lib/locales/en.ts` + the component). Match the wiki's concise, present-tense voice; don't paste changelog prose.
 4. Fix anything the release makes stale (counts, removed toggles, renamed settings).
