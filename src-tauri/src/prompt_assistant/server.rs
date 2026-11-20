@@ -10,10 +10,10 @@ use crate::comfyui::process::tokio_command_no_window;
 use crate::error::AppError;
 
 /// Pinned llama.cpp release. Update this constant to roll the binary forward.
-/// b7100 is the newest release that still ships `.zip` assets on every platform
-/// (b7300+ switched Linux/macOS to `.tar.gz`) and supports the `qwen3`
-/// architecture, which the previous pin (b4585) could not load.
-const LLAMA_RELEASE: &str = "b7100";
+/// b12500 loads the `qwen35` / `qwen35moe` architectures (Qwen3.5 to 3.8),
+/// which the previous pin (b7100) could not. Since b7300 the Linux and macOS
+/// assets are `.tar.gz` (Windows stays `.zip`); [`extract_all_into`] takes both.
+const LLAMA_RELEASE: &str = "b12500";
 const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download";
 
 /// Context window the bundled llama-server is started with. llama.cpp's
@@ -70,24 +70,24 @@ fn temperature() -> f64 {
 /// refused rather than installed unverified.
 const LLAMA_ASSET_SHA256: &[(&str, &str)] = &[
     (
-        "llama-b7100-bin-win-vulkan-x64.zip",
-        "9670903b9821777f08fa4875603c872626cff8d9a37cd6a80c16cd6b22da0daa",
+        "llama-b12500-bin-win-vulkan-x64.zip",
+        "61ca034bacfdc93f1504d4e8b7eaad7faae87fd0dd85f0b9fdb58660402cb282",
     ),
     (
-        "llama-b7100-bin-win-cpu-x64.zip",
-        "a530dfaf4928f40d08f5f5eb4e6350f37409ce5310f56240d725c3b84aca93ee",
+        "llama-b12500-bin-win-cpu-x64.zip",
+        "d6ba4bf776d22ad9c8eca1ad1217addf9654321e3fe8e23113096b4dd8f31ddb",
     ),
     (
-        "llama-b7100-bin-ubuntu-x64.zip",
-        "a34d005333ede5f4f1c327667cce2546ef77ced1263b666199d97896b8e1e09e",
+        "llama-b12500-bin-ubuntu-x64.tar.gz",
+        "decd26836af2cb9e0925e3bd5c79f7aa3740df9f2dbe88bbc57b1b4249cfd7ea",
     ),
     (
-        "llama-b7100-bin-macos-arm64.zip",
-        "c54e7997d8dc4bc85d2166de14619cdafdd82aba34aadc15046668320e78ed63",
+        "llama-b12500-bin-macos-arm64.tar.gz",
+        "afe4188c1ffab52b9b39ea688c8fa49f1012b826282b5c11eee5e9b9c757e1aa",
     ),
     (
-        "llama-b7100-bin-macos-x64.zip",
-        "fec57f35bf4c0bfb3bbd12e5d4a73de27d7a9938737aedb41e436adae215ab0c",
+        "llama-b12500-bin-macos-x64.tar.gz",
+        "480a5ab691ccd1eb41c7a982852fd7b499789f32608e18a2d6efcb6ce49bb4e6",
     ),
 ];
 
@@ -145,7 +145,7 @@ fn assets_for(backend: Backend) -> String {
     #[cfg(target_os = "linux")]
     {
         let _ = backend;
-        format!("llama-{t}-bin-ubuntu-x64.zip")
+        format!("llama-{t}-bin-ubuntu-x64.tar.gz")
     }
     #[cfg(target_os = "macos")]
     {
@@ -155,7 +155,7 @@ fn assets_for(backend: Backend) -> String {
         } else {
             "x64"
         };
-        format!("llama-{t}-bin-macos-{arch}.zip")
+        format!("llama-{t}-bin-macos-{arch}.tar.gz")
     }
 }
 
@@ -538,7 +538,11 @@ impl LlamaServer {
             "messages": super::history::openai_messages(system, history, openai_user_content(user, images)),
             "temperature": temperature(),
             "max_tokens": max_tokens,
-            "stream": false
+            "stream": false,
+            // Qwen3.5 and later think by default, which would spend the
+            // small budgets these requests ask for before answering. Models
+            // whose template has no thinking switch ignore it.
+            "chat_template_kwargs": { "enable_thinking": false }
         });
         if sampling().json {
             // llama-server turns this into a grammar, so a small model cannot
@@ -1634,9 +1638,82 @@ async fn download_with_progress(
     }
 }
 
+/// Extract a release archive flatly into `dir`: `.tar.gz` (Linux and macOS
+/// since b7300) or `.zip` (Windows).
+fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+    let is_tar_gz = archive_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".tar.gz"));
+    if is_tar_gz {
+        #[cfg(unix)]
+        return extract_tar_gz_into(archive_path, dir);
+        #[cfg(not(unix))]
+        return Err(AppError::LlmError(
+            "llama.cpp .tar.gz archives are only used on Linux and macOS".into(),
+        ));
+    }
+    extract_zip_into(archive_path, dir)
+}
+
+/// Remove whatever an earlier release left at `path` (a file or a symlink),
+/// so writing the new one never follows an old link.
+fn clear_path(path: &Path) -> Result<(), AppError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => std::fs::remove_file(path).map_err(AppError::from),
+        Err(_) => Ok(()),
+    }
+}
+
+/// Extract every file and symlink of a `.tar.gz` flatly into `dir` (strip
+/// directories). The Linux and macOS builds ship their shared libraries as
+/// version symlinks (`libllama.so.1 -> libllama.so.1.0.0`), which the binary
+/// loads by the short name, so links are recreated pointing at their target's
+/// file name in the same folder, never anywhere else.
+#[cfg(unix)]
+fn extract_tar_gz_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+    use std::os::unix::fs::PermissionsExt;
+    let file = std::fs::File::open(archive_path)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    let bad = |e: std::io::Error| AppError::LlmError(format!("Bad tar.gz: {e}"));
+    for entry in archive.entries().map_err(bad)? {
+        let mut entry = entry.map_err(bad)?;
+        let kind = entry.header().entry_type();
+        let path = entry.path().map_err(bad)?.into_owned();
+        let Some(name) = path.file_name().map(|f| f.to_owned()) else {
+            continue;
+        };
+        let out_path = dir.join(&name);
+        if kind.is_symlink() {
+            let Some(target) = entry
+                .link_name()
+                .map_err(bad)?
+                .and_then(|t| t.file_name().map(|f| f.to_owned()))
+            else {
+                continue;
+            };
+            clear_path(&out_path)?;
+            std::os::unix::fs::symlink(target, &out_path)?;
+        } else if kind.is_file() {
+            clear_path(&out_path)?;
+            let mut out = std::fs::File::create(&out_path)?;
+            std::io::copy(&mut entry, &mut out)?;
+            // Readable by the owner always; executable only where the
+            // archive says so, and always for the server itself.
+            let mode = if out_path.file_name().and_then(|n| n.to_str()) == Some(SERVER_BIN) {
+                0o755
+            } else {
+                (entry.header().mode().unwrap_or(0o644) | 0o644) & 0o755
+            };
+            std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode))?;
+        }
+    }
+    Ok(())
+}
+
 /// Extract every file from a zip archive flatly into `dir` (strip directories),
 /// preserving executable bits on unix.
-fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+fn extract_zip_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
     let file = std::fs::File::open(archive_path)?;
     let mut zip =
         zip::ZipArchive::new(file).map_err(|e| AppError::LlmError(format!("Bad zip: {e}")))?;
@@ -1820,7 +1897,54 @@ mod hardening_tests {
             assert_eq!(digest.len(), 64, "{asset}");
             assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "{asset}");
         }
-        assert!(pinned_sha256("llama-b7100-bin-evil.zip").is_none());
+        assert!(pinned_sha256("llama-b12500-bin-evil.zip").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tar_gz_releases_extract_flat_with_their_library_links() {
+        let root = std::env::temp_dir().join(format!("mooshie-llama-tar-{}", random_api_key()));
+        let out = root.join("bin");
+        std::fs::create_dir_all(&out).unwrap();
+        let archive = root.join("llama-test-bin-ubuntu-x64.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(
+                std::fs::File::create(&archive).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut tar = tar::Builder::new(gz);
+            let mut add = |path: &str, body: &[u8], mode: u32| {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(body.len() as u64);
+                h.set_mode(mode);
+                h.set_cksum();
+                tar.append_data(&mut h, path, body).unwrap();
+            };
+            add("llama-test/llama-server", b"bin", 0o755);
+            add("llama-test/libllama.so.1.0.0", b"lib", 0o644);
+            let mut link = tar::Header::new_gnu();
+            link.set_entry_type(tar::EntryType::Symlink);
+            link.set_size(0);
+            link.set_cksum();
+            // A link that tries to leave the folder still lands inside it.
+            tar.append_link(
+                &mut link,
+                "llama-test/libllama.so.1",
+                "../../libllama.so.1.0.0",
+            )
+            .unwrap();
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        // An old release left a regular file where the new one has a link.
+        std::fs::write(out.join("libllama.so.1"), b"old").unwrap();
+        super::extract_all_into(&archive, &out).unwrap();
+        assert_eq!(std::fs::read(out.join("llama-server")).unwrap(), b"bin");
+        assert_eq!(
+            std::fs::read_link(out.join("libllama.so.1")).unwrap(),
+            std::path::PathBuf::from("libllama.so.1.0.0")
+        );
+        assert_eq!(std::fs::read(out.join("libllama.so.1")).unwrap(), b"lib");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

@@ -44,15 +44,18 @@ globs: src/**/*.svelte,src/**/*.svelte.ts,src/**/*.ts
 ## UI & Design System
 
 - Tailwind only; no `<style>` in `.svelte`.
-- Modals and `fixed` popups: `use:portal` on the outermost overlay element so they cover the whole app, never just the panel that opened them (see CLAUDE.md, enforced by `scripts/check-portals.mjs`).
-- **Color Palette (Dark theme only)**:
+- Modals and `fixed` popups: `use:portal` on the outermost overlay element so they cover the whole app, never just the panel that opened them (enforced by `scripts/check-portals.mjs`; keep the portaled element the sole top-level node of its `{#if}` branch, or add `<!-- portal-exempt: reason -->` for deliberate exceptions).
+- **Themes & Color Palette (Dark + Light modes via CSS variables in `src/app.css`)**:
   - `neutral-950` (#0a0a0a) → Main BG
   - `neutral-900` (#171717) → Card BG
   - `neutral-800` (#262626) → Input BG, borders
   - `neutral-700` (#404040) → Active borders, dividers
   - `neutral-500` (#737373) → Placeholder, muted text
   - `neutral-300` (#d4d4d4) → Primary text
-- **Accent colors**: Remapped in `app.css` to `--theme-accent-*`. Default is gold; alternativesNord/Solarized set via `data-palette`.
+- **Accent colors & palettes**: Remapped in `app.css` to `--theme-accent-*`. Default is gold; alternatives (`nord`, `solarized`, `gruvbox`, `catppuccin`, `custom`) set via `data-palette`, plus light mode via `html.light`.
+- **Show, don't tell**: trust concise labels plus tooltips (`InfoTip` / `title`). Do not add explanatory `<p>` help text under controls or descriptive subtitles on model names (mark Full models with an `18+` pill; Curated gets none). Keep group headers and toasts terse.
+- **Redesign parity**: restyling work must keep full feature parity with existing components (options, limits, interactions).
+- **CivitAI links**: always build model page URLs with `civitaiModelPageUrl()` (`src/lib/utils/civitaiUrl.ts`), never hardcode `civitai.com`.
 - **Hover Reveal**: Use Tailwind `group` + `group-hover:` utility class patterns.
 - **Mobile / Touch Targets**:
   - Minimum hit area of 44px (`touch-target` class).

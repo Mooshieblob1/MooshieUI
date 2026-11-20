@@ -55,6 +55,8 @@ gh api repos/Mooshieblob1/MooshieUI/pulls/N/comments
 gh api repos/Mooshieblob1/MooshieUI/pulls/N/reviews
 ```
 
+Review bots (`gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`) are currently inactive on this repo; skip bot triage if no bot comments exist on open or recent PRs.
+
 Primary bots: `gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`, and actionable `github-actions[bot]` comments.
 
 Classify with `docs/BOT_REVIEW_TRIAGE.md`:
@@ -63,6 +65,8 @@ Classify with `docs/BOT_REVIEW_TRIAGE.md`:
 - **Defer**: valid but not maintenance-blocking
 
 ### 3. Cleanup actions
+
+Remote branch deletions and closing PRs require explicit user confirmation unless already approved by the user.
 
 Apply only safe, explicit actions:
 - Delete stale local branches

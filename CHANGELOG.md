@@ -1,5 +1,27 @@
 # Changelog
 
+## What's New in v2.4.4
+
+### Fixes and maintenance
+- **Enhance chat crash on Windows fixed**: sending a message in the Enhance chat window no longer crashes the app on Windows.
+- **NovelAI quality tags with in-image text**: when a prompt includes a `Text:` lettering block (written by hand or created from quoted text on V5), MooshieUI omits `no text` from the appended Quality tags preset so it does not fight the lettering, and matches `text:` / `TEXT:` labels case-insensitively.
+- **Model picker while ComfyUI restarts**: when ComfyUI is starting or restarting, the model picker waits for ComfyUI to list your models instead of showing download arrows and retries the model list automatically, so installed models no longer look uninstalled.
+
+---
+
+## What's New in v2.4.3
+
+### Character Extract
+- **More accurate on small local models**: Extract from prompt asks the prompt assistant for exact copies (low temperature, JSON replies) and checks the result against your prompt, so invented tags, quality and artist tags, and tags from another character no longer end up on the card. Only related saved characters are sent along.
+- **Editable review**: what Extract found shows in text boxes you can fix before saving, a wrong match can be saved with Save as new, and a click outside no longer throws the review away.
+- **NovelAI character boxes read directly**: with character boxes in use, each box becomes one character as written. The prompt assistant only names them, and Extract works without one.
+
+### Prompt assistant
+- **Bigger built-in models**: Qwen3-VL 8B, Qwen3 30B-A3B, Qwen3.6 35B-A3B and Qwen3.8 27B, offered only where they fit. Mixture-of-experts models too big for your GPU run with their experts in system RAM.
+- **Bundled llama.cpp updated** to b12500, which the newest Qwen models need. Thinking is turned off per request so replies stay fast and in JSON.
+
+---
+
 ## What's New in v2.4.2
 
 ### Fixes and maintenance

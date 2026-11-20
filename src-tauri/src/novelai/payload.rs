@@ -44,12 +44,15 @@ pub fn build(
         (input, nai)
     };
     let action = normalise_action(&nai.action, input);
-    // Own-line first, then transparency, quality and text, so the `Text:`
+    // Own-line first, then auto-text, transparency and quality, so the `Text:`
     // block ends up last and on its own line: the API wants it at the very end
     // of the prompt, after every tag, and reads `, Text:` as a comma to render.
+    // Running auto-text before quality lets `with_quality_tags` drop `no text`
+    // for quoted lettering as well as a hand-written `Text:` block.
     // Transparency before quality is the order NovelAI's client writes them.
     let positive_prompt = text_block_on_own_line(&input.positive_prompt);
     let positive_prompt = without_artist_prefixes(&positive_prompt);
+    let positive_prompt = with_text_blocks(&positive_prompt, model);
     let positive_prompt = with_transparency(&positive_prompt, nai, model);
     let quality = nai
         .quality_toggle
@@ -62,7 +65,6 @@ pub fn build(
         nai,
         model,
     );
-    let positive_prompt = with_text_blocks(&positive_prompt, model);
     let mut parameters = Map::new();
 
     parameters.insert("params_version".into(), json!(model.params_version));
@@ -269,18 +271,35 @@ fn append_before_text_block(prompt: &str, tags: &str) -> String {
 ///
 /// NovelAI's backend ignores the setting; its client writes the tags into the
 /// prompt itself, as `prompt, very aesthetic, masterpiece, no text` for V5
-/// Standard, and ahead of any `Text:` section. A prompt that already carries
-/// the exact stack (one pasted back from a NovelAI image, say) is left as it
+/// Standard, and ahead of any `Text:` section. When a `Text:` lettering block
+/// is present (hand-written or extracted from quotes), `no text` is omitted
+/// from the stack so it does not fight the lettering. A prompt that already
+/// carries the stack (one pasted back from a NovelAI image, say) is left as it
 /// is rather than given a second copy.
 fn with_quality_tags(prompt: &str, tags: Option<&str>) -> String {
     let Some(tags) = tags else {
         return prompt.to_string();
     };
-    let (head, _) = split_text_block(prompt);
-    if head.to_lowercase().contains(tags) {
+    let (head, text) = split_text_block(prompt);
+    let effective = if text.is_empty() {
+        tags.to_string()
+    } else {
+        without_no_text(tags)
+    };
+    if effective.is_empty() || head.to_lowercase().contains(&effective) {
         return prompt.to_string();
     }
-    append_before_text_block(prompt, tags)
+    append_before_text_block(prompt, &effective)
+}
+
+/// Remove `no text` from a comma-separated quality-tag stack, whether it sits
+/// at the end (V4.5, V5) or the front (V4 Full).
+fn without_no_text(tags: &str) -> String {
+    tags.split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("no text"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Prepend the undesired-content preset to the user's UC, the way NovelAI's
@@ -319,13 +338,20 @@ fn with_uc_preset(
     (preset, uc)
 }
 
+/// True when a line starts with `Text:` (case-insensitive, allowing leading
+/// whitespace).
+fn starts_with_text_label(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.len() >= 5 && trimmed.is_char_boundary(5) && trimmed[..5].eq_ignore_ascii_case("text:")
+}
+
 /// Split a prompt at the first `Text:` label that starts a line. The tail
 /// begins at the label itself (leading blank lines are dropped); it is empty
 /// when the prompt has no lettering block.
 fn split_text_block(prompt: &str) -> (&str, &str) {
     let mut offset = 0;
     for line in prompt.split_inclusive('\n') {
-        if line.trim_start().starts_with("Text:") {
+        if starts_with_text_label(line) {
             let head = &prompt[..offset];
             let tail = prompt[offset..].trim_start();
             return (head, tail);
@@ -342,10 +368,11 @@ fn split_text_block(prompt: &str) -> (&str, &str) {
 /// `1girl, rain\nText: Mumei` renders `Mumei`. Every frontend path is meant to
 /// keep the newline, but this is the last stop before the payload, so the
 /// label is put back on its own line here whenever it follows a comma on the
-/// same line. A `Text:` that already starts a line, or that is glued to a
-/// word (`SubText:`), is left alone.
+/// same line, and normalised to `Text:` casing. A `Text:` that is glued to a
+/// word (`SubText:`) is left alone.
 fn text_block_on_own_line(prompt: &str) -> String {
-    for (idx, _) in prompt.match_indices("Text:") {
+    let lower = prompt.to_ascii_lowercase();
+    for (idx, _) in lower.match_indices("text:") {
         let head = &prompt[..idx];
         let boundary = head
             .chars()
@@ -354,16 +381,21 @@ fn text_block_on_own_line(prompt: &str) -> String {
         if !boundary {
             continue;
         }
+        let after_label = &prompt[idx + 5..];
         let stripped = head.trim_end();
-        // Already at the start of the prompt or of a line: nothing to fix.
+        // Already at the start of the prompt or of a line: canonicalise the
+        // label casing to `Text:`.
         if stripped.is_empty() || head[stripped.len()..].contains('\n') {
-            return prompt.to_string();
+            if &prompt[idx..idx + 5] == "Text:" {
+                return prompt.to_string();
+            }
+            return format!("{head}Text:{after_label}");
         }
         if !stripped.ends_with(',') {
             return prompt.to_string();
         }
         let body = stripped.trim_end_matches(|c: char| c == ',' || c.is_whitespace());
-        return format!("{body}\n{}", &prompt[idx..]);
+        return format!("{body}\nText:{after_label}");
     }
     prompt.to_string()
 }
@@ -429,10 +461,7 @@ fn with_text_blocks(prompt: &str, model: &NovelAiModel) -> String {
     if !model.auto_text {
         return prompt.to_string();
     }
-    if prompt
-        .lines()
-        .any(|line| line.trim_start().starts_with("Text:"))
-    {
+    if prompt.lines().any(starts_with_text_label) {
         return prompt.to_string();
     }
     let pieces = extract_quoted(prompt);
@@ -1481,20 +1510,82 @@ mod tests {
         let body = build(&i, &presets_on(3), v5()).unwrap();
         assert_eq!(
             body["input"],
-            "1girl, rain, very aesthetic, masterpiece, no text\nText:\nMumei\n\nHello"
+            "1girl, rain, very aesthetic, masterpiece\nText:\nMumei\n\nHello"
         );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 1);
     }
 
     #[test]
     fn quality_tags_land_before_an_auto_text_block() {
-        // NovelAI's client runs auto-text after the quality pass, so the
-        // lettering stays last.
+        // Auto-text runs before quality tags so `no text` is dropped from the
+        // stack and the lettering block stays last.
         let mut i = input();
         i.positive_prompt = "sign saying \"hello\"".into();
         let body = build(&i, &presets_on(3), v5()).unwrap();
         assert_eq!(
             body["input"],
-            "sign saying \"hello\", very aesthetic, masterpiece, no text\nText: hello"
+            "sign saying \"hello\", very aesthetic, masterpiece\nText: hello"
+        );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 1);
+    }
+
+    #[test]
+    fn quality_tags_drop_no_text_across_presets_when_text_block_is_present() {
+        let mut i = input();
+        i.positive_prompt = "1girl, sign\nText: OPEN".into();
+
+        // V5 Light drops trailing `no text`.
+        let mut light = presets_on(3);
+        light.quality_preset = 1;
+        let body = build(&i, &light, v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, sign, very aesthetic, amazing quality\nText: OPEN"
+        );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 3);
+
+        // V4.5 Full drops trailing `no text` while keeping `location`.
+        let body = build(&i, &presets_on(3), v45()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, sign, location, very aesthetic, masterpiece\nText: OPEN"
+        );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 1);
+
+        // V4 Full drops leading `no text`.
+        let v4 = models::find("nai-diffusion-4-full").unwrap();
+        let body = build(&i, &presets_on(3), v4).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, sign, best quality, very aesthetic, absurdres\nText: OPEN"
+        );
+        assert_eq!(body["parameters"]["tag_hint_qt"], 1);
+    }
+
+    #[test]
+    fn lowercase_text_label_is_recognised_and_canonicalised() {
+        let mut i = input();
+        i.positive_prompt = "1girl, rain, text: Mumei".into();
+        let body = build(&i, &presets_on(3), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, rain, very aesthetic, masterpiece\nText: Mumei"
+        );
+
+        i.positive_prompt = "1girl, rain\nTEXT: Mumei".into();
+        let body = build(&i, &presets_on(3), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "1girl, rain, very aesthetic, masterpiece\nText: Mumei"
+        );
+
+        // Lowercase manual `text:` still disables duplicate auto-text
+        // extraction for quoted phrases.
+        i.positive_prompt = "sign saying \"hello\"\ntext: HELLO".into();
+        let body = build(&i, &presets_on(3), v5()).unwrap();
+        assert_eq!(
+            body["input"],
+            "sign saying \"hello\", very aesthetic, masterpiece\nText: HELLO"
         );
     }
 

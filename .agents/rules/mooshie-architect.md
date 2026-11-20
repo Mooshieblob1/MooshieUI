@@ -26,7 +26,7 @@ description: MooshieUI architecture — dual-mode, AppState, workflows, storage.
 
 ## Images
 
-- Gallery: JXL on disk; display via transcoding helpers; thumbnails WebP on demand (`thumbnail://` or `/internal-api/_thumbnail/`).
+- Gallery: PNG (default), JPEG XL, or WebP on disk per output format setting; display via `loadGalleryImageDisplay()` (transcodes to WebP); PNG export via `loadGalleryImagePng()`; thumbnails WebP on demand (`thumbnail://` or `/internal-api/_thumbnail/`).
 - `gallery://` for full-res non-JXL view. Temp dir cleaned at startup.
 
 ## Workflow templates
@@ -47,4 +47,4 @@ description: MooshieUI architecture — dual-mode, AppState, workflows, storage.
 
 - Shared `state.http_client` (reqwest pool).
 - Gallery metadata: SQLite, not directory scan.
-- JXL thumbnail transcode on first access only.
+- Thumbnail transcode on first access only.
