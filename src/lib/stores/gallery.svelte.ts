@@ -82,6 +82,7 @@ function parseGenerationMode(value: string): GenerationMode | undefined {
     case "txt2img":
     case "img2img":
     case "inpainting":
+    case "outpainting":
     case "image_edit":
     case "video":
       return value;
@@ -3133,6 +3134,7 @@ class GalleryStore {
   private inferModeFromFilename(image: OutputImage): GenerationMode {
     const n = `${image.filename} ${image.gallery_filename ?? ""}`.toLowerCase();
     if (n.includes("image_edit")) return "image_edit";
+    if (n.includes("outpaint")) return "outpainting";
     if (n.includes("inpaint") || n.includes("mask")) return "inpainting";
     if (n.includes("img2img") || n.includes("upscale")) return "img2img";
     return "txt2img";

@@ -210,6 +210,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
         },
         ModeSpec::generic("img2img"),
         ModeSpec::generic("inpainting"),
+        ModeSpec::generic("outpainting"),
     ],
     negative_prompt: true,
     resolution_multiple: 16,

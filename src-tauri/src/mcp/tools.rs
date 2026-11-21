@@ -81,8 +81,13 @@ pub fn definitions() -> Value {
                         }
                     },
                     "use_active_styles": { "type": "boolean", "description": "Also add the styles and chunks currently active in MooshieUI. Default false." },
-                    "source_image": { "type": "string", "description": "Turns this into img2img: a gallery filename, or the image as base64 or a data URL. The size follows the source's aspect ratio unless width/height are given. Works on NovelAI too (free window)." },
-                    "denoise": { "type": "number", "minimum": 0.05, "maximum": 1, "description": "With source_image: how much to change it. Default 0.6." },
+                    "source_image": { "type": "string", "description": "Turns this into img2img (or outpainting when outpaint padding is set): a gallery filename, or the image as base64 or a data URL. The size follows the source's aspect ratio unless width/height are given. Works on NovelAI too (free window) for img2img." },
+                    "denoise": { "type": "number", "minimum": 0.05, "maximum": 1, "description": "With source_image: how much to change it. Default 0.6 (1.0 when outpainting)." },
+                    "outpaint_top": { "type": "integer", "minimum": 0, "maximum": 2048, "description": "With source_image (local models): pixels to extend upward." },
+                    "outpaint_bottom": { "type": "integer", "minimum": 0, "maximum": 2048, "description": "With source_image (local models): pixels to extend downward." },
+                    "outpaint_left": { "type": "integer", "minimum": 0, "maximum": 2048, "description": "With source_image (local models): pixels to extend left." },
+                    "outpaint_right": { "type": "integer", "minimum": 0, "maximum": 2048, "description": "With source_image (local models): pixels to extend right." },
+                    "outpaint_feather": { "type": "integer", "minimum": 0, "maximum": 512, "description": "Outpainting seam feather width in pixels. Default 40." },
                     "reference_images": { "type": "array", "maxItems": 8, "items": { "type": "string" }, "description": "Local models only: one or two character/style reference images (gallery filenames or base64) for the model's style reference (Anima Reference Adapter, Flux Redux, IP-Adapter), using the setup's reference settings. When the owner's Anima setup uses SnapRef, up to 8 images of the same character." },
                     "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the returned download links work. Default 24." },
                     "width": { "type": "integer", "minimum": 256, "maximum": 4096 },
@@ -760,7 +765,14 @@ async fn apply_source_image(
         params.width = w;
         params.height = h;
     }
-    let denoise = arg_denoise(args, 0.6)?;
+    let has_outpaint = params.outpaint_top > 0
+        || params.outpaint_bottom > 0
+        || params.outpaint_left > 0
+        || params.outpaint_right > 0;
+    if has_outpaint && nai {
+        return Err("Outpainting over MCP supports local models only.".into());
+    }
+    let denoise = arg_denoise(args, if has_outpaint { 1.0 } else { 0.6 })?;
     if nai {
         setups::check_novelai_free_window(params)?;
         let data = inputs::base64_png_at(&src, params.width, params.height).await?;
@@ -770,7 +782,11 @@ async fn apply_source_image(
         params.mode = "img2img".into();
         params.input_image = Some(data);
     } else {
-        params.mode = "img2img".into();
+        params.mode = if has_outpaint {
+            "outpainting".into()
+        } else {
+            "img2img".into()
+        };
         params.denoise = denoise;
         params.input_image = Some(inputs::upload(state, &src).await?);
     }
@@ -792,6 +808,12 @@ async fn generate_image(
     let mut params = setups::apply(&setup.params, &overrides)?;
     if let Some(spec) = arg_str(args, "source_image") {
         apply_source_image(state, &mut params, args, spec).await?;
+    } else if params.outpaint_top > 0
+        || params.outpaint_bottom > 0
+        || params.outpaint_left > 0
+        || params.outpaint_right > 0
+    {
+        return Err("outpaint_top, outpaint_bottom, outpaint_left and outpaint_right require source_image.".into());
     }
     let refs = arg_images(args, "reference_images", MAX_SNAPREF_IMAGES)?;
     if !refs.is_empty() {

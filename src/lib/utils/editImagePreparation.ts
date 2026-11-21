@@ -99,12 +99,15 @@ export async function normalizeGenerationInputBytes(
 
 export async function prepareOutputImageForEditMode(
   image: OutputImage,
-  mode: "img2img" | "inpainting",
+  mode: "img2img" | "inpainting" | "outpainting",
 ): Promise<PreparedEditImage> {
-  const source = await loadOutputImageForGenerationInput(
-    image,
-    mode === "inpainting" ? "inpaint_input.png" : "img2img_input.png",
-  );
+  const filename =
+    mode === "inpainting"
+      ? "inpaint_input.png"
+      : mode === "outpainting"
+        ? "outpaint_input.png"
+        : "img2img_input.png";
+  const source = await loadOutputImageForGenerationInput(image, filename);
 
   if (mode !== "inpainting") {
     return {

@@ -1787,6 +1787,7 @@ pub fn save_to_gallery_inner(
         Some("txt2img") => "txt2img",
         Some("img2img") => "img2img",
         Some("inpainting") => "inpainting",
+        Some("outpainting") => "outpainting",
         Some("image_edit") => "image_edit",
         _ => "unknown",
     };

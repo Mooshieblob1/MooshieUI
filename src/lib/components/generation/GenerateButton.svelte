@@ -20,6 +20,7 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
+  import { hasOutpaintPadding } from "../../utils/outpaintCanvas.js";
   import { runRegionalInpaintChain } from "../../utils/regionalInpaintChain.js";
   import {
     suppressRegionalChainGallerySave,
@@ -310,6 +311,25 @@
         }
         if (!generation.maskImage) {
           errorMsg = locale.t('generation.error_no_mask');
+          return;
+        }
+      }
+
+      if (generation.mode === "outpainting") {
+        if (!generation.inputImage) {
+          errorMsg = locale.t('generation.error_no_image');
+          return;
+        }
+        if (
+          !hasOutpaintPadding({
+            top: generation.outpaintTop,
+            bottom: generation.outpaintBottom,
+            left: generation.outpaintLeft,
+            right: generation.outpaintRight,
+            feather: generation.outpaintFeather,
+          })
+        ) {
+          errorMsg = locale.t('generation.error_no_outpaint_padding');
           return;
         }
       }

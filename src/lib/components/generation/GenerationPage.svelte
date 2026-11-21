@@ -21,6 +21,7 @@
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import StyleReferenceSection from "./StyleReferenceSection.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
+  import OutpaintControls from "./OutpaintControls.svelte";
   import VideoSettingsPanel from "../video/VideoSettingsPanel.svelte";
   import H3PromptGuidePanel from "../video/H3PromptGuidePanel.svelte";
   import { h3Guide } from "../../stores/h3Guide.svelte.js";
@@ -94,6 +95,7 @@
     { id: "txt2img" as const, label: () => locale.t('generation.mode.txt2img') },
     { id: "img2img" as const, label: () => locale.t('generation.mode.img2img') },
     { id: "inpainting" as const, label: () => locale.t('generation.mode.inpainting') },
+    { id: "outpainting" as const, label: () => locale.t('generation.mode.outpainting') },
     { id: "image_edit" as const, label: () => locale.t('generation.mode.image_edit') },
   ];
 
@@ -362,7 +364,11 @@
   function sectionLabel(section: SectionId): string {
     if (section === "dimensions") return locale.t('generation.dimensions.title');
     if (section === "prompts") return locale.t('generation.prompts.title');
-    if (section === "imageInputs") return locale.t('generation.image.title');
+    if (section === "imageInputs") {
+      return generation.mode === "outpainting"
+        ? locale.t('generation.outpaint.title')
+        : locale.t('generation.image.title');
+    }
     if (section === "imageEdit") return locale.t('generation.image_edit.title');
     if (section === "videoSettings") return locale.t('generation.video.title');
     if (section === "inpaintLayers") return locale.t('generation.inpaint.title');
@@ -394,8 +400,9 @@
       return generation.isNovelAi && generation.mode !== "inpainting";
     if (generation.isNovelAi && (section === "controlnet" || section === "styleTransfer"))
       return false;
+    if (section === "dimensions") return generation.mode !== "outpainting";
     if (section === "imageInputs")
-      return generation.mode === "img2img" || generation.mode === "inpainting";
+      return generation.mode === "img2img" || generation.mode === "inpainting" || generation.mode === "outpainting";
     if (section === "imageEdit") return generation.mode === "image_edit";
     if (section === "inpaintLayers") return generation.mode === "inpainting";
     if (section === "generationSettings") return generation.mode === "inpainting";
@@ -405,7 +412,7 @@
     if (section === "facefix")
       return generation.mode !== "inpainting" && !generation.isNovelAi;
     if (section === "styleTransfer") return generation.isAnima && generation.mode === "txt2img";
-    if (section === "styleRef") return !generation.isNovelAi && (generation.mode === "txt2img" || generation.mode === "img2img" || generation.mode === "inpainting");
+    if (section === "styleRef") return !generation.isNovelAi && (generation.mode === "txt2img" || generation.mode === "img2img" || generation.mode === "inpainting" || generation.mode === "outpainting");
     return true;
   }
 
@@ -795,6 +802,25 @@
     }
   }
 
+  async function outpaintImage(image: OutputImage) {
+    try {
+      const prepared = await prepareOutputImageForEditMode(image, "outpainting");
+      const normalized = await normalizeGenerationInputBytes(prepared.uploadBytes, prepared.uploadFilename);
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      resetStagedInputForManualReplacement();
+      generation.inputImage = response.name;
+      generation.mode = "outpainting";
+      generation.denoise = 1.0;
+      progress.setLastOutputForMode("outpainting", null);
+      applyNormalizedImagePreview(normalized);
+      gallery.showToast(locale.t('generation.toast.loaded_outpaint'), "success");
+      await revealImageInputSection();
+    } catch (e) {
+      console.error("Failed to set up outpainting:", e);
+      gallery.showToast(locale.t('gallery.toast.failed_load'), "error");
+    }
+  }
+
   // Context menu + interrogation for session images
   let ctxMenuImage = $state<OutputImage | null>(null);
   let ctxMenuX = $state(0);
@@ -830,6 +856,7 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t('generation.ctx.upscale'), action: () => upscaleImage(image) },
       { label: locale.t('generation.ctx.inpaint'), action: () => inpaintImage(image) },
+      { label: locale.t('generation.ctx.outpaint'), action: () => outpaintImage(image) },
       // NovelAI only, and only with a key: the entry is hidden rather than
       // disabled, because there is nothing the user can do about it from here.
       ...(directorToolsAvailable()
@@ -1642,7 +1669,7 @@
       // as pasting into the image input so the advertised "Ctrl+V Paste" works without
       // hovering the field first. Prefer the image in the paste event (works on Linux
       // where the native clipboard read is unreliable), else read the system clipboard (#396).
-      if (generation.mode === "img2img" || generation.mode === "inpainting") {
+      if (generation.mode === "img2img" || generation.mode === "inpainting" || generation.mode === "outpainting") {
         e.preventDefault();
         e.stopPropagation();
         await handleImagePaste(getClipboardImageFile(e));
@@ -1962,7 +1989,7 @@
           </div>
           {/if}
 
-          {#if generation.mode === "inpainting" && !generation.isNovelAi}
+          {#if (generation.mode === "inpainting" || generation.mode === "outpainting") && !generation.isNovelAi}
             <div class="rounded-md border border-neutral-800 bg-neutral-900/70 p-2.5">
               <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
                 <span class="leading-tight">{locale.t('generation.inpaint.differential_diffusion')}<InfoTip text={locale.t('generation.inpaint.differential_tip')} /></span>
@@ -1973,6 +2000,10 @@
                 />
               </label>
             </div>
+          {/if}
+
+          {#if generation.mode === "outpainting"}
+            <OutpaintControls {imagePreviewUrl} {imageAspect} />
           {/if}
 
           {#if generation.mode === "inpainting"}

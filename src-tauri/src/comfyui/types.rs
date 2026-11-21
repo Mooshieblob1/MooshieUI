@@ -181,6 +181,16 @@ pub struct GenerationParams {
     pub input_image: Option<String>,
     pub mask_image: Option<String>,
     pub grow_mask_by: Option<u32>,
+    #[serde(default)]
+    pub outpaint_top: u32,
+    #[serde(default)]
+    pub outpaint_bottom: u32,
+    #[serde(default)]
+    pub outpaint_left: u32,
+    #[serde(default)]
+    pub outpaint_right: u32,
+    #[serde(default = "default_outpaint_feather")]
+    pub outpaint_feather: u32,
     pub upscale_enabled: bool,
     pub upscale_method: String,
     pub upscale_model: Option<String>,
@@ -946,6 +956,10 @@ fn default_facefix_bbox_padding() -> f64 {
 
 fn default_facefix_feather() -> u32 {
     20
+}
+
+fn default_outpaint_feather() -> u32 {
+    40
 }
 
 #[cfg(test)]

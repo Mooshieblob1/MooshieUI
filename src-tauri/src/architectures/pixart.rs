@@ -52,6 +52,7 @@ const MODES: &[ModeSpec] = &[
     ModeSpec::generic("txt2img"),
     ModeSpec::generic("img2img"),
     ModeSpec::generic("inpainting"),
+    ModeSpec::generic("outpainting"),
 ];
 
 pub static SPEC: ArchitectureSpec = ArchitectureSpec {
