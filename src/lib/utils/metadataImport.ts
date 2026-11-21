@@ -12,6 +12,8 @@ import type { NovelAiCharacter } from "../types/index.js";
 import { NAI_EFFORT_HIGH, NAI_EFFORT_MEDIUM, novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
 import { NAI_QUALITY_FILLER } from "./naiPrompt.js";
+import type { ModelFamily } from "./modelFamily.js";
+import { autoQualityTagsForImport, inferQualityFamilyFromModelName } from "./promptQualityStrip.js";
 import type {
   NovelAiImportSelection,
   NovelAiImportSource,
@@ -50,17 +52,29 @@ function sectionLabel(sectionId: DroppableSectionId | "all"): string {
   }
 }
 
-/** Build a set of quality tags from the user's custom quality tag settings.
- *  This ensures imported prompts have the user's current custom tags stripped to avoid duplication. */
-function buildAutoQualityTagSet(): Set<string> {
-  const all = [
-    generation.customAnimaPositiveQuality,
-    generation.customAnimaNegativeQuality,
-    generation.customIllustriousPositiveQuality,
-    generation.customIllustriousNegativeQuality,
-  ].join(", ");
-  return new Set(
-    all.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+/** Build the auto-injected quality tag set for the active/imported family and side. */
+function buildAutoQualityTagSet(
+  side: "positive" | "negative",
+  familyOverride?: ModelFamily,
+): Set<string> {
+  const family = familyOverride ?? generation.modelFamily;
+  const usesAnima =
+    familyOverride !== undefined ? familyOverride === "anima" : generation.usesAnimaQualityTags;
+  return autoQualityTagsForImport(
+    family,
+    side,
+    generation.autoQualityTags,
+    {
+      animaPositive: generation.animaPositiveQuality,
+      animaNegative: generation.animaNegativeQuality,
+      illustriousPositive: generation.customIllustriousPositiveQuality,
+      illustriousNegative: generation.customIllustriousNegativeQuality,
+      ponyPositive: generation.customPonyPositiveQuality,
+      ponyNegative: generation.customPonyNegativeQuality,
+      nanosaurPositive: generation.customNanosaurPositiveQuality,
+      nanosaurNegative: generation.customNanosaurNegativeQuality,
+    },
+    usesAnima,
   );
 }
 
@@ -115,8 +129,13 @@ function splitQualityTagCandidates(prompt: string): string[] {
 }
 
 /** Remove auto-applied quality tags and SwarmUI syntax from a prompt string. */
-function stripQualityTags(prompt: string, extraTags: readonly string[] = []): string {
-  const autoTags = buildAutoQualityTagSet();
+function stripQualityTags(
+  prompt: string,
+  side: "positive" | "negative",
+  extraTags: readonly string[] = [],
+  familyOverride?: ModelFamily,
+): string {
+  const autoTags = buildAutoQualityTagSet(side, familyOverride);
   for (const tag of extraTags) autoTags.add(tag.toLowerCase());
   const cleaned = stripSwarmUITags(prompt);
   const tags = splitQualityTagCandidates(cleaned);
@@ -136,32 +155,54 @@ function stripQualityTags(prompt: string, extraTags: readonly string[] = []): st
 function promptForImport(
   text: string,
   clean: boolean,
+  side: "positive" | "negative",
   extraTags: readonly string[] = [],
+  familyOverride?: ModelFamily,
 ): string {
-  return clean ? stripQualityTags(text, extraTags) : text.trim();
+  return clean ? stripQualityTags(text, side, extraTags, familyOverride) : text.trim();
 }
 
-function applyPositivePrompt(meta: Record<string, string>, clean = true): boolean {
+function applyPositivePrompt(
+  meta: Record<string, string>,
+  clean = true,
+  familyOverride?: ModelFamily,
+): boolean {
   if (meta.positive_prompt === undefined) return false;
   // A NovelAI image carries its quality stack folded into the prompt; the
   // panel's quality toggle puts it back at send time, so it comes out here.
   const extraTags = isNovelAiMeta(meta) ? NAI_QUALITY_FILLER : [];
-  generation.positivePrompt = promptForImport(meta.positive_prompt, clean, extraTags);
+  generation.positivePrompt = promptForImport(
+    meta.positive_prompt,
+    clean,
+    "positive",
+    extraTags,
+    familyOverride,
+  );
   generation.extraPositiveBoxes = [];
   return true;
 }
 
-function applyNegativePrompt(meta: Record<string, string>, clean = true): boolean {
+function applyNegativePrompt(
+  meta: Record<string, string>,
+  clean = true,
+  familyOverride?: ModelFamily,
+): boolean {
   if (meta.negative_prompt === undefined) return false;
-  generation.negativePrompt = promptForImport(meta.negative_prompt, clean);
+  generation.negativePrompt = promptForImport(
+    meta.negative_prompt,
+    clean,
+    "negative",
+    [],
+    familyOverride,
+  );
   generation.extraNegativeBoxes = [];
   return true;
 }
 
-function applyPrompts(meta: Record<string, string>): boolean {
+function applyPrompts(meta: Record<string, string>, familyOverride?: ModelFamily): boolean {
   // Both sides are applied: `||` would short-circuit past the negative.
-  const positive = applyPositivePrompt(meta);
-  const negative = applyNegativePrompt(meta);
+  const positive = applyPositivePrompt(meta, true, familyOverride);
+  const negative = applyNegativePrompt(meta, true, familyOverride);
   return positive || negative;
 }
 
@@ -382,7 +423,11 @@ function applyModel(meta: Record<string, string>): boolean {
   }
   let applied = false;
   if (meta.model) {
-    generation.checkpoint = matchInstalledModel(meta.model, models.checkpoints);
+    const matched = matchInstalledModel(meta.model, models.checkpoints);
+    generation.checkpoint = matched;
+    if (!isNovelAiMeta(meta)) {
+      void generation.fetchAndApplyModelMetadata("checkpoints", matched, { applyPreset: false });
+    }
     applied = true;
   }
   if (meta.vae) { generation.vae = meta.vae; applied = true; }
@@ -488,10 +533,21 @@ export function applyMetadataToSection(
 
 /** Apply all applicable metadata. Returns list of section names that were applied. */
 export function applyAllMetadata(meta: Record<string, string>): string[] {
+  const prevCheckpoint = generation.checkpoint;
+  const importedFamily: ModelFamily | undefined =
+    meta.model && !isNovelAiMeta(meta) && meta.mode !== "video"
+      ? (() => {
+          const matched = matchInstalledModel(meta.model, models.checkpoints);
+          return matched === prevCheckpoint && generation.modelFamily !== "unknown"
+            ? generation.modelFamily
+            : inferQualityFamilyFromModelName(matched);
+        })()
+      : undefined;
+
   const applied: string[] = [];
-  if (applyPrompts(meta)) applied.push("prompts");
-  if (applySampler(meta)) applied.push("sampler");
   if (applyModel(meta)) applied.push("model");
+  if (applyPrompts(meta, importedFamily)) applied.push("prompts");
+  if (applySampler(meta)) applied.push("sampler");
   if (applyUpscale(meta)) applied.push("upscale");
   return applied;
 }

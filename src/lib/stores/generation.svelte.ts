@@ -1894,7 +1894,11 @@ class GenerationStore {
    * whenever the Model panel is collapsed, and quality-tag injection in
    * toParams() keys off modelFamily, so it was silently skipped in that state.
    */
-  async fetchAndApplyModelMetadata(category: string, filename: string): Promise<void> {
+  async fetchAndApplyModelMetadata(
+    category: string,
+    filename: string,
+    options: { applyPreset?: boolean } = {},
+  ): Promise<void> {
     // GGUF carries no safetensors header, but the backend still resolves
     // family/turbo/recommended-encoder info from the filename and sidecars.
     const supportsSpec =
@@ -1913,7 +1917,7 @@ class GenerationStore {
         modelFamily: manualOverride,
         modelIsSdxlLike: familyIsSdxlLike(manualOverride),
       });
-      this.applyModelSpecificPreset();
+      if (options.applyPreset !== false) this.applyModelSpecificPreset();
       return;
     }
 
@@ -1950,7 +1954,7 @@ class GenerationStore {
       this.mainModelHasBakedVae = spec?.baked_vae === "true";
       this.ensureRecommendedSplitClip(models.textEncoders);
       this.ensureRecommendedSplitVae(models.vaes);
-      this.applyModelSpecificPreset();
+      if (options.applyPreset !== false) this.applyModelSpecificPreset();
       // Nothing resolved — clear the key so a later selection retries detection.
       if (family === "unknown") this._loadedModelMetadataKey = "";
     } catch {
