@@ -31,6 +31,7 @@ export const CARD_SIZE_DEFAULT = 48;
 
 const SAMPLE_PICTURES: Record<string, SamplePictures> = {
   yue: { thumbnail: yueThumbnail, reference: yueReference },
+  "yue-natural": { thumbnail: yueThumbnail, reference: null },
 };
 
 /** Every NovelAI model shares one architecture bucket; their tags carry over. */

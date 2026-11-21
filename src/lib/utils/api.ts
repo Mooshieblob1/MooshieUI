@@ -972,6 +972,20 @@ export async function listGalleryImageEntries(): Promise<GalleryImageEntry[]> {
   return ipcInvoke("list_gallery_image_entries");
 }
 
+export interface VisualDuplicateGroup {
+  filenames: string[];
+  max_distance: number;
+}
+
+export async function findGalleryVisualDuplicates(
+  maxDistance?: number
+): Promise<VisualDuplicateGroup[]> {
+  return ipcInvoke(
+    "find_gallery_visual_duplicates",
+    maxDistance !== undefined ? { max_distance: maxDistance } : {}
+  );
+}
+
 export interface ImportResult {
   imported: number;
   skipped: number;
