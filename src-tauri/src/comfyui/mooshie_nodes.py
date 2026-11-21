@@ -26,6 +26,31 @@ os.makedirs(_ultralytics_dir, exist_ok=True)
 folder_paths.add_model_folder_path("ultralytics", _ultralytics_dir)
 
 
+def _detailer_target_size(crop_h, crop_w, guide_size, max_size=1536, align=8):
+    """Compute aligned target size without downscaling crops larger than guide_size."""
+    crop_max = max(crop_h, crop_w)
+    target_max = max(guide_size, min(crop_max, max_size))
+    scale = target_max / crop_max
+    new_h = max(align, round(crop_h * scale / align) * align)
+    new_w = max(align, round(crop_w * scale / align) * align)
+    return new_h, new_w
+
+
+def _resize_bhwc(img, target_h, target_w):
+    """Resize a BHWC image tensor using area for downscaling and clamped bicubic for upscaling."""
+    _, src_h, src_w, _ = img.shape
+    if src_h == target_h and src_w == target_w:
+        return img
+    nchw = img.permute(0, 3, 1, 2)
+    if target_h < src_h or target_w < src_w:
+        out = torch.nn.functional.interpolate(nchw, size=(target_h, target_w), mode="area")
+    else:
+        out = torch.nn.functional.interpolate(
+            nchw, size=(target_h, target_w), mode="bicubic", align_corners=False
+        )
+    return out.permute(0, 2, 3, 1).clamp(0, 1)
+
+
 class MooshieFaceDetailer:
     """Detect faces with YOLOv8, crop each to guide_size, re-denoise, composite back."""
 
@@ -128,17 +153,9 @@ class MooshieFaceDetailer:
                 # Crop from current result
                 crop = result[b : b + 1, cy1:cy2, cx1:cx2, :].clone()
 
-                # Resize to guide_size (maintain aspect, round to 8 for VAE)
-                scale = guide_size / max(crop_h, crop_w)
-                new_h = max(8, round(crop_h * scale / 8) * 8)
-                new_w = max(8, round(crop_w * scale / 8) * 8)
-
-                resized = torch.nn.functional.interpolate(
-                    crop.permute(0, 3, 1, 2),
-                    size=(new_h, new_w),
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
+                # Resize without downscaling crops that already exceed guide_size
+                new_h, new_w = _detailer_target_size(crop_h, crop_w, guide_size, align=8)
+                resized = _resize_bhwc(crop, new_h, new_w)
 
                 # Create feathered mask at original crop resolution for pixel-space blending.
                 # Use a generous feather proportional to the crop size for seamless edges.
@@ -179,12 +196,7 @@ class MooshieFaceDetailer:
                     )
 
                 # Resize back to original crop size
-                back = torch.nn.functional.interpolate(
-                    decoded.permute(0, 3, 1, 2),
-                    size=(crop_h, crop_w),
-                    mode="bilinear",
-                    align_corners=False,
-                ).permute(0, 2, 3, 1)
+                back = _resize_bhwc(decoded, crop_h, crop_w)
 
                 # Blend mask is already at original crop resolution
                 blend_mask = mask.unsqueeze(0).unsqueeze(-1)  # [1, H, W, 1]
@@ -329,15 +341,8 @@ class MooshieSegmentDetailer:
 
             crop = result[b : b + 1, cy1:cy2, cx1:cx2, :].clone()
 
-            scale = guide_size / max(crop_h, crop_w)
-            new_h = max(8, round(crop_h * scale / 8) * 8)
-            new_w = max(8, round(crop_w * scale / 8) * 8)
-            resized = torch.nn.functional.interpolate(
-                crop.permute(0, 3, 1, 2),
-                size=(new_h, new_w),
-                mode="bilinear",
-                align_corners=False,
-            ).permute(0, 2, 3, 1)
+            new_h, new_w = _detailer_target_size(crop_h, crop_w, guide_size, align=8)
+            resized = _resize_bhwc(crop, new_h, new_w)
 
             latent = vae.encode(resized[:, :, :, :3])
             latent = comfy.sample.fix_empty_latent_channels(model, latent)
@@ -367,12 +372,7 @@ class MooshieSegmentDetailer:
                     -1, decoded.shape[-3], decoded.shape[-2], decoded.shape[-1]
                 )
 
-            back = torch.nn.functional.interpolate(
-                decoded.permute(0, 3, 1, 2),
-                size=(crop_h, crop_w),
-                mode="bilinear",
-                align_corners=False,
-            ).permute(0, 2, 3, 1)
+            back = _resize_bhwc(decoded, crop_h, crop_w)
 
             # Composite with the blurred detected mask so irregular shapes
             # (eyes, hands) blend cleanly — not a rectangular feather.
@@ -582,15 +582,8 @@ class MooshieMaskDetailer:
             blend = MooshieSegmentDetailer._blur_mask(area, feather)[cy1:cy2, cx1:cx2]
             crop = result[b : b + 1, cy1:cy2, cx1:cx2, :].clone()
 
-            scale = guide_size / max(crop_h, crop_w)
-            new_h = max(16, round(crop_h * scale / 16) * 16)
-            new_w = max(16, round(crop_w * scale / 16) * 16)
-            resized = torch.nn.functional.interpolate(
-                crop.permute(0, 3, 1, 2),
-                size=(new_h, new_w),
-                mode="bicubic",
-                align_corners=False,
-            ).permute(0, 2, 3, 1).clamp(0, 1)
+            new_h, new_w = _detailer_target_size(crop_h, crop_w, guide_size, align=16)
+            resized = _resize_bhwc(crop, new_h, new_w)
 
             latent = {"samples": vae.encode(resized[:, :, :, :3])}
             latent["samples"] = comfy.sample.fix_empty_latent_channels(model, latent["samples"])
@@ -622,12 +615,7 @@ class MooshieMaskDetailer:
             decoded = vae.decode(samples)
             if decoded.ndim == 5:
                 decoded = decoded.reshape(-1, decoded.shape[-3], decoded.shape[-2], decoded.shape[-1])
-            back = torch.nn.functional.interpolate(
-                decoded.permute(0, 3, 1, 2),
-                size=(crop_h, crop_w),
-                mode="bicubic",
-                align_corners=False,
-            ).permute(0, 2, 3, 1).to(result.device)
+            back = _resize_bhwc(decoded, crop_h, crop_w).to(result.device)
 
             weight = blend.unsqueeze(0).unsqueeze(-1)
             original_crop = result[b : b + 1, cy1:cy2, cx1:cx2, :]

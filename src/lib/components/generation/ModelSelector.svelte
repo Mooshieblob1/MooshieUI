@@ -169,7 +169,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -201,7 +201,7 @@
         samplerName: "euler",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 5,
       },
     },
     {
@@ -231,7 +231,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -265,7 +265,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -301,7 +301,7 @@
         scheduler: "simple",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -337,7 +337,7 @@
         scheduler: "simple",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -369,7 +369,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -407,7 +407,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
@@ -439,7 +439,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
-        facefixSteps: 10,
+        facefixSteps: 20,
       },
     },
     {
