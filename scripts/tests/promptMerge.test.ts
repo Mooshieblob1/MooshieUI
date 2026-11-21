@@ -47,3 +47,26 @@ test("sanitizePromptForSend strips BREAK by default and preserves it when keepBr
     "masterpiece, 1girl, BREAK, 2girls",
   );
 });
+
+test("mergeComfyTags dedupes tags adjacent to BREAK without commas", () => {
+  assert.equal(
+    mergeComfyTags(
+      "source_anime, score_9, BREAK masterpiece, best quality",
+      "best quality, masterpiece, newest",
+      "before",
+    ),
+    "newest, source_anime, score_9, BREAK masterpiece, best quality",
+  );
+  assert.equal(
+    mergeComfyTags("1girl BREAK best quality", "best quality, masterpiece", "before"),
+    "masterpiece, 1girl BREAK best quality",
+  );
+  assert.equal(
+    mergeComfyTags("1girl, <break>best quality", "best quality, masterpiece", "before"),
+    "masterpiece, 1girl, <break>best quality",
+  );
+  assert.equal(
+    mergeComfyTags("1girl, BREAKFAST, smile", "breakfast, fast", "before"),
+    "fast, 1girl, BREAKFAST, smile",
+  );
+});
