@@ -5,6 +5,7 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import { modelFamilyLabel, type ModelFamily } from "../../utils/modelFamily.js";
   import { NOVELAI_DIMENSION_STEP, naiV5Variant } from "../../utils/novelaiModels.js";
+  import { BUCKET_DIMENSION_STEP, dimsForAspect as computeDimsForAspect } from "../../utils/aspectDimensions.js";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
@@ -32,53 +33,24 @@
   let lastSyncedDimensions = "";
 
   /**
-   * The pixel grid every dimension has to land on.
+   * The pixel grid every dimension preset has to land on.
    *
-   * NovelAI rejects anything that is not a multiple of 64, and its own UI steps
-   * the side length 1024 -> 1088 -> 1152. Local backends accept 8, so the
-   * coarser grid applies in NovelAI mode only.
+   * NovelAI rejects anything that is not a multiple of 64, and SDXL-family
+   * models (sdxl, illustrious, pony, mugen) use the same 64px training buckets
+   * (e.g. 3:2 at 1024 -> 1216x832). Other local backends stay on an 8px grid.
    */
-  const quantum = $derived(generation.isNovelAi ? NOVELAI_DIMENSION_STEP : 8);
+  const useBucketGrid = $derived(generation.isNovelAi || generation.isSdxlLike);
+  const quantum = $derived(
+    generation.isNovelAi
+      ? NOVELAI_DIMENSION_STEP
+      : generation.isSdxlLike
+        ? BUCKET_DIMENSION_STEP
+        : 8
+  );
 
-  /** Try to match persisted width/height back to a preset or simplified ratio. */
-  /**
-   * Largest pair on the pixel grid whose area does not go over `area`.
-   *
-   * NovelAI prices by pixel count and Opus only covers a generation while it
-   * stays at or under one megapixel, so rounding a ratio up past the requested
-   * area is what quietly turns a free 1024 generation into a paid one. That is
-   * what 2:3 did: the area-faithful formula picked 832x1280, 1.06 MP, while
-   * 3:4 happened to round down and stayed free. Walking the width across a few
-   * grid steps and taking the tallest height that still fits lands on
-   * 832x1216, which is NovelAI's own portrait preset.
-   */
-  function dimsUnderArea(aw: number, ah: number, area: number, q: number): { w: number; h: number } {
-    const target = aw / ah;
-    let best: { w: number; h: number; err: number } | null = null;
-    const mid = Math.round(Math.sqrt(area * target) / q);
-    for (let k = Math.max(1, mid - 2); k <= mid + 2; k++) {
-      const w = k * q;
-      const h = Math.floor(area / w / q) * q;
-      if (h < q) continue;
-      // Scored in log space so a result that is too wide and one that is too
-      // tall by the same factor are treated as equally far off.
-      const err = Math.abs(Math.log(w / h / target));
-      if (!best || err < best.err) best = { w, h, err };
-    }
-    return best ? { w: best.w, h: best.h } : { w: q, h: q };
-  }
-
-  /** Compute dimensions for a given aspect ratio using the area-faithful formula. */
+  /** Compute dimensions for a given aspect ratio. */
   function dimsForAspect(aw: number, ah: number, side: number, q = quantum): { w: number; h: number } {
-    const area = side * side;
-    if (generation.isNovelAi) return dimsUnderArea(aw, ah, area, q);
-    const wA = Math.max(q, Math.round(Math.sqrt(area * (aw / ah)) / q) * q);
-    const hA = Math.max(q, Math.round(area / wA / q) * q);
-    const hB = Math.max(q, Math.round(Math.sqrt(area * (ah / aw)) / q) * q);
-    const wB = Math.max(q, Math.round(area / hB / q) * q);
-    return Math.abs(wA * hA - area) <= Math.abs(wB * hB - area)
-      ? { w: wA, h: hA }
-      : { w: wB, h: hB };
+    return computeDimsForAspect(aw, ah, side, q, useBucketGrid);
   }
 
   /**
@@ -163,9 +135,9 @@
     });
   });
 
-  // The same eight shortcuts on every backend. NovelAI accepts any size on its
-  // 64px grid, so the ratio itself is unrestricted there too; only the grid
-  // (`quantum`) and the round-down area rule in `dimsUnderArea` differ.
+  // The same eight shortcuts on every backend. NovelAI and SDXL-family models
+  // snap to the 64px round-down bucket grid (`quantum` + `dimsUnderArea`),
+  // while other local models stay on the 8px area-faithful grid.
   const presets: ReadonlyArray<{ label: string; w: number; h: number }> = [
     { label: "1:1", w: 1, h: 1 },
     { label: "4:3", w: 4, h: 3 },
