@@ -4513,6 +4513,20 @@ fn filename_indicates_anima(filename: &str) -> bool {
     text_indicates_anima(filename)
 }
 
+fn filename_indicates_illustrious(filename: &str) -> bool {
+    let lower = filename.trim().to_lowercase();
+    if lower.contains("noobai") || lower.contains("illustrious") {
+        return true;
+    }
+    lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .any(|token| {
+            matches!(token, "ilxl" | "illu" | "noob" | "noobxl")
+                || (token.len() >= 4 && token.ends_with("illu"))
+        })
+}
+
 /// FLUX 3 Image Klein, from a lowercase filename or CivitAI base-model name.
 ///
 /// Black Forest Labs ships `flux3-image-klein[-base]-*` and
@@ -4786,7 +4800,7 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if filename_indicates_anima(&name) {
         return Some("anima");
     }
-    if name.contains("noobai") || name.contains("illustrious") {
+    if filename_indicates_illustrious(&name) {
         return Some("illustrious");
     }
     if name.contains("pony") {
@@ -12055,5 +12069,29 @@ mod h3_video_lora_tests {
             None,
             "minimax_h3_flf2v_lora_v1.safetensors"
         ));
+    }
+
+    #[test]
+    fn filename_illustrious_detection_avoids_false_positives() {
+        assert_eq!(
+            model_family_from_filename("redLilyIllu_v10.safetensors"),
+            Some("illustrious")
+        );
+        assert_eq!(
+            model_family_from_filename("wai_ilxl_v14.safetensors"),
+            Some("illustrious")
+        );
+        assert_eq!(
+            model_family_from_filename("noob_vpred.safetensors"),
+            Some("illustrious")
+        );
+        assert_ne!(
+            model_family_from_filename("illusion_xl.safetensors"),
+            Some("illustrious")
+        );
+        assert_ne!(
+            model_family_from_filename("illustration_mix.safetensors"),
+            Some("illustrious")
+        );
     }
 }
