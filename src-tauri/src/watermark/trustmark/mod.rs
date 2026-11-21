@@ -54,8 +54,12 @@ fn ort_err<E: std::fmt::Display>(what: &str) -> impl Fn(E) -> String + '_ {
     move |e| format!("TrustMark {what}: {e}")
 }
 
-fn session(path: &std::path::Path, threads: usize) -> Result<Session, String> {
-    Session::builder()
+fn session(
+    env: &ort::environment::Environment,
+    path: &std::path::Path,
+    threads: usize,
+) -> Result<Session, String> {
+    Session::builder(env)
         .map_err(ort_err("session builder"))?
         .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
         .map_err(ort_err("optimization level"))?
@@ -66,14 +70,18 @@ fn session(path: &std::path::Path, threads: usize) -> Result<Session, String> {
 }
 
 impl TrustMark {
-    /// Load both models from `dir`. ONNX Runtime must already be initialised.
-    pub fn load(dir: &std::path::Path, version: Version) -> Result<Self, String> {
+    /// Load both models from `dir` using the shared ONNX Runtime `env`.
+    pub fn load(
+        dir: &std::path::Path,
+        version: Version,
+        env: &ort::environment::Environment,
+    ) -> Result<Self, String> {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get().min(8))
             .unwrap_or(4);
         Ok(Self {
-            encoder: session(&dir.join(ENCODER_FILENAME), threads)?,
-            decoder: session(&dir.join(DECODER_FILENAME), threads)?,
+            encoder: session(env, &dir.join(ENCODER_FILENAME), threads)?,
+            decoder: session(env, &dir.join(DECODER_FILENAME), threads)?,
             version,
         })
     }
@@ -108,8 +116,6 @@ impl TrustMark {
         let stego = outputs
             .get("image")
             .ok_or("TrustMark encoder returned no image")?
-            .downcast_ref::<ort::value::DynTensorValueType>()
-            .map_err(ort_err("encoder output"))?
             .try_extract_tensor::<f32>()
             .map_err(ort_err("encoder output"))?
             .1
@@ -148,8 +154,6 @@ impl TrustMark {
         let logits = outputs
             .get("output")
             .ok_or("TrustMark decoder returned no output")?
-            .downcast_ref::<ort::value::DynTensorValueType>()
-            .map_err(ort_err("decoder output"))?
             .try_extract_tensor::<f32>()
             .map_err(ort_err("decoder output"))?
             .1

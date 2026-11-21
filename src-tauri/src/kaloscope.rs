@@ -124,9 +124,12 @@ impl ArtistDetector {
         self.labels = Vec::new();
     }
 
-    /// Load the session and labels from `root_dir/kaloscope-3`. The caller must
-    /// have initialised ONNX Runtime first (`InterrogatorState::init_ort`).
-    pub fn load(&mut self, root_dir: &Path) -> Result<(), AppError> {
+    /// Load the session and labels from `root_dir/kaloscope-3` using `env`.
+    pub fn load(
+        &mut self,
+        root_dir: &Path,
+        env: &ort::environment::Environment,
+    ) -> Result<(), AppError> {
         if self.session.is_some() {
             return Ok(());
         }
@@ -141,7 +144,7 @@ impl ArtistDetector {
         let thread_count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        let session = Session::builder()
+        let session = Session::builder(env)
             .map_err(|e| {
                 AppError::InterrogatorError(format!("Failed to create session builder: {}", e))
             })?
@@ -186,8 +189,6 @@ impl ArtistDetector {
         let logits = outputs
             .get("logits")
             .ok_or_else(|| AppError::InterrogatorError("Kaloscope output 'logits' missing".into()))?
-            .downcast_ref::<ort::value::DynTensorValueType>()
-            .map_err(|e| AppError::InterrogatorError(format!("Output is not a tensor: {}", e)))?
             .try_extract_tensor::<f32>()
             .map_err(|e| AppError::InterrogatorError(format!("Failed to extract logits: {}", e)))?
             .1
