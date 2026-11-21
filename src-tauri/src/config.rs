@@ -140,6 +140,10 @@ pub struct AppConfig {
     /// fetching. This and every other owner key field below may instead hold
     /// `env:NAME`; read them through `civitai_key()` and its siblings.
     pub civitai_api_key: Option<String>,
+    /// Optional HTTP/HTTPS/SOCKS5 proxy URL used only for CivitAI API requests
+    /// and CivitAI model downloads. Example: `socks5://127.0.0.1:1080`.
+    #[serde(default)]
+    pub civitai_proxy: Option<String>,
     /// Optional NovelAI API key. Required before any NovelAI model can be used.
     #[serde(default)]
     pub novelai_api_key: Option<String>,
@@ -396,6 +400,7 @@ impl Default for AppConfig {
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,
             civitai_api_key: None,
+            civitai_proxy: None,
             novelai_api_key: None,
             elevenlabs_api_key: None,
             fal_api_key: None,
@@ -451,9 +456,10 @@ impl Default for AppConfig {
 /// webhook with a token in its userinfo or query. Only the instance admin sees
 /// them; every other client gets `null` plus a `{name}_configured` flag.
 /// [`operator_secrets`] must list the same fields in the same order.
-fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<String>); 4] {
+fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<String>); 5] {
     [
         ("civitai_api_key", &mut config.civitai_api_key),
+        ("civitai_proxy", &mut config.civitai_proxy),
         ("webhook_url", &mut config.webhook_url),
         ("network_proxy", &mut config.network_proxy),
         ("pip_index_url", &mut config.pip_index_url),
@@ -461,9 +467,10 @@ fn operator_secrets_mut(config: &mut AppConfig) -> [(&'static str, &mut Option<S
 }
 
 /// Read-only twin of [`operator_secrets_mut`], same fields in the same order.
-fn operator_secrets(config: &AppConfig) -> [&Option<String>; 4] {
+fn operator_secrets(config: &AppConfig) -> [&Option<String>; 5] {
     [
         &config.civitai_api_key,
+        &config.civitai_proxy,
         &config.webhook_url,
         &config.network_proxy,
         &config.pip_index_url,
@@ -758,8 +765,27 @@ pub fn load_persisted_config() -> AppConfig {
     AppConfig::default()
 }
 
+pub(crate) fn validate_civitai_proxy(proxy: Option<&str>) -> Result<(), String> {
+    let Some(trimmed) = proxy.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let parsed = reqwest::Url::parse(trimmed).map_err(|_| {
+        "Invalid CivitAI proxy URL (expected http, https, socks5, or socks5h)".to_string()
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err(
+            "Invalid CivitAI proxy scheme (must be http, https, socks5, or socks5h)".to_string(),
+        );
+    }
+    if parsed.host_str().is_none_or(|h| h.trim().is_empty()) {
+        return Err("Invalid CivitAI proxy URL: missing host".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
     for field in [
+        &mut config.civitai_proxy,
         &mut config.network_proxy,
         &mut config.pip_index_url,
         &mut config.output_filename_template,
@@ -1436,5 +1462,45 @@ mod secret_handling_tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn civitai_proxy_validation_checks_scheme_and_never_echoes_credentials() {
+        assert!(validate_civitai_proxy(None).is_ok());
+        assert!(validate_civitai_proxy(Some("   ")).is_ok());
+        for valid in [
+            "http://127.0.0.1:7890",
+            "https://user:secret@proxy.example.com:8443",
+            "socks5://127.0.0.1:1080",
+            "socks5h://user:secret@127.0.0.1:1080",
+        ] {
+            assert!(validate_civitai_proxy(Some(valid)).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "ftp://user:SECRET_PASS@proxy.example.com:21",
+            "socks4://user:SECRET_PASS@127.0.0.1:1080",
+            "not a url with SECRET_PASS",
+            "http://",
+        ] {
+            let err = validate_civitai_proxy(Some(invalid)).unwrap_err();
+            assert!(!err.contains("SECRET_PASS"), "leaked credentials: {err}");
+        }
+    }
+
+    #[test]
+    fn civitai_proxy_is_redacted_for_non_admins() {
+        let mut current = owner_config();
+        current.civitai_proxy = Some("http://user:secret@127.0.0.1:7890".into());
+        let redacted = config_to_client_json(&current, false).unwrap();
+        assert!(redacted["civitai_proxy"].is_null());
+        assert_eq!(
+            redacted["civitai_proxy_configured"],
+            serde_json::json!(true)
+        );
+
+        let mut incoming = echo(redacted);
+        preserve_secrets(&mut incoming, &current);
+        preserve_redacted_secrets(&mut incoming, &current);
+        assert_eq!(incoming.civitai_proxy, current.civitai_proxy);
     }
 }

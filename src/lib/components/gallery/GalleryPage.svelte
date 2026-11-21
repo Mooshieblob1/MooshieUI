@@ -30,6 +30,14 @@
   import { UPSCALE_FACTOR } from "../../utils/novelaiEnhance.js";
   import { isTauri } from "../../utils/ipc.js";
   import { buildGalleryRows, rowOffsets, selectionRange, visibleRowRange } from "../../utils/galleryGrid.js";
+  import {
+    CHECKERBOARD_CLASS,
+    detectImageAlpha,
+    isMingLayerImage,
+    isTransparentImage,
+    layerOrderValue,
+    mingLayerBadgeInfo,
+  } from "../../utils/transparentBackdrop.js";
   import type { GalleryViewMode } from "../../stores/gallery.svelte.js";
   import { imageEditor } from "../../stores/imageEditor.svelte.js";
   import type { OutputImage } from "../../types/index.js";
@@ -52,6 +60,29 @@
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
   let showSearchHelp = $state(false);
   let dirPickerImage = $state<OutputImage | null>(null);
+  const alphaThumbs = new SvelteSet<string>();
+
+  function thumbKey(image: OutputImage): string {
+    return image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+  }
+
+  function handleThumbLoad(e: Event, image: OutputImage) {
+    const img = e.currentTarget;
+    if (img instanceof HTMLImageElement && detectImageAlpha(img)) {
+      alphaThumbs.add(thumbKey(image));
+    }
+  }
+
+  const layerSiblingsByPrompt = $derived.by(() => {
+    const map = new Map<string, OutputImage[]>();
+    for (const img of gallery.images) {
+      if (!img.prompt_id || !isMingLayerImage(img)) continue;
+      const bucket = map.get(img.prompt_id) ?? [];
+      bucket.push(img);
+      map.set(img.prompt_id, bucket);
+    }
+    return map;
+  });
   // Touch screens have no hover, so a tile's action tray stays hidden until its
   // Actions toggle opens it. One tile at a time.
   let touchActionsImage = $state<OutputImage | null>(null);
@@ -400,6 +431,35 @@
         };
       });
     }
+    if (gallery.groupBy === "layers") {
+      const layerSets = new Map<string, OutputImage[]>();
+      const singletons: OutputImage[] = [];
+      for (const image of visibleImages) {
+        const siblings = image.prompt_id ? layerSiblingsByPrompt.get(image.prompt_id) : undefined;
+        if (isMingLayerImage(image) && siblings && siblings.length > 1 && image.prompt_id) {
+          const bucket = layerSets.get(image.prompt_id) ?? [];
+          bucket.push(image);
+          layerSets.set(image.prompt_id, bucket);
+        } else {
+          singletons.push(image);
+        }
+      }
+      const groups: Array<{ label: string; images: OutputImage[] }> = [];
+      for (const images of layerSets.values()) {
+        images.sort((a, b) => layerOrderValue(a) - layerOrderValue(b));
+        groups.push({
+          label: locale.t("gallery.group_layers_header", { count: String(images.length) }),
+          images,
+        });
+      }
+      if (singletons.length > 0) {
+        groups.push({
+          label: layerSets.size > 0 ? locale.t("gallery.group_layers_other") : locale.t("gallery.all_images"),
+          images: singletons,
+        });
+      }
+      return groups;
+    }
     if (gallery.groupBy !== "none") {
       const grouped = new Map<string, OutputImage[]>();
       for (const image of visibleImages) {
@@ -419,7 +479,16 @@
         bucket.push(image);
         grouped.set(key, bucket);
       }
-      return Array.from(grouped.entries()).map(([label, images]) => ({ label, images }));
+      return Array.from(grouped.entries()).map(([label, images]) => {
+        if (gallery.groupBy === "prompt" && images.length > 1 && images.every(isMingLayerImage)) {
+          const ordered = [...images].sort((a, b) => layerOrderValue(a) - layerOrderValue(b));
+          return {
+            label: locale.t("gallery.group_layers_header", { count: String(ordered.length) }),
+            images: ordered,
+          };
+        }
+        return { label, images };
+      });
     }
     return [{ label: locale.t("gallery.all_images"), images: visibleImages }];
   });
@@ -1077,6 +1146,7 @@
               <option value="month">{locale.t("gallery.group_month")}</option>
               <option value="mode">{locale.t("gallery.group_mode")}</option>
               <option value="prompt">{locale.t("gallery.group_prompt")}</option>
+              <option value="layers">{locale.t("gallery.group_layers")}</option>
               <option value="board">{locale.t("gallery.group_board")}</option>
               {#if knownCharacters.length > 0}
                 <option value="character">{locale.t("gallery.character_filter")}</option>
@@ -1346,13 +1416,22 @@
                 <div></div><div>{locale.t("gallery.col_preview")}</div><div>{locale.t("gallery.col_name")}</div><div>{locale.t("gallery.col_date")}</div><div>{locale.t("gallery.col_size")}</div><div>{locale.t("gallery.col_actions")}</div>
               </div>
               {#each group.images as image (image)}
+                {@const transparentTile = isTransparentImage(image) || alphaThumbs.has(thumbKey(image))}
+                {@const layerInfo = mingLayerBadgeInfo(image, image.prompt_id ? layerSiblingsByPrompt.get(image.prompt_id) : undefined)}
                 <div class="grid grid-cols-[28px_72px_1fr_150px_120px_420px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0 [content-visibility:auto] [contain-intrinsic-size:auto_76px] {selection.has(image) ? 'bg-indigo-500/10' : ''} {cursor === image ? 'outline-2 -outline-offset-2 outline-white' : ''}" data-gallery-cursor={cursor === image ? "" : undefined}>
                   {@render selectBox(image, true)}
                   <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={(e) => onTileClick(e, image)}>
-                    <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} loading="lazy" decoding="async" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-md scale-110' : ''}" />
+                    <img use:lazyThumbnail={{ image, size: thumbSize }} onload={(e) => handleThumbLoad(e, image)} alt={image.filename} loading="lazy" decoding="async" class="w-full h-full object-cover {transparentTile ? CHECKERBOARD_CLASS : ''} {gallery.shouldBlur(image) ? 'blur-md scale-110' : ''}" />
                   </button>
                   <div class="min-w-0">
-                    <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
+                    <div class="flex items-center gap-1.5 min-w-0">
+                      <span class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</span>
+                      {#if layerInfo}
+                        <span class="shrink-0 px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-700/50 text-[10px] text-indigo-200 font-medium">
+                          {locale.t("gallery.layer_badge", { index: String(layerInfo.index), total: String(layerInfo.total) })}
+                        </span>
+                      {/if}
+                    </div>
                     {#if image.linked_folder}
                       <div class="text-[10px] text-neutral-500 truncate" title={image.linked_folder}>{image.linked_folder}</div>
                     {/if}
@@ -1444,13 +1523,15 @@
                 {:else}
                   <div class="grid" style="grid-template-columns: repeat({gridColumns}, minmax(0, 1fr)); gap: {GRID_GAP}px; height: {tileHeight}px; margin-bottom: {GRID_GAP}px;">
                     {#each row.images as image (image)}
-                    <div role="presentation" ondragstart={(e) => onTileDragStart(e, image)} ondragend={onTileDragEnd} class="group relative h-full rounded-lg overflow-hidden border transition-colors {selection.has(image) ? 'border-indigo-400 ring-2 ring-indigo-500' : 'border-neutral-800 hover:border-indigo-500'} {cursor === image ? 'outline-2 outline-offset-2 outline-white' : ''}">
+                    {@const transparentTile = isTransparentImage(image) || alphaThumbs.has(thumbKey(image))}
+                    {@const layerInfo = mingLayerBadgeInfo(image, image.prompt_id ? layerSiblingsByPrompt.get(image.prompt_id) : undefined)}
+                    <div role="presentation" ondragstart={(e) => onTileDragStart(e, image)} ondragend={onTileDragEnd} class="group relative h-full rounded-lg overflow-hidden border transition-colors {selection.has(image) ? 'border-indigo-400 ring-2 ring-indigo-500' : layerInfo ? 'border-indigo-700/60 hover:border-indigo-400' : 'border-neutral-800 hover:border-indigo-500'} {cursor === image ? 'outline-2 outline-offset-2 outline-white' : ''}">
                       <button
                         class="w-full h-full"
                         title={isVideoImage(image) ? locale.t("gallery.play_video") : image.filename}
                         onclick={(e) => onTileClick(e, image)}
                       >
-                        <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} decoding="async" class="w-full h-full object-cover {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
+                        <img use:lazyThumbnail={{ image, size: thumbSize }} onload={(e) => handleThumbLoad(e, image)} alt={image.filename} decoding="async" class="w-full h-full object-cover {transparentTile ? CHECKERBOARD_CLASS : ''} {gallery.shouldBlur(image) ? 'blur-xl scale-110' : ''}" />
                       </button>
                       {#if gallery.shouldBlur(image)}
                         <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1484,6 +1565,11 @@
                         {/if}
                         {#if gallery.getRating(image) > 0}
                           <div class="px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-amber-300" title={locale.t("gallery.rating")}>★{gallery.getRating(image)}</div>
+                        {/if}
+                        {#if layerInfo}
+                          <div class="px-1.5 py-0.5 rounded bg-indigo-950/90 border border-indigo-600/50 text-[10px] text-indigo-200 font-medium">
+                            {locale.t("gallery.layer_badge", { index: String(layerInfo.index), total: String(layerInfo.total) })}
+                          </div>
                         {/if}
                       </div>
                       {#if generation.manualSaveMode && !image.gallery_filename}

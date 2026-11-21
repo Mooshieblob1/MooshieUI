@@ -4102,17 +4102,15 @@ async fn civitai_lookup_hash_value(state: &Arc<AppState>, hash: &str) -> Result<
     }
     let api_key = state.config.read().await.civitai_key();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
-    let mut req = state
-        .http_client
-        .get(&url)
-        .header("User-Agent", "MooshieUI/0.3.9");
+    let client = state.civitai_http_client().await?;
+    let mut req = client.get(&url).header("User-Agent", "MooshieUI/0.3.9");
     if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
     }
     let resp = req
         .send()
         .await
-        .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
+        .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e.without_url())))?;
 
     if resp.status() == 404 {
         return Err(AppError::Other("Model not found on CivitAI".into()));
@@ -4239,9 +4237,10 @@ pub(crate) async fn fetch_civitai_image_bytes(
     state: &AppState,
     url: &str,
 ) -> Result<Vec<u8>, AppError> {
-    // Reuse the shared no-redirect client so redirects stay manual (the token is
-    // gated per-host below) while still benefiting from connection pooling.
-    let client = &state.http_client_no_redirect;
+    // Reuse the shared no-redirect client (or CivitAI proxy twin) so redirects
+    // stay manual (the token is gated per-host below) while still benefiting
+    // from connection pooling.
+    let client = state.civitai_http_client_no_redirect().await?;
     // The initial URL must be a CivitAI host so this command can't be turned into
     // a generic server-side fetch primitive (it is reachable through browser-mode
     // LAN auth and carries the user's CivitAI token).
@@ -4268,7 +4267,7 @@ pub(crate) async fn fetch_civitai_image_bytes(
         let resp = req
             .send()
             .await
-            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
+            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e.without_url())))?;
         if resp.status().is_redirection() {
             let location = resp
                 .headers()
@@ -4349,17 +4348,14 @@ pub async fn civitai_lookup_image(
         "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
         image_id
     );
-    let mut req = state
-        .http_client
-        .get(&url)
-        .header("User-Agent", "MooshieUI/0.5.7");
+    let client = state.civitai_http_client().await?;
+    let mut req = client.get(&url).header("User-Agent", "MooshieUI/0.5.7");
     if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AppError::Other(format!("CivitAI image lookup failed: {}", e)))?;
+    let resp = req.send().await.map_err(|e| {
+        AppError::Other(format!("CivitAI image lookup failed: {}", e.without_url()))
+    })?;
 
     if resp.status() == 404 {
         return Err(AppError::Other("Image not found on CivitAI".into()));
@@ -6215,8 +6211,8 @@ pub async fn civitai_search_models_internal(
     );
     log::debug!("CivitAI search URL: {}", url);
 
-    let mut req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut req = client
         .get(&url)
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
@@ -6225,7 +6221,7 @@ pub async fn civitai_search_models_internal(
         req = req.bearer_auth(key);
     }
 
-    let resp = req.send().await?;
+    let resp = req.send().await.map_err(reqwest::Error::without_url)?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
 
@@ -6322,8 +6318,8 @@ pub async fn civitai_get_model_internal(
 ) -> Result<Value, AppError> {
     let url = format!("https://civitai.com/api/v1/models/{}", model_id);
 
-    let mut req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut req = client
         .get(&url)
         .header("Accept", "application/json")
         .header("User-Agent", "MooshieUI/0.3.9");
@@ -6332,7 +6328,7 @@ pub async fn civitai_get_model_internal(
         req = req.bearer_auth(key);
     }
 
-    let resp = req.send().await?;
+    let resp = req.send().await.map_err(reqwest::Error::without_url)?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
 
@@ -6429,11 +6425,11 @@ pub async fn civitai_list_architectures(
         architectures.insert(arch.to_string());
     }
 
+    let client = state.civitai_http_client().await?;
     let mut cursor: Option<String> = None;
 
     for _ in 0..8 {
-        let mut req = state
-            .http_client
+        let mut req = client
             .get("https://civitai.com/api/v1/models")
             .header("Accept", "application/json")
             .header("User-Agent", "MooshieUI/0.3.9")
@@ -8306,8 +8302,8 @@ pub async fn get_lora_civitai_info(
         "https://civitai.com/api/v1/model-versions/by-hash/{}",
         autov2
     );
-    let mut civitai_req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut civitai_req = client
         .get(&civitai_url)
         .header("User-Agent", "MooshieUI/0.3.9");
     if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
@@ -8539,14 +8535,17 @@ pub async fn get_checkpoint_civitai_info(
         "https://civitai.com/api/v1/model-versions/by-hash/{}",
         autov2
     );
-    let mut civitai_req = state
-        .http_client
+    let client = state.civitai_http_client().await?;
+    let mut civitai_req = client
         .get(&civitai_url)
         .header("User-Agent", "MooshieUI/0.3.9");
     if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
         civitai_req = civitai_req.bearer_auth(key);
     }
-    let civitai_resp = civitai_req.send().await;
+    let civitai_resp = civitai_req
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url);
 
     match &civitai_resp {
         Ok(resp) if !resp.status().is_success() => {
@@ -10774,10 +10773,14 @@ where
                 break 'retry;
             }
 
-            let mut req = state
-                .http_client
-                .get(&api_url)
-                .header("User-Agent", "MooshieUI/2.0");
+            let client = match state.civitai_http_client().await {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("civitai_bulk_scan: proxy error for {}: {}", filename, e);
+                    break 'retry;
+                }
+            };
+            let mut req = client.get(&api_url).header("User-Agent", "MooshieUI/2.0");
             if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
                 req = req.bearer_auth(key);
             }
@@ -10785,7 +10788,11 @@ where
             let resp = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    log::warn!("civitai_bulk_scan: request error for {}: {}", filename, e);
+                    log::warn!(
+                        "civitai_bulk_scan: request error for {}: {}",
+                        filename,
+                        e.without_url()
+                    );
                     break 'retry;
                 }
             };

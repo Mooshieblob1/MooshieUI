@@ -2776,6 +2776,7 @@ async fn dispatch_command(
             config::normalize_config_fields(&mut new_config);
             let mut current = state.config.write().await;
             preserve_config_secrets_for_role(&mut new_config, &current, caller_role);
+            config::validate_civitai_proxy(new_config.civitai_proxy.as_deref())?;
             config::save_config(&new_config)?;
             state.trust_localhost.store(
                 config::local_trust_enabled(new_config.trust_localhost),
@@ -5161,8 +5162,11 @@ async fn dispatch_command(
             .collect();
 
             // Try to fetch more from CivitAI API
-            let mut req = state
-                .http_client
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client
                 .get("https://civitai.com/api/v1/models?limit=1")
                 .header("User-Agent", "MooshieUI/0.3.9");
             if let Some(ref key) = api_key {
@@ -5202,11 +5206,15 @@ async fn dispatch_command(
             }
             let api_key = state.config.read().await.civitai_key();
             let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
-            let mut req = state.http_client.get(&url);
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client.get(&url);
             if let Some(ref key) = api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
@@ -5223,11 +5231,15 @@ async fn dispatch_command(
                 "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
                 image_id
             );
-            let mut req = state.http_client.get(&url);
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client.get(&url);
             if let Some(ref key) = api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
@@ -5324,8 +5336,11 @@ async fn dispatch_command(
                 "https://civitai.com/api/v1/model-versions/by-hash/{}",
                 autov2
             );
-            let mut civitai_req = state
-                .http_client
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut civitai_req = civitai_client
                 .get(&civitai_url)
                 .header("User-Agent", "MooshieUI/0.7");
             if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
@@ -5798,8 +5813,12 @@ async fn dispatch_command(
             let dest = models_dir.join(&filename);
 
             // Skip if the file on disk is complete and matches the expected hash.
+            let dl_client = state
+                .http_client_for_url(&url)
+                .await
+                .map_err(|e| e.to_string())?;
             if crate::comfyui::client::reuse_existing_model_download(
-                &state.http_client,
+                &dl_client,
                 &url,
                 &dest,
                 &filename,
@@ -5813,10 +5832,7 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let mut req = state
-                .http_client
-                .get(&url)
-                .header("User-Agent", "MooshieUI/1.3.0");
+            let mut req = dl_client.get(&url).header("User-Agent", "MooshieUI/1.3.0");
             if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
                 req = req.bearer_auth(token);
             } else if crate::comfyui::client::is_civitai_url(&url) && !url_has_token_param(&url) {

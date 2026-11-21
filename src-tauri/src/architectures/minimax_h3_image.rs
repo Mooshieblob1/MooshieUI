@@ -69,6 +69,16 @@ const VAE: ModelFile = ModelFile {
     sha256: Some("d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af"),
 };
 
+/// pDMD 2-step distillation LoRA (ComfyUI-remapped weights from `akhaliq/minimax-h3-image-pdmd-2step`).
+#[allow(dead_code)]
+pub const PDMD_LORA: ModelFile = ModelFile {
+    filename: "minimax_h3_pdmd_2nfe_comfyui.safetensors",
+    url: "https://huggingface.co/akhaliq/minimax-h3-image-pdmd-2step/resolve/main/minimax_h3_pdmd_2nfe_comfyui.safetensors",
+    category: "loras",
+    size: Some("~1.96 GB"),
+    sha256: Some("5feaeef13df31f98f36364a95e7ce9e8ff0afd71570d1c53d7c3be599e3a0f22"),
+};
+
 /// Spellings of "MiniMax-H3-Image" in Comfy-Org, community and CivitAI names.
 const NAME_MARKERS: &[&[&str]] = &[
     &["minimax_h3_image"],
@@ -825,5 +835,19 @@ mod tests {
         p.pause_at_step = Some(3);
         let err = crate::templates::validate_generation_params(&p).unwrap_err();
         assert!(err.contains("MiniMax-H3-Image"), "{err}");
+    }
+
+    #[test]
+    fn pdmd_lora_metadata_matches_verified_release() {
+        assert_eq!(
+            PDMD_LORA.filename,
+            "minimax_h3_pdmd_2nfe_comfyui.safetensors"
+        );
+        assert_eq!(PDMD_LORA.category, "loras");
+        assert!(PDMD_LORA.url.contains("/resolve/main/"));
+        assert!(PDMD_LORA.filename.contains(PDMD_MARKER));
+        let sha = PDMD_LORA.sha256.expect("sha256");
+        assert_eq!(sha.len(), 64);
+        assert!(sha.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 }

@@ -5361,5 +5361,18 @@ const fr: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC : {tags}",
   "prompt_uc.from_title": "UC de {name} : {tags}",
+  "gallery.group_layers": "Jeux de calques",
+  "gallery.group_layers_header": "Calques Ming-Image ({count})",
+  "gallery.group_layers_other": "Autres images",
+  "gallery.layer_badge": "Calque {index}/{total}",
+  "gallery.layer_item": "Calque",
+  "comic.panel1_ref": "Utiliser le panneau 1 comme reference de personnage",
+  "comic.panel1_ref_tip": "Transmet l'image generee du panneau 1 comme reference de personnage aux panneaux 2 a 6 sur les modeles compatibles.",
+  "comic.panel1_ref_unsupported": "Non pris en charge par le modele selectionne. Choisissez NovelAI Precise Reference, un modele Edit ou Anima.",
+  "settings.civitai.proxy": "URL du proxy CivitAI",
+  "settings.civitai.proxy_desc": "Proxy HTTP, HTTPS ou SOCKS5 facultatif utilise uniquement pour les requetes API et telechargements CivitAI.",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 ou socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "Proxy configure (laisser vide pour conserver)",
+  "settings.civitai.proxy_invalid": "Utilisez une URL valide http://, https://, socks5:// ou socks5h://.",
 };
 export default fr;
