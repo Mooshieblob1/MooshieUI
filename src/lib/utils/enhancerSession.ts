@@ -124,8 +124,14 @@ export function appendTurn(turns: SessionTurn[], turn: SessionTurn): SessionTurn
   return [...turns, turn].slice(-MAX_SESSION_TURNS);
 }
 
-export function emptySessions(): Record<EnhancerFlow, SessionTurn[]> {
+export type TabSessions = Record<EnhancerFlow, SessionTurn[]>;
+
+export function emptySessions(): TabSessions {
   return { nai: [], enhance: [], h3: [], compose: [] };
+}
+
+export function hasAnyTurns(sessions: TabSessions): boolean {
+  return ENHANCER_FLOWS.some((flow) => sessions[flow].length > 0);
 }
 
 function isTurn(value: unknown): value is SessionTurn {
@@ -138,20 +144,56 @@ function isTurn(value: unknown): value is SessionTurn {
   );
 }
 
-/** Whatever is stored, the result is a full, well-formed set of sessions. */
-export function parseStoredSessions(raw: string | null): Record<EnhancerFlow, SessionTurn[]> {
+function parseSessionsObject(data: unknown): TabSessions {
   const sessions = emptySessions();
-  if (!raw) return sessions;
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return sessions;
-  }
-  if (!data || typeof data !== "object") return sessions;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return sessions;
   for (const flow of ENHANCER_FLOWS) {
     const list = (data as Record<string, unknown>)[flow];
     if (Array.isArray(list)) sessions[flow] = list.filter(isTurn).slice(-MAX_SESSION_TURNS);
   }
   return sessions;
+}
+
+/** Whatever is stored, the result is a full, well-formed set of sessions. */
+export function parseStoredSessions(raw: string | null): TabSessions {
+  if (!raw) return emptySessions();
+  try {
+    return parseSessionsObject(JSON.parse(raw));
+  } catch {
+    return emptySessions();
+  }
+}
+
+/** Parse parked per-tab enhancer sessions, dropping empty or malformed entries. */
+export function parseStoredTabSessions(raw: string | null): Record<string, TabSessions> {
+  if (!raw) return {};
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const out: Record<string, TabSessions> = {};
+  for (const [tabId, value] of Object.entries(data)) {
+    if (!tabId) continue;
+    const parsed = parseSessionsObject(value);
+    if (hasAnyTurns(parsed)) out[tabId] = parsed;
+  }
+  return out;
+}
+
+/** Keep only parked sessions belonging to open non-active tabs with at least one turn. */
+export function pruneTabSessions(
+  parked: Record<string, TabSessions>,
+  openIds: Iterable<string>,
+  activeId?: string | null,
+): Record<string, TabSessions> {
+  const open = new Set(openIds);
+  const out: Record<string, TabSessions> = {};
+  for (const [tabId, sessions] of Object.entries(parked)) {
+    if (!open.has(tabId) || tabId === activeId || !hasAnyTurns(sessions)) continue;
+    out[tabId] = sessions;
+  }
+  return out;
 }

@@ -86,6 +86,7 @@ class GenerationTabsStore {
   // Raw: snapshots are plain data, only ever replaced wholesale, never mutated.
   tabs = $state.raw<GenerationTab[]>([{ id: newTabId(), snapshot: null }]);
   activeId = $state(this.tabs[0].id);
+  loaded = $state(false);
 
   /** The tabs the strip shows: every tab but the pages' own. */
   get stripTabs(): GenerationTab[] {
@@ -135,6 +136,8 @@ class GenerationTabsStore {
       this.activeId = active.id;
     } catch (e) {
       console.error("generationTabs: load failed", e);
+    } finally {
+      this.loaded = true;
     }
   }
 
