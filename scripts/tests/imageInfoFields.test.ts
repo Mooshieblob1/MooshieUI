@@ -4,6 +4,7 @@ import {
   EMPTY_PREFS,
   formatLoraWeight,
   loraDisplayName,
+  matchInstalledModel,
   moveField,
   orderFields,
   parseLoraField,
@@ -51,4 +52,40 @@ test("LoRAs are split one per entry with their weights", () => {
     { name: "detail", model: -0.5, clip: null },
     { name: "foo", model: 1, clip: null },
   ]);
+});
+
+test("parseLoraField reads JSON object and string arrays from SwarmUI metadata", () => {
+  assert.deepEqual(
+    parseLoraField('[{"name":"ctd mofu/ctdmofu","strength_model":0.8,"strength_clip":0.6}]'),
+    [{ name: "ctd mofu/ctdmofu", model: 0.8, clip: 0.6 }],
+  );
+  assert.deepEqual(parseLoraField('["ctd mofu/ctdmofu", "plain"]'), [
+    { name: "ctd mofu/ctdmofu", model: null, clip: null },
+    { name: "plain", model: null, clip: null },
+  ]);
+});
+
+test("matchInstalledModel normalizes slashes and extensions against installed files", () => {
+  const installedLoras = [
+    "ctd mofu\\ctdmofu.safetensors",
+    "styles\\dup.safetensors",
+    "other\\dup.safetensors",
+    "unique_dir\\rare_lora.safetensors",
+  ];
+  assert.equal(
+    matchInstalledModel("ctd mofu/ctdmofu", installedLoras),
+    "ctd mofu\\ctdmofu.safetensors",
+  );
+  assert.equal(
+    matchInstalledModel("rare_lora", installedLoras),
+    "unique_dir\\rare_lora.safetensors",
+  );
+  // Ambiguous basename falls back to imported name rather than guessing
+  assert.equal(matchInstalledModel("dup", installedLoras), "dup");
+  assert.equal(matchInstalledModel("missing_lora", installedLoras), "missing_lora");
+
+  assert.equal(
+    matchInstalledModel("redLilyIllu_v10", ["redLilyIllu_v10.safetensors"]),
+    "redLilyIllu_v10.safetensors",
+  );
 });

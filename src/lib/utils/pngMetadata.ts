@@ -57,6 +57,38 @@ function* iterChunks(buf: ArrayBuffer): Generator<PngChunk> {
 // SwarmUI JSON parser (mirrors Rust parse_swarmui_json)
 // ---------------------------------------------------------------------------
 
+function parseSwarmUiWeight(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function formatSwarmUiLoras(imageParams: Record<string, unknown>): string | null {
+  const raw = imageParams.loras;
+  if (!Array.isArray(raw) || !raw.some((v) => typeof v === "string")) return null;
+  const weights = Array.isArray(imageParams.loraweights) ? imageParams.loraweights : [];
+  const tencWeights = Array.isArray(imageParams.loratencweights) ? imageParams.loratencweights : [];
+  const items: unknown[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry === "string") {
+      const name = entry.trim();
+      if (!name) continue;
+      const strengthModel = parseSwarmUiWeight(weights[i]) ?? 1.0;
+      const strengthClip = parseSwarmUiWeight(tencWeights[i]) ?? strengthModel;
+      items.push({ name, strength_model: strengthModel, strength_clip: strengthClip });
+    } else if (entry && typeof entry === "object") {
+      items.push(entry);
+    }
+  }
+  return items.length > 0 ? JSON.stringify(items) : null;
+}
+
 function parseSwarmUIJson(text: string): Record<string, string> | null {
   try {
     const root = JSON.parse(text);
@@ -84,6 +116,13 @@ function parseSwarmUIJson(text: string): Record<string, string> | null {
       ];
 
       for (const [swarm, internal] of reverseMap) {
+        if (swarm === "loras") {
+          const formatted = formatSwarmUiLoras(imageParams as Record<string, unknown>);
+          if (formatted !== null) {
+            params[internal] = formatted;
+            continue;
+          }
+        }
         if (swarm in imageParams) {
           const v = imageParams[swarm];
           const s = typeof v === "string" ? v : JSON.stringify(v);
