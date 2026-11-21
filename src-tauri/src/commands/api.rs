@@ -2319,6 +2319,21 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
     Ok(files)
 }
 
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn find_gallery_visual_duplicates(
+    max_distance: Option<u32>,
+) -> Result<Vec<crate::gallery_index::VisualDuplicateGroup>, AppError> {
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let threshold = max_distance.unwrap_or(crate::watermark::fingerprint::MATCH_DISTANCE);
+    tokio::task::spawn_blocking(move || {
+        crate::gallery_index::find_visual_duplicates(&dir, threshold)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))
+}
+
 /// Copy a gallery file to a caller-chosen destination path.
 ///
 /// Used by save-video-as. Videos are far too large to marshal through IPC as a

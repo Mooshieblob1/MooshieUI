@@ -29,8 +29,18 @@ export interface CharacterHit {
   score: number;
 }
 
-/** Score a card must reach to count as in the image. */
+/** Score a card must reach to count as in the image by default. */
 export const CHARACTER_MATCH_THRESHOLD = 0.7;
+export const CHARACTER_MATCH_MIN = 0.3;
+export const CHARACTER_MATCH_MAX = 1.0;
+export const CHARACTER_MATCH_STEP = 0.05;
+
+/** Clamp a persisted or user-chosen character match strictness threshold into the valid slider range. */
+export function clampCharacterMatchThreshold(value: number): number {
+  if (!Number.isFinite(value)) return CHARACTER_MATCH_THRESHOLD;
+  const clamped = Math.max(CHARACTER_MATCH_MIN, Math.min(CHARACTER_MATCH_MAX, value));
+  return Math.round(clamped * 100) / 100;
+}
 
 type Subject = "girl" | "boy" | "other";
 
@@ -264,11 +274,12 @@ export function detectInUnits(
   threshold = CHARACTER_MATCH_THRESHOLD,
 ): CharacterHit[] {
   if (cards.length === 0 || units.length === 0) return [];
+  const floor = Number.isFinite(threshold) ? Math.max(0, Math.min(1, threshold)) : CHARACTER_MATCH_THRESHOLD;
   const best = new Map<string, CharacterHit>();
   for (const card of cards) {
     let score = 0;
     for (const unit of units) score = Math.max(score, scoreCard(card, unit));
-    if (score < threshold) continue;
+    if (score < floor) continue;
     const current = best.get(card.characterId);
     // On a tie the character's own card wins over a variant.
     if (!current || score > current.score || (score === current.score && card.card.id === card.characterId)) {

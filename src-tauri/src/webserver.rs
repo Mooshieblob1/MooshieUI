@@ -3379,6 +3379,19 @@ async fn dispatch_command(
             });
             Ok(serde_json::json!(files))
         }
+        "find_gallery_visual_duplicates" => {
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            let max_distance = args["max_distance"]
+                .as_u64()
+                .map(|v| v.min(32) as u32)
+                .unwrap_or(crate::watermark::fingerprint::MATCH_DISTANCE);
+            let groups = tokio::task::spawn_blocking(move || {
+                crate::gallery_index::find_visual_duplicates(&dir, max_distance)
+            })
+            .await
+            .map_err(|e| format!("Task panicked: {e}"))?;
+            Ok(serde_json::json!(groups))
+        }
         "load_gallery_image" => {
             let filename = args["filename"]
                 .as_str()

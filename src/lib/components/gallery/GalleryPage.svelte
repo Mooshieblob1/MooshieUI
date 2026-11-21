@@ -3,7 +3,18 @@
   import { SvelteSet } from "svelte/reactivity";
   import { portal } from "../../utils/portal.js";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
-  import { gallery, isVideoImage, GALLERY_MAX_RATING, GALLERY_SOURCE_OWN } from "../../stores/gallery.svelte.js";
+  import {
+    gallery,
+    isVideoImage,
+    GALLERY_MAX_RATING,
+    GALLERY_SOURCE_OWN,
+    VISUAL_DUPLICATE_MAX_DISTANCE,
+  } from "../../stores/gallery.svelte.js";
+  import {
+    CHARACTER_MATCH_MAX,
+    CHARACTER_MATCH_MIN,
+    CHARACTER_MATCH_STEP,
+  } from "../../utils/galleryCharacters.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
@@ -312,6 +323,7 @@
   // background, once the prompts are loaded, instead of while the page opens.
   $effect(() => {
     void gallery.images.length;
+    void gallery.characterMatchThreshold;
     if (knownCharacters.length === 0 || gallery.hydratingMetadata) return;
     untrack(() => void gallery.warmCharacters());
   });
@@ -358,6 +370,7 @@
       gallery.minRating > 0 ||
       gallery.nsfwFilter !== "all" ||
       gallery.duplicatesOnly ||
+      gallery.visualDuplicatesOnly ||
       characterFilterActive,
   );
 
@@ -369,13 +382,38 @@
       gallery.minRating > 0 ||
       gallery.nsfwFilter !== "all" ||
       gallery.duplicatesOnly ||
+      gallery.visualDuplicatesOnly ||
       characterFilterActive,
   );
 
-  /** Groups get a header row: Group By is on, or the page shows sets of repeated generations. */
-  const showGroupHeaders = $derived(gallery.groupBy !== "none" || gallery.duplicatesOnly);
+  /** Groups get a header row: Group By is on, or the page shows sets of repeated or visually duplicate images. */
+  const showGroupHeaders = $derived(gallery.groupBy !== "none" || gallery.duplicatesOnly || gallery.visualDuplicatesOnly);
 
   const groupedGalleryImages = $derived.by(() => {
+    if (gallery.visualDuplicatesOnly) {
+      // One group per visually matching set, oldest copy first.
+      const map = gallery.visualDuplicateMap;
+      const sets = new Map<number, OutputImage[]>();
+      for (const image of visibleImages) {
+        const groupId = image.gallery_filename ? map.get(image.gallery_filename) : undefined;
+        if (groupId === undefined) continue;
+        const bucket = sets.get(groupId) ?? [];
+        bucket.push(image);
+        sets.set(groupId, bucket);
+      }
+      return Array.from(sets.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([, images], idx) => {
+          images.sort((a, b) => (a.generated_at_ms ?? 0) - (b.generated_at_ms ?? 0));
+          return {
+            label: locale.t("gallery.visual_duplicate_group", {
+              index: String(idx + 1),
+              count: String(images.length),
+            }),
+            images,
+          };
+        });
+    }
     if (gallery.duplicatesOnly) {
       // One group per repeated generation, oldest copy first.
       const sets = new Map<string, OutputImage[]>();
@@ -954,7 +992,9 @@
     void gallery.minRating;
     void gallery.nsfwFilter;
     void gallery.characterFilter;
+    void gallery.characterMatchThreshold;
     void gallery.duplicatesOnly;
+    void gallery.visualDuplicatesOnly;
     galleryRenderLimit = 48;
   });
 
@@ -972,6 +1012,8 @@
     void gallery.sourceFilter;
     void gallery.filtersCollapsed;
     void gallery.characterFilter;
+    void gallery.characterMatchThreshold;
+    void gallery.visualDuplicateThreshold;
     gallery.saveViewPrefs();
   });
 
@@ -1181,6 +1223,22 @@
                 {/each}
               </select>
             </div>
+            <div>
+              <div class="flex items-center justify-between text-xs text-neutral-400 mb-1" title={locale.t("gallery.character_strictness_tooltip")}>
+                <span>{locale.t("gallery.character_strictness")}</span>
+                <span class="tabular-nums text-neutral-300">{Math.round(gallery.characterMatchThreshold * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={CHARACTER_MATCH_MIN}
+                max={CHARACTER_MATCH_MAX}
+                step={CHARACTER_MATCH_STEP}
+                bind:value={gallery.characterMatchThreshold}
+                aria-label={locale.t("gallery.character_strictness")}
+                title={locale.t("gallery.character_strictness_tooltip")}
+                class="w-full accent-indigo-500 my-2"
+              />
+            </div>
           {/if}
           {#if gallery.linkedFolders.length > 0}
             <div>
@@ -1194,16 +1252,48 @@
               </select>
             </div>
           {/if}
-          <div class="flex flex-wrap items-center gap-2 {gallery.linkedFolders.length > 0 ? '' : 'lg:col-span-2'}">
+          <div class="flex flex-wrap items-center gap-2 {knownCharacters.length > 0 && gallery.linkedFolders.length > 0 ? 'sm:col-span-2 lg:col-span-3' : knownCharacters.length > 0 ? 'sm:col-span-2 lg:col-span-4' : gallery.linkedFolders.length > 0 ? '' : 'lg:col-span-2'}">
             <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
               <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.favouritesOnly} />
               {locale.t("gallery.favourites_only")}
             </label>
             <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500" title={locale.t("gallery.duplicates_only_tooltip")}>
-              <input type="checkbox" class="accent-indigo-500" bind:checked={gallery.duplicatesOnly} />
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                checked={gallery.duplicatesOnly}
+                onchange={(e) => gallery.setDuplicatesOnly((e.currentTarget as HTMLInputElement).checked)}
+              />
               {locale.t("gallery.duplicates_only")}
             </label>
-            {#if gallery.duplicatesOnly && galleryTotalCount > 0}
+            <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500" title={locale.t("gallery.visual_duplicates_only_tooltip")}>
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                checked={gallery.visualDuplicatesOnly}
+                onchange={(e) => gallery.setVisualDuplicatesOnly((e.currentTarget as HTMLInputElement).checked)}
+              />
+              {locale.t("gallery.visual_duplicates_only")}
+              {#if gallery.visualDuplicatesLoading}
+                <span class="text-neutral-400">...</span>
+              {/if}
+            </label>
+            {#if gallery.visualDuplicatesOnly}
+              <label class="flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300" title={locale.t("gallery.visual_duplicates_distance_tooltip")}>
+                <span class="whitespace-nowrap">{locale.t("gallery.visual_duplicates_distance", { distance: String(gallery.visualDuplicateThreshold) })}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max={VISUAL_DUPLICATE_MAX_DISTANCE}
+                  step="1"
+                  value={gallery.visualDuplicateThreshold}
+                  aria-label={locale.t("gallery.visual_duplicates_distance", { distance: String(gallery.visualDuplicateThreshold) })}
+                  oninput={(e) => gallery.setVisualDuplicateThreshold(Number((e.currentTarget as HTMLInputElement).value))}
+                  class="w-20 accent-indigo-500"
+                />
+              </label>
+            {/if}
+            {#if (gallery.duplicatesOnly || gallery.visualDuplicatesOnly) && galleryTotalCount > 0}
               <button class="px-3 py-2 text-xs rounded border border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200" title={locale.t("gallery.duplicates_select_extras_tooltip")} onclick={selectDuplicateExtras}>{locale.t("gallery.duplicates_select_extras")}</button>
             {/if}
             <label class="flex items-center gap-1.5 px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500" title={locale.t("gallery.blur_nsfw_tooltip")}>

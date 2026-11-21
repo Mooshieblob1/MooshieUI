@@ -771,6 +771,250 @@ fn nearest_fingerprint_in(
     nearest
 }
 
+/// A cluster of visually matching gallery images grouped by perceptual hash
+/// Hamming distance.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct VisualDuplicateGroup {
+    pub filenames: Vec<String>,
+    pub max_distance: u32,
+}
+
+fn find_root(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+/// Cluster `(filename, fingerprint)` pairs into connected components whose
+/// edges have Hamming distance at most `max_distance` (clamped to `32`).
+pub fn group_visual_duplicates(
+    items: &[(String, u64)],
+    max_distance: u32,
+) -> Vec<VisualDuplicateGroup> {
+    let n = items.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let threshold = max_distance.min(32);
+    let mut parent: Vec<usize> = (0..n).collect();
+    for (i, (_, fp_i)) in items.iter().enumerate() {
+        for (j, (_, fp_j)) in items.iter().enumerate().skip(i + 1) {
+            if (*fp_i ^ *fp_j).count_ones() <= threshold {
+                let ri = find_root(&mut parent, i);
+                let rj = find_root(&mut parent, j);
+                if ri != rj {
+                    parent[rj] = ri;
+                }
+            }
+        }
+    }
+
+    let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let root = find_root(&mut parent, i);
+        buckets.entry(root).or_default().push(i);
+    }
+
+    let mut groups: Vec<VisualDuplicateGroup> = buckets
+        .into_values()
+        .filter(|indices| indices.len() >= 2)
+        .map(|indices| {
+            let mut max_d = 0u32;
+            for a in 0..indices.len() {
+                for b in (a + 1)..indices.len() {
+                    let d = (items[indices[a]].1 ^ items[indices[b]].1).count_ones();
+                    if d > max_d {
+                        max_d = d;
+                    }
+                }
+            }
+            let mut filenames: Vec<String> =
+                indices.into_iter().map(|i| items[i].0.clone()).collect();
+            filenames.sort();
+            VisualDuplicateGroup {
+                filenames,
+                max_distance: max_d,
+            }
+        })
+        .collect();
+
+    groups.sort_by(|a, b| {
+        b.filenames
+            .len()
+            .cmp(&a.filenames.len())
+            .then_with(|| a.max_distance.cmp(&b.max_distance))
+            .then_with(|| a.filenames.first().cmp(&b.filenames.first()))
+    });
+    groups
+}
+
+struct DiskGalleryFile {
+    name: String,
+    path: PathBuf,
+    size: u64,
+}
+
+fn list_still_gallery_files(dir: &Path) -> Vec<DiskGalleryFile> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_file() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !crate::commands::api::is_listable_gallery_file(&name)
+                || name.to_ascii_lowercase().ends_with(".mp4")
+            {
+                return None;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            Some(DiskGalleryFile {
+                name,
+                path: entry.path(),
+                size,
+            })
+        })
+        .collect()
+}
+
+fn dir_fingerprints_snapshot(
+    c: &Connection,
+    dir: &Path,
+) -> (HashMap<String, u64>, std::collections::HashSet<String>) {
+    let mut fps = HashMap::new();
+    let mut has_row = std::collections::HashSet::new();
+    let Ok(mut stmt) = c.prepare("SELECT path, fingerprint FROM images WHERE media_type = 'image'")
+    else {
+        return (fps, has_row);
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+    }) else {
+        return (fps, has_row);
+    };
+    for (path_str, fp) in rows.flatten() {
+        let p = Path::new(&path_str);
+        if p.parent() != Some(dir) {
+            continue;
+        }
+        let Some(name) = p.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        has_row.insert(name.clone());
+        if let Some(fp_val) = fp {
+            fps.insert(name, fp_val as u64);
+        }
+    }
+    (fps, has_row)
+}
+
+struct ComputedFingerprint {
+    name: String,
+    path: PathBuf,
+    size: u64,
+    format: ImageFormat,
+    metadata: Option<HashMap<String, String>>,
+    fingerprint: u64,
+    needs_insert: bool,
+}
+
+fn compute_missing_fingerprints(
+    disk_files: &[DiskGalleryFile],
+    fps: &HashMap<String, u64>,
+    has_row: &std::collections::HashSet<String>,
+) -> Vec<ComputedFingerprint> {
+    let mut computed = Vec::new();
+    for file in disk_files {
+        if fps.contains_key(&file.name) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&file.path) else {
+            continue;
+        };
+        let Some(img) = crate::watermark::decode_pixels(&bytes) else {
+            continue;
+        };
+        let fp = crate::watermark::fingerprint::fingerprint(&img);
+        let needs_insert = !has_row.contains(&file.name);
+        let (format, metadata) = if needs_insert {
+            (
+                crate::metadata::detect_format(&bytes),
+                crate::metadata::read_image_metadata(&bytes).ok().flatten(),
+            )
+        } else {
+            (ImageFormat::Unknown, None)
+        };
+        computed.push(ComputedFingerprint {
+            name: file.name.clone(),
+            path: file.path.clone(),
+            size: file.size,
+            format,
+            metadata,
+            fingerprint: fp,
+            needs_insert,
+        });
+    }
+    computed
+}
+
+fn persist_computed_fingerprints(c: &Connection, computed: &[ComputedFingerprint]) {
+    if computed.is_empty() {
+        return;
+    }
+    let tx = c.unchecked_transaction();
+    for item in computed {
+        if item.needs_insert {
+            upsert_in(
+                c,
+                &item.path,
+                item.size,
+                item.format,
+                item.metadata.as_ref(),
+            );
+        }
+        let _ = c.execute(
+            "UPDATE images SET fingerprint = ?1 WHERE path = ?2",
+            params![item.fingerprint as i64, item.path.to_string_lossy()],
+        );
+    }
+    if let Ok(tx) = tx {
+        let _ = tx.commit();
+    }
+}
+
+/// Find groups of visually near-identical still images directly inside `dir`
+/// using the 64-bit perceptual hashes stored in `gallery_index`. Any still
+/// images in `dir` that do not yet have a stored fingerprint are hashed and
+/// persisted off the DB lock first. Blocking.
+pub fn find_visual_duplicates(dir: &Path, max_distance: u32) -> Vec<VisualDuplicateGroup> {
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let disk_files = list_still_gallery_files(dir);
+    if disk_files.len() < 2 {
+        return Vec::new();
+    }
+    let (mut fps, has_row) = with_conn(|c, _| dir_fingerprints_snapshot(c, dir))
+        .unwrap_or_else(|| (HashMap::new(), std::collections::HashSet::new()));
+    let computed = compute_missing_fingerprints(&disk_files, &fps, &has_row);
+    if !computed.is_empty() {
+        with_conn(|c, _| persist_computed_fingerprints(c, &computed));
+        for item in computed {
+            fps.insert(item.name, item.fingerprint);
+        }
+    }
+    let items: Vec<(String, u64)> = disk_files
+        .into_iter()
+        .filter_map(|file| fps.get(&file.name).map(|&fp| (file.name, fp)))
+        .collect();
+    group_visual_duplicates(&items, max_distance)
+}
+
 /// Update an image's path in the index after a rename. Best-effort: errors are
 /// logged. Preserves the existing row (and its metadata/created_at) rather than
 /// dropping and re-inserting.
@@ -965,5 +1209,93 @@ mod tests {
         assert_eq!(bob["a.mp4"].duration_seconds, 3.0);
 
         assert!(video_meta_for_dir(root, Path::new("/elsewhere"), rows()).is_empty());
+    }
+
+    #[test]
+    fn group_visual_duplicates_clusters_near_matches_and_separates_unrelated() {
+        let items = vec![
+            ("a.png".to_string(), 0xFFFF_0000_0000_0000u64),
+            ("b.png".to_string(), 0xFFFF_0000_0000_0003u64), // 2 bits from a
+            ("c.png".to_string(), 0xFFFF_0000_0000_0013u64), // 1 bit from b, 3 from a
+            ("d.png".to_string(), 0x0000_FFFF_0000_0000u64), // 32 bits away
+            ("e.png".to_string(), 0x0000_0000_FFFF_FFFFu64),
+            ("f.png".to_string(), 0x0000_0000_FFFF_FFFFu64), // 0 bits from e
+        ];
+        let groups = group_visual_duplicates(&items, 10);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].filenames, vec!["a.png", "b.png", "c.png"]);
+        assert_eq!(groups[0].max_distance, 3);
+        assert_eq!(groups[1].filenames, vec!["e.png", "f.png"]);
+        assert_eq!(groups[1].max_distance, 0);
+
+        // Tightening threshold to 0 keeps only exact perceptual matches.
+        let strict = group_visual_duplicates(&items, 0);
+        assert_eq!(strict.len(), 1);
+        assert_eq!(strict[0].filenames, vec!["e.png", "f.png"]);
+    }
+
+    #[test]
+    fn find_visual_duplicates_backfills_missing_fingerprints_and_scopes_to_dir() {
+        let dir = scratch_dir("visual_dupes");
+        let other = dir.join("users").join("alice");
+        std::fs::create_dir_all(&other).unwrap();
+        let c = open_index(&dir).unwrap();
+
+        let make_png = |path: &Path, bias: u8| {
+            let img = image::RgbImage::from_fn(64, 64, |x, y| {
+                let r = ((x * 4 + bias as u32) % 256) as u8;
+                let g = ((y * 4) % 256) as u8;
+                let b = (((x + y) * 2) % 256) as u8;
+                image::Rgb([r, g, b])
+            });
+            image::DynamicImage::ImageRgb8(img)
+                .save_with_format(path, image::ImageFormat::Png)
+                .unwrap();
+        };
+
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        let diff = dir.join("diff.png");
+        let alice_copy = other.join("a_copy.png");
+        make_png(&a, 0);
+        make_png(&b, 1); // near-identical
+                         // Checkerboard has completely different low-frequency DCT bits.
+        let checker = image::RgbImage::from_fn(64, 64, |x, y| {
+            if (x / 4 + y / 4) % 2 == 0 {
+                image::Rgb([250, 250, 250])
+            } else {
+                image::Rgb([5, 5, 5])
+            }
+        });
+        image::DynamicImage::ImageRgb8(checker)
+            .save_with_format(&diff, image::ImageFormat::Png)
+            .unwrap();
+        make_png(&alice_copy, 0);
+
+        // Only `alice_copy` is pre-indexed; `a`, `b`, `diff` are missing from the DB.
+        upsert_in(&c, &alice_copy, 10, ImageFormat::Png, None);
+
+        let disk_files = list_still_gallery_files(&dir);
+        let (mut fps, has_row) = dir_fingerprints_snapshot(&c, &dir);
+        assert!(fps.is_empty());
+        let computed = compute_missing_fingerprints(&disk_files, &fps, &has_row);
+        assert_eq!(computed.len(), 3);
+        persist_computed_fingerprints(&c, &computed);
+        for item in computed {
+            fps.insert(item.name, item.fingerprint);
+        }
+
+        let items: Vec<(String, u64)> = disk_files
+            .into_iter()
+            .filter_map(|f| fps.get(&f.name).map(|&fp| (f.name, fp)))
+            .collect();
+        let groups = group_visual_duplicates(&items, crate::watermark::fingerprint::MATCH_DISTANCE);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].filenames, vec!["a.png", "b.png"]);
+
+        // Backfilled rows are now persisted in SQLite for future instant lookups.
+        let (persisted, _) = dir_fingerprints_snapshot(&c, &dir);
+        assert_eq!(persisted.len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
