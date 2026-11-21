@@ -1,3 +1,32 @@
+## What's New in v2.4.5
+
+### Outpainting
+- **Dedicated Outpaint mode**: new **Outpaint** mode with directional **Top**, **Bottom**, **Left**, and **Right** padding controls, **Feather width**, quick presets, a live expanded-frame preview, and **Send to outpaint** actions from the preview and gallery. Works with both ComfyUI (`ImagePadForOutpaint`) and NovelAI padded infill, and adds outpaint overrides to MCP `generate_image`.
+
+### Workflows, Prompts & Models
+- **Real `BREAK` chunking**: CLIP models (SD 1.5, SDXL, Illustrious, Pony, Mugen) now split `BREAK` chunks into separate `CLIPTextEncode` nodes chained with `ConditioningConcat`, and auto quality tags deduplicate cleanly across `BREAK` even without a comma.
+- **SDXL-family 64 px aspect buckets**: aspect ratio presets for SDXL, Illustrious, Pony, and Mugen now snap to standard 64 px training buckets (for example `1216x832` for 3:2 at 1024 px).
+- **Comic Panel 1 reference**: new **Use Panel 1 as character reference** toggle on the Comic page forwards Panel 1's image to Panels 2-6 on supported reference and edit models.
+- **Transparent & Ming-Image Layer polish**: transparent RGBA images render over a checkerboard backdrop in preview, gallery, and lightbox, and the Gallery adds **Layer sets** grouping for multi-layer Ming-Image outputs.
+- **MiniMax H3 & 2026 GGUF compatibility**: bundled GGUF loader patch now supports MiniMax H3 (video and image), newer 2026 architectures, and untagged native-keyed text-encoder GGUFs, plus a verified Model Hub entry for the MiniMax-H3-Image pDMD 2-step LoRA.
+- **CivitAI Proxy URL**: optional HTTP, HTTPS, or SOCKS5 proxy setting in Settings used only for CivitAI API requests and model downloads.
+
+### Prompt Assistant & Characters
+- **Character memory on bundled local models**: Character Memory files now work with bundled natural-language models using tighter memory budgets and a review-before-save flow.
+- **Custom server thinking-off & JoyCaption routing**: custom OpenAI-compatible servers can turn thinking off, and **Describe in words** automatically falls back to bundled JoyCaption when an external provider is text-only (with route indicator badges).
+- **NovelAI V5 prompt caching**: static NovelAI V5 Enhance instructions are sent with Anthropic and OpenRouter prompt caching blocks.
+- **Natural-language Yue sample & faster New chat**: prose-prompt architectures get a natural-language Yue sample character card, and clicking **New chat** in Enhance starts a fresh chat without a confirmation dialog.
+
+### Gallery & Metadata Import
+- **Near duplicates & Match strictness**: new **Near duplicates** perceptual-hash duplicate finder in the Gallery with a similarity threshold slider and **Select extras**, plus a **Match strictness** slider for character filtering and sorting.
+- **SwarmUI metadata & quality-tag import fixes**: imports SwarmUI LoRA arrays (`loras`, `loraweights`, `loratencweights`), matches imported checkpoints and LoRAs to installed filenames, strips SwarmUI `//cid=...` suffixes in `<segment:...>` tags, scopes quality-tag stripping to what **Auto-apply quality tags** will re-inject, and improves `*illu` Illustrious checkpoint detection.
+
+### Face Detailer & Maintenance
+- **Sharper Face, Segment & Mask Detailers**: detailers preserve native crop resolution (up to 1536 px) instead of shrinking large crops down to **Guide Size**, use area downscaling and bicubic upscaling instead of bilinear, and raise default Face Detailer **Guide Size** to 1024 px and **Steps** to 15-20 for 1024 px+ non-turbo models.
+- **Dependency updates**: updated Cargo (including Tauri 2.12.6, `jxl-encoder` 0.3.4, `ort` 2.0.0-rc.15), npm, and GitHub Actions dependencies.
+
+---
+
 ## What's New in v2.4.4
 
 ### Fixes and maintenance
