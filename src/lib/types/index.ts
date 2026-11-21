@@ -1003,6 +1003,8 @@ export interface LlmStatus {
   active_model: string | null;
   server_running: boolean;
   external_enabled: boolean;
+  external_vision?: boolean | null;
+  describe_model?: string | null;
 }
 
 export interface PromptAssistantOpts {

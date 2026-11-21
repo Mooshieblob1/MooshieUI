@@ -186,6 +186,16 @@ jobs:
           npx esbuild scripts/tests/cascade.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/cascade.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/cascade.test.mjs"
 
+      - name: Character memory budget and review tests
+        run: |
+          npx esbuild scripts/tests/characterMemory.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/characterMemory.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/characterMemory.test.mjs"
+
+      - name: NAI V5 prompt cache split tests
+        run: |
+          npx esbuild scripts/tests/naiPromptCache.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiPromptCache.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/naiPromptCache.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 

@@ -1991,6 +1991,7 @@ export async function callExternalLlm(
   history: ChatMessage[] = [],
   signal?: AbortSignal,
   sampling?: LlmSampling,
+  systemCachePrefix?: string,
 ): Promise<string> {
   return runPromptAssistant(
     "call_external_llm",
@@ -2003,6 +2004,7 @@ export async function callExternalLlm(
       history,
       temperature: sampling?.temperature,
       json: sampling?.json,
+      systemCachePrefix: systemCachePrefix || undefined,
     },
     signal,
   );

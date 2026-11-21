@@ -444,17 +444,38 @@ Never mention the images themselves, because the image model will not see them."
 /// The frontend already cuts its notes well below this; the cap only guards
 /// the backend against an oversized request.
 const CHARACTER_NOTES_LIMIT: usize = 24_000;
+/// Tighter caps for bundled local models sharing the 16k `-c` context window.
+const CHARACTER_NOTES_LOCAL_LARGE_LIMIT: usize = 8_000;
+const CHARACTER_NOTES_LOCAL_SMALL_LIMIT: usize = 4_000;
+
+/// Maximum character-notes length for the active backend and model.
+pub fn character_notes_budget(ext_enabled: bool, model_id: Option<&str>) -> usize {
+    if ext_enabled {
+        return CHARACTER_NOTES_LIMIT;
+    }
+    match model_id {
+        Some("qwen3-30b-a3b-instruct" | "qwen36-35b-a3b" | "qwen38-27b") => {
+            CHARACTER_NOTES_LOCAL_LARGE_LIMIT
+        }
+        _ => CHARACTER_NOTES_LOCAL_SMALL_LIMIT,
+    }
+}
 
 /// The user's saved characters that the request refers to, with their look
 /// and memory notes, as an addition to the system prompt. Empty when there are
-/// none. Sent to external providers only: the bundled models are too small to
-/// spare the context.
+/// none.
 pub fn character_notes(notes: &str) -> String {
+    character_notes_with_limit(notes, CHARACTER_NOTES_LIMIT)
+}
+
+/// [`character_notes`] capped to `limit` characters of notes (tighter for
+/// smaller bundled local models).
+pub fn character_notes_with_limit(notes: &str, limit: usize) -> String {
     let notes = notes.trim();
-    if notes.is_empty() {
+    if notes.is_empty() || limit == 0 {
         return String::new();
     }
-    let notes: String = notes.chars().take(CHARACTER_NOTES_LIMIT).collect();
+    let notes: String = notes.chars().take(limit).collect();
     format!(
         "\n\nSAVED CHARACTERS\nThe user's request refers to these saved characters of theirs. Each has \
 the appearance the user saved and their memory notes: who the character is, such as personality, \
@@ -1483,6 +1504,15 @@ tags: 1girl, red dress, hair bun";
         let long = "a".repeat(CHARACTER_NOTES_LIMIT + 500);
         assert!(character_notes(&long).len() < CHARACTER_NOTES_LIMIT + 3000);
         assert!(block.contains(MEMORY_MARKER));
+
+        // Smaller local models get a tighter budget than large local or external.
+        let small = character_notes_budget(false, Some("qwen3-4b-instruct"));
+        let large = character_notes_budget(false, Some("qwen38-27b"));
+        let external = character_notes_budget(true, Some("qwen3-4b-instruct"));
+        assert!(small < large && large < external);
+        let cut = character_notes_with_limit(&"b".repeat(10_000), small);
+        assert!(cut.len() < small + 3000);
+        assert!(character_notes_with_limit("notes", 0).is_empty());
     }
 
     #[test]

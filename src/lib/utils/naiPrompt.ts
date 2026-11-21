@@ -548,9 +548,13 @@ ${current}
 - Every answer is still a complete prompt in the output format, never a diff against an earlier answer.`;
 }
 
-/** The system turn for one rewrite. */
-export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
-  return [
+/**
+ * The V5 system prompt split into its static ~4.7k-token specification prefix
+ * (eligible for prompt caching on Anthropic and OpenRouter Anthropic models)
+ * and the per-request/per-session dynamic suffix.
+ */
+export function naiRewriteSystemPromptParts(ctx: NaiPromptContext): { cached: string; dynamic: string } {
+  const cached = [
     SHARED_RULES,
     naiVocabularyBlock(ctx.rating ?? "sfw", ctx.minorRule ?? true),
     SHARED_RULES_TAIL,
@@ -558,6 +562,10 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
     QUALITY_TAGS,
     ucPresetDirective(ctx.ucPreset),
     TECHNIQUE,
+  ]
+    .filter((block) => block !== "")
+    .join("\n\n");
+  const dynamic = [
     ctx.recipes ?? "",
     ctx.savedCharacters ?? "",
     sourceFidelity(ctx.existing, ctx.references.length > 0, !!ctx.inSession),
@@ -569,6 +577,13 @@ export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
   ]
     .filter((block) => block !== "")
     .join("\n\n");
+  return { cached, dynamic };
+}
+
+/** The system turn for one rewrite. */
+export function naiRewriteSystemPrompt(ctx: NaiPromptContext): string {
+  const { cached, dynamic } = naiRewriteSystemPromptParts(ctx);
+  return [cached, dynamic].filter((block) => block !== "").join("\n\n");
 }
 
 /**

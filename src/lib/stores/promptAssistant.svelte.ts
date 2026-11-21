@@ -62,6 +62,7 @@ import {
 import {
   NAI_MAX_TOKENS,
   naiRewriteSystemPrompt,
+  naiRewriteSystemPromptParts,
   naiUserPrompt,
 } from "../utils/naiPrompt.js";
 import type { NaiPromptContext, NaiVariant } from "../utils/naiPrompt.js";
@@ -130,6 +131,7 @@ import {
 } from "../utils/characterMerge.js";
 import {
   MEMORY_REMEMBER_RETRY,
+  memoryBudgetFor,
   memoryContext,
   parseOtherFacts,
   parseRemember,
@@ -139,6 +141,7 @@ import {
   type LearnedMemory,
   type LinkedCharacter,
   type CharacterMemoryFile,
+  type MemoryBudget,
   type MemoryChange,
 } from "../utils/characterMemory.js";
 import { expressionRequest, parseExpression, type PortraitPromptStyle } from "../utils/portraitExpression.js";
@@ -213,6 +216,27 @@ class PromptAssistantStore {
     );
   }
 
+  /** Installed natural-language local models capable of reading character memory. */
+  get naturalLanguageModels(): string[] {
+    return this.assistantModels.filter(
+      (id) => this.catalog.find((e) => e.id === id)?.purpose !== "tag_upsampler",
+    );
+  }
+
+  /** Whether at least one bundled natural-language instruct model is installed. */
+  get hasNaturalLanguageModel(): boolean {
+    return this.naturalLanguageModels.length > 0;
+  }
+
+  /** Active or selected bundled natural-language model id, if any. */
+  get activeLocalModelId(): string | null {
+    const nl = this.naturalLanguageModels;
+    const active = this.status?.active_model;
+    if (active && nl.includes(active)) return active;
+    if (this.selectedModelId && nl.includes(this.selectedModelId)) return this.selectedModelId;
+    return nl[0] ?? null;
+  }
+
   /** Catalog models that can see images, for Describe in Interrogate. */
   get visionCatalog(): LlmCatalogEntry[] {
     return this.catalog.filter((e) => e.variants.length > 0 && e.variants.every((v) => !!v.mmproj));
@@ -224,6 +248,25 @@ class PromptAssistantStore {
     return this.visionCatalog.some((e) => installed.includes(e.id));
   }
 
+  /** Active route for `Describe image` (external vision, bundled JoyCaption/VLM, or none). */
+  get describeTarget():
+    | { kind: "external" }
+    | { kind: "local"; modelId: string; name: string }
+    | { kind: "none" }
+    | null {
+    const st = this.status;
+    if (!st) return null;
+    if (st.external_enabled && st.external_vision !== false) {
+      return { kind: "external" };
+    }
+    const localId = st.describe_model ?? null;
+    if (localId) {
+      const entry = this.catalog.find((e) => e.id === localId);
+      return { kind: "local", modelId: localId, name: entry?.name ?? localId };
+    }
+    return { kind: "none" };
+  }
+
   /** True when the assistant can run: a local model is installed, or an external
    *  OpenAI-compatible endpoint is configured. Gates the enhance/compose actions. */
   get isAvailable(): boolean {
@@ -231,13 +274,17 @@ class PromptAssistantStore {
   }
 
   /**
-   * Whether the assistant reads and suggests character memory files. Only an
-   * external provider (Claude, ChatGPT, Gemini, Grok, or a capable model on
-   * the user's own endpoint) gets them: the bundled models are small, and
-   * whole memory files would crowd out their context.
+   * Whether the assistant reads and suggests character memory files: enabled
+   * for external providers and bundled natural-language local models (with
+   * tighter context budgets and review-before-save on local models).
    */
   get canUseMemory(): boolean {
-    return !!this.status?.external_enabled;
+    return this.usesExternal || this.hasNaturalLanguageModel;
+  }
+
+  /** Character memory context budget for the active backend and model. */
+  get memoryBudget(): MemoryBudget {
+    return memoryBudgetFor(this.usesExternal, this.activeLocalModelId);
   }
 
   /** Launch-time bootstrap: detect hardware, load catalog + status, pre-select. */
@@ -434,10 +481,12 @@ class PromptAssistantStore {
   async describe(imageToken: string, length: "short" | "detailed"): Promise<string> {
     if (this.isGenerating) throw new Error("busy_generation");
     this.isGenerating = true;
+    const probePending = !!this.status?.external_enabled && this.status.external_vision == null;
     try {
       return await this.withStageListener(() => describeImage(imageToken, length));
     } finally {
       this.isGenerating = false;
+      if (probePending) void this.refreshStatus();
     }
   }
 
@@ -859,7 +908,7 @@ class PromptAssistantStore {
     this.isGenerating = true;
     try {
       const history = this.sessionHistory("enhance", {
-        systemTokens: RUST_SYSTEM_RESERVE_TOKENS,
+        systemTokens: RUST_SYSTEM_RESERVE_TOKENS + estimateTokens(req.opts.character_notes ?? ""),
         userText: existing ? `${existing}\n${text}` : text,
         maxOutputTokens: req.chat ? 640 : 384,
       });
@@ -908,7 +957,7 @@ class PromptAssistantStore {
    * server cannot read the provider settings, so `provider` stays null for
    * them; the status, which everyone can read, answers then.
    */
-  private get usesExternal(): boolean {
+  get usesExternal(): boolean {
     return this.provider ? this.provider.enabled : !!this.status?.external_enabled;
   }
 
@@ -1214,7 +1263,12 @@ class PromptAssistantStore {
         // The chat rules go last, after the output contract they make an exception to.
         const chatClause = chat ? `\n\n${CHAT_CLAUSE}` : "";
         const maxTokens = NAI_MAX_TOKENS + (chat ? 256 : 0);
-        const sessionSystem = naiSystemWithSkill(naiRewriteSystemPrompt(sessionCtx), skill) + chatClause;
+        const sessionParts = naiRewriteSystemPromptParts(sessionCtx);
+        const sessionSystem =
+          naiSystemWithSkill(
+            [sessionParts.cached, sessionParts.dynamic].filter(Boolean).join("\n\n"),
+            skill,
+          ) + chatClause;
         const sessionUserTurn = naiUserPrompt(prompt, sessionCtx);
         const history = this.sessionHistory("nai", {
           systemTokens: estimateTokens(sessionSystem),
@@ -1227,17 +1281,22 @@ class PromptAssistantStore {
           history.sentTurns > 0 ? sessionUserTurn : naiUserPrompt(prompt, { ...ctx, inSession: false });
         // The SESSION block only when history actually goes out: telling the
         // model about earlier turns it cannot see would be the opposite lie.
+        const singleParts =
+          history.sentTurns > 0
+            ? sessionParts
+            : naiRewriteSystemPromptParts({
+                ...ctx,
+                inSession: false,
+                recipes: naiRecipeDirective([prompt]),
+              });
         const system =
           history.sentTurns > 0
             ? sessionSystem
             : naiSystemWithSkill(
-                naiRewriteSystemPrompt({
-                  ...ctx,
-                  inSession: false,
-                  recipes: naiRecipeDirective([prompt]),
-                }),
+                [singleParts.cached, singleParts.dynamic].filter(Boolean).join("\n\n"),
                 skill,
               ) + chatClause;
+        const systemCachePrefix = singleParts.cached;
         // Saved without the pasted current prompt: the next turn sends that fresh.
         const sessionUser = withImageMarker(prompt, referenceData.length, "reference");
 
@@ -1247,7 +1306,17 @@ class PromptAssistantStore {
         // it would bias every later rewrite.
         const split = (raw: string) => (chat ? splitReply(raw) : { reply: "", prompt: raw });
         const firstAnswer = split(
-          await callExternalLlm(system, user, maxTokens, null, referenceData, history.messages, signal),
+          await callExternalLlm(
+            system,
+            user,
+            maxTokens,
+            null,
+            referenceData,
+            history.messages,
+            signal,
+            undefined,
+            systemCachePrefix,
+          ),
         );
         const firstRaw = firstAnswer.prompt;
         const reply = firstAnswer.reply;
@@ -1279,6 +1348,8 @@ class PromptAssistantStore {
             { role: "assistant", content: firstRaw },
           ],
           signal,
+          undefined,
+          systemCachePrefix,
         )).prompt;
         const second = normalizeNaiResponse(parseNaiResponse(secondRaw));
         const recheck = validateNaiResponse(second);
