@@ -700,7 +700,7 @@ fn build_outpaint_for_novelai(
     right: u32,
     feather: u32,
 ) -> Result<(String, String, u32, u32), AppError> {
-    use image::{DynamicImage, GenericImageView, ImageFormat, Luma, RgbaImage};
+    use image::{DynamicImage, ImageFormat, Luma, RgbaImage};
     let src = image::load_from_memory(bytes)
         .map_err(|e| AppError::Other(format!("could not decode the image: {e}")))?
         .to_rgba8();
@@ -809,17 +809,25 @@ async fn resolve_upload_images(
     params: &GenerationParams,
 ) -> Result<Option<GenerationParams>, AppError> {
     if params.mode == "outpainting" {
-        let Some(raw_input) = params.input_image.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        let Some(raw_input) = params
+            .input_image
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
             return Err(AppError::InvalidWorkflow(
                 "Outpainting mode requires an input image.".into(),
             ));
         };
         let bytes = if looks_like_upload_name(raw_input) {
-            state.get_input_image_bytes(raw_input, "").await.map_err(|e| {
-                AppError::Other(format!(
-                    "NovelAI could not load the image '{raw_input}' from ComfyUI: {e}"
-                ))
-            })?
+            state
+                .get_input_image_bytes(raw_input, "")
+                .await
+                .map_err(|e| {
+                    AppError::Other(format!(
+                        "NovelAI could not load the image '{raw_input}' from ComfyUI: {e}"
+                    ))
+                })?
         } else {
             let b64 = raw_input
                 .split_once(',')
@@ -1806,9 +1814,13 @@ mod tests {
     fn novelai_outpaint_builds_padded_image_and_feathered_mask() {
         use image::{DynamicImage, GenericImageView, ImageFormat, RgbaImage};
         let mut src = std::io::Cursor::new(Vec::new());
-        DynamicImage::ImageRgba8(RgbaImage::from_pixel(256, 256, image::Rgba([20, 40, 60, 255])))
-            .write_to(&mut src, ImageFormat::Png)
-            .unwrap();
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+            256,
+            256,
+            image::Rgba([20, 40, 60, 255]),
+        ))
+        .write_to(&mut src, ImageFormat::Png)
+        .unwrap();
         let (padded_b64, mask_b64, w, h) =
             build_outpaint_for_novelai(&src.into_inner(), 0, 0, 128, 128, 32).unwrap();
         assert_eq!((w, h), (512, 256));

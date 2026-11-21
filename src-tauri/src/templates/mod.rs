@@ -176,9 +176,10 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         cascade::validate(params)?;
     }
 
-    let needs_input_image =
-        matches!(params.mode.as_str(), "img2img" | "inpainting" | "outpainting")
-            || params.refine_only;
+    let needs_input_image = matches!(
+        params.mode.as_str(),
+        "img2img" | "inpainting" | "outpainting"
+    ) || params.refine_only;
 
     if needs_input_image
         && params

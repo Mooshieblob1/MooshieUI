@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::{
-    build_scheduled_conditioning, insert_vae_decode, is_vpred_model, load_model_nodes,
+    build_scheduled_conditioning_for_arch, insert_vae_decode, is_vpred_model, load_model_nodes,
     WorkflowResult,
 };
 use crate::comfyui::types::GenerationParams;
@@ -49,7 +49,9 @@ pub fn uses_inpaint_model_conditioning(params: &GenerationParams) -> bool {
     }
     .to_lowercase();
 
-    model_name.contains("inpaint") || model_name.contains("flux-fill") || model_name.contains("flux_fill")
+    model_name.contains("inpaint")
+        || model_name.contains("flux-fill")
+        || model_name.contains("flux_fill")
 }
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
@@ -63,23 +65,25 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let clip_source = ml.clip_source;
     let vae_source = ml.vae_source;
 
-    // Positive conditioning (with optional timestep scheduling)
-    let (mut pos_source, nid) = build_scheduled_conditioning(
+    // Positive conditioning (with optional timestep scheduling and CLIP BREAK chunking)
+    let (mut pos_source, nid) = build_scheduled_conditioning_for_arch(
         &mut workflow,
         next_id,
         &clip_source,
         &params.positive_prompt,
         &params.positive_segments,
+        &params.model_architecture,
     );
     next_id = nid;
 
-    // Negative conditioning (with optional timestep scheduling)
-    let (mut neg_source, nid) = build_scheduled_conditioning(
+    // Negative conditioning (with optional timestep scheduling and CLIP BREAK chunking)
+    let (mut neg_source, nid) = build_scheduled_conditioning_for_arch(
         &mut workflow,
         next_id,
         &clip_source,
         &params.negative_prompt,
         &params.negative_segments,
+        &params.model_architecture,
     );
     next_id = nid;
 
@@ -186,8 +190,8 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let sampler_name_lc = params.sampler_name.to_lowercase();
     let is_cfgpp_sampler = sampler_name_lc.contains("cfg_pp");
     let is_vpred_or_anima = is_vpred_model(params) || params.model_architecture == "anima";
-    let use_differential_diffusion =
-        !use_inpaint_cond && (params.differential_diffusion || (is_vpred_or_anima && !is_cfgpp_sampler));
+    let use_differential_diffusion = !use_inpaint_cond
+        && (params.differential_diffusion || (is_vpred_or_anima && !is_cfgpp_sampler));
 
     let mut sampler_model_source = model_source.clone();
     if use_differential_diffusion {
@@ -274,8 +278,14 @@ mod tests {
         assert_eq!(mask_node["class_type"], "SetLatentNoiseMask");
         let encode = linked(&workflow, &mask_node["inputs"]["samples"]);
         assert_eq!(encode["class_type"], "VAEEncode");
-        assert_eq!(linked(&workflow, &encode["inputs"]["pixels"])["class_type"], "ImagePadForOutpaint");
-        assert_eq!(linked(&workflow, &mask_node["inputs"]["mask"])["class_type"], "ImagePadForOutpaint");
+        assert_eq!(
+            linked(&workflow, &encode["inputs"]["pixels"])["class_type"],
+            "ImagePadForOutpaint"
+        );
+        assert_eq!(
+            linked(&workflow, &mask_node["inputs"]["mask"])["class_type"],
+            "ImagePadForOutpaint"
+        );
     }
 
     #[test]
