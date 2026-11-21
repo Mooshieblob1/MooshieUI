@@ -1123,12 +1123,6 @@ const pl: Record<string, string> = {
   "generation.sampler.format_jxl": "JXL",
 
   "generation.sampler.format_webp": "WebP",
-  "generation.sampler.metadata": "Metadane",
-  "generation.sampler.metadata_tip": "Sposób zapisywania parametrów generowania w obrazach. 'Chunk tekstowy' to standardowe metadane PNG (szybkie, szeroko obsługiwane). 'Stealth Alpha' ukrywa metadane w kanale alfa i może przetrwać przesyłanie do mediów społecznościowych, które usuwa fragmenty PNG. 'Oba' zapisuje w obu lokalizacjach.",
-  "generation.sampler.metadata_text": "Txt",
-  "generation.sampler.metadata_stealth": "Stealth",
-  "generation.sampler.metadata_both": "Oba",
-  "generation.sampler.metadata_upgraded": "16-bit aktywne — Stealth Alpha ulepszone do Oba.",
   "generation.sampler.watermark": "Znak wodny",
   "generation.sampler.watermark_tip": "Ukrywa niewidoczny identyfikator w pikselach każdego zapisanego obrazu. Gdy kopia straci metadane (ponowna publikacja, zmiana rozmiaru, zrzut ekranu), upuść ją z powrotem, a ustawienia wrócą. Przy pierwszym użyciu pobiera około 65 MB.",
   "generation.sampler.watermark_off": "Wył.",

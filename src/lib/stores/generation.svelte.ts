@@ -963,7 +963,7 @@ class GenerationStore {
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
   /** WebP is lossless VP8L and always 8-bit (no 16-bit VP8L variant exists). */
   outputFormat = $state<"png" | "jxl" | "webp">("png");
-  metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
+  metadataMode = $state<"both">("both");
   /** Weave an invisible TrustMark ID into saved images (see src-tauri/src/watermark). */
   invisibleWatermark = $state(false);
   autoQualityTags = $state(true);
@@ -3400,7 +3400,7 @@ class GenerationStore {
     this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
     if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
     if (saved.outputFormat === "png" || saved.outputFormat === "jxl" || saved.outputFormat === "webp") this.outputFormat = saved.outputFormat;
-    if (saved.metadataMode) this.metadataMode = saved.metadataMode;
+    this.metadataMode = "both";
     if (saved.invisibleWatermark !== undefined) this.invisibleWatermark = saved.invisibleWatermark;
     if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
     if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;

@@ -321,14 +321,6 @@
     generation.cfg < recommendedCfgRange().min || generation.cfg > recommendedCfgRange().max
   );
 
-  const metadataUpgradedToBoth = $derived(
-    generation.outputBitDepth === "16bit" && generation.metadataMode === "stealth"
-  );
-
-  const effectiveMetadataMode = $derived(
-    metadataUpgradedToBoth ? "both" : generation.metadataMode
-  );
-
   let watermarkPreparing = $state(false);
 
   /** Turning the watermark on downloads its models the first time. */
@@ -930,21 +922,6 @@
   </div>
   <div class="grid grid-cols-1 gap-2">
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.metadata')}<InfoTip text={locale.t('generation.sampler.metadata_tip')} /></label>
-      <div class="flex gap-1">
-        {#each [["text_chunk", locale.t('generation.sampler.metadata_text')], ["stealth", locale.t('generation.sampler.metadata_stealth')], ["both", locale.t('generation.sampler.metadata_both')]] as [value, label]}
-          <button
-            class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {effectiveMetadataMode === value
-              ? 'bg-neutral-700 border-neutral-500 text-neutral-50'
-              : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
-            onclick={() => generation.metadataMode = value as "text_chunk" | "stealth" | "both"}
-          >
-            {label}
-          </button>
-        {/each}
-      </div>
-    </div>
-    <div>
       <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.watermark')}<InfoTip text={locale.t('generation.sampler.watermark_tip')} /></label>
       <div class="flex gap-1">
         {#each [[false, locale.t('generation.sampler.watermark_off')], [true, locale.t('generation.sampler.watermark_on')]] as [value, label]}
@@ -961,11 +938,6 @@
       </div>
     </div>
   </div>
-  {#if metadataUpgradedToBoth}
-    <p class="text-[10px] text-indigo-300 -mt-1">
-      {locale.t('generation.sampler.metadata_upgraded')}
-    </p>
-  {/if}
 
   <!-- Smart Guidance toggle (hidden for Flux models which use FluxGuidance instead) -->
   {#if generation.isFlux}

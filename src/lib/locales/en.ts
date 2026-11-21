@@ -1141,12 +1141,6 @@ const en: Record<string, string> = {
   "generation.sampler.format_jxl": "JXL",
 
   "generation.sampler.format_webp": "WebP",
-  "generation.sampler.metadata": "Metadata",
-  "generation.sampler.metadata_tip": "How generation parameters are saved into images. 'Text Chunk' is standard PNG metadata (fast, widely supported). 'Stealth Alpha' hides metadata in the alpha channel and can survive social media re-uploads that strip PNG chunks. 'Both' writes to both locations.",
-  "generation.sampler.metadata_text": "Txt",
-  "generation.sampler.metadata_stealth": "Stealth",
-  "generation.sampler.metadata_both": "Both",
-  "generation.sampler.metadata_upgraded": "16-bit active — Stealth Alpha upgraded to Both.",
   "generation.sampler.watermark": "Watermark",
   "generation.sampler.watermark_tip": "Hides an invisible ID in the pixels of every saved image. When a copy loses its metadata (a repost, a resize, a screenshot), drop it back in and its settings come back. The first use downloads about 65 MB.",
   "generation.sampler.watermark_off": "Off",

@@ -195,17 +195,29 @@ pub fn bits_per_sample(jxl: &[u8]) -> Option<u32> {
     Some(image.image_header().metadata.bit_depth.bits_per_sample())
 }
 
-/// Read the first `xml ` (XMP) box from a JXL container, returning its UTF-8
-/// payload if present.
-pub fn read_xmp_box(jxl: &[u8]) -> Option<String> {
+/// Read all `xml ` (XMP / SwarmUI) box UTF-8 payloads from a JXL container,
+/// in file order.
+pub fn read_xml_boxes(jxl: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
     for (typ, range) in iter_boxes(jxl) {
         if &typ == b"xml " {
             if let Ok(s) = std::str::from_utf8(&jxl[range]) {
-                return Some(s.to_string());
+                out.push(s.to_string());
             }
         }
     }
-    None
+    out
+}
+
+/// Read the first `xml ` box from a JXL container, preferring a SwarmUI JSON
+/// payload if multiple `xml ` boxes exist (e.g. SwarmUI JSON + IPTC XMP).
+pub fn read_xmp_box(jxl: &[u8]) -> Option<String> {
+    let boxes = read_xml_boxes(jxl);
+    boxes
+        .iter()
+        .find(|s| s.trim_start().starts_with('{'))
+        .cloned()
+        .or_else(|| boxes.into_iter().next())
 }
 
 /// Return a JXL container with the given XMP string embedded in an `xml ` box.
@@ -260,6 +272,104 @@ pub fn wrap_with_xmp(jxl: &[u8], xmp: &str) -> Result<Vec<u8>, AppError> {
         // No codestream box found (shouldn't happen for a valid file) —
         // append XMP at the end as a best-effort.
         out.extend_from_slice(&xml_box);
+    }
+    Ok(out)
+}
+
+/// Return a JXL container carrying optional SwarmUI JSON and an IPTC XMP `xml `
+/// box without dropping any pre-existing non-JSON XMP properties or other boxes.
+///
+/// SwarmUI JSON (if present, or preserved from the input when `swarmui_json` is
+/// `None`) stays in the first `xml ` box, and the IPTC XMP packet sits in the
+/// second `xml ` box (merged into the first existing XMP packet if one exists).
+pub fn wrap_with_metadata_and_iptc(
+    jxl: &[u8],
+    swarmui_json: Option<&str>,
+    iptc_xmp_builder: impl Fn(Option<&str>) -> String,
+) -> Result<Vec<u8>, AppError> {
+    if is_codestream(jxl) {
+        let iptc = iptc_xmp_builder(None);
+        let extra = swarmui_json.map_or(0, str::len) + iptc.len() + 96;
+        let mut out = Vec::with_capacity(jxl.len() + extra);
+        out.extend_from_slice(&JXL_SIGNATURE_BOX);
+        out.extend_from_slice(&ftyp_box());
+        if let Some(json) = swarmui_json {
+            out.extend_from_slice(&make_box(b"xml ", json.as_bytes()));
+        }
+        out.extend_from_slice(&make_box(b"xml ", iptc.as_bytes()));
+        out.extend_from_slice(&make_box(b"jxlc", jxl));
+        return Ok(out);
+    }
+
+    if !is_container(jxl) {
+        return Err(AppError::Other(
+            "wrap_with_metadata_and_iptc: input is neither a JXL container nor a naked codestream"
+                .into(),
+        ));
+    }
+
+    let (boxes, malformed) = walk_boxes(jxl);
+    if malformed {
+        return Err(AppError::Other(
+            "wrap_with_metadata_and_iptc: JXL container has a malformed box".into(),
+        ));
+    }
+
+    let mut preserved_json: Option<&[u8]> = None;
+    let mut existing_xmp_idx: Option<usize> = None;
+    let mut existing_xmp_str: Option<&str> = None;
+    let mut skip_xml = vec![false; boxes.len()];
+
+    for (idx, (typ, range)) in boxes.iter().enumerate() {
+        if typ != b"xml " {
+            continue;
+        }
+        let payload = &jxl[range.clone()];
+        if let Ok(text) = std::str::from_utf8(payload) {
+            if text.trim_start().starts_with('{') {
+                if preserved_json.is_none() {
+                    preserved_json = Some(payload);
+                }
+                skip_xml[idx] = true;
+                continue;
+            }
+            if existing_xmp_idx.is_none() {
+                existing_xmp_idx = Some(idx);
+                existing_xmp_str = Some(text);
+                skip_xml[idx] = true;
+            }
+        }
+    }
+
+    let json_box = swarmui_json
+        .map(str::as_bytes)
+        .or(preserved_json)
+        .map(|b| make_box(b"xml ", b));
+    let iptc_box = make_box(b"xml ", iptc_xmp_builder(existing_xmp_str).as_bytes());
+
+    let mut out = Vec::with_capacity(jxl.len() + iptc_box.len() + 64);
+    out.extend_from_slice(&JXL_SIGNATURE_BOX);
+
+    let insert_boxes = |dst: &mut Vec<u8>| {
+        if let Some(ref jb) = json_box {
+            dst.extend_from_slice(jb);
+        }
+        dst.extend_from_slice(&iptc_box);
+    };
+
+    let mut inserted = false;
+    for (idx, (typ, range)) in boxes.iter().enumerate() {
+        if skip_xml[idx] {
+            continue;
+        }
+        if !inserted && (typ == b"jxlc" || typ == b"jxlp") {
+            insert_boxes(&mut out);
+            inserted = true;
+        }
+        push_box(&mut out, typ, &jxl[range.clone()]);
+    }
+    if !inserted {
+        insert_boxes(&mut out);
     }
     Ok(out)
 }

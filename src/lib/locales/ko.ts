@@ -999,12 +999,6 @@ const ko: Record<string, string> = {
   "generation.sampler.bit_16": "16비트",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "메타데이터",
-  "generation.sampler.metadata_tip": "생성 매개변수를 이미지에 저장하는 방법. '텍스트 청크'는 표준 PNG 메타데이터. '스텔스 알파'는 알파 채널에 메타데이터를 숨기며 SNS 재업로드에서도 유지됩니다. '모두'는 양쪽에 기록합니다.",
-  "generation.sampler.metadata_text": "텍스트",
-  "generation.sampler.metadata_stealth": "스텔스",
-  "generation.sampler.metadata_both": "모두",
-  "generation.sampler.metadata_upgraded": "16비트 활성 — 스텔스 알파가 '모두'로 업그레이드되었습니다.",
   "generation.sampler.watermark": "워터마크",
   "generation.sampler.watermark_tip": "저장하는 모든 이미지의 픽셀에 보이지 않는 ID를 숨깁니다. 재게시, 크기 조정, 스크린샷으로 메타데이터를 잃은 사본도 다시 드롭하면 설정이 돌아옵니다. 처음 사용할 때 약 65 MB를 다운로드합니다.",
   "generation.sampler.watermark_off": "끄기",

@@ -999,12 +999,6 @@ const zhTw: Record<string, string> = {
   "generation.sampler.bit_16": "16 位元",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "中繼資料",
-  "generation.sampler.metadata_tip": "如何將生成參數儲存到影像中。'文字區塊'是標準 PNG 中繼資料。'隱寫'將中繼資料隱藏在 alpha 通道中，即使在社群媒體重新上傳後也能保留。'全部'兩者都寫入。",
-  "generation.sampler.metadata_text": "文字",
-  "generation.sampler.metadata_stealth": "隱寫",
-  "generation.sampler.metadata_both": "全部",
-  "generation.sampler.metadata_upgraded": "16 位元已啟用 — 隱寫 alpha 已升級為「全部」。",
   "generation.sampler.watermark": "浮水印",
   "generation.sampler.watermark_tip": "在每張儲存的圖像像素中隱藏一個不可見的 ID。副本因轉貼、縮放或截圖遺失中繼資料時，把它拖回來即可恢復設定。首次使用會下載約 65 MB。",
   "generation.sampler.watermark_off": "關",
