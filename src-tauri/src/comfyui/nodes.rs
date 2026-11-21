@@ -2708,6 +2708,14 @@ mod rife_pin_tests {
         assert!(!dest.exists() && !dest.with_extension("part").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn mooshie_nodes_detailers_use_resolution_preserving_resize() {
+        assert!(super::MOOSHIE_NODES_INIT.contains("def _detailer_target_size("));
+        assert!(super::MOOSHIE_NODES_INIT.contains("def _resize_bhwc("));
+        assert!(super::MOOSHIE_NODES_INIT.contains("mode=\"area\""));
+        assert!(super::MOOSHIE_NODES_INIT.contains("mode=\"bicubic\""));
+    }
 }
 
 #[cfg(all(test, unix))]

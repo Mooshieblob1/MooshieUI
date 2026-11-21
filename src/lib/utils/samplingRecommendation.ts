@@ -32,7 +32,7 @@ export const ANIMA_SAMPLING: SamplingRecommendation = {
   samplerName: "er_sde",
   scheduler: "sgm_uniform",
   upscaleSteps: 10,
-  facefixSteps: 10,
+  facefixSteps: 20,
 };
 
 /**
@@ -50,7 +50,7 @@ export const JUICE_SAMPLING: SamplingRecommendation = {
   samplerName: "euler_cfg_pp",
   scheduler: "sgm_uniform",
   upscaleSteps: 7,
-  facefixSteps: 7,
+  facefixSteps: 15,
 };
 
 /** Nanosaur, which asks for a much heavier refine pass than the others. */
@@ -74,7 +74,7 @@ export const KREA2_TURBO_SAMPLING: SamplingRecommendation = {
   samplerName: "euler",
   scheduler: "simple",
   upscaleSteps: 3,
-  facefixSteps: 3,
+  facefixSteps: 4,
 };
 
 /** Krea 2 Raw, the undistilled weights. Matches the store's Krea 2 preset. */
@@ -84,7 +84,7 @@ export const KREA2_SAMPLING: SamplingRecommendation = {
   samplerName: "er_sde",
   scheduler: "sgm_uniform",
   upscaleSteps: 10,
-  facefixSteps: 10,
+  facefixSteps: 20,
 };
 
 /**
@@ -157,7 +157,7 @@ export const GENERIC_SAMPLING: SamplingRecommendation = {
   samplerName: "euler",
   scheduler: "normal",
   upscaleSteps: 9,
-  facefixSteps: 9,
+  facefixSteps: 18,
 };
 
 /**

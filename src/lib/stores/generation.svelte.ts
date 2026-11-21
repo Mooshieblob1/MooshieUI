@@ -957,7 +957,7 @@ class GenerationStore {
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
   facefixSteps = $state(20);
-  facefixGuideSize = $state(512);
+  facefixGuideSize = $state(1024);
   facefixMaxFaces = $state(8);
   facefixAutoPrompt = $state(false);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
@@ -2381,7 +2381,11 @@ class GenerationStore {
       this.width = preset.width;
       this.height = preset.height;
     }
-    this.facefixSteps = Math.ceil(preset.steps / 3);
+    this.facefixGuideSize = Math.max(preset.width, preset.height) <= 512 ? 512 : 1024;
+    this.facefixSteps =
+      preset.steps <= 12
+        ? Math.max(4, Math.ceil(preset.steps / 2))
+        : Math.max(15, Math.round(preset.steps * 0.75));
     this.upscaleSteps = Math.ceil(preset.steps / 3);
     if (preset.upscaleDenoise !== undefined) {
       this.upscaleDenoise = preset.upscaleDenoise;
