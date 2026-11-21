@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use ort::session::Session;
@@ -335,17 +336,8 @@ impl InterrogatorState {
     }
 
     /// Load the shared ONNX Runtime library. Safe to call more than once.
-    fn init_ort(&self) -> Result<(), AppError> {
-        let lib_path = self.ort_library_path();
-        let builder = ort::init_from(&lib_path).map_err(|e| {
-            AppError::InterrogatorError(format!(
-                "Failed to load ONNX Runtime library at '{}': {}",
-                lib_path.display(),
-                e
-            ))
-        })?;
-        builder.commit();
-        Ok(())
+    fn init_ort(&self) -> Result<ort::environment::Environment, AppError> {
+        shared_ort_environment(&self.ort_library_path()).map_err(AppError::InterrogatorError)
     }
 
     /// Load the ONNX session and tag list, caching for subsequent calls.
@@ -358,7 +350,7 @@ impl InterrogatorState {
         let t = Instant::now();
 
         // Initialize ONNX Runtime from downloaded shared library
-        self.init_ort()?;
+        let env = self.init_ort()?;
 
         // Parse tag CSV
         self.tag_list = parse_tags_csv(&self.tags_path())?;
@@ -378,7 +370,7 @@ impl InterrogatorState {
             thread_count
         );
 
-        let session = Session::builder()
+        let session = Session::builder(&env)
             .map_err(|e| {
                 AppError::InterrogatorError(format!("Failed to create session builder: {}", e))
             })?
@@ -498,8 +490,8 @@ impl InterrogatorState {
         let detection = match artist_threshold {
             Some(threshold) => {
                 if !self.artist.is_loaded() {
-                    self.init_ort()?;
-                    self.artist.load(&self.root_dir)?;
+                    let env = self.init_ort()?;
+                    self.artist.load(&self.root_dir, &env)?;
                 }
                 Some((threshold, self.artist.detect(&img)?))
             }
@@ -614,11 +606,7 @@ impl InterrogatorState {
             .get(&output_name)
             .ok_or_else(|| AppError::InterrogatorError("No output tensor found".into()))?;
 
-        let tensor_ref = output
-            .downcast_ref::<ort::value::DynTensorValueType>()
-            .map_err(|e| AppError::InterrogatorError(format!("Output is not a tensor: {}", e)))?;
-
-        let (_, probs_slice) = tensor_ref
+        let (_, probs_slice) = output
             .try_extract_tensor::<f32>()
             .map_err(|e| AppError::InterrogatorError(format!("Failed to extract output: {}", e)))?;
 
@@ -757,6 +745,34 @@ fn tags_path_in(model_dir: &std::path::Path) -> PathBuf {
 
 pub(crate) fn ort_library_path_in(model_dir: &std::path::Path) -> PathBuf {
     model_dir.join(ORT_LIB_NAME)
+}
+
+/// Return the process-wide ONNX Runtime environment, loading the shared
+/// library at `lib_path` on first call. `ort` enforces a single
+/// `Environment` per process (`CURRENT_ENV` rejects any second `build()`),
+/// so tagger, Kaloscope, and TrustMark share this handle.
+pub(crate) fn shared_ort_environment(
+    lib_path: &Path,
+) -> Result<ort::environment::Environment, String> {
+    static ORT_ENV: Mutex<Option<ort::environment::Environment>> = Mutex::new(None);
+    let mut guard = ORT_ENV
+        .lock()
+        .map_err(|_| "ONNX Runtime environment lock poisoned".to_string())?;
+    if let Some(env) = guard.as_ref() {
+        return Ok(env.clone());
+    }
+    let env = ort::init_from(lib_path)
+        .map_err(|e| {
+            format!(
+                "Failed to load ONNX Runtime library at '{}': {}",
+                lib_path.display(),
+                e
+            )
+        })?
+        .build()
+        .map_err(|e| format!("Failed to initialize ONNX Runtime environment: {}", e))?;
+    *guard = Some(env.clone());
+    Ok(env)
 }
 
 pub fn is_model_downloaded_at(model_dir: &std::path::Path) -> bool {

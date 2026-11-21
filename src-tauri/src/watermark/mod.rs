@@ -299,12 +299,14 @@ mod engine {
             return Err("watermark models are not downloaded".into());
         }
         let lib = crate::interrogator::ort_library_path_in(&ort_root().ok_or("no app data dir")?);
-        ort::init_from(&lib)
-            .map_err(|e| format!("ONNX Runtime at {}: {e}", lib.display()))?
-            .commit();
+        let env = crate::interrogator::shared_ort_environment(&lib)?;
         let dir = models_dir().ok_or("no app data dir")?;
         let started = std::time::Instant::now();
-        *slot = Some(trustmark::TrustMark::load(&dir, trustmark::Version::Bch5)?);
+        *slot = Some(trustmark::TrustMark::load(
+            &dir,
+            trustmark::Version::Bch5,
+            &env,
+        )?);
         log::info!("watermark: models loaded in {:.1?}", started.elapsed());
         Ok(())
     }
@@ -440,9 +442,9 @@ mod model_tests {
 
     fn load() -> trustmark::TrustMark {
         let lib = std::env::var("MOOSHIE_ORT_LIB").expect("MOOSHIE_ORT_LIB");
-        ort::init_from(&lib).unwrap().commit();
+        let env = crate::interrogator::shared_ort_environment(Path::new(&lib)).unwrap();
         let dir = std::env::var("MOOSHIE_TRUSTMARK_DIR").expect("MOOSHIE_TRUSTMARK_DIR");
-        trustmark::TrustMark::load(Path::new(&dir), trustmark::Version::Bch5).unwrap()
+        trustmark::TrustMark::load(Path::new(&dir), trustmark::Version::Bch5, &env).unwrap()
     }
 
     fn sample(w: u32, h: u32) -> DynamicImage {
