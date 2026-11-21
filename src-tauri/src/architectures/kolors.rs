@@ -129,7 +129,12 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
     core_nodes: &[],
     min_comfyui: None,
     int8_fast_model_type: None,
-    modes: &[mode("txt2img"), mode("img2img"), mode("inpainting")],
+    modes: &[
+        mode("txt2img"),
+        mode("img2img"),
+        mode("inpainting"),
+        mode("outpainting"),
+    ],
     negative_prompt: true,
     resolution_multiple: 8,
     // SDXL ControlNets read the 2048-wide context; Kolors hands the UNet

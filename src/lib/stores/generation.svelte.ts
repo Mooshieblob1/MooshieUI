@@ -371,6 +371,7 @@ const GENERATION_MODES = [
   "txt2img",
   "img2img",
   "inpainting",
+  "outpainting",
   "image_edit",
   "video",
 ] as const satisfies readonly GenerationMode[];
@@ -404,6 +405,7 @@ function createDefaultModeToggles(): ModeToggleStates {
     txt2img: defaultModeToggleState(),
     img2img: defaultModeToggleState(),
     inpainting: defaultModeToggleState(),
+    outpainting: defaultModeToggleState(),
     image_edit: defaultModeToggleState(),
     video: defaultModeToggleState(),
   };
@@ -770,6 +772,11 @@ class GenerationStore {
   inputImage = $state<string | null>(null);
   maskImage = $state<string | null>(null);
   growMaskBy = $state(6);
+  outpaintTop = $state(0);
+  outpaintBottom = $state(0);
+  outpaintLeft = $state(256);
+  outpaintRight = $state(256);
+  outpaintFeather = $state(40);
   differentialDiffusion = $state(false);
   upscaleEnabled = $state(false);
   upscaleMethod = $state<"algorithmic" | "model" | "seedvr2">("algorithmic");
@@ -1565,10 +1572,13 @@ class GenerationStore {
     return this.modelFamily === "auraflow";
   }
 
-  /** In img2img/inpainting/image_edit, the loaded source image owns width/height. */
+  /** In img2img/inpainting/outpainting/image_edit, the loaded source image owns width/height. */
   get hasAuthoritativeEditSource(): boolean {
     if (this._mode === "image_edit") return !!this.editReferenceImages[0];
-    return (this._mode === "img2img" || this._mode === "inpainting") && !!this.inputImage;
+    return (
+      (this._mode === "img2img" || this._mode === "inpainting" || this._mode === "outpainting") &&
+      !!this.inputImage
+    );
   }
 
   /** True when the selected model is HunyuanDiT. */
@@ -3113,6 +3123,11 @@ class GenerationStore {
     if (saved.height) this.height = saved.height;
     if (saved.batchSize) this.batchSize = saved.batchSize;
     if (saved.denoise !== undefined) this.denoise = saved.denoise;
+    if (saved.outpaintTop !== undefined) this.outpaintTop = Number(saved.outpaintTop) || 0;
+    if (saved.outpaintBottom !== undefined) this.outpaintBottom = Number(saved.outpaintBottom) || 0;
+    if (saved.outpaintLeft !== undefined) this.outpaintLeft = Number(saved.outpaintLeft) || 0;
+    if (saved.outpaintRight !== undefined) this.outpaintRight = Number(saved.outpaintRight) || 0;
+    if (saved.outpaintFeather !== undefined) this.outpaintFeather = Number(saved.outpaintFeather) || 0;
     if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
     // The parked bucket. The active one is loaded from the flat fields below,
     // which also carries a pre-split store forward: its single prompt lands
@@ -3467,6 +3482,11 @@ class GenerationStore {
         height: this.height,
         batchSize: this.batchSize,
         denoise: this.denoise,
+        outpaintTop: this.outpaintTop,
+        outpaintBottom: this.outpaintBottom,
+        outpaintLeft: this.outpaintLeft,
+        outpaintRight: this.outpaintRight,
+        outpaintFeather: this.outpaintFeather,
         differentialDiffusion: this.differentialDiffusion,
         upscaleEnabled: this.upscaleEnabled,
         upscaleMethod: this.upscaleMethod,
@@ -3663,6 +3683,11 @@ class GenerationStore {
       height: this.height,
       batchSize: this.batchSize,
       denoise: this.denoise,
+      outpaintTop: this.outpaintTop,
+      outpaintBottom: this.outpaintBottom,
+      outpaintLeft: this.outpaintLeft,
+      outpaintRight: this.outpaintRight,
+      outpaintFeather: this.outpaintFeather,
       refineOnly: this.refineOnly,
       differentialDiffusion: this.differentialDiffusion,
       upscaleEnabled: this.upscaleEnabled,
@@ -3883,7 +3908,11 @@ class GenerationStore {
   private novelAiParams(characters: NovelAiCharacter[]): NovelAiParams | null {
     if (!this.isNovelAi) return null;
     const action =
-      this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
+      this.mode === "inpainting" || this.mode === "outpainting"
+        ? "infill"
+        : this.mode === "img2img"
+          ? "img2img"
+          : "generate";
     return {
       ...this.novelaiSettings,
       face_detail: {
@@ -4528,6 +4557,11 @@ class GenerationStore {
       input_image: this.inputImage,
       mask_image: this.maskImage,
       grow_mask_by: this.growMaskBy,
+      outpaint_top: this.outpaintTop,
+      outpaint_bottom: this.outpaintBottom,
+      outpaint_left: this.outpaintLeft,
+      outpaint_right: this.outpaintRight,
+      outpaint_feather: this.outpaintFeather,
       upscale_enabled: this.upscaleEnabled,
       upscale_method: this.upscaleMethod,
       upscale_model: this.upscaleModel,

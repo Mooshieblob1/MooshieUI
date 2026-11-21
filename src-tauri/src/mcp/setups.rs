@@ -141,6 +141,11 @@ pub fn snapshot(params: &GenerationParams) -> Option<GenerationParams> {
     p.video_last_frame = None;
     p.video_ref_images.clear();
     p.refine_only = false;
+    p.outpaint_top = 0;
+    p.outpaint_bottom = 0;
+    p.outpaint_left = 0;
+    p.outpaint_right = 0;
+    p.outpaint_feather = 40;
     if let Some(nai) = p.novelai.as_mut() {
         // Character boxes are that image's cast; vibes and precise
         // references are pictures (and a vibe costs Anlas to encode).
@@ -307,6 +312,11 @@ pub struct Overrides {
     /// Ask for a transparent background (models that support it, Ming-Image
     /// Design; ignored by the rest).
     pub transparent_background: Option<bool>,
+    pub outpaint_top: Option<u32>,
+    pub outpaint_bottom: Option<u32>,
+    pub outpaint_left: Option<u32>,
+    pub outpaint_right: Option<u32>,
+    pub outpaint_feather: Option<u32>,
 }
 
 pub const MIN_SIDE: u32 = 256;
@@ -451,6 +461,25 @@ pub fn apply(base: &GenerationParams, o: &Overrides) -> Result<GenerationParams,
     }
     if let Some(t) = o.transparent_background {
         p.transparent_background = t;
+    }
+    for (name, val, target) in [
+        ("outpaint_top", o.outpaint_top, &mut p.outpaint_top),
+        ("outpaint_bottom", o.outpaint_bottom, &mut p.outpaint_bottom),
+        ("outpaint_left", o.outpaint_left, &mut p.outpaint_left),
+        ("outpaint_right", o.outpaint_right, &mut p.outpaint_right),
+    ] {
+        if let Some(px) = val {
+            if px > 2048 {
+                return Err(format!("{name} must be between 0 and 2048"));
+            }
+            *target = px;
+        }
+    }
+    if let Some(feather) = o.outpaint_feather {
+        if feather > 512 {
+            return Err("outpaint_feather must be between 0 and 512".into());
+        }
+        p.outpaint_feather = feather;
     }
     if let Some(block) = p.novelai.as_mut() {
         // Face crops shrunk into the free window, never paid ones.
@@ -808,6 +837,40 @@ mod tests {
             loras: Some(vec![LoraOverride::default()]),
             ..p()
         }));
+        assert!(bad(Overrides {
+            outpaint_left: Some(2049),
+            ..p()
+        }));
+        assert!(bad(Overrides {
+            outpaint_feather: Some(513),
+            ..p()
+        }));
+    }
+
+    #[test]
+    fn outpaint_overrides_validate_and_apply() {
+        let p = apply(
+            &base(),
+            &Overrides {
+                prompt: "extend landscape".into(),
+                outpaint_top: Some(64),
+                outpaint_bottom: Some(128),
+                outpaint_left: Some(256),
+                outpaint_right: Some(256),
+                outpaint_feather: Some(48),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(p.outpaint_top, 64);
+        assert_eq!(p.outpaint_bottom, 128);
+        assert_eq!(p.outpaint_left, 256);
+        assert_eq!(p.outpaint_right, 256);
+        assert_eq!(p.outpaint_feather, 48);
+
+        let mut outpaint_run = p.clone();
+        outpaint_run.mode = "outpainting".into();
+        assert!(snapshot(&outpaint_run).is_none());
     }
 
     #[test]

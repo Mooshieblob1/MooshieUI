@@ -24,7 +24,7 @@ export interface QueuedPrompt {
 type ModeOutputs = Record<GenerationMode, string | null>;
 
 function emptyModeOutputs(): ModeOutputs {
-  return { txt2img: null, img2img: null, inpainting: null, image_edit: null, video: null };
+  return { txt2img: null, img2img: null, inpainting: null, outpainting: null, image_edit: null, video: null };
 }
 
 class ProgressStore {

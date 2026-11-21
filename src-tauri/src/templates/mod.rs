@@ -9,6 +9,7 @@ pub mod krea2_edit;
 pub mod mesh3d;
 pub mod moody_moss;
 pub mod music;
+pub mod outpainting;
 pub mod rife;
 pub mod segment_detail;
 pub mod splat;
@@ -175,8 +176,10 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         cascade::validate(params)?;
     }
 
-    let needs_input_image =
-        matches!(params.mode.as_str(), "img2img" | "inpainting") || params.refine_only;
+    let needs_input_image = matches!(
+        params.mode.as_str(),
+        "img2img" | "inpainting" | "outpainting"
+    ) || params.refine_only;
 
     if needs_input_image
         && params
@@ -206,6 +209,18 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     {
         return Err(
             "Inpainting mode requires a mask image — please paint a mask before generating.".into(),
+        );
+    }
+
+    if params.mode == "outpainting"
+        && params.outpaint_top == 0
+        && params.outpaint_bottom == 0
+        && params.outpaint_left == 0
+        && params.outpaint_right == 0
+    {
+        return Err(
+            "Outpainting mode requires padding on at least one side (top, bottom, left or right)."
+                .into(),
         );
     }
 
@@ -1166,6 +1181,7 @@ fn build_image_stage(params: &GenerationParams, seed: i64) -> WorkflowResult {
         match params.mode.as_str() {
             "img2img" => img2img::build(params, seed),
             "inpainting" => inpainting::build(params, seed),
+            "outpainting" => outpainting::build(params, seed),
             "image_edit" => image_edit::build(params, seed),
             _ => txt2img::build(params, seed),
         }

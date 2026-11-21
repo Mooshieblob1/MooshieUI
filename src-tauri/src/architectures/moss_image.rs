@@ -181,6 +181,7 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
         ModeSpec::generic("txt2img"),
         ModeSpec::generic("img2img"),
         ModeSpec::generic("inpainting"),
+        ModeSpec::generic("outpainting"),
         ModeSpec {
             mode: "image_edit",
             max_references: MAX_REFERENCES as u32,

@@ -275,6 +275,41 @@
     }
   }
 
+  async function sendToOutpaint() {
+    try {
+      let rawBytes: number[];
+      let fallbackFilename = `outpaint_${Date.now()}.png`;
+      const savedImage = getActiveSavedImage();
+      if (savedImage) {
+        const source = await loadOutputImageForGenerationInput(savedImage, fallbackFilename);
+        rawBytes = source.bytes;
+        fallbackFilename = source.filename;
+      } else {
+        const sourceUrl = previewSrc ?? progress.lastOutputImage;
+        if (!sourceUrl) {
+          gallery.showToast(locale.t("preview.not_available"), "info");
+          return;
+        }
+        rawBytes = await imageUrlToPngBytes(sourceUrl);
+      }
+
+      const normalized = await normalizeGenerationInputBytes(rawBytes, fallbackFilename);
+      const upload = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = upload.name;
+      generation.width = normalized.width;
+      generation.height = normalized.height;
+      generation.denoise = 1.0;
+      generation.mode = "outpainting";
+      canvas.isCanvasMode = false;
+      canvas.setReferenceImage(normalized.previewUrl);
+      progress.setLastOutputForMode("outpainting", null);
+      gallery.showToast(locale.t("generation.toast.loaded_outpaint"), "success");
+    } catch (e) {
+      console.error("Send to outpaint failed:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
   async function upscaleImage() {
     // The Refine button takes the most-recent output and runs it back through
     // the upscale chain (MooshieUI's "refiner") at low denoise — analogous to
@@ -507,6 +542,7 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.send_to_img2img"), action: () => void sendToImg2img() },
       { label: locale.t("gallery.send_to_inpaint"), action: () => void sendToInpaint() },
+      { label: locale.t("gallery.send_to_outpaint"), action: () => void sendToOutpaint() },
       { label: locale.t("gallery.edit"), action: () => openEditor() },
     ];
     if (!progress.wasUpscaled) {

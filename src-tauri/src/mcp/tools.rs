@@ -31,6 +31,99 @@ const BACKFILL_PER_CALL: usize = 200;
 /// Most reference images SnapRef takes (`style_ref::validate_snapref`).
 const MAX_SNAPREF_IMAGES: usize = 8;
 
+fn generate_image_schema() -> Value {
+    let mut schema = json!({
+        "name": "generate_image",
+        "title": "Generate image",
+        "description": "Generate images with MooshieUI (txt2img), on a local model or NovelAI. Reuses the owner's last setup for the model (loaders, upscale, face fix, guidance; for NovelAI its quality tags, UC preset and sampler); you change the prompt and any of the optional fields. Prompts may use __name__ wildcards from the owner's wildcard files and {a|b|c} random choices (list_library kind wildcards). Saved characters, artist styles and prompt chunks can be added by name (list_library). NovelAI images must stay inside the free Opus window: at most 1 megapixel, 28 steps, one image. Images are saved to the MooshieUI gallery and returned as previews, each with a url that downloads the full-size file. Waits up to 10 minutes for the result unless wait is false; then poll get_job (get_status lists recent job ids).",
+        "inputSchema": {
+            "type": "object",
+            "required": ["prompt"],
+            "properties": {
+                "prompt": { "type": "string", "description": "Positive prompt, in the style the model expects (tags for anime SDXL models, sentences for Flux and similar)." },
+                "negative_prompt": { "type": "string", "description": "Replaces the setup's negative prompt." },
+                "model": { "type": "string", "description": "Model with a saved setup (see get_status), a file name or a NovelAI model id such as nai-diffusion-4-5-full. Default: the most recently used one." },
+                "characters": { "type": "array", "maxItems": 22, "items": { "type": "string" }, "description": "Saved character names (list_library). Each adds its prompt and UC; on NovelAI V4 and later it becomes its own character prompt." },
+                "styles": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Saved artist style names (list_library kind styles): their weighted artist tags are appended and their UC added." },
+                "chunks": {
+                    "type": "array",
+                    "maxItems": 30,
+                    "description": "Saved prompt chunk names (list_library kind chunks), or { name, mode } with mode prepend, append or random (one random line). Default: the mode the chunk is active with in MooshieUI, else append. Their UC is added.",
+                    "items": {
+                        "anyOf": [
+                            { "type": "string" },
+                            { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "mode": { "type": "string", "enum": ["prepend", "append", "random"] } } }
+                        ]
+                    }
+                },
+                "use_active_styles": { "type": "boolean", "description": "Also add the styles and chunks currently active in MooshieUI. Default false." },
+                "source_image": { "type": "string", "description": "Turns this into img2img (or outpainting when outpaint padding is set): a gallery filename, or the image as base64 or a data URL. The size follows the source's aspect ratio unless width/height are given. Works on NovelAI too (free window) for img2img." },
+                "denoise": { "type": "number", "minimum": 0.05, "maximum": 1, "description": "With source_image: how much to change it. Default 0.6 (1.0 when outpainting)." },
+                "reference_images": { "type": "array", "maxItems": 8, "items": { "type": "string" }, "description": "Local models only: one or two character/style reference images (gallery filenames or base64) for the model's style reference (Anima Reference Adapter, Flux Redux, IP-Adapter), using the setup's reference settings. When the owner's Anima setup uses SnapRef, up to 8 images of the same character." },
+                "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the returned download links work. Default 24." },
+                "width": { "type": "integer", "minimum": 256, "maximum": 4096 },
+                "height": { "type": "integer", "minimum": 256, "maximum": 4096 },
+                "steps": { "type": "integer", "minimum": 1, "maximum": 150 },
+                "cfg": { "type": "number", "minimum": 0, "maximum": 30 },
+                "seed": { "type": "integer", "description": "Omit or -1 for random." },
+                "batch_size": { "type": "integer", "minimum": 1, "maximum": 8 },
+                "sampler": { "type": "string", "description": "ComfyUI sampler name, e.g. euler_ancestral. On NovelAI its own names, e.g. k_euler_ancestral." },
+                "scheduler": { "type": "string", "description": "ComfyUI scheduler name, e.g. karras. On NovelAI its noise schedule, e.g. karras." },
+                "loras": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "description": "Replaces the setup's LoRAs. [] removes them. Not for NovelAI.",
+                    "items": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {
+                            "name": { "type": "string", "description": "LoRA filename from list_models." },
+                            "strength": { "type": "number", "description": "Default 1." },
+                            "strength_clip": { "type": "number", "description": "Default: same as strength." }
+                        }
+                    }
+                },
+                "transparent_background": { "type": "boolean", "description": "Ask for a see-through (RGBA) background, for logos, stickers and design assets. Only models that support it (Ming-Image Design) use it. Default: the setup's." },
+                "wait": { "type": "boolean", "description": "Default true." },
+                "include_images": { "type": "boolean", "description": "Return image previews. Default true." }
+            }
+        }
+    });
+    if let Some(props) = schema
+        .pointer_mut("/inputSchema/properties")
+        .and_then(Value::as_object_mut)
+    {
+        for (key, desc) in [
+            (
+                "outpaint_top",
+                "With source_image (local models): pixels to extend upward.",
+            ),
+            (
+                "outpaint_bottom",
+                "With source_image (local models): pixels to extend downward.",
+            ),
+            (
+                "outpaint_left",
+                "With source_image (local models): pixels to extend left.",
+            ),
+            (
+                "outpaint_right",
+                "With source_image (local models): pixels to extend right.",
+            ),
+        ] {
+            props.insert(
+                key.into(),
+                json!({ "type": "integer", "minimum": 0, "maximum": 2048, "description": desc }),
+            );
+        }
+        props.insert(
+            "outpaint_feather".into(),
+            json!({ "type": "integer", "minimum": 0, "maximum": 512, "description": "Outpainting seam feather width in pixels. Default 40." }),
+        );
+    }
+    schema
+}
+
 pub fn definitions() -> Value {
     // One json! per tool: a single literal this size hits the macro
     // recursion limit.
@@ -56,63 +149,7 @@ pub fn definitions() -> Value {
             },
             "annotations": { "readOnlyHint": true }
         }),
-        json!({
-            "name": "generate_image",
-            "title": "Generate image",
-            "description": "Generate images with MooshieUI (txt2img), on a local model or NovelAI. Reuses the owner's last setup for the model (loaders, upscale, face fix, guidance; for NovelAI its quality tags, UC preset and sampler); you change the prompt and any of the optional fields. Prompts may use __name__ wildcards from the owner's wildcard files and {a|b|c} random choices (list_library kind wildcards). Saved characters, artist styles and prompt chunks can be added by name (list_library). NovelAI images must stay inside the free Opus window: at most 1 megapixel, 28 steps, one image. Images are saved to the MooshieUI gallery and returned as previews, each with a url that downloads the full-size file. Waits up to 10 minutes for the result unless wait is false; then poll get_job (get_status lists recent job ids).",
-            "inputSchema": {
-                "type": "object",
-                "required": ["prompt"],
-                "properties": {
-                    "prompt": { "type": "string", "description": "Positive prompt, in the style the model expects (tags for anime SDXL models, sentences for Flux and similar)." },
-                    "negative_prompt": { "type": "string", "description": "Replaces the setup's negative prompt." },
-                    "model": { "type": "string", "description": "Model with a saved setup (see get_status), a file name or a NovelAI model id such as nai-diffusion-4-5-full. Default: the most recently used one." },
-                    "characters": { "type": "array", "maxItems": 22, "items": { "type": "string" }, "description": "Saved character names (list_library). Each adds its prompt and UC; on NovelAI V4 and later it becomes its own character prompt." },
-                    "styles": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Saved artist style names (list_library kind styles): their weighted artist tags are appended and their UC added." },
-                    "chunks": {
-                        "type": "array",
-                        "maxItems": 30,
-                        "description": "Saved prompt chunk names (list_library kind chunks), or { name, mode } with mode prepend, append or random (one random line). Default: the mode the chunk is active with in MooshieUI, else append. Their UC is added.",
-                        "items": {
-                            "anyOf": [
-                                { "type": "string" },
-                                { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "mode": { "type": "string", "enum": ["prepend", "append", "random"] } } }
-                            ]
-                        }
-                    },
-                    "use_active_styles": { "type": "boolean", "description": "Also add the styles and chunks currently active in MooshieUI. Default false." },
-                    "source_image": { "type": "string", "description": "Turns this into img2img: a gallery filename, or the image as base64 or a data URL. The size follows the source's aspect ratio unless width/height are given. Works on NovelAI too (free window)." },
-                    "denoise": { "type": "number", "minimum": 0.05, "maximum": 1, "description": "With source_image: how much to change it. Default 0.6." },
-                    "reference_images": { "type": "array", "maxItems": 8, "items": { "type": "string" }, "description": "Local models only: one or two character/style reference images (gallery filenames or base64) for the model's style reference (Anima Reference Adapter, Flux Redux, IP-Adapter), using the setup's reference settings. When the owner's Anima setup uses SnapRef, up to 8 images of the same character." },
-                    "link_hours": { "type": "integer", "minimum": 1, "maximum": 168, "description": "How long the returned download links work. Default 24." },
-                    "width": { "type": "integer", "minimum": 256, "maximum": 4096 },
-                    "height": { "type": "integer", "minimum": 256, "maximum": 4096 },
-                    "steps": { "type": "integer", "minimum": 1, "maximum": 150 },
-                    "cfg": { "type": "number", "minimum": 0, "maximum": 30 },
-                    "seed": { "type": "integer", "description": "Omit or -1 for random." },
-                    "batch_size": { "type": "integer", "minimum": 1, "maximum": 8 },
-                    "sampler": { "type": "string", "description": "ComfyUI sampler name, e.g. euler_ancestral. On NovelAI its own names, e.g. k_euler_ancestral." },
-                    "scheduler": { "type": "string", "description": "ComfyUI scheduler name, e.g. karras. On NovelAI its noise schedule, e.g. karras." },
-                    "loras": {
-                        "type": "array",
-                        "maxItems": 10,
-                        "description": "Replaces the setup's LoRAs. [] removes them. Not for NovelAI.",
-                        "items": {
-                            "type": "object",
-                            "required": ["name"],
-                            "properties": {
-                                "name": { "type": "string", "description": "LoRA filename from list_models." },
-                                "strength": { "type": "number", "description": "Default 1." },
-                                "strength_clip": { "type": "number", "description": "Default: same as strength." }
-                            }
-                        }
-                    },
-                    "transparent_background": { "type": "boolean", "description": "Ask for a see-through (RGBA) background, for logos, stickers and design assets. Only models that support it (Ming-Image Design) use it. Default: the setup's." },
-                    "wait": { "type": "boolean", "description": "Default true." },
-                    "include_images": { "type": "boolean", "description": "Return image previews. Default true." }
-                }
-            }
-        }),
+        generate_image_schema(),
         json!({
             "name": "generate_music",
             "title": "Generate music",
@@ -760,7 +797,14 @@ async fn apply_source_image(
         params.width = w;
         params.height = h;
     }
-    let denoise = arg_denoise(args, 0.6)?;
+    let has_outpaint = params.outpaint_top > 0
+        || params.outpaint_bottom > 0
+        || params.outpaint_left > 0
+        || params.outpaint_right > 0;
+    if has_outpaint && nai {
+        return Err("Outpainting over MCP supports local models only.".into());
+    }
+    let denoise = arg_denoise(args, if has_outpaint { 1.0 } else { 0.6 })?;
     if nai {
         setups::check_novelai_free_window(params)?;
         let data = inputs::base64_png_at(&src, params.width, params.height).await?;
@@ -770,7 +814,11 @@ async fn apply_source_image(
         params.mode = "img2img".into();
         params.input_image = Some(data);
     } else {
-        params.mode = "img2img".into();
+        params.mode = if has_outpaint {
+            "outpainting".into()
+        } else {
+            "img2img".into()
+        };
         params.denoise = denoise;
         params.input_image = Some(inputs::upload(state, &src).await?);
     }
@@ -792,6 +840,15 @@ async fn generate_image(
     let mut params = setups::apply(&setup.params, &overrides)?;
     if let Some(spec) = arg_str(args, "source_image") {
         apply_source_image(state, &mut params, args, spec).await?;
+    } else if params.outpaint_top > 0
+        || params.outpaint_bottom > 0
+        || params.outpaint_left > 0
+        || params.outpaint_right > 0
+    {
+        return Err(
+            "outpaint_top, outpaint_bottom, outpaint_left and outpaint_right require source_image."
+                .into(),
+        );
     }
     let refs = arg_images(args, "reference_images", MAX_SNAPREF_IMAGES)?;
     if !refs.is_empty() {

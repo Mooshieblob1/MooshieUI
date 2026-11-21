@@ -28,8 +28,8 @@ use super::{
 };
 use crate::comfyui::types::GenerationParams;
 use crate::templates::{
-    img2img, inpainting, insert_vae_decode, load_model_nodes, strip_lora_tags, txt2img,
-    WorkflowResult,
+    img2img, inpainting, insert_vae_decode, load_model_nodes, outpainting, strip_lora_tags,
+    txt2img, WorkflowResult,
 };
 
 /// References `TextEncodeMingImageEdit` takes (`image_1` .. `image_8`).
@@ -189,6 +189,13 @@ pub static SPEC: ArchitectureSpec = ArchitectureSpec {
             required_files: &[],
             sampling: None,
             build: Some(build_inpainting),
+        },
+        ModeSpec {
+            mode: "outpainting",
+            max_references: 0,
+            required_files: &[],
+            sampling: None,
+            build: Some(build_outpainting),
         },
         ModeSpec {
             mode: "image_edit",
@@ -380,6 +387,11 @@ fn build_img2img(params: &GenerationParams, seed: i64) -> WorkflowResult {
 fn build_inpainting(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let p = with_prompt_prefix(params);
     finish_generic(inpainting::build(&p, seed), &p)
+}
+
+fn build_outpainting(params: &GenerationParams, seed: i64) -> WorkflowResult {
+    let p = with_prompt_prefix(params);
+    finish_generic(outpainting::build(&p, seed), &p)
 }
 
 /// Non-empty reference images, the edit source (slot 0) first.

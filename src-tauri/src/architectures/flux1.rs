@@ -134,6 +134,7 @@ const GENERIC_MODES: &[ModeSpec] = &[
     ModeSpec::generic("txt2img"),
     ModeSpec::generic("img2img"),
     ModeSpec::generic("inpainting"),
+    ModeSpec::generic("outpainting"),
 ];
 
 /// What every Flux.1 spec shares: encoders, VAE, CLIP-L slot and loader.
@@ -195,6 +196,7 @@ pub static KONTEXT_SPEC: ArchitectureSpec = ArchitectureSpec {
         ModeSpec::generic("txt2img"),
         ModeSpec::generic("img2img"),
         ModeSpec::generic("inpainting"),
+        ModeSpec::generic("outpainting"),
         ModeSpec {
             mode: "image_edit",
             max_references: 1,

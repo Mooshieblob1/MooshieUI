@@ -88,7 +88,7 @@ export interface ExtraPromptBox {
  * filename parsing, progress tracking, the save-to-gallery wrappers) shares one
  * definition — hand-copied unions silently drift when a mode is added.
  */
-export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit" | "video";
+export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "outpainting" | "image_edit" | "video";
 
 /**
  * MiniMax H3 workflow variants. `fl2va` drives the first/last-frame graph (which
@@ -374,6 +374,11 @@ export interface GenerationParams {
   input_image: string | null;
   mask_image: string | null;
   grow_mask_by: number | null;
+  outpaint_top?: number;
+  outpaint_bottom?: number;
+  outpaint_left?: number;
+  outpaint_right?: number;
+  outpaint_feather?: number;
   upscale_enabled: boolean;
   upscale_method: string;
   upscale_model: string | null;

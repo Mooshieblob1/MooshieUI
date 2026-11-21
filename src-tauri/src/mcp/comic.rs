@@ -892,6 +892,7 @@ fn overrides(
         scheduler: plan.scheduler.clone(),
         loras: None,
         transparent_background: None,
+        ..Default::default()
     }
 }
 
