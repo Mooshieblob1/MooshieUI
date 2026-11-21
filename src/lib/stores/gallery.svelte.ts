@@ -49,6 +49,7 @@ import { savedCharacters } from "./savedCharacters.svelte.js";
 import { loadGalleryTags, saveGalleryTags, tagsFromInterrogation } from "../utils/galleryTagCache.js";
 import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
+import { isMingLayerImage, layerOrderValue } from "../utils/transparentBackdrop.js";
 import {
   buildArtistTagIndex,
   detectArtistsInPrompt,
@@ -220,7 +221,7 @@ const GALLERY_RATINGS_KEY = "mooshieui.gallery.ratings.v1";
 const GALLERY_NSFW_KEY = "mooshieui.gallery.nsfw.v1";
 
 export type GallerySortBy = "date" | "name" | "size" | "rating";
-export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board" | "character";
+export type GalleryGroupBy = "none" | "date" | "month" | "mode" | "prompt" | "board" | "character" | "layers";
 export type GalleryViewMode = "huge" | "large" | "small" | "details";
 /** Which images the NSFW filter keeps: everything, only safe ones, or only flagged ones. */
 export type GalleryNsfwFilter = "all" | "hide" | "only";
@@ -1466,13 +1467,24 @@ class GalleryStore {
    * variation is which.
    */
   batchFor(image: OutputImage | null): OutputImage[] {
-    if (!image) return [];
-    return this.sessionImages.filter((i) => i.prompt_id === image.prompt_id);
+    if (!image || !image.prompt_id) return [];
+    const inSession = this.sessionImages.filter((i) => i.prompt_id === image.prompt_id);
+    const list =
+      inSession.length > 0
+        ? inSession
+        : this.images.filter((i) => i.prompt_id === image.prompt_id);
+    if (isMingLayerImage(image) && list.length > 1) {
+      return [...list].sort((a, b) => layerOrderValue(a) - layerOrderValue(b));
+    }
+    return list;
   }
 
-  /** Whether `image` came from a variations run that returned more than one image. */
+  /** Whether `image` came from a variations run or a multi-layer Ming-Image Layer run. */
   batchGridAvailable(image: OutputImage | null): boolean {
-    if (!image || !this.variationBatchIds.includes(image.prompt_id)) return false;
+    if (!image || !image.prompt_id) return false;
+    if (!this.variationBatchIds.includes(image.prompt_id) && !isMingLayerImage(image)) {
+      return false;
+    }
     return this.batchFor(image).length > 1;
   }
 
@@ -1897,6 +1909,7 @@ class GalleryStore {
     blobs?: Blob[],
     metadataMode?: string,
     tempFilenames?: (string | undefined)[],
+    perImageMetadata?: Array<Record<string, string> | undefined>,
   ) {
     if (generation.manualSaveMode) return;
 
@@ -1912,6 +1925,7 @@ class GalleryStore {
 
     for (let i = 0; i < images.length; i++) {
       const img = images[i]!;
+      const imgMetadata = perImageMetadata?.[i] ?? metadata;
       try {
         let galleryFilename: string;
         const blob = blobs?.[i];
@@ -1925,7 +1939,7 @@ class GalleryStore {
               img.filename,
               img.prompt_id,
               img.generation_mode,
-              metadata,
+              imgMetadata,
               metadataMode,
               generation.invisibleWatermark,
             );
@@ -1938,7 +1952,7 @@ class GalleryStore {
               img.filename,
               img.prompt_id,
               img.generation_mode,
-              metadata,
+              imgMetadata,
               metadataMode,
               generation.invisibleWatermark,
             );
@@ -1951,7 +1965,7 @@ class GalleryStore {
             img.filename,
             img.prompt_id,
             img.generation_mode,
-            metadata,
+            imgMetadata,
             metadataMode,
             generation.invisibleWatermark,
           );
@@ -1962,7 +1976,7 @@ class GalleryStore {
             img.subfolder,
             img.prompt_id,
             img.generation_mode,
-            metadata,
+            imgMetadata,
             metadataMode,
             generation.invisibleWatermark,
           );

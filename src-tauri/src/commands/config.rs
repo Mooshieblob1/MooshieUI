@@ -56,10 +56,14 @@ pub async fn update_config(
     mut config: AppConfig,
 ) -> Result<(), AppError> {
     normalize_config_fields(&mut config);
+    crate::config::validate_civitai_proxy(config.civitai_proxy.as_deref())
+        .map_err(AppError::Other)?;
     // Held across the save so a concurrent provider write cannot land between
     // the read that carries the key forward and the write that replaces config.
     let mut current = state.config.write().await;
     preserve_secrets(&mut config, &current);
+    crate::config::validate_civitai_proxy(config.civitai_proxy.as_deref())
+        .map_err(AppError::Other)?;
     save_config(&config).map_err(AppError::Other)?;
     state.trust_localhost.store(
         crate::config::local_trust_enabled(config.trust_localhost),

@@ -22,6 +22,11 @@
   import VideoPlayer from "../video/VideoPlayer.svelte";
   import type { GenerationParams } from "../../types/index.js";
   import { untrack } from "svelte";
+  import {
+    CHECKERBOARD_CLASS,
+    detectImageAlpha,
+    isTransparentImage,
+  } from "../../utils/transparentBackdrop.js";
 
   let currentTipIndex = $state(0);
   let suppressOpenUntil = 0;
@@ -51,6 +56,7 @@
 
   // load/loadedmetadata don't bubble, so this runs on the capture phase to
   // catch both the preview <img> and VideoPlayer's <video>.
+  let previewHasAlpha = $state(false);
   function handleMediaLoad(e: Event) {
     const el = e.target;
     let w = 0;
@@ -58,9 +64,11 @@
     if (el instanceof HTMLImageElement) {
       w = el.naturalWidth;
       h = el.naturalHeight;
+      previewHasAlpha = detectImageAlpha(el);
     } else if (el instanceof HTMLVideoElement) {
       w = el.videoWidth;
       h = el.videoHeight;
+      previewHasAlpha = false;
     }
     if (w > 0 && h > 0) mediaAspect = w / h;
   }
@@ -438,6 +446,19 @@
     return progress.displayImage;
   });
 
+  $effect(() => {
+    void previewSrc;
+    previewHasAlpha = false;
+  });
+
+  const previewIsTransparent = $derived.by(() => {
+    if (previewHasAlpha) return true;
+    const saved = getActiveSavedImage();
+    if (isTransparentImage(saved)) return true;
+    // While streaming/before metadata attaches, honor the active transparency modes.
+    return progress.isGenerating && (generation.transparentBackgroundActive || generation.modelFamily === "mingimagelayer");
+  });
+
   /** Total generation time for the currently shown output, ms (badge). */
   const activeGenerationTimeMs = $derived.by(() => {
     if (progress.isGenerating || !progress.lastOutputImage) return null;
@@ -591,7 +612,7 @@
     </div>
   {:else if progress.displayImage}
     <button
-      class="w-full h-full cursor-pointer"
+      class="w-full h-full flex items-center justify-center cursor-pointer"
       onclick={openPreviewLightbox}
       oncontextmenu={openPreviewContextMenu}
       ondragenter={suppressPreviewOpenOnFileDrop}
@@ -601,7 +622,7 @@
       <img
         src={previewSrc}
         alt={locale.t("preview.alt")}
-        class="w-full h-full object-contain"
+        class="max-w-full max-h-full object-contain {previewIsTransparent ? CHECKERBOARD_CLASS : ''}"
       />
     </button>
     {#if activeGenerationTimeMs != null}

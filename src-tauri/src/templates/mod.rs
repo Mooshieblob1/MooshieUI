@@ -2136,6 +2136,138 @@ mod validation_and_seed_tests {
     }
 }
 
+/// CLIP-based ComfyUI families whose text encoder benefits from splitting
+/// `BREAK` boundaries into separate `CLIPTextEncode` chunks chained via
+/// `ConditioningConcat`. Non-CLIP encoders (LLM / T5 / Qwen) and NovelAI leave
+/// `BREAK` stripped/untouched.
+pub fn supports_break_chunking(arch: &str) -> bool {
+    matches!(arch, "sd15" | "sdxl" | "illustrious" | "pony" | "mugen")
+}
+
+/// Split a prompt on whole-word `BREAK` (or `<break>`) boundaries, trimming
+/// whitespace and stray boundary commas from each chunk and dropping empties.
+/// Always returns at least one element (possibly `""` for an empty prompt).
+pub fn split_break_chunks(prompt: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let bytes = prompt.as_bytes();
+    let mut chunk_start = 0usize;
+    let mut i = 0usize;
+
+    let trim_chunk = |raw: &str| -> String {
+        raw.trim()
+            .trim_matches(|c: char| c == ',' || c.is_whitespace())
+            .trim()
+            .to_string()
+    };
+
+    while i < bytes.len() {
+        if prompt[i..].starts_with("BREAK") {
+            let prev_is_word = prompt[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let next_is_word = prompt[i + 5..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            if !prev_is_word && !next_is_word {
+                let piece = trim_chunk(&prompt[chunk_start..i]);
+                if !piece.is_empty() {
+                    chunks.push(piece);
+                }
+                i += 5;
+                chunk_start = i;
+                continue;
+            }
+        } else if bytes.len() - i >= 7 && prompt[i..].is_char_boundary(7) {
+            if prompt[i..i + 7].eq_ignore_ascii_case("<break>") {
+                let piece = trim_chunk(&prompt[chunk_start..i]);
+                if !piece.is_empty() {
+                    chunks.push(piece);
+                }
+                i += 7;
+                chunk_start = i;
+                continue;
+            }
+        }
+        let ch_len = prompt[i..].chars().next().map_or(1, char::len_utf8);
+        i += ch_len;
+    }
+
+    let tail = trim_chunk(&prompt[chunk_start..]);
+    if !tail.is_empty() {
+        chunks.push(tail);
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    chunks
+}
+
+/// Encode `text` into one `CLIPTextEncode` (or multiple chained via
+/// `ConditioningConcat` when `break_chunks` is enabled and `BREAK` splits it).
+pub fn encode_clip_prompt(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    clip_source: &(String, u32),
+    text: &str,
+    break_chunks: bool,
+) -> ((String, u32), u32) {
+    let cleaned = strip_lora_tags(text);
+    let chunks = if break_chunks {
+        split_break_chunks(&cleaned)
+    } else {
+        vec![cleaned]
+    };
+
+    let mut iter = chunks.into_iter();
+    let first_text = iter.next().unwrap_or_default();
+    let first_id = next_id.to_string();
+    workflow.insert(
+        first_id.clone(),
+        json!({
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "clip": [clip_source.0, clip_source.1],
+                "text": first_text
+            }
+        }),
+    );
+    next_id += 1;
+
+    let mut current = (first_id, 0u32);
+    for chunk in iter {
+        let chunk_id = next_id.to_string();
+        workflow.insert(
+            chunk_id.clone(),
+            json!({
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": [clip_source.0, clip_source.1],
+                    "text": chunk
+                }
+            }),
+        );
+        next_id += 1;
+
+        let concat_id = next_id.to_string();
+        workflow.insert(
+            concat_id.clone(),
+            json!({
+                "class_type": "ConditioningConcat",
+                "inputs": {
+                    "conditioning_to": [current.0, current.1],
+                    "conditioning_from": [chunk_id, 0]
+                }
+            }),
+        );
+        next_id += 1;
+        current = (concat_id, 0);
+    }
+
+    (current, next_id)
+}
+
 /// Build a conditioning output that combines a base prompt with optional timestep-scheduled segments.
 ///
 /// When `segments` is empty, this creates a single `CLIPTextEncode` and returns its output —
@@ -2151,46 +2283,63 @@ mod validation_and_seed_tests {
 /// Returns `(conditioning_source, next_id)`.
 pub fn build_scheduled_conditioning(
     workflow: &mut serde_json::Map<String, Value>,
-    mut next_id: u32,
+    next_id: u32,
     clip_source: &(String, u32),
     base_prompt: &str,
     segments: &[PromptSegment],
 ) -> ((String, u32), u32) {
+    build_scheduled_conditioning_with_break(
+        workflow,
+        next_id,
+        clip_source,
+        base_prompt,
+        segments,
+        false,
+    )
+}
+
+/// Architecture-aware twin of [`build_scheduled_conditioning`]: enables `BREAK`
+/// chunking via `ConditioningConcat` for CLIP-based ComfyUI families.
+pub fn build_scheduled_conditioning_for_arch(
+    workflow: &mut serde_json::Map<String, Value>,
+    next_id: u32,
+    clip_source: &(String, u32),
+    base_prompt: &str,
+    segments: &[PromptSegment],
+    arch: &str,
+) -> ((String, u32), u32) {
+    build_scheduled_conditioning_with_break(
+        workflow,
+        next_id,
+        clip_source,
+        base_prompt,
+        segments,
+        supports_break_chunking(arch),
+    )
+}
+
+fn build_scheduled_conditioning_with_break(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    clip_source: &(String, u32),
+    base_prompt: &str,
+    segments: &[PromptSegment],
+    break_chunks: bool,
+) -> ((String, u32), u32) {
     // Base prompt — always encoded (may be empty if user put everything in segments)
-    let base_id = next_id.to_string();
-    workflow.insert(
-        base_id.clone(),
-        json!({
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "clip": [clip_source.0, clip_source.1],
-                "text": strip_lora_tags(base_prompt)
-            }
-        }),
-    );
-    next_id += 1;
+    let (mut combined_source, nid) =
+        encode_clip_prompt(workflow, next_id, clip_source, base_prompt, break_chunks);
+    next_id = nid;
 
     if segments.is_empty() {
-        return ((base_id, 0), next_id);
+        return (combined_source, next_id);
     }
-
-    // Start the combine chain with the base conditioning
-    let mut combined_source = (base_id, 0u32);
 
     for segment in segments {
         // Encode segment text
-        let seg_clip_id = next_id.to_string();
-        workflow.insert(
-            seg_clip_id.clone(),
-            json!({
-                "class_type": "CLIPTextEncode",
-                "inputs": {
-                    "clip": [clip_source.0, clip_source.1],
-                    "text": strip_lora_tags(&segment.text)
-                }
-            }),
-        );
-        next_id += 1;
+        let (seg_clip_source, nid) =
+            encode_clip_prompt(workflow, next_id, clip_source, &segment.text, break_chunks);
+        next_id = nid;
 
         // Set timestep range on the segment conditioning
         let range_id = next_id.to_string();
@@ -2199,7 +2348,7 @@ pub fn build_scheduled_conditioning(
             json!({
                 "class_type": "ConditioningSetTimestepRange",
                 "inputs": {
-                    "conditioning": [seg_clip_id, 0],
+                    "conditioning": [seg_clip_source.0, seg_clip_source.1],
                     "start": segment.start,
                     "end": segment.end
                 }
@@ -3542,5 +3691,50 @@ mod tests {
             last.sampler_name = sampler.into();
             validate_generation_params(&last).expect("same schedule can pause again");
         }
+    }
+
+    #[test]
+    fn break_chunking_splits_clip_models_with_conditioning_concat() {
+        for arch in ["sd15", "sdxl", "illustrious", "pony"] {
+            let mut p = pausable_params();
+            p.model_architecture = arch.into();
+            p.positive_prompt =
+                "1girl, blue hair, BREAK, beach, sunset, <break> BREAKFAST, smiling".into();
+            p.negative_prompt = "lowres, BREAK, blurry".into();
+            let workflow = build_workflow(&p, 42, false);
+            let workflow = workflow.as_object().unwrap();
+
+            let encodes = nodes_of_class(workflow, "CLIPTextEncode");
+            let texts: Vec<&str> = encodes
+                .iter()
+                .map(|(_, n)| n["inputs"]["text"].as_str().unwrap())
+                .collect();
+            assert!(texts.contains(&"1girl, blue hair"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"beach, sunset"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"BREAKFAST, smiling"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"lowres"), "{arch}: {texts:?}");
+            assert!(texts.contains(&"blurry"), "{arch}: {texts:?}");
+
+            let concats = nodes_of_class(workflow, "ConditioningConcat");
+            assert_eq!(concats.len(), 3, "{arch}: expected 2 pos + 1 neg concats");
+
+            let sampler = nodes_of_class(workflow, "KSampler")[0].1;
+            let pos_id = sampler["inputs"]["positive"][0].as_str().unwrap();
+            let neg_id = sampler["inputs"]["negative"][0].as_str().unwrap();
+            assert_eq!(workflow[pos_id]["class_type"], json!("ConditioningConcat"));
+            assert_eq!(workflow[neg_id]["class_type"], json!("ConditioningConcat"));
+        }
+    }
+
+    #[test]
+    fn break_chunking_keeps_non_clip_models_single_encode() {
+        let mut p = pausable_params();
+        p.model_architecture = "anima".into();
+        p.positive_prompt = "1girl, BREAK, beach".into();
+        p.negative_prompt = "lowres, BREAK, blurry".into();
+        let workflow = build_workflow(&p, 42, false);
+        let workflow = workflow.as_object().unwrap();
+        assert!(nodes_of_class(workflow, "ConditioningConcat").is_empty());
+        assert_eq!(nodes_of_class(workflow, "CLIPTextEncode").len(), 2);
     }
 }

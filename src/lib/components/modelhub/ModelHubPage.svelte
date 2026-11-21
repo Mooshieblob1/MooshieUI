@@ -100,7 +100,15 @@
     { value: "text_encoders", label: locale.t("modelhub.filter.text_encoder") },
   ]);
 
-  const hfQuickLinks = [
+  interface HfQuickLink {
+    label: string;
+    url: string;
+    filename: string;
+    category: string;
+    sha256?: string;
+  }
+
+  const hfQuickLinks: readonly HfQuickLink[] = [
     {
       label: "SDXL Base 1.0",
       url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
@@ -296,7 +304,14 @@
       filename: "Wulver_v0.5_fp8_e4m3fn.safetensors",
       category: "diffusion_models",
     },
-  ] as const;
+    {
+      label: "MiniMax-H3-Image - pDMD 2-step LoRA",
+      url: "https://huggingface.co/akhaliq/minimax-h3-image-pdmd-2step/resolve/main/minimax_h3_pdmd_2nfe_comfyui.safetensors",
+      filename: "minimax_h3_pdmd_2nfe_comfyui.safetensors",
+      category: "loras",
+      sha256: "5feaeef13df31f98f36364a95e7ce9e8ff0afd71570d1c53d7c3be599e3a0f22",
+    },
+  ];
 
   let source = $state<"civitai" | "direct">("civitai");
   let civitaiColumns = $state(5);
@@ -1125,9 +1140,13 @@
     const installDir = await pickInstallDir(directCategory);
     if (!installDir) return; // user cancelled
 
+    const expectedSha256 = hfQuickLinks.find(
+      (item) => item.sha256 && item.url === trimmedUrl && item.filename === finalFilename,
+    )?.sha256;
+
     directInstalling = true;
     try {
-      await downloadModel(trimmedUrl, directCategory, finalFilename, installDir);
+      await downloadModel(trimmedUrl, directCategory, finalFilename, installDir, expectedSha256);
       await models.refresh();
       directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {

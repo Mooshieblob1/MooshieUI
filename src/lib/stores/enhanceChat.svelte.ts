@@ -21,6 +21,7 @@ import type { NovelAiSettings } from "./generation.svelte.js";
 import type { NaiVariant } from "../utils/naiPrompt.js";
 import type { NaiCanonPriority } from "../utils/naiSavedCharacters.js";
 import type { NaiLanguage } from "../utils/naiLanguage.js";
+import type { PendingLearnedFact } from "../utils/characterMemory.js";
 
 /**
  * The Enhance chat: a conversation with the prompt assistant in a modal chat
@@ -45,8 +46,8 @@ import type { NaiLanguage } from "../utils/naiLanguage.js";
  * state over the conversation and the review.
  */
 
-/** Which part of the window is showing: the conversation, or a V5 answer's per-field review. */
-export type EnhanceChatView = "chat" | "review";
+/** Which part of the window is showing: the conversation, a V5 answer's per-field review, or learned memory review. */
+export type EnhanceChatView = "chat" | "review" | "memory";
 
 export type EnhanceFlow = "nai" | "general" | "h3";
 
@@ -230,6 +231,10 @@ export interface ChatAnswerMeta {
   curate?: boolean;
   /** Run once when the answer is applied: saves what it learned to memory. */
   onApplied?: () => void;
+  /** Bundled-model learned facts awaiting user review before saving. */
+  pendingMemory?: PendingLearnedFact[];
+  /** Save the user-approved subset of `pendingMemory`. */
+  onSaveMemory?: (kept: PendingLearnedFact[]) => void;
   /** The request, for Retry and the canon redo. */
   request?: ChatRequest;
   applied?: boolean;
@@ -266,6 +271,7 @@ class EnhanceChatStore {
   /** Per-answer extras, by the answer's session timestamp. */
   meta = $state<Record<number, ChatAnswerMeta>>({});
   pending = $state<NaiEnhancePending | null>(null);
+  memoryReview = $state<{ at: number; flow: EnhanceFlow; items: PendingLearnedFact[] } | null>(null);
   showUndo = $state(false);
   /** Which flow the undo pill belongs to, for its label. */
   undoFlow = $state<EnhanceFlow>("nai");
@@ -322,11 +328,13 @@ class EnhanceChatStore {
     this.open = false;
     this.view = "chat";
     this.pending = null;
+    this.memoryReview = null;
   }
 
   backToChat(): void {
     this.view = "chat";
     this.pending = null;
+    this.memoryReview = null;
   }
 
   /**
@@ -419,7 +427,51 @@ class EnhanceChatStore {
     enhancerSessions.clear(sessionFlowOf(flow));
     this.meta = Object.fromEntries(Object.entries(this.meta).filter(([at]) => !gone.has(Number(at))));
     if (this.error?.flow === flow) this.error = null;
-    if (this.view === "review") this.backToChat();
+    if (this.view === "review" || this.view === "memory") this.backToChat();
+  }
+
+  /** Save or dismiss inline learned-memory suggestions right from a chat answer card. */
+  resolveInlineMemory(at: number, save: boolean): void {
+    const m = this.meta[at];
+    if (!m?.pendingMemory?.length) return;
+    const kept = save ? m.pendingMemory.filter((item) => item.keep && item.fact.trim()) : [];
+    const onSave = m.onSaveMemory;
+    this.meta = {
+      ...this.meta,
+      [at]: { ...m, pendingMemory: undefined, onSaveMemory: undefined },
+    };
+    if (save && kept.length > 0) onSave?.(kept);
+  }
+
+  private openMemoryReview(at: number, flow: EnhanceFlow): boolean {
+    const m = this.meta[at];
+    if (!m?.pendingMemory?.length) return false;
+    this.pending = null;
+    this.memoryReview = {
+      at,
+      flow,
+      items: m.pendingMemory.map((item) => ({ ...item })),
+    };
+    this.view = "memory";
+    return true;
+  }
+
+  /** Complete the bundled-model memory review step after applying an answer. */
+  finishMemoryReview(save: boolean): void {
+    const rev = this.memoryReview;
+    if (!rev) return;
+    const m = this.meta[rev.at];
+    const kept = save ? rev.items.filter((item) => item.keep && item.fact.trim()) : [];
+    const onSave = m?.onSaveMemory;
+    if (m) {
+      this.meta = {
+        ...this.meta,
+        [rev.at]: { ...m, pendingMemory: undefined, onSaveMemory: undefined },
+      };
+    }
+    this.memoryReview = null;
+    if (save && kept.length > 0) onSave?.(kept);
+    this.finishApply(rev.flow);
   }
 
   private markApplied(at: number | undefined): void {
@@ -484,7 +536,9 @@ class EnhanceChatStore {
     generation.positivePrompt = how === "append" && current ? `${current}, ${prompt}` : prompt;
     generation.saveSettings();
     this.markApplied(at);
-    this.finishApply(this.flow === "h3" ? "h3" : "general");
+    const flow: EnhanceFlow = this.flow === "h3" ? "h3" : "general";
+    if (this.openMemoryReview(at, flow)) return;
+    this.finishApply(flow);
   }
 
   /** A V5 answer's fields, read back from the conversation. */
@@ -759,6 +813,7 @@ class EnhanceChatStore {
     generation.saveSettings();
 
     this.markApplied(p.answerAt);
+    if (p.answerAt !== undefined && this.openMemoryReview(p.answerAt, "nai")) return;
     this.finishApply("nai");
   }
 

@@ -5,6 +5,46 @@
 //! (Flux, Krea, H3, Qwen Image). This asks a model that can see the image for
 //! the paragraph those families want instead.
 
+use super::vision::VisionSupport;
+use crate::error::AppError;
+
+/// Where a `Describe image` request should run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DescribeRoute {
+    /// Use the active external provider first, keeping `fallback_local_vision`
+    /// in reserve if the external model turns out to be text-only.
+    External {
+        fallback_local_vision: Option<String>,
+    },
+    /// Route directly to an installed bundled vision model (preferring JoyCaption).
+    Local(String),
+}
+
+/// Choose the route for `Describe image` from the external-provider toggle, the
+/// external model's vision capability, and any installed bundled vision model.
+pub fn plan_route(
+    ext_enabled: bool,
+    vision_support: VisionSupport,
+    local_vision: Option<String>,
+) -> Result<DescribeRoute, AppError> {
+    if !ext_enabled {
+        return local_vision
+            .map(DescribeRoute::Local)
+            .ok_or_else(|| AppError::LlmError("prompt_assistant.no_vision_model".into()));
+    }
+    match vision_support {
+        VisionSupport::Unsupported => match local_vision {
+            Some(model) => Ok(DescribeRoute::Local(model)),
+            None => Err(AppError::LlmError(
+                "prompt_assistant.provider_no_vision".into(),
+            )),
+        },
+        VisionSupport::Supported | VisionSupport::Unknown => Ok(DescribeRoute::External {
+            fallback_local_vision: local_vision,
+        }),
+    }
+}
+
 /// How much the description should cover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Length {
@@ -131,5 +171,46 @@ mod tests {
             clean("A sign that reads \"OPEN\" hangs on the door."),
             "A sign that reads \"OPEN\" hangs on the door."
         );
+    }
+
+    #[test]
+    fn route_prefers_installed_joycaption_when_external_is_text_only() {
+        assert_eq!(
+            plan_route(
+                true,
+                VisionSupport::Unsupported,
+                Some("joycaption-beta-one".into())
+            )
+            .unwrap(),
+            DescribeRoute::Local("joycaption-beta-one".into())
+        );
+        assert!(plan_route(true, VisionSupport::Unsupported, None)
+            .unwrap_err()
+            .to_string()
+            .contains("provider_no_vision"));
+        assert_eq!(
+            plan_route(
+                true,
+                VisionSupport::Supported,
+                Some("joycaption-beta-one".into())
+            )
+            .unwrap(),
+            DescribeRoute::External {
+                fallback_local_vision: Some("joycaption-beta-one".into()),
+            }
+        );
+        assert_eq!(
+            plan_route(
+                false,
+                VisionSupport::Unknown,
+                Some("joycaption-beta-one".into())
+            )
+            .unwrap(),
+            DescribeRoute::Local("joycaption-beta-one".into())
+        );
+        assert!(plan_route(false, VisionSupport::Unknown, None)
+            .unwrap_err()
+            .to_string()
+            .contains("no_vision_model"));
     }
 }

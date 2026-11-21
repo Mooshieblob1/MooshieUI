@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeComfyTags } from "../../src/lib/utils/promptSanitize.ts";
+import { mergeComfyTags, sanitizePromptForSend } from "../../src/lib/utils/promptSanitize.ts";
 
 const twoGirls = "2girls, hatsune miku, long hair, smile, kagamine rin, long hair, smile";
 
@@ -33,4 +33,17 @@ test("nothing new leaves the prompt byte for byte", () => {
 
 test("an empty prompt becomes the fragment", () => {
   assert.equal(mergeComfyTags("", "masterpiece, best quality", "before"), "masterpiece, best quality");
+});
+
+test("sanitizePromptForSend strips BREAK by default and preserves it when keepBreak is true", () => {
+  const raw = "1girl, blue hair\nBREAK\nbeach, <break> sunset, BREAKFAST";
+  assert.equal(sanitizePromptForSend(raw), "1girl, blue hair, beach,   sunset, BREAKFAST");
+  assert.equal(
+    sanitizePromptForSend(raw, { keepBreak: true }),
+    "1girl, blue hair, BREAK, beach,  BREAK  sunset, BREAKFAST",
+  );
+  assert.equal(
+    mergeComfyTags(sanitizePromptForSend("1girl\nBREAK\n2girls", { keepBreak: true }), "masterpiece", "before"),
+    "masterpiece, 1girl, BREAK, 2girls",
+  );
 });

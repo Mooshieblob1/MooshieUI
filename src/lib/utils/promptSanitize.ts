@@ -37,23 +37,33 @@ export interface SanitizeOptions {
    * then renders the comma into the image.
    */
   keepNewlines?: boolean;
+  /**
+   * Keep `BREAK` boundaries (and normalize `<break>` to `BREAK`) for CLIP-based
+   * ComfyUI models so the backend can split chunks via `ConditioningConcat`.
+   * Off for LLM text encoders and NovelAI, where `BREAK` is dead weight.
+   */
+  keepBreak?: boolean;
 }
 
 /**
- * Remove BREAK / <break> tokens and normalize newlines to ", " so the outgoing
- * prompt is a single clean comma-separated string regardless of how the user
- * laid it out in the textarea.
+ * Remove BREAK / <break> tokens (unless `keepBreak` is true) and normalize
+ * newlines to ", " so the outgoing prompt is a single clean comma-separated
+ * string regardless of how the user laid it out in the textarea.
  *
  * With `keepNewlines` every line is cleaned on its own and the line structure
  * survives, with runs of blank lines collapsed to a single blank line.
  */
 export function sanitizePromptForSend(prompt: string, options: SanitizeOptions = {}): string {
   if (!prompt) return "";
-  const stripped = prompt
-    // A1111 chunk keyword — case-sensitive whole word so "BREAKFAST" survives.
-    .replace(/\bBREAK\b/g, " ")
-    // Angle-bracket form some tools emit; case-insensitive.
-    .replace(/<break>/gi, " ");
+  const stripped = options.keepBreak
+    ? prompt
+        // Normalize angle-bracket form to canonical BREAK for backend chunking.
+        .replace(/<break>/gi, " BREAK ")
+    : prompt
+        // A1111 chunk keyword — case-sensitive whole word so "BREAKFAST" survives.
+        .replace(/\bBREAK\b/g, " ")
+        // Angle-bracket form some tools emit; case-insensitive.
+        .replace(/<break>/gi, " ");
   if (options.keepNewlines) {
     return stripped
       .replace(/\r\n?/g, "\n")

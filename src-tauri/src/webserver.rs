@@ -2776,6 +2776,7 @@ async fn dispatch_command(
             config::normalize_config_fields(&mut new_config);
             let mut current = state.config.write().await;
             preserve_config_secrets_for_role(&mut new_config, &current, caller_role);
+            config::validate_civitai_proxy(new_config.civitai_proxy.as_deref())?;
             config::save_config(&new_config)?;
             state.trust_localhost.store(
                 config::local_trust_enabled(new_config.trust_localhost),
@@ -5161,8 +5162,11 @@ async fn dispatch_command(
             .collect();
 
             // Try to fetch more from CivitAI API
-            let mut req = state
-                .http_client
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client
                 .get("https://civitai.com/api/v1/models?limit=1")
                 .header("User-Agent", "MooshieUI/0.3.9");
             if let Some(ref key) = api_key {
@@ -5202,11 +5206,15 @@ async fn dispatch_command(
             }
             let api_key = state.config.read().await.civitai_key();
             let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
-            let mut req = state.http_client.get(&url);
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client.get(&url);
             if let Some(ref key) = api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
@@ -5223,11 +5231,15 @@ async fn dispatch_command(
                 "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
                 image_id
             );
-            let mut req = state.http_client.get(&url);
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut req = civitai_client.get(&url);
             if let Some(ref key) = api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = req.send().await.map_err(|e| e.without_url().to_string())?;
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
@@ -5324,8 +5336,11 @@ async fn dispatch_command(
                 "https://civitai.com/api/v1/model-versions/by-hash/{}",
                 autov2
             );
-            let mut civitai_req = state
-                .http_client
+            let civitai_client = state
+                .civitai_http_client()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut civitai_req = civitai_client
                 .get(&civitai_url)
                 .header("User-Agent", "MooshieUI/0.7");
             if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
@@ -5798,8 +5813,12 @@ async fn dispatch_command(
             let dest = models_dir.join(&filename);
 
             // Skip if the file on disk is complete and matches the expected hash.
+            let dl_client = state
+                .http_client_for_url(&url)
+                .await
+                .map_err(|e| e.to_string())?;
             if crate::comfyui::client::reuse_existing_model_download(
-                &state.http_client,
+                &dl_client,
                 &url,
                 &dest,
                 &filename,
@@ -5813,10 +5832,7 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let mut req = state
-                .http_client
-                .get(&url)
-                .header("User-Agent", "MooshieUI/1.3.0");
+            let mut req = dl_client.get(&url).header("User-Agent", "MooshieUI/1.3.0");
             if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
                 req = req.bearer_auth(token);
             } else if crate::comfyui::client::is_civitai_url(&url) && !url_has_token_param(&url) {
@@ -6107,12 +6123,30 @@ async fn dispatch_command(
             // `external_enabled` decides whether the frontend offers the
             // assistant at all: with an external provider configured it is
             // usable with no local model installed.
-            let external_enabled = state.config.read().await.llm_external_enabled;
+            let (external_enabled, external_vision, local_model_id) = {
+                let cfg = state.config.read().await;
+                let ext_vision = if cfg.llm_external_enabled {
+                    crate::prompt_assistant::vision::cached_external_vision_support(
+                        &cfg.llm_provider,
+                        &cfg.llm_external_base_url,
+                        &cfg.llm_external_model,
+                    )
+                } else {
+                    None
+                };
+                (
+                    cfg.llm_external_enabled,
+                    ext_vision,
+                    cfg.prompt_assistant_model_id.clone(),
+                )
+            };
             Ok(serde_json::json!({
                 "installed_models": pa.installed_models(),
                 "active_model": pa.server.active_model(),
                 "server_running": pa.server.is_running(),
                 "external_enabled": external_enabled,
+                "external_vision": external_vision,
+                "describe_model": pa.vision_model(local_model_id.as_deref()),
             }))
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -6411,25 +6445,7 @@ async fn dispatch_command(
             let length = describe::Length::parse(args["length"].as_str());
             let run = {
                 let state = state.clone();
-                move || async move {
-                    chat_any_headless(
-                        &state,
-                        describe::SYSTEM,
-                        &[],
-                        describe::instruction(length),
-                        length.max_tokens(),
-                        &[image],
-                        crate::prompt_assistant::LocalPick::Vision,
-                    )
-                    .await
-                    .and_then(|raw| {
-                        if describe::saw_no_image(&raw) {
-                            Err("prompt_assistant.provider_no_vision".to_string())
-                        } else {
-                            Ok(describe::clean(&raw))
-                        }
-                    })
-                }
+                move || async move { describe_image_headless(&state, &[image], length).await }
             };
             match args["requestId"].as_str() {
                 // Same SSE hand-off as `call_external_llm`: loading a vision
@@ -6491,6 +6507,7 @@ async fn dispatch_command(
                 temperature: args["temperature"].as_f64(),
                 json: args["json"].as_bool().unwrap_or(false),
             };
+            let system_cache_prefix = args["systemCachePrefix"].as_str().map(str::to_string);
 
             match args["requestId"].as_str() {
                 // Same SSE hand-off as enhance/compose: a long rewrite would
@@ -6506,14 +6523,17 @@ async fn dispatch_command(
                             owner.as_deref(),
                             crate::prompt_assistant::server::with_sampling(
                                 sampling,
-                                chat_any_headless(
-                                    &state,
-                                    &system,
-                                    &history,
-                                    &prompt,
-                                    max_tokens,
-                                    &images,
-                                    crate::prompt_assistant::LocalPick::Assistant,
+                                crate::prompt_assistant::server::with_system_cache_prefix(
+                                    system_cache_prefix,
+                                    chat_any_headless(
+                                        &state,
+                                        &system,
+                                        &history,
+                                        &prompt,
+                                        max_tokens,
+                                        &images,
+                                        crate::prompt_assistant::LocalPick::Assistant,
+                                    ),
                                 ),
                             ),
                         )
@@ -6544,14 +6564,17 @@ async fn dispatch_command(
                 None => {
                     let text = crate::prompt_assistant::server::with_sampling(
                         sampling,
-                        chat_any_headless(
-                            &state,
-                            &system,
-                            &history,
-                            &prompt,
-                            max_tokens,
-                            &images,
-                            crate::prompt_assistant::LocalPick::Assistant,
+                        crate::prompt_assistant::server::with_system_cache_prefix(
+                            system_cache_prefix,
+                            chat_any_headless(
+                                &state,
+                                &system,
+                                &history,
+                                &prompt,
+                                max_tokens,
+                                &images,
+                                crate::prompt_assistant::LocalPick::Assistant,
+                            ),
                         ),
                     )
                     .await?;
@@ -7192,7 +7215,6 @@ pub async fn chat_any_headless(
     images: &[crate::prompt_assistant::vision::VisionImage],
     pick: crate::prompt_assistant::LocalPick,
 ) -> Result<String, String> {
-    use crate::prompt_assistant::hardware;
     let history = crate::prompt_assistant::history::sanitize(history);
 
     // Same reason as the desktop path: an OAuth provider parks its access token
@@ -7278,6 +7300,25 @@ pub async fn chat_any_headless(
             .default_assistant_model()
             .ok_or_else(|| "prompt_assistant.no_model".to_string())?,
     };
+    run_local_chat_headless(
+        state, &model_id, idle_secs, system, &history, user, max_tokens, images,
+    )
+    .await
+}
+
+#[cfg(any(feature = "desktop", feature = "server"))]
+#[allow(clippy::too_many_arguments)]
+async fn run_local_chat_headless(
+    state: &Arc<AppState>,
+    model_id: &str,
+    idle_secs: u64,
+    system: &str,
+    history: &[crate::prompt_assistant::history::ChatMessage],
+    user: &str,
+    max_tokens: u32,
+    images: &[crate::prompt_assistant::vision::VisionImage],
+) -> Result<String, String> {
+    use crate::prompt_assistant::hardware;
     let hw = tokio::task::spawn_blocking(hardware::detect)
         .await
         .map_err(|e| e.to_string())?;
@@ -7292,7 +7333,7 @@ pub async fn chat_any_headless(
         .prompt_assistant
         .ensure_running(
             &state.http_client,
-            &model_id,
+            model_id,
             hw.total_vram_mb,
             idle_secs,
             &noop,
@@ -7300,7 +7341,7 @@ pub async fn chat_any_headless(
         .await
         .map_err(|e| e.to_string())?;
     state.broadcast("llm:stage", serde_json::json!("generating"));
-    let images = crate::prompt_assistant::images_for(&model_id, images);
+    let images = crate::prompt_assistant::images_for(model_id, images);
     state
         .prompt_assistant
         .server
@@ -7308,13 +7349,190 @@ pub async fn chat_any_headless(
             &state.http_client,
             port,
             system,
-            &history,
+            history,
             user,
             max_tokens,
             images,
         )
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Browser-mode twin of `describe_image_inline`: route `Describe image` to an
+/// installed bundled vision model (preferring JoyCaption) when the external
+/// provider is disabled or its active model is text-only.
+#[cfg(any(feature = "desktop", feature = "server"))]
+async fn describe_image_headless(
+    state: &Arc<AppState>,
+    images: &[crate::prompt_assistant::vision::VisionImage],
+    length: crate::prompt_assistant::describe::Length,
+) -> Result<String, String> {
+    use crate::prompt_assistant::{describe, vision};
+    crate::prompt_assistant::providers::ensure_fresh_token(&state.http_client, &state.config).await;
+
+    let (
+        model_id,
+        idle_secs,
+        ext_enabled,
+        provider,
+        ext_base,
+        ext_key,
+        ext_models,
+        fallback_local,
+        reasoning_effort,
+    ) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.prompt_assistant_model_id.clone(),
+            cfg.prompt_assistant_idle_timeout_secs,
+            cfg.llm_external_enabled,
+            cfg.llm_provider.clone(),
+            cfg.llm_external_base_url.clone(),
+            cfg.llm_api_key(),
+            crate::prompt_assistant::server::model_chain(
+                &cfg.llm_external_model,
+                &cfg.llm_fallback_models,
+            ),
+            cfg.llm_fallback_local,
+            cfg.llm_reasoning_effort.clone(),
+        )
+    };
+
+    let local_vision = state.prompt_assistant.vision_model(model_id.as_deref());
+    let vision_support = if ext_enabled {
+        vision::probe_external_vision_support(
+            &state.http_client,
+            &provider,
+            &ext_base,
+            &ext_models[0],
+        )
+        .await
+    } else {
+        vision::VisionSupport::Unknown
+    };
+
+    let route = describe::plan_route(ext_enabled, vision_support, local_vision)
+        .map_err(|e| e.to_string())?;
+    let raw = match route {
+        describe::DescribeRoute::Local(local_model) => {
+            if ext_enabled {
+                log::info!(
+                    "[prompt-assistant] external model is text-only; describing image with local model {local_model}"
+                );
+            }
+            run_local_chat_headless(
+                state,
+                &local_model,
+                idle_secs,
+                describe::SYSTEM,
+                &[],
+                describe::instruction(length),
+                length.max_tokens(),
+                images,
+            )
+            .await?
+        }
+        describe::DescribeRoute::External {
+            fallback_local_vision,
+        } => {
+            crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base)
+                .await;
+            state.broadcast("llm:stage", serde_json::json!("generating"));
+            let answer = crate::prompt_assistant::server::chat_provider_chain(
+                &state.http_client,
+                &provider,
+                &ext_base,
+                &ext_key,
+                &ext_models,
+                describe::SYSTEM,
+                &[],
+                describe::instruction(length),
+                length.max_tokens(),
+                images,
+                &reasoning_effort,
+            )
+            .await;
+            match answer {
+                Ok(text) if !describe::saw_no_image(&text) => text,
+                Ok(_) => {
+                    vision::record_external_vision(
+                        &ext_base,
+                        &ext_models[0],
+                        vision::VisionSupport::Unsupported,
+                    );
+                    if let Some(local_model) = fallback_local_vision {
+                        log::info!(
+                            "[prompt-assistant] external model reported NO_IMAGE; falling back to local model {local_model}"
+                        );
+                        run_local_chat_headless(
+                            state,
+                            &local_model,
+                            idle_secs,
+                            describe::SYSTEM,
+                            &[],
+                            describe::instruction(length),
+                            length.max_tokens(),
+                            images,
+                        )
+                        .await?
+                    } else {
+                        return Err("prompt_assistant.provider_no_vision".to_string());
+                    }
+                }
+                Err(e) if vision::is_vision_rejection(&e) => {
+                    vision::record_external_vision(
+                        &ext_base,
+                        &ext_models[0],
+                        vision::VisionSupport::Unsupported,
+                    );
+                    if let Some(local_model) = fallback_local_vision {
+                        log::info!(
+                            "[prompt-assistant] external model rejected image ({e}); falling back to local model {local_model}"
+                        );
+                        run_local_chat_headless(
+                            state,
+                            &local_model,
+                            idle_secs,
+                            describe::SYSTEM,
+                            &[],
+                            describe::instruction(length),
+                            length.max_tokens(),
+                            images,
+                        )
+                        .await?
+                    } else {
+                        return Err("prompt_assistant.provider_no_vision".to_string());
+                    }
+                }
+                Err(e) if fallback_local && e.is_llm_unavailable() => {
+                    if let Some(local_model) = fallback_local_vision {
+                        log::warn!(
+                            "[prompt-assistant] external LLM unavailable ({e}); describing with local model {local_model}"
+                        );
+                        run_local_chat_headless(
+                            state,
+                            &local_model,
+                            idle_secs,
+                            describe::SYSTEM,
+                            &[],
+                            describe::instruction(length),
+                            length.max_tokens(),
+                            images,
+                        )
+                        .await?
+                    } else {
+                        return Err(e.to_string());
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    };
+
+    if describe::saw_no_image(&raw) {
+        return Err("prompt_assistant.provider_no_vision".to_string());
+    }
+    Ok(describe::clean(&raw))
 }
 
 #[cfg(any(feature = "desktop", feature = "server"))]
@@ -7353,8 +7571,16 @@ pub async fn run_prompt_assistant_headless(
         )
     };
     // Images go to an external provider or a bundled model that can see them.
+    let resolved_model_id = if ext_enabled {
+        model_id
+    } else {
+        match model_id {
+            Some(id) => Some(id),
+            None => state.prompt_assistant.default_assistant_model(),
+        }
+    };
     let sees_images = ext_enabled
-        || model_id
+        || resolved_model_id
             .as_deref()
             .and_then(crate::prompt_assistant::catalog::entry)
             .is_some_and(|e| e.has_vision());
@@ -7362,12 +7588,9 @@ pub async fn run_prompt_assistant_headless(
     let purpose = if ext_enabled {
         "natural_language".to_string()
     } else {
-        let resolved = match model_id {
-            Some(id) => Some(id),
-            None => state.prompt_assistant.default_assistant_model(),
-        };
-        resolved
-            .and_then(|id| crate::prompt_assistant::catalog::entry(&id))
+        resolved_model_id
+            .as_deref()
+            .and_then(crate::prompt_assistant::catalog::entry)
             .map(|e| e.purpose)
             .unwrap_or_else(|| "natural_language".to_string())
     };
@@ -7388,9 +7611,9 @@ pub async fn run_prompt_assistant_headless(
         .collect();
     let style = grounding::prompt_style(&purpose, family);
     let candidates = grounding::candidates_for(style, &format!("{input} {instruction}"));
-    // Same as the desktop path: the notes go to external providers only.
-    let notes = if ext_enabled {
-        grounding::character_notes(character_notes)
+    let notes = if purpose == "natural_language" {
+        let budget = grounding::character_notes_budget(ext_enabled, resolved_model_id.as_deref());
+        grounding::character_notes_with_limit(character_notes, budget)
     } else {
         String::new()
     };

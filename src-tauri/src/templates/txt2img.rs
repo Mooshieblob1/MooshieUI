@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use super::{
-    build_scheduled_conditioning, insert_vae_decode, is_sdxl_like_family, load_model_nodes,
-    needs_flux2_latent, needs_sd3_latent, strip_lora_tags, WorkflowResult,
+    build_scheduled_conditioning_for_arch, encode_clip_prompt, insert_vae_decode,
+    is_sdxl_like_family, load_model_nodes, needs_flux2_latent, needs_sd3_latent, strip_lora_tags,
+    supports_break_chunking, WorkflowResult,
 };
 use crate::comfyui::types::GenerationParams;
 
@@ -71,18 +72,20 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let base_sources = ml.base;
 
     // Positive conditioning (with optional timestep scheduling)
-    let (mut pos_source, nid) = build_scheduled_conditioning(
+    let (mut pos_source, nid) = build_scheduled_conditioning_for_arch(
         &mut workflow,
         next_id,
         &clip_source,
         &params.positive_prompt,
         &params.positive_segments,
+        &params.model_architecture,
     );
     next_id = nid;
 
     // Regional prompting (syntax-first): <region:x1,y1,x2,y2>text</region>
     // Scope-gated to SDXL-family txt2img to keep v1 risk contained.
     let supports_regions = is_sdxl_like_family(&params.model_architecture);
+    let break_chunks = supports_break_chunking(&params.model_architecture);
     if params.mode == "txt2img" && supports_regions {
         for region in &params.positive_regions {
             // The frontend sends each region already merged with the prompt
@@ -102,18 +105,9 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 continue;
             }
 
-            let region_encode_id = next_id.to_string();
-            workflow.insert(
-                region_encode_id.clone(),
-                json!({
-                    "class_type": "CLIPTextEncode",
-                    "inputs": {
-                        "text": text,
-                        "clip": [clip_source.0.clone(), clip_source.1]
-                    }
-                }),
-            );
-            next_id += 1;
+            let (region_encode_source, nid) =
+                encode_clip_prompt(&mut workflow, next_id, &clip_source, &text, break_chunks);
+            next_id = nid;
 
             let region_area_id = next_id.to_string();
             workflow.insert(
@@ -121,7 +115,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 json!({
                     "class_type": "ConditioningSetAreaPercentage",
                     "inputs": {
-                        "conditioning": [region_encode_id, 0],
+                        "conditioning": [region_encode_source.0, region_encode_source.1],
                         "x": x,
                         "y": y,
                         "width": w,
@@ -149,12 +143,13 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     }
 
     // Negative conditioning (with optional timestep scheduling)
-    let (neg_source, nid) = build_scheduled_conditioning(
+    let (neg_source, nid) = build_scheduled_conditioning_for_arch(
         &mut workflow,
         next_id,
         &clip_source,
         &params.negative_prompt,
         &params.negative_segments,
+        &params.model_architecture,
     );
     next_id = nid;
 

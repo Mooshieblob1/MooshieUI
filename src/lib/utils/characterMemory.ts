@@ -41,6 +41,46 @@ export const MEMORY_REQUEST_CHARACTERS = 4;
 /** Reply budget when the assistant writes whole memory files back. */
 export const MEMORY_WRITE_MAX_TOKENS = 4096;
 
+/** Context budget for sending character memory notes in one request. */
+export interface MemoryBudget {
+  perCharacter: number;
+  total: number;
+  maxCharacters: number;
+}
+
+export const DEFAULT_MEMORY_BUDGET: MemoryBudget = {
+  perCharacter: MEMORY_CONTEXT_LIMIT,
+  total: MEMORY_REQUEST_LIMIT,
+  maxCharacters: MEMORY_REQUEST_CHARACTERS,
+};
+
+/** Tighter budget for smaller bundled local models (4B-8B) sharing 16k `-c`. */
+export const LOCAL_SMALL_MEMORY_BUDGET: MemoryBudget = {
+  perCharacter: 2000,
+  total: 4000,
+  maxCharacters: 2,
+};
+
+/** Moderate local budget for larger bundled local models (27B-35B) sharing 16k `-c`. */
+export const LOCAL_LARGE_MEMORY_BUDGET: MemoryBudget = {
+  perCharacter: 4000,
+  total: 8000,
+  maxCharacters: 3,
+};
+
+const LARGE_LOCAL_MODEL_IDS = new Set([
+  "qwen3-30b-a3b-instruct",
+  "qwen36-35b-a3b",
+  "qwen38-27b",
+]);
+
+/** Pick the character memory budget for the active backend and model. */
+export function memoryBudgetFor(usesExternal: boolean, localModelId?: string | null): MemoryBudget {
+  if (usesExternal) return DEFAULT_MEMORY_BUDGET;
+  if (localModelId && LARGE_LOCAL_MODEL_IDS.has(localModelId)) return LOCAL_LARGE_MEMORY_BUDGET;
+  return LOCAL_SMALL_MEMORY_BUDGET;
+}
+
 const NAME_LIMIT = 60;
 
 /** Starter file names offered on a character with no memory yet. */
@@ -449,6 +489,7 @@ export function memoryForRequest<T extends MemoryCandidate>(
   cards: readonly T[],
   texts: readonly string[],
   existing = "",
+  budget: MemoryBudget = DEFAULT_MEMORY_BUDGET,
 ): (T & { notes: string })[] {
   const said = texts.filter(Boolean).join("\n");
   const lowerSaid = said.toLowerCase();
@@ -462,13 +503,13 @@ export function memoryForRequest<T extends MemoryCandidate>(
   scored.sort((a, b) => Number(b.full) - Number(a.full));
   const owners = new Set<string>();
   const out: (T & { notes: string })[] = [];
-  let left = MEMORY_REQUEST_LIMIT;
+  let left = budget.total;
   for (const { card } of scored) {
-    if (owners.has(card.ownerId) || out.length >= MEMORY_REQUEST_CHARACTERS || left < 200) continue;
+    if (owners.has(card.ownerId) || out.length >= budget.maxCharacters || left < 200) continue;
     owners.add(card.ownerId);
     // A character with no notes yet still goes out, so the assistant can
     // save what it works out about them the first time.
-    const notes = memoryContext(card.memory, Math.min(MEMORY_CONTEXT_LIMIT, left)) || MEMORY_NONE;
+    const notes = memoryContext(card.memory, Math.min(budget.perCharacter, left)) || MEMORY_NONE;
     left -= notes.length;
     out.push({ ...card, notes });
   }
@@ -538,6 +579,65 @@ export function splitLearnedMemory(text: string): { prompt: string; learned: Lea
   const at = lines.findIndex((l) => l.trim() === MEMORY_MARKER);
   if (at === -1) return { prompt: text ?? "", learned: [] };
   return { prompt: lines.slice(0, at).join("\n").trimEnd(), learned: parseLearnedLines(lines.slice(at + 1)) };
+}
+
+/** A learned fact queued for user review before being written to a character's memory. */
+export interface PendingLearnedFact {
+  key: string;
+  ownerId: string;
+  ownerName: string;
+  file: string;
+  fact: string;
+  keep: boolean;
+}
+
+/** Match a character name from a learned memory line against the sent cards. */
+export function matchLearnedCard<T extends { name: string }>(name: string, cards: readonly T[]): T | undefined {
+  const bare = (n: string) => n.replace(/\([^)]*\)/g, " ").trim().toLowerCase();
+  const said = name.trim().toLowerCase();
+  const bareSaid = bare(name);
+  return (
+    cards.find((c) => c.name.trim().toLowerCase() === said) ??
+    cards.find((c) => bare(c.name) === bareSaid) ??
+    cards.find((c) => {
+      const b = bare(c.name);
+      return !!b && !!bareSaid && (b.includes(bareSaid) || bareSaid.includes(b));
+    })
+  );
+}
+
+/**
+ * Turn parsed learned lines into reviewable suggestions against `cards`,
+ * skipping lines that match no card, are already saved, or would exceed limits.
+ */
+export function buildPendingLearnedFacts<
+  T extends { id: string; name: string; memory: readonly CharacterMemoryFile[] },
+>(
+  learned: readonly LearnedMemory[],
+  cards: readonly T[],
+  resolveOwner: (card: T) => T,
+): PendingLearnedFact[] {
+  const simulated = new Map<string, CharacterMemoryFile[]>();
+  const out: PendingLearnedFact[] = [];
+  for (let i = 0; i < learned.length; i++) {
+    const item = learned[i];
+    const card = matchLearnedCard(item.name, cards);
+    if (!card) continue;
+    const owner = resolveOwner(card);
+    const current = simulated.get(owner.id) ?? owner.memory;
+    const next = addLearnedFact(current, item.file, item.fact);
+    if (!next) continue;
+    simulated.set(owner.id, next);
+    out.push({
+      key: `${owner.id}:${item.file}:${i}`,
+      ownerId: owner.id,
+      ownerName: owner.name,
+      file: item.file,
+      fact: item.fact.trim().replace(/^[-*•]\s*/, ""),
+      keep: true,
+    });
+  }
+  return out;
 }
 
 /**

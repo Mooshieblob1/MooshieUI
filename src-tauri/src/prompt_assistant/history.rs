@@ -49,6 +49,40 @@ pub fn history_from_args(value: &Value) -> Vec<ChatMessage> {
         .unwrap_or_default()
 }
 
+/// System prompt passed either as a plain string or split into a static
+/// cacheable prefix and a per-request dynamic suffix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemPrompt<'a> {
+    Plain(&'a str),
+    Cached { prefix: &'a str, suffix: &'a str },
+}
+
+/// Split `system` at `cache_prefix` when `system` starts with that non-empty prefix.
+pub fn split_system<'a>(system: &'a str, cache_prefix: Option<&'a str>) -> SystemPrompt<'a> {
+    let Some(prefix) = cache_prefix else {
+        return SystemPrompt::Plain(system);
+    };
+    if prefix.is_empty() || !system.starts_with(prefix) {
+        return SystemPrompt::Plain(system);
+    }
+    let suffix = system[prefix.len()..].trim_start_matches('\n');
+    SystemPrompt::Cached { prefix, suffix }
+}
+
+/// Content blocks with `cache_control: { "type": "ephemeral" }` on the static prefix,
+/// accepted by Anthropic's Messages API and OpenRouter's Anthropic models.
+pub fn system_cache_blocks(prefix: &str, suffix: &str) -> Value {
+    let mut blocks = vec![json!({
+        "type": "text",
+        "text": prefix,
+        "cache_control": { "type": "ephemeral" }
+    })];
+    if !suffix.trim().is_empty() {
+        blocks.push(json!({ "type": "text", "text": suffix }));
+    }
+    Value::Array(blocks)
+}
+
 fn turns(history: &[ChatMessage]) -> impl Iterator<Item = Value> + '_ {
     history
         .iter()
@@ -58,6 +92,24 @@ fn turns(history: &[ChatMessage]) -> impl Iterator<Item = Value> + '_ {
 /// OpenAI-compatible and llama-server: system, the session, then the new turn.
 pub fn openai_messages(system: &str, history: &[ChatMessage], user_content: Value) -> Value {
     let mut messages = vec![json!({ "role": "system", "content": system })];
+    messages.extend(turns(history));
+    messages.push(json!({ "role": "user", "content": user_content }));
+    Value::Array(messages)
+}
+
+/// OpenAI-compatible messages with Anthropic-style `cache_control` blocks on the
+/// system message (only used for OpenRouter Anthropic models).
+pub fn openai_messages_with_cache(
+    system: &str,
+    cache_prefix: Option<&str>,
+    history: &[ChatMessage],
+    user_content: Value,
+) -> Value {
+    let sys_content = match split_system(system, cache_prefix) {
+        SystemPrompt::Plain(s) => json!(s),
+        SystemPrompt::Cached { prefix, suffix } => system_cache_blocks(prefix, suffix),
+    };
+    let mut messages = vec![json!({ "role": "system", "content": sys_content })];
     messages.extend(turns(history));
     messages.push(json!({ "role": "user", "content": user_content }));
     Value::Array(messages)
@@ -238,5 +290,47 @@ mod tests {
         let new = t.find("[New request]\nadd rain").unwrap();
         assert!(night < answer && answer < new);
         assert!(t.ends_with("add rain"));
+    }
+
+    #[test]
+    fn split_system_only_splits_matching_non_empty_prefix() {
+        assert_eq!(split_system("abc", None), SystemPrompt::Plain("abc"));
+        assert_eq!(split_system("abc", Some("")), SystemPrompt::Plain("abc"));
+        assert_eq!(split_system("abc", Some("xyz")), SystemPrompt::Plain("abc"));
+        assert_eq!(
+            split_system("static\n\ndynamic", Some("static")),
+            SystemPrompt::Cached {
+                prefix: "static",
+                suffix: "dynamic"
+            }
+        );
+        assert_eq!(
+            split_system("static", Some("static")),
+            SystemPrompt::Cached {
+                prefix: "static",
+                suffix: ""
+            }
+        );
+    }
+
+    #[test]
+    fn openai_messages_with_cache_marks_prefix_and_skips_empty_suffix() {
+        let two = openai_messages_with_cache("static\n\ndyn", Some("static"), &[], json!("hi"));
+        assert_eq!(
+            two[0]["content"],
+            json!([
+                { "type": "text", "text": "static", "cache_control": { "type": "ephemeral" } },
+                { "type": "text", "text": "dyn" }
+            ])
+        );
+        let one = openai_messages_with_cache("static", Some("static"), &[], json!("hi"));
+        assert_eq!(
+            one[0]["content"],
+            json!([
+                { "type": "text", "text": "static", "cache_control": { "type": "ephemeral" } }
+            ])
+        );
+        let plain = openai_messages_with_cache("static\n\ndyn", None, &[], json!("hi"));
+        assert_eq!(plain[0]["content"], json!("static\n\ndyn"));
     }
 }

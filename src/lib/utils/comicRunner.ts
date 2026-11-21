@@ -17,6 +17,7 @@ import {
   loadGalleryImageDisplay,
   loadGalleryImagePng,
   saveToGalleryBytes,
+  uploadImageBytes,
 } from "./api.js";
 import {
   DRAFT_SYSTEM,
@@ -157,17 +158,101 @@ function panelParams(panel: ComicPanel): GenerationParams | null {
   return params;
 }
 
-async function generateOne(panel: ComicPanel, params: GenerationParams): Promise<void> {
+export type Panel1RefKind = "novelai" | "anima_ref" | "image_edit";
+
+/** Which character-reference path the active checkpoint supports for Panel 1 -> 2..6. */
+export function panel1ReferenceKind(): Panel1RefKind | null {
+  if (generation.isNovelAi) {
+    return generation.supportsNovelAiPreciseReference ? "novelai" : null;
+  }
+  if (generation.modelFamily === "anima") return "anima_ref";
+  if (generation.supportsImageEditMode) return "image_edit";
+  return null;
+}
+
+/** True when the active checkpoint supports passing Panel 1 as a character reference. */
+export function supportsPanel1Reference(): boolean {
+  return panel1ReferenceKind() !== null;
+}
+
+async function existingPanel1Png(panel1Id: string): Promise<Uint8Array | null> {
+  const res = comic.results[panel1Id];
+  if (!res) return null;
+  if (res.galleryFilename) {
+    try {
+      return new Uint8Array(await loadGalleryImagePng(res.galleryFilename));
+    } catch {
+      /* fall through to object URL */
+    }
+  }
+  if (res.url) {
+    try {
+      return new Uint8Array(await (await fetch(res.url)).arrayBuffer());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function applyPanel1Reference(
+  params: GenerationParams,
+  kind: Panel1RefKind,
+  panel1Png: Uint8Array,
+  cachedUploadName: string | null,
+): Promise<string | null> {
+  if (kind === "novelai") {
+    if (params.novelai) {
+      params.novelai = {
+        ...params.novelai,
+        director_references: [
+          {
+            image: bytesToBase64(panel1Png),
+            description: "character",
+            strength: 0.6,
+            fidelity: 1.0,
+          },
+        ],
+      };
+    }
+    return cachedUploadName;
+  }
+  let uploadedName = cachedUploadName;
+  if (!uploadedName) {
+    const upload = await uploadImageBytes(
+      Array.from(panel1Png),
+      `comic_panel1_ref_${Date.now()}.png`,
+    );
+    uploadedName = upload.name;
+  }
+  if (kind === "anima_ref") {
+    params.style_ref_enabled = true;
+    params.anima_ref_method = "anima_ref_adapter";
+    params.style_ref_image = uploadedName;
+    params.style_ref_image_2 = null;
+    params.style_ref_end = 1.0;
+    params.anima_ref_guidance = generation.animaRefGuidance;
+    params.anima_ref_correction = generation.animaRefCorrection;
+  } else {
+    params.mode = "image_edit";
+    params.edit_reference_images = [uploadedName];
+    params.input_image = uploadedName;
+  }
+  return uploadedName;
+}
+
+async function generateOne(panel: ComicPanel, params: GenerationParams): Promise<Uint8Array | null> {
   comic.setResult(panel.id, { status: "running", error: undefined, issues: null, checkError: undefined });
   const promptId = await submitGeneration(params);
   const image = await waitForImage(promptId);
   if (!image) {
     comic.setResult(panel.id, { status: "queued" });
-    return;
+    return null;
   }
   const { png, galleryFilename } = await imageBytes(image);
   comic.setResult(panel.id, { status: "done", url: objectUrl(png), galleryFilename });
   if (comic.checkContinuity) void checkPanel(panel.id, png, galleryFilename);
+  return png;
 }
 
 /** Generate the given panels (default: every enabled panel), one after another. */
@@ -189,13 +274,28 @@ export async function generatePanels(ids?: string[]): Promise<void> {
       prepared.set(p.id, e instanceof Error ? e : new Error(String(e)));
     }
   }
+  const refKind = comic.usePanel1Ref ? panel1ReferenceKind() : null;
+  const panel1Id = comic.orderedPanels[0]?.id ?? null;
+  let panel1Png: Uint8Array | null = null;
+  let uploadedRefName: string | null = null;
   try {
     for (const panel of targets) {
       if (comic.stopRequested) break;
       try {
         const params = prepared.get(panel.id);
         if (params instanceof Error) throw params;
-        if (params) await generateOne(panel, params);
+        if (!params) continue;
+        if (refKind && panel1Id && panel.id !== panel1Id) {
+          if (!panel1Png) panel1Png = await existingPanel1Png(panel1Id);
+          if (panel1Png) {
+            uploadedRefName = await applyPanel1Reference(params, refKind, panel1Png, uploadedRefName);
+          }
+        }
+        const generated = await generateOne(panel, params);
+        if (panel1Id && panel.id === panel1Id && generated) {
+          panel1Png = generated;
+          uploadedRefName = null;
+        }
       } catch (e) {
         comic.setResult(panel.id, { status: "failed", error: messageOf(e) });
       }

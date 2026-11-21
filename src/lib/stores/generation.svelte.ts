@@ -23,6 +23,7 @@ import {
   signalsIndicateVPred,
   familyRequiresSeparateClip,
   familyIsSdxlLike,
+  familySupportsBreakChunking,
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { detectModelKind, readModelSpec, type ModelKind, type ModelSpec } from "../utils/api.js";
@@ -4199,7 +4200,10 @@ class GenerationStore {
     // `@preset:` tokens inside extra boxes still flow through the pipeline.
     // NovelAI reads the prompt line by line (a `Text:` line opens the lettering
     // block), so its layout is preserved instead of folded into commas.
-    const sanitizeOptions = { keepNewlines: this.isNovelAi };
+    const sanitizeOptions = {
+      keepNewlines: this.isNovelAi,
+      keepBreak: !this.isNovelAi && !isVideo && familySupportsBreakChunking(this.modelFamily),
+    };
     const ownPrompts = options.prompts ?? null;
     // `//` comments come off each box before the boxes are joined, so a
     // comment at the end of one box cannot swallow the next box's text.
