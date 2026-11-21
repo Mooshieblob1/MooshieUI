@@ -7,6 +7,7 @@ import type { CharacterPromptStyle } from "../utils/characterExtract.js";
 import {
   addLearnedFact,
   cloneMemory,
+  matchLearnedCard,
   mergeMemory,
   sanitizeMemory,
   usualExpression,
@@ -365,20 +366,11 @@ class SavedCharactersStore {
     learned: readonly LearnedMemory[],
     cards: readonly SavedCharacter[],
   ): { saved: string[]; undo: () => void } | null {
-    const bare = (name: string) => name.replace(/\([^)]*\)/g, " ").trim().toLowerCase();
-    const find = (name: string) => {
-      const said = name.trim().toLowerCase();
-      return (
-        cards.find((c) => c.name.trim().toLowerCase() === said) ??
-        cards.find((c) => bare(c.name) === bare(name)) ??
-        cards.find((c) => bare(c.name).includes(bare(name)) || bare(name).includes(bare(c.name)))
-      );
-    };
     const before = new Map<string, CharacterMemoryFile[]>();
     const saved = new Set<string>();
     let next = this.characters;
     for (const item of learned) {
-      const card = find(item.name);
+      const card = matchLearnedCard(item.name, cards);
       if (!card) continue;
       const ownerId = this.memoryOwner(card).id;
       const owner = next.find((c) => c.id === ownerId);

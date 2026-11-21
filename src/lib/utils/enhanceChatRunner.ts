@@ -25,7 +25,14 @@ import { locale } from "../stores/locale.svelte.js";
 import { promptAssistant } from "../stores/promptAssistant.svelte.js";
 import { savedCharacters } from "../stores/savedCharacters.svelte.js";
 import { isLlmCancelled } from "./api.js";
-import { characterNotesBlock, memoryForRequest, parseLearnedLines, type LearnedMemory } from "./characterMemory.js";
+import {
+  buildPendingLearnedFacts,
+  characterNotesBlock,
+  memoryForRequest,
+  parseLearnedLines,
+  type LearnedMemory,
+  type PendingLearnedFact,
+} from "./characterMemory.js";
 import { naiRequestTexts, promptRequestTexts, rateRequest, savedCharactersForRequest } from "./contentSafety.js";
 import { joinReply } from "./enhanceChat.js";
 import { buildH3Context } from "./h3Prompt.js";
@@ -96,7 +103,12 @@ async function run(flow: EnhanceFlow, request: ChatRequest): Promise<void> {
  */
 function memoryNotes(texts: string[], existing: string): Map<string, string> {
   if (!promptAssistant.canUseMemory || !enhanceChat.useMemory) return new Map();
-  const picks = memoryForRequest(savedCharacters.withMemory(savedCharacters.currentCharacters), texts, existing);
+  const picks = memoryForRequest(
+    savedCharacters.withMemory(savedCharacters.currentCharacters),
+    texts,
+    existing,
+    promptAssistant.memoryBudget,
+  );
   return new Map(picks.map((p) => [p.id, p.notes]));
 }
 
@@ -115,6 +127,34 @@ function saveLearned(learned: LearnedMemory[], sentIds: Set<string>): void {
     onAction: result.undo,
     durationMs: 8000,
   });
+}
+
+/**
+ * Build memory persistence metadata for an answer: external providers save
+ * learned facts on Apply (with Undo), whereas bundled local models queue them
+ * for explicit user review before saving.
+ */
+function learnedMeta(
+  learned: LearnedMemory[],
+  sentIds: Set<string>,
+  canApply: boolean,
+): Partial<ChatAnswerMeta> {
+  if (!canApply || learned.length === 0 || sentIds.size === 0) return {};
+  if (promptAssistant.usesExternal) {
+    return { onApplied: () => saveLearned(learned, sentIds) };
+  }
+  const cards = savedCharacters.currentCharacters.filter((c) => sentIds.has(c.id));
+  const pending = buildPendingLearnedFacts(learned, cards, (c) => savedCharacters.memoryOwner(c));
+  if (pending.length === 0) return {};
+  return {
+    pendingMemory: pending,
+    onSaveMemory: (kept: PendingLearnedFact[]) => {
+      saveLearned(
+        kept.map((item) => ({ name: item.ownerName, file: item.file, fact: item.fact })),
+        sentIds,
+      );
+    },
+  };
 }
 
 /** File an answer, or say it came back empty. */
@@ -162,8 +202,7 @@ async function runGeneral(request: ChatRequest, signal: AbortSignal): Promise<vo
   });
   const sentIds = new Set(noted.map((n) => n.id));
   file("general", request, result.sessionUser, result.reply, result.prompt, {
-    // Memory waits for Apply: what an answer nobody used worked out is not worth keeping.
-    onApplied: result.prompt.trim() ? () => saveLearned(result.learned, sentIds) : undefined,
+    ...learnedMeta(result.learned, sentIds, !!result.prompt.trim()),
   }, signal);
 }
 
@@ -300,8 +339,6 @@ async function runNai(request: ChatRequest, signal: AbortSignal): Promise<void> 
     note: parsed.note,
     problems: result.problems,
     canon: parsed.canon,
-    // Memory is permanent where the conversation is not, so it waits for
-    // Apply and is skipped for an answer that failed validation.
-    onApplied: prompt && result.problems.length === 0 ? () => saveLearned(learned, sentIds) : undefined,
+    ...learnedMeta(learned, sentIds, !!prompt && result.problems.length === 0),
   }, signal);
 }

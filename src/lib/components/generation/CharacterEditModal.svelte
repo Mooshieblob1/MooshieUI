@@ -18,7 +18,6 @@
     type SavedCharacter,
   } from "../../stores/savedCharacters.svelte.js";
   import {
-    MEMORY_CONTEXT_LIMIT,
     MEMORY_FILE_LIMIT,
     MEMORY_MAX_FILES,
     MEMORY_STARTER_FILES,
@@ -106,6 +105,7 @@
   const dirty = $derived(detailsDirty || memoryDirty || Object.keys(otherDrafts).length > 0);
   const canSave = $derived(dirty && !!name.trim() && !!prompt.trim() && review === null && !remembering);
   const showMemory = $derived(promptAssistant.canUseMemory || initialFiles.length > 0 || review !== null);
+  const contextLimit = $derived(promptAssistant.memoryBudget.perCharacter);
   const used = $derived(memorySize(files));
   const canRemember = $derived(
     promptAssistant.canUseMemory && !remembering && !promptAssistant.isGenerating && !!fact.trim() && review === null,
@@ -213,7 +213,7 @@
     const others = savedCharacters
       .withMemory(savedCharacters.characters.filter((c) => c.architecture === character.architecture))
       .filter((c) => c.ownerId !== owner.id);
-    return memoryForRequest(others, texts).map((c) => ({
+    return memoryForRequest(others, texts, "", promptAssistant.memoryBudget).map((c) => ({
       name: c.name,
       prompt: c.prompt,
       notes: c.notes,
@@ -540,9 +540,9 @@
             </div>
             {#if files.length > 0}
               <span
-                class="text-[10px] tabular-nums {used > MEMORY_CONTEXT_LIMIT ? 'text-amber-400' : 'text-neutral-500'}"
-                title={locale.t("characters.memory.size_tip", { limit: String(MEMORY_CONTEXT_LIMIT) })}
-              >{used} / {MEMORY_CONTEXT_LIMIT}</span>
+                class="text-[10px] tabular-nums {used > contextLimit ? 'text-amber-400' : 'text-neutral-500'}"
+                title={locale.t("characters.memory.size_tip", { limit: String(contextLimit) })}
+              >{used} / {contextLimit}</span>
             {/if}
           </div>
 

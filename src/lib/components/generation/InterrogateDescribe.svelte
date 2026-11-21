@@ -42,11 +42,14 @@
     running = false;
   });
 
-  /** No way to see the image yet: no provider and no bundled vision model. */
+  /** No way to see the image yet: no bundled vision model, and external is off or text-only. */
   const noRoute = $derived(
-    !!promptAssistant.status && !promptAssistant.status.external_enabled && !promptAssistant.hasVisionModel,
+    !!promptAssistant.status &&
+      !promptAssistant.hasVisionModel &&
+      (!promptAssistant.status.external_enabled || promptAssistant.status.external_vision === false),
   );
   const showInstall = $derived(needsModel || noRoute);
+  const routeTarget = $derived(promptAssistant.describeTarget);
 
   async function describe() {
     const mine = ++run;
@@ -62,6 +65,9 @@
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("no_vision_model")) {
         needsModel = true;
+      } else if (msg.includes("provider_no_vision")) {
+        if (!promptAssistant.hasVisionModel) needsModel = true;
+        error = mapLlmError(msg);
       } else {
         error = mapLlmError(msg);
       }
@@ -111,6 +117,17 @@
 <div class="rounded-xl border border-neutral-700 bg-neutral-800/40 p-3 space-y-2">
   <div class="flex flex-wrap items-center gap-2">
     <p class="text-sm font-medium text-sky-400 flex-1 min-w-0">{locale.t('generation.interrogate.describe.title')}</p>
+    {#if routeTarget?.kind === "local"}
+      <span
+        class="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-300"
+        title={locale.t('generation.interrogate.describe.local_route_tip', { name: routeTarget.name })}
+      >{routeTarget.name}</span>
+    {:else if routeTarget?.kind === "external"}
+      <span
+        class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300"
+        title={locale.t('generation.interrogate.describe.external_route_tip')}
+      >{promptAssistant.provider?.model || locale.t('settings.prompt_assistant.external_title')}</span>
+    {/if}
     <div class="flex rounded-lg border border-neutral-700 overflow-hidden text-xs" role="group" aria-label={locale.t('generation.interrogate.describe.length')}>
       <button
         onclick={() => { length = "short"; }}

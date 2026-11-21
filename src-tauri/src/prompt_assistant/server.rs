@@ -41,6 +41,7 @@ pub struct Sampling {
 
 tokio::task_local! {
     static SAMPLING: Sampling;
+    static SYSTEM_CACHE_PREFIX: Option<String>;
 }
 
 /// Run `work` with `sampling` applied to every chat request it sends. A
@@ -50,9 +51,23 @@ pub async fn with_sampling<F: std::future::Future>(sampling: Sampling, work: F) 
     SAMPLING.scope(sampling, work).await
 }
 
+/// Run `work` with a static system-prompt prefix marked for prompt caching on
+/// providers that support it (Anthropic and OpenRouter Anthropic models).
+pub async fn with_system_cache_prefix<F: std::future::Future>(
+    prefix: Option<String>,
+    work: F,
+) -> F::Output {
+    SYSTEM_CACHE_PREFIX.scope(prefix, work).await
+}
+
 /// The sampling in force for the current request.
 fn sampling() -> Sampling {
     SAMPLING.try_with(|s| *s).unwrap_or_default()
+}
+
+/// The static cacheable prefix of the current system prompt, if any.
+fn system_cache_prefix() -> Option<String> {
+    SYSTEM_CACHE_PREFIX.try_with(|p| p.clone()).ok().flatten()
 }
 
 /// The temperature to send, rounded to two places so an f32 from IPC does not
@@ -762,6 +777,98 @@ fn status_error(status: reqwest::StatusCode, message: String) -> AppError {
     }
 }
 
+/// Whether an OpenAI-compatible provider/model supports Anthropic-style
+/// `cache_control` content blocks in the system message.
+pub fn supports_openai_system_cache(provider_id: &str, model: &str) -> bool {
+    provider_id == "openrouter" && model.trim().to_ascii_lowercase().starts_with("anthropic/")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CustomBodyShape {
+    /// Default OpenAI-compatible request (no extra thinking/reasoning fields).
+    Bare,
+    /// Thinking-off: send all common switches (`enable_thinking`, `think`,
+    /// `chat_template_kwargs`, `reasoning_effort: "none"`).
+    ThinkingOffAll,
+    /// Thinking-off: `chat_template_kwargs: { "enable_thinking": false }` only.
+    ThinkingOffTemplateKwargs,
+    /// Thinking-off: top-level `enable_thinking: false` only.
+    ThinkingOffFlag,
+    /// Thinking-off: `reasoning_effort: "none"` only.
+    ThinkingOffEffortNone,
+    /// Explicit `reasoning_effort` (`Medium` / `High` or hosted provider effort).
+    ReasoningEffort,
+}
+
+const CUSTOM_SHAPE_CACHE_MAX: usize = 256;
+type CustomShapeKey = (String, String, bool);
+static CUSTOM_SHAPE_CACHE: std::sync::Mutex<
+    Option<std::collections::HashMap<CustomShapeKey, CustomBodyShape>>,
+> = std::sync::Mutex::new(None);
+
+fn custom_shape_key(base_url: &str, model: &str, is_off: bool) -> CustomShapeKey {
+    (
+        base_url.trim().trim_end_matches('/').to_ascii_lowercase(),
+        model.trim().to_ascii_lowercase(),
+        is_off,
+    )
+}
+
+fn cached_custom_shape(base_url: &str, model: &str, is_off: bool) -> Option<CustomBodyShape> {
+    let guard = CUSTOM_SHAPE_CACHE.lock().ok()?;
+    guard
+        .as_ref()?
+        .get(&custom_shape_key(base_url, model, is_off))
+        .copied()
+}
+
+fn record_custom_shape(base_url: &str, model: &str, tuning: &Tuning, shape: CustomBodyShape) {
+    use super::reasoning::CustomThinking;
+    let is_off = match tuning.custom_thinking {
+        CustomThinking::Untouched => return,
+        CustomThinking::Off => true,
+        CustomThinking::Effort => false,
+    };
+    if let Ok(mut guard) = CUSTOM_SHAPE_CACHE.lock() {
+        let map = guard.get_or_insert_with(std::collections::HashMap::new);
+        if map.len() >= CUSTOM_SHAPE_CACHE_MAX {
+            map.clear();
+        }
+        map.insert(custom_shape_key(base_url, model, is_off), shape);
+    }
+}
+
+fn custom_shapes_for(base_url: &str, model: &str, tuning: &Tuning) -> Vec<CustomBodyShape> {
+    use super::reasoning::CustomThinking;
+    match tuning.custom_thinking {
+        CustomThinking::Untouched => vec![if tuning.effort.is_some() {
+            CustomBodyShape::ReasoningEffort
+        } else {
+            CustomBodyShape::Bare
+        }],
+        CustomThinking::Off => {
+            const ORDER: &[CustomBodyShape] = &[
+                CustomBodyShape::ThinkingOffAll,
+                CustomBodyShape::ThinkingOffTemplateKwargs,
+                CustomBodyShape::ThinkingOffFlag,
+                CustomBodyShape::ThinkingOffEffortNone,
+                CustomBodyShape::Bare,
+            ];
+            let start = cached_custom_shape(base_url, model, true)
+                .and_then(|s| ORDER.iter().position(|&c| c == s))
+                .unwrap_or(0);
+            ORDER[start..].to_vec()
+        }
+        CustomThinking::Effort => {
+            if cached_custom_shape(base_url, model, false) == Some(CustomBodyShape::Bare) {
+                vec![CustomBodyShape::Bare]
+            } else {
+                vec![CustomBodyShape::ReasoningEffort, CustomBodyShape::Bare]
+            }
+        }
+    }
+}
+
 /// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
 /// OpenAI, OpenRouter, Ollama, ...) instead of the bundled local llama-server.
 /// `base_url` is the API root (e.g. `http://localhost:1234/v1` or
@@ -789,15 +896,23 @@ pub async fn chat_external(
     tuning: &Tuning,
 ) -> Result<String, AppError> {
     let user_content = openai_user_content(user, images);
-    let body = openai_body(
-        model,
-        super::history::openai_messages(system, history, user_content),
-        max_tokens,
-        tuning,
+    let cache_prefix = if tuning.cache_system {
+        system_cache_prefix()
+    } else {
+        None
+    };
+    let messages = super::history::openai_messages_with_cache(
+        system,
+        cache_prefix.as_deref(),
+        history,
+        user_content,
     );
+    let shapes = custom_shapes_for(base_url, model, tuning);
     let urls = external_chat_urls(base_url);
     let timeout = chat_timeout(!images.is_empty(), tuning.reasons);
-    let mut resp = send_external_chat(client, &urls[0], api_key, &body, timeout).await?;
+    let first_body = openai_body_with_shape(model, &messages, max_tokens, tuning, shapes[0]);
+    let mut active_url = &urls[0];
+    let mut resp = send_external_chat(client, active_url, api_key, &first_body, timeout).await?;
     if resp.status().as_u16() == 404 && urls.len() > 1 {
         // A user-entered base URL can carry credentials (`user:pass@`) or a
         // `?key=` query, and this log ends up in exported diagnostics.
@@ -806,7 +921,19 @@ pub async fn chat_external(
             crate::commands::api::redact_url_secrets(&urls[0]),
             crate::commands::api::redact_url_secrets(&urls[1])
         );
-        resp = send_external_chat(client, &urls[1], api_key, &body, timeout).await?;
+        active_url = &urls[1];
+        resp = send_external_chat(client, active_url, api_key, &first_body, timeout).await?;
+    }
+    let mut used_shape = shapes[0];
+    if shapes.len() > 1 && matches!(resp.status().as_u16(), 400 | 422) {
+        for &next_shape in &shapes[1..] {
+            let body = openai_body_with_shape(model, &messages, max_tokens, tuning, next_shape);
+            used_shape = next_shape;
+            resp = send_external_chat(client, active_url, api_key, &body, timeout).await?;
+            if !matches!(resp.status().as_u16(), 400 | 422) {
+                break;
+            }
+        }
     }
     if !resp.status().is_success() {
         let status = resp.status();
@@ -821,14 +948,14 @@ pub async fn chat_external(
             format!("External LLM returned {status}{detail}{hint}"),
         ));
     }
+    record_custom_shape(base_url, model, tuning, used_shape);
     let v = bounded_json(resp, RESPONSE_LIMIT, "external LLM response").await?;
     completion_content(&v, "The external model")
 }
 
 /// Per-model adjustments to an OpenAI-style chat request for a model that
-/// reasons. The default leaves the request exactly as it always was, which
-/// is what every self-hosted server and unrecognised model gets.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// reasons. The default leaves the request exactly as it always was.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tuning {
     /// The effort to ask for, if any.
     pub effort: Option<String>,
@@ -842,6 +969,26 @@ pub struct Tuning {
     pub headroom: u32,
     /// The model reasons, so it gets the longer timeout.
     pub reasons: bool,
+    /// How a custom OpenAI-compatible server handles thinking/reasoning, with
+    /// safe fallback when unknown fields are rejected.
+    pub custom_thinking: super::reasoning::CustomThinking,
+    /// Whether this `(provider, model)` accepts Anthropic-style `cache_control`
+    /// blocks on the system message (OpenRouter Anthropic models).
+    pub cache_system: bool,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            effort: None,
+            nested: false,
+            openai_reasoning: false,
+            headroom: 0,
+            reasons: false,
+            custom_thinking: super::reasoning::CustomThinking::Untouched,
+            cache_system: false,
+        }
+    }
 }
 
 /// The tuning for `model` on `provider_id`. See [`super::reasoning`].
@@ -853,6 +1000,27 @@ pub async fn tuning_for(
     setting: super::reasoning::Setting,
 ) -> Tuning {
     use super::reasoning as r;
+    if super::providers::is_custom_endpoint(provider_id) {
+        let custom_thinking = r::custom(setting);
+        let (effort, headroom) = match custom_thinking {
+            r::CustomThinking::Effort => {
+                let level = match setting {
+                    r::Setting::Medium => "medium",
+                    r::Setting::High => "high",
+                    _ => "low",
+                };
+                (Some(level.to_string()), r::headroom(Some(level)))
+            }
+            r::CustomThinking::Off | r::CustomThinking::Untouched => (None, 0),
+        };
+        return Tuning {
+            reasons: true,
+            effort,
+            headroom,
+            custom_thinking,
+            ..Tuning::default()
+        };
+    }
     match provider_id {
         // xAI does not count reasoning against `max_tokens` (Grok 4.5 has
         // been answering inside a 96-token budget at its default `high`), so
@@ -874,43 +1042,63 @@ pub async fn tuning_for(
                     effort,
                     openai_reasoning: true,
                     reasons: true,
-                    nested: false,
+                    ..Tuning::default()
                 }
             }
             None => Tuning::default(),
         },
-        "openrouter" => match r::openrouter(client, base, model).await {
-            Some(m) if m.on_by_default => {
-                let effort = r::pick(setting, &m.efforts);
-                let level = r::effective(effort.as_deref(), &m.efforts).unwrap_or("medium");
-                Tuning {
-                    headroom: r::headroom(Some(level)),
-                    effort,
-                    nested: true,
-                    reasons: true,
-                    openai_reasoning: false,
+        "openrouter" => {
+            let cache_system = supports_openai_system_cache(provider_id, model);
+            match r::openrouter(client, base, model).await {
+                Some(m) if m.on_by_default => {
+                    let effort = r::pick(setting, &m.efforts);
+                    let level = r::effective(effort.as_deref(), &m.efforts).unwrap_or("medium");
+                    Tuning {
+                        headroom: r::headroom(Some(level)),
+                        effort,
+                        nested: true,
+                        reasons: true,
+                        cache_system,
+                        ..Tuning::default()
+                    }
                 }
+                _ => Tuning {
+                    cache_system,
+                    ..Tuning::default()
+                },
             }
-            _ => Tuning::default(),
-        },
-        // The user's own endpoint is usually a local server (Ollama, LM
-        // Studio, llama.cpp), where a large or reasoning model on modest
-        // hardware needs well over two minutes for a long rewrite. Only the
-        // timeout changes: the request body stays exactly as it was.
-        "custom" => Tuning {
-            reasons: true,
-            ..Tuning::default()
-        },
+        }
         _ => Tuning::default(),
     }
 }
 
 /// The JSON body of an OpenAI-style chat completion.
+#[cfg_attr(not(test), allow(dead_code))]
 fn openai_body(
     model: &str,
     messages: serde_json::Value,
     max_tokens: u32,
     tuning: &Tuning,
+) -> serde_json::Value {
+    let shape = match tuning.custom_thinking {
+        super::reasoning::CustomThinking::Off => CustomBodyShape::ThinkingOffAll,
+        super::reasoning::CustomThinking::Effort | super::reasoning::CustomThinking::Untouched => {
+            if tuning.effort.is_some() {
+                CustomBodyShape::ReasoningEffort
+            } else {
+                CustomBodyShape::Bare
+            }
+        }
+    };
+    openai_body_with_shape(model, &messages, max_tokens, tuning, shape)
+}
+
+fn openai_body_with_shape(
+    model: &str,
+    messages: &serde_json::Value,
+    max_tokens: u32,
+    tuning: &Tuning,
+    shape: CustomBodyShape,
 ) -> serde_json::Value {
     let mut body = json!({
         "model": model,
@@ -924,11 +1112,31 @@ fn openai_body(
         body["temperature"] = json!(temperature());
         body["max_tokens"] = json!(limit);
     }
-    if let Some(effort) = &tuning.effort {
-        if tuning.nested {
-            body["reasoning"] = json!({ "effort": effort });
-        } else {
-            body["reasoning_effort"] = json!(effort);
+    match shape {
+        CustomBodyShape::Bare => {}
+        CustomBodyShape::ThinkingOffAll => {
+            body["enable_thinking"] = json!(false);
+            body["think"] = json!(false);
+            body["chat_template_kwargs"] = json!({ "enable_thinking": false });
+            body["reasoning_effort"] = json!("none");
+        }
+        CustomBodyShape::ThinkingOffTemplateKwargs => {
+            body["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        }
+        CustomBodyShape::ThinkingOffFlag => {
+            body["enable_thinking"] = json!(false);
+        }
+        CustomBodyShape::ThinkingOffEffortNone => {
+            body["reasoning_effort"] = json!("none");
+        }
+        CustomBodyShape::ReasoningEffort => {
+            if let Some(effort) = &tuning.effort {
+                if tuning.nested {
+                    body["reasoning"] = json!({ "effort": effort });
+                } else {
+                    body["reasoning_effort"] = json!(effort);
+                }
+            }
         }
     }
     body
@@ -1179,11 +1387,13 @@ pub async fn chat_anthropic(
         json!(parts)
     };
     let claude = super::reasoning::anthropic(model);
-    let body = anthropic_body(
+    let cache_prefix = system_cache_prefix();
+    let body = anthropic_body_cached(
         &claude,
         effort,
         model,
         system,
+        cache_prefix.as_deref(),
         super::history::anthropic_messages(history, user_content),
         max_tokens,
     );
@@ -1220,6 +1430,7 @@ pub async fn chat_anthropic(
 /// is only sent to the ones that still take it. Models that think unasked
 /// (the 5 generation on) get the chosen effort and room in `max_tokens` for
 /// the thinking, which Anthropic counts against the same limit as the answer.
+#[cfg_attr(not(test), allow(dead_code))]
 fn anthropic_body(
     claude: &super::reasoning::Claude,
     effort: super::reasoning::Setting,
@@ -1228,10 +1439,27 @@ fn anthropic_body(
     messages: serde_json::Value,
     max_tokens: u32,
 ) -> serde_json::Value {
+    anthropic_body_cached(claude, effort, model, system, None, messages, max_tokens)
+}
+
+fn anthropic_body_cached(
+    claude: &super::reasoning::Claude,
+    effort: super::reasoning::Setting,
+    model: &str,
+    system: &str,
+    cache_prefix: Option<&str>,
+    messages: serde_json::Value,
+    max_tokens: u32,
+) -> serde_json::Value {
+    use super::history::{split_system, system_cache_blocks, SystemPrompt};
     use super::reasoning as r;
+    let system_val = match split_system(system, cache_prefix) {
+        SystemPrompt::Plain(s) => json!(s),
+        SystemPrompt::Cached { prefix, suffix } => system_cache_blocks(prefix, suffix),
+    };
     let mut body = json!({
         "model": model,
-        "system": system,
+        "system": system_val,
         "messages": messages
     });
     let mut limit = max_tokens;
@@ -2269,20 +2497,43 @@ mod reasoning_body_tests {
     }
 
     #[test]
-    fn custom_servers_are_untouched() {
-        // The long timeout, and nothing in the request itself.
-        let custom = tuning("custom", "qwen3:8b", Setting::High);
+    fn custom_servers_disable_thinking_by_default_and_leave_model_default_untouched() {
+        use super::super::reasoning::CustomThinking;
+        let low = tuning("custom", "qwen3:8b", Setting::Low);
         assert_eq!(
-            custom,
+            low,
             Tuning {
                 reasons: true,
+                custom_thinking: CustomThinking::Off,
                 ..Tuning::default()
             }
         );
-        let body = openai_body("qwen3:8b", json!([]), 96, &custom);
+        let body = openai_body("qwen3:8b", json!([]), 96, &low);
         assert_eq!(body["max_tokens"], 96);
         assert_eq!(body["temperature"], 0.7);
-        assert!(body.get("reasoning_effort").is_none() && body.get("reasoning").is_none());
+        assert_eq!(body["enable_thinking"], false);
+        assert_eq!(body["think"], false);
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+        assert_eq!(body["reasoning_effort"], "none");
+
+        // ModelDefault leaves the request body untouched.
+        let default_mode = tuning("custom", "qwen3:8b", Setting::ModelDefault);
+        assert_eq!(
+            default_mode,
+            Tuning {
+                reasons: true,
+                custom_thinking: CustomThinking::Untouched,
+                ..Tuning::default()
+            }
+        );
+        let bare = openai_body("qwen3:8b", json!([]), 96, &default_mode);
+        assert!(bare.get("enable_thinking").is_none());
+        assert!(bare.get("chat_template_kwargs").is_none());
+        assert!(bare.get("reasoning_effort").is_none());
+
         assert_eq!(
             tuning("nous", "hermes-4-405b", Setting::Low),
             Tuning::default()
@@ -2296,11 +2547,190 @@ mod reasoning_body_tests {
             nested: true,
             headroom: 2048,
             reasons: true,
-            openai_reasoning: false,
+            ..Tuning::default()
         };
         let body = openai_body("x-ai/grok-4.7", json!([]), 96, &t);
         assert_eq!(body["reasoning"], json!({ "effort": "low" }));
         assert_eq!(body["max_tokens"], 96 + 2048);
+    }
+
+    #[test]
+    fn prompt_caching_applies_to_anthropic_and_openrouter_anthropic_only() {
+        use super::{anthropic_body_cached, supports_openai_system_cache};
+        let sonnet5 = anthropic("claude-sonnet-5");
+        let body = anthropic_body_cached(
+            &sonnet5,
+            Setting::Low,
+            "claude-sonnet-5",
+            "STATIC_SPEC\n\nDYNAMIC_PART",
+            Some("STATIC_SPEC"),
+            json!([]),
+            192,
+        );
+        assert_eq!(
+            body["system"],
+            json!([
+                {
+                    "type": "text",
+                    "text": "STATIC_SPEC",
+                    "cache_control": { "type": "ephemeral" }
+                },
+                {
+                    "type": "text",
+                    "text": "DYNAMIC_PART"
+                }
+            ])
+        );
+        assert!(supports_openai_system_cache(
+            "openrouter",
+            "anthropic/claude-sonnet-4"
+        ));
+        assert!(!supports_openai_system_cache(
+            "openrouter",
+            "openai/gpt-4o-mini"
+        ));
+        assert!(!supports_openai_system_cache(
+            "openai",
+            "anthropic/claude-sonnet-4"
+        ));
+        assert!(!supports_openai_system_cache(
+            "custom",
+            "anthropic/claude-sonnet-4"
+        ));
+    }
+
+    #[tokio::test]
+    async fn custom_server_thinking_off_falls_back_when_unknown_fields_are_rejected() {
+        use std::sync::{Arc, Mutex};
+        let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_clone = Arc::clone(&seen);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let seen = Arc::clone(&seen_clone);
+                async move {
+                    use axum::response::IntoResponse;
+                    seen.lock().unwrap().push(body.clone());
+                    // Reject top-level `enable_thinking`/`think`/`reasoning_effort`,
+                    // accept `chat_template_kwargs` only (like strict vLLM).
+                    if body.get("enable_thinking").is_some()
+                        || body.get("think").is_some()
+                        || body.get("reasoning_effort").is_some()
+                    {
+                        return (
+                            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                            "Extra inputs are not permitted",
+                        )
+                            .into_response();
+                    }
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "ok" } }]
+                    }))
+                    .into_response()
+                }
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/v1");
+        let t = tuning_for(&client, "custom", &base, "qwen3-strict", Setting::Low).await;
+        let out = super::chat_external(
+            &client,
+            &base,
+            "",
+            "qwen3-strict",
+            "sys",
+            &[],
+            "hi",
+            64,
+            &[],
+            &t,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "ok");
+
+        // Second call reuses the cached winning shape (no wasted 422).
+        let out2 = super::chat_external(
+            &client,
+            &base,
+            "",
+            "qwen3-strict",
+            "sys",
+            &[],
+            "hi2",
+            64,
+            &[],
+            &t,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out2, "ok");
+        let reqs = seen.lock().unwrap();
+        assert_eq!(reqs.len(), 3);
+        assert!(reqs[0].get("enable_thinking").is_some());
+        assert_eq!(
+            reqs[1]["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+        assert!(reqs[1].get("enable_thinking").is_none());
+        assert_eq!(
+            reqs[2]["chat_template_kwargs"],
+            json!({ "enable_thinking": false })
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_server_falls_back_all_the_way_to_bare_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(
+                |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    use axum::response::IntoResponse;
+                    if body.get("enable_thinking").is_some()
+                        || body.get("think").is_some()
+                        || body.get("chat_template_kwargs").is_some()
+                        || body.get("reasoning_effort").is_some()
+                    {
+                        return (axum::http::StatusCode::BAD_REQUEST, "unknown field")
+                            .into_response();
+                    }
+                    axum::Json(serde_json::json!({
+                        "choices": [{ "message": { "content": "bare-ok" } }]
+                    }))
+                    .into_response()
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/v1");
+        let t = tuning_for(&client, "custom", &base, "strict-proxy", Setting::Low).await;
+        let out = super::chat_external(
+            &client,
+            &base,
+            "",
+            "strict-proxy",
+            "sys",
+            &[],
+            "hi",
+            64,
+            &[],
+            &t,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "bare-ok");
     }
 
     #[test]
