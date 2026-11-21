@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { detectCharacters, normalizeTag, prepareCards, promptTags, type DetectCard } from "../../src/lib/utils/galleryCharacters.ts";
+import {
+  CHARACTER_MATCH_MAX,
+  CHARACTER_MATCH_MIN,
+  CHARACTER_MATCH_THRESHOLD,
+  clampCharacterMatchThreshold,
+  detectCharacters,
+  normalizeTag,
+  prepareCards,
+  promptTags,
+  type DetectCard,
+} from "../../src/lib/utils/galleryCharacters.ts";
 
 const card = (id: string, name: string, prompt: string, parentId: string | null = null): DetectCard => ({ id, name, prompt, parentId });
 const meta = (positive_prompt: string, boxes?: string[]) => ({
@@ -84,4 +94,28 @@ test("prose prompts match on whole words", () => {
 test("images without a prompt, and cards too thin to tell apart, match nothing", () => {
   assert.deepEqual(ids({}), []);
   assert.deepEqual(detectCharacters(meta("1girl, blue hair"), prepareCards([card("x", "X", "1girl, blue hair")])), []);
+});
+
+test("threshold strictness controls how many traits are needed for a match", () => {
+  // ani has 4 identity tags (long blonde hair, twintails, blue eyes, fang) and 1 other tag (school uniform).
+  // Matching 2 of 4 identity tags + school uniform scores 0.5 * 0.85 + 1.0 * 0.15 = 0.575.
+  const partial = meta("1girl, long blonde hair, twintails, school uniform");
+  assert.deepEqual(detectCharacters(partial, cards), []);
+  assert.deepEqual(detectCharacters(partial, cards, 0.5).map((hit) => hit.characterId), ["ani"]);
+
+  // Matching all 4 identity tags without the outfit scores 0.85: passes default 0.7, fails strict 0.9.
+  const differentOutfit = meta("1girl, long blonde hair, twintails, blue eyes, fang, maid");
+  assert.deepEqual(detectCharacters(differentOutfit, cards, CHARACTER_MATCH_THRESHOLD).map((hit) => hit.characterId), ["ani"]);
+  assert.deepEqual(detectCharacters(differentOutfit, cards, 0.9), []);
+
+  // Naming the character always scores 1.0 and passes even at maximum strictness.
+  assert.deepEqual(detectCharacters(meta("1girl, hatsune miku"), cards, 1.0).map((hit) => hit.characterId), ["miku"]);
+});
+
+test("clampCharacterMatchThreshold clamps out-of-range and non-finite inputs", () => {
+  assert.equal(clampCharacterMatchThreshold(0.7), 0.7);
+  assert.equal(clampCharacterMatchThreshold(0.1), CHARACTER_MATCH_MIN);
+  assert.equal(clampCharacterMatchThreshold(1.5), CHARACTER_MATCH_MAX);
+  assert.equal(clampCharacterMatchThreshold(Number.NaN), CHARACTER_MATCH_THRESHOLD);
+  assert.equal(clampCharacterMatchThreshold(Number.POSITIVE_INFINITY), CHARACTER_MATCH_THRESHOLD);
 });

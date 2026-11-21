@@ -6,6 +6,7 @@ import type {
 } from "../types/index.js";
 import {
   listGalleryImageEntries,
+  findGalleryVisualDuplicates,
   loadGalleryImage,
   loadGalleryImageDisplay,
   loadGalleryImagePng,
@@ -26,6 +27,7 @@ import {
   readImageMetadata,
   copyGalleryFileTo,
   type StorageInfo,
+  type VisualDuplicateGroup,
   interrogateGalleryImage,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken, userScopedKey } from "../utils/ipc.js";
@@ -35,7 +37,14 @@ import { progress } from "./progress.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { matchesGallerySearch, parseGallerySearch } from "../utils/gallerySearch.js";
-import { detectInUnits, imageUnits, prepareCards, type PromptUnit } from "../utils/galleryCharacters.js";
+import {
+  CHARACTER_MATCH_THRESHOLD,
+  clampCharacterMatchThreshold,
+  detectInUnits,
+  imageUnits,
+  prepareCards,
+  type PromptUnit,
+} from "../utils/galleryCharacters.js";
 import { savedCharacters } from "./savedCharacters.svelte.js";
 import { loadGalleryTags, saveGalleryTags, tagsFromInterrogation } from "../utils/galleryTagCache.js";
 import { buildNsfwMatcher, DEFAULT_NSFW_KEYWORDS } from "../utils/galleryNsfw.js";
@@ -216,6 +225,9 @@ export type GalleryViewMode = "huge" | "large" | "small" | "details";
 export type GalleryNsfwFilter = "all" | "hide" | "only";
 /** Star ratings run from 1 to this; 0 means unrated. */
 export const GALLERY_MAX_RATING = 5;
+/** Default Hamming distance threshold for near-duplicate visual matching (0..16). */
+export const DEFAULT_VISUAL_DUPLICATE_DISTANCE = 10;
+export const VISUAL_DUPLICATE_MAX_DISTANCE = 16;
 /** `sourceFilter` value for files saved by MooshieUI itself, as opposed to a linked folder. */
 export const GALLERY_SOURCE_OWN = "gallery";
 
@@ -351,8 +363,17 @@ class GalleryStore {
   boardFilter = $state("all");
   /** Show only images a saved character was found in: the character's name, or "all". */
   characterFilter = $state("all");
+  /** Minimum character-match score (0.3..1.0) required to attribute a character to an image. */
+  characterMatchThreshold = $state(CHARACTER_MATCH_THRESHOLD);
   /** Show only images made more than once with the same prompt, seed and settings. Not remembered. */
   duplicatesOnly = $state(false);
+  /** Show only visually near-identical images grouped by perceptual hash distance. Not remembered. */
+  visualDuplicatesOnly = $state(false);
+  /** Maximum Hamming distance (0..16) for perceptual hash duplicate clustering. */
+  visualDuplicateThreshold = $state(DEFAULT_VISUAL_DUPLICATE_DISTANCE);
+  visualDuplicatesLoading = $state(false);
+  visualDuplicateGroups = $state<VisualDuplicateGroup[]>([]);
+  private _visualDuplicatesToken = 0;
   /** The gallery page's filter panel is folded down to the search row. */
   filtersCollapsed = $state(false);
   viewMode = $state<GalleryViewMode>("large");
@@ -498,6 +519,8 @@ class GalleryStore {
       sourceFilter?: string;
       filtersCollapsed?: boolean;
       characterFilter?: string;
+      characterMatchThreshold?: number;
+      visualDuplicateThreshold?: number;
     } | undefined;
     if (!parsed || typeof parsed !== "object") return;
     if (typeof parsed.imagesPerRow === "number") this.imagesPerRow = Math.max(2, Math.min(8, Math.round(parsed.imagesPerRow)));
@@ -512,6 +535,12 @@ class GalleryStore {
     if (parsed.blurNsfw !== undefined) this.blurNsfw = parsed.blurNsfw;
     if (parsed.sourceFilter) this.sourceFilter = parsed.sourceFilter;
     if (typeof parsed.characterFilter === "string" && parsed.characterFilter) this.characterFilter = parsed.characterFilter;
+    if (typeof parsed.characterMatchThreshold === "number" && Number.isFinite(parsed.characterMatchThreshold)) {
+      this.characterMatchThreshold = clampCharacterMatchThreshold(parsed.characterMatchThreshold);
+    }
+    if (typeof parsed.visualDuplicateThreshold === "number" && Number.isFinite(parsed.visualDuplicateThreshold)) {
+      this.visualDuplicateThreshold = Math.max(0, Math.min(VISUAL_DUPLICATE_MAX_DISTANCE, Math.round(parsed.visualDuplicateThreshold)));
+    }
     if (parsed.filtersCollapsed !== undefined) this.filtersCollapsed = parsed.filtersCollapsed === true;
   }
 
@@ -530,6 +559,8 @@ class GalleryStore {
       sourceFilter: this.sourceFilter,
       filtersCollapsed: this.filtersCollapsed,
       characterFilter: this.characterFilter,
+      characterMatchThreshold: this.characterMatchThreshold,
+      visualDuplicateThreshold: this.visualDuplicateThreshold,
     });
   }
 
@@ -713,10 +744,16 @@ class GalleryStore {
     image: OutputImage,
     terms: ReturnType<typeof parseGallerySearch>,
     repeated: Set<string> | null = null,
+    visualDuplicates: Map<string, number> | null = null,
   ): boolean {
     if (repeated) {
       const key = this.duplicateKey(image);
       if (!key || !repeated.has(key)) return false;
+    }
+    if (visualDuplicates) {
+      if (!image.gallery_filename || image.linked_folder || !visualDuplicates.has(image.gallery_filename)) {
+        return false;
+      }
     }
     if (this.boardFilter !== "all" && this.getBoard(image) !== this.boardFilter) return false;
     if (this.sourceFilter !== "all") {
@@ -742,8 +779,9 @@ class GalleryStore {
     const dir = this.sortDir === "asc" ? 1 : -1;
     const byDate = (a: OutputImage, b: OutputImage) => (a.generated_at_ms ?? 0) - (b.generated_at_ms ?? 0);
     const repeated = this.duplicatesOnly ? this._repeatedKeys() : null;
+    const visualDuplicates = this.visualDuplicatesOnly ? this.visualDuplicateMap : null;
     return this.images
-      .filter((image) => this._passesFilters(image, terms, repeated))
+      .filter((image) => this._passesFilters(image, terms, repeated, visualDuplicates))
       .sort((a, b) => {
         if (this.sortBy === "name") return dir * NAME_COLLATOR.compare(a.filename, b.filename);
         if (this.sortBy === "size") return dir * ((a.file_size_bytes ?? 0) - (b.file_size_bytes ?? 0));
@@ -925,6 +963,7 @@ class GalleryStore {
     this.minRating = 0;
     this.nsfwFilter = "all";
     this.duplicatesOnly = false;
+    this.visualDuplicatesOnly = false;
     this.characterFilter = "all";
   }
 
@@ -990,6 +1029,73 @@ class GalleryStore {
   }
 
   // ---------------------------------------------------------------------------
+  // Visual near-duplicates (perceptual hash)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Map each active gallery filename to its 0-based visual duplicate group
+   * index, keeping only groups with at least two files still present in
+   * `this.images`.
+   */
+  get visualDuplicateMap(): Map<string, number> {
+    const map = new Map<string, number>();
+    if (this.visualDuplicateGroups.length === 0) return map;
+    const present = new Set<string>();
+    for (const image of this.images) {
+      if (image.gallery_filename && !image.linked_folder) {
+        present.add(image.gallery_filename);
+      }
+    }
+    let groupIndex = 0;
+    for (const group of this.visualDuplicateGroups) {
+      const alive = group.filenames.filter((name) => present.has(name));
+      if (alive.length < 2) continue;
+      for (const name of alive) map.set(name, groupIndex);
+      groupIndex++;
+    }
+    return map;
+  }
+
+  setDuplicatesOnly(enabled: boolean) {
+    this.duplicatesOnly = enabled;
+    if (enabled) this.visualDuplicatesOnly = false;
+  }
+
+  setVisualDuplicatesOnly(enabled: boolean) {
+    this.visualDuplicatesOnly = enabled;
+    if (enabled) {
+      this.duplicatesOnly = false;
+      void this.loadVisualDuplicates();
+    }
+  }
+
+  setVisualDuplicateThreshold(distance: number) {
+    const clamped = Number.isFinite(distance)
+      ? Math.max(0, Math.min(VISUAL_DUPLICATE_MAX_DISTANCE, Math.round(distance)))
+      : DEFAULT_VISUAL_DUPLICATE_DISTANCE;
+    if (clamped === this.visualDuplicateThreshold) return;
+    this.visualDuplicateThreshold = clamped;
+    if (this.visualDuplicatesOnly) void this.loadVisualDuplicates();
+  }
+
+  async loadVisualDuplicates() {
+    const token = ++this._visualDuplicatesToken;
+    this.visualDuplicatesLoading = true;
+    try {
+      const groups = await findGalleryVisualDuplicates(this.visualDuplicateThreshold);
+      if (token !== this._visualDuplicatesToken) return;
+      this.visualDuplicateGroups = groups;
+    } catch (e) {
+      if (token === this._visualDuplicatesToken) {
+        console.error("Failed to find visual duplicates:", e);
+        this.showToast(locale.t("gallery.visual_duplicates_failed"), "error");
+      }
+    } finally {
+      if (token === this._visualDuplicatesToken) this.visualDuplicatesLoading = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Saved character detection
   // ---------------------------------------------------------------------------
 
@@ -1002,11 +1108,18 @@ class GalleryStore {
   /**
    * Per image: the prompt it was read from, that prompt parsed, and the names
    * found for the current cards. The prompt is parsed once; only the matching
-   * is redone when the cards change.
+   * is redone when the cards or threshold change.
    */
   private _characterCache = new WeakMap<
     OutputImage,
-    { prompt: string | undefined; boxes: string | undefined; units: PromptUnit[]; cards: unknown; names: string[] }
+    {
+      prompt: string | undefined;
+      boxes: string | undefined;
+      units: PromptUnit[];
+      cards: unknown;
+      threshold: number;
+      names: string[];
+    }
   >();
   /** What detection reads from the saved characters, so edits to anything else keep the cache. */
   private _detectSignature = "";
@@ -1054,19 +1167,21 @@ class GalleryStore {
     if (!metadata) return [];
     const prompt = metadata.positive_prompt;
     const boxes = metadata.mooshie_novelai_characters;
+    const threshold = this.characterMatchThreshold;
     let cached = this._characterCache.get(image);
     if (cached && cached.prompt === prompt && cached.boxes === boxes) {
-      if (cached.cards === this._detectCards) return cached.names;
+      if (cached.cards === this._detectCards && cached.threshold === threshold) return cached.names;
     } else {
-      cached = { prompt, boxes, units: imageUnits(metadata), cards: null, names: [] };
+      cached = { prompt, boxes, units: imageUnits(metadata), cards: null, threshold, names: [] };
       this._characterCache.set(image, cached);
     }
     const names: string[] = [];
-    for (const hit of detectInUnits(cached.units, this._detectCards)) {
+    for (const hit of detectInUnits(cached.units, this._detectCards, threshold)) {
       const name = this._detectNames.get(hit.cardId);
       if (name && !names.includes(name)) names.push(name);
     }
     cached.cards = this._detectCards;
+    cached.threshold = threshold;
     cached.names = names;
     return names;
   }
@@ -2087,6 +2202,7 @@ class GalleryStore {
       }
       if (refreshMetadata) this._metadataMisses.clear();
       if (isBrowserMode) void this.refreshStorageInfo();
+      if (this.visualDuplicatesOnly) void this.loadVisualDuplicates();
       const hydration = this.hydrateMetadataInBackground();
       if (refreshMetadata) await hydration;
       return true;
