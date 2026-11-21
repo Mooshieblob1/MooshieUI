@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v2.4.6
+
+### Prompt Assistant
+- **Per-tab Enhance chat**: Enhance chat conversations, drafts, and errors are now scoped per generation tab. Opening a new tab starts a fresh Enhance chat, switching tabs restores that tab's session, and in-flight Enhance replies land on the tab that started them.
+
+### Metadata & AI Provenance
+- **Mandatory Stealth Alpha metadata**: Stealth Alpha metadata is now always embedded on saved, exported, and copied images (keeping transparency and 16-bit fallbacks). The old Metadata mode picker has been removed from Sampler settings.
+- **IPTC AI-generation disclosure**: saved PNG, NovelAI PNG, WebP, JPEG XL, MP4, and AVIF outputs now include zero-interference IPTC `trainedAlgorithmicMedia` XMP disclosure without altering existing XMP properties, ComfyUI chunks, or pixel data.
+
+---
+
 ## What's New in v2.4.5
 
 ### Outpainting
