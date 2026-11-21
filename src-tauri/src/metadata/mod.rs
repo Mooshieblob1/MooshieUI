@@ -2398,6 +2398,62 @@ pub(crate) fn format_swarmui_json(params: &HashMap<String, String>) -> String {
     serde_json::to_string_pretty(&root).unwrap_or_else(|_| "{}".to_string())
 }
 
+fn parse_swarmui_weight(value: &serde_json::Value) -> Option<f64> {
+    let parsed = match value {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }?;
+    parsed.is_finite().then_some(parsed)
+}
+
+fn parse_swarmui_loras(
+    image_params: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let arr = image_params.get("loras").and_then(|v| v.as_array())?;
+    if !arr.iter().any(|v| v.is_string()) {
+        return None;
+    }
+
+    let weights = image_params.get("loraweights").and_then(|v| v.as_array());
+    let tenc_weights = image_params
+        .get("loratencweights")
+        .and_then(|v| v.as_array());
+
+    let mut items = Vec::with_capacity(arr.len());
+    for (idx, entry) in arr.iter().enumerate() {
+        match entry {
+            serde_json::Value::String(raw) => {
+                let name = raw.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let strength_model = weights
+                    .and_then(|w| w.get(idx))
+                    .and_then(parse_swarmui_weight)
+                    .unwrap_or(1.0);
+                let strength_clip = tenc_weights
+                    .and_then(|w| w.get(idx))
+                    .and_then(parse_swarmui_weight)
+                    .unwrap_or(strength_model);
+                items.push(serde_json::json!({
+                    "name": name,
+                    "strength_model": strength_model,
+                    "strength_clip": strength_clip,
+                }));
+            }
+            serde_json::Value::Object(_) => items.push(entry.clone()),
+            _ => {}
+        }
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&items).ok()
+    }
+}
+
 /// Parse SwarmUI JSON format back into our flat key-value map.
 pub(crate) fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> {
     let root: serde_json::Value = serde_json::from_str(text).ok()?;
@@ -2427,6 +2483,12 @@ pub(crate) fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> 
         for &(swarm, internal) in reverse_mappings {
             if swarm == "mooshie_version" {
                 continue;
+            }
+            if swarm == "loras" {
+                if let Some(formatted) = parse_swarmui_loras(image_params) {
+                    params.insert(internal.to_string(), formatted);
+                    continue;
+                }
             }
             if let Some(value) = image_params.get(swarm) {
                 let s = match value {
@@ -3473,5 +3535,57 @@ mod tests {
         assert!(copy_png_text_chunks(&source, &composite).is_none());
         assert!(copy_png_text_chunks(b"not a png at all", &composite).is_none());
         assert!(copy_png_text_chunks(&make_novelai_png(8, 8), b"nope").is_none());
+    }
+
+    #[test]
+    fn swarmui_loras_zip_weights_and_preserve_legacy_formats() {
+        // SwarmUI string array + parallel weights arrays
+        let swarm = r#"{
+            "sui_image_params": {
+                "loras": ["ctd mofu/ctdmofu", "style/second"],
+                "loraweights": ["0.8", 0.5],
+                "loratencweights": ["0.6"]
+            }
+        }"#;
+        let parsed = parse_swarmui_json(swarm).unwrap();
+        let loras: Vec<serde_json::Value> =
+            serde_json::from_str(parsed.get("loras").unwrap()).unwrap();
+        assert_eq!(loras.len(), 2);
+        assert_eq!(loras[0]["name"], "ctd mofu/ctdmofu");
+        assert_eq!(loras[0]["strength_model"], 0.8);
+        assert_eq!(loras[0]["strength_clip"], 0.6);
+        assert_eq!(loras[1]["name"], "style/second");
+        assert_eq!(loras[1]["strength_model"], 0.5);
+        assert_eq!(loras[1]["strength_clip"], 0.5);
+
+        // Missing loraweights defaults to 1.0
+        let defaults = r#"{"sui_image_params":{"loras":["only_name"]}}"#;
+        let parsed_default = parse_swarmui_json(defaults).unwrap();
+        let loras_default: Vec<serde_json::Value> =
+            serde_json::from_str(parsed_default.get("loras").unwrap()).unwrap();
+        assert_eq!(
+            loras_default,
+            vec![serde_json::json!({
+                "name": "only_name",
+                "strength_model": 1.0,
+                "strength_clip": 1.0,
+            })]
+        );
+
+        // Existing comma-string and object-array formats stay unchanged
+        let legacy_str = r#"{"sui_image_params":{"loras":"foo.safetensors:0.7"}}"#;
+        assert_eq!(
+            parse_swarmui_json(legacy_str)
+                .unwrap()
+                .get("loras")
+                .map(String::as_str),
+            Some("foo.safetensors:0.7")
+        );
+        let obj_arr = r#"{"sui_image_params":{"loras":[{"name":"bar.safetensors","strength_model":0.9,"strength_clip":0.9}]}}"#;
+        let parsed_obj = parse_swarmui_json(obj_arr).unwrap();
+        let loras_obj: Vec<serde_json::Value> =
+            serde_json::from_str(parsed_obj.get("loras").unwrap()).unwrap();
+        assert_eq!(loras_obj[0]["name"], "bar.safetensors");
+        assert_eq!(loras_obj[0]["strength_model"], 0.9);
     }
 }

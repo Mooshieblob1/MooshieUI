@@ -107,10 +107,42 @@ const ENTRY = new RegExp(`^(.*?)(?::(${NUM}))?(?::(${NUM}))?$`);
 
 /**
  * Split a `loras` metadata value into one entry per LoRA. MooshieUI writes
- * `name:model:clip, name:model:clip`; prompt-style `<lora:name:0.8>` and bare
- * names are read too.
+ * `name:model:clip, name:model:clip`; SwarmUI writes JSON arrays; prompt-style
+ * `<lora:name:0.8>` and bare names are read too.
  */
 export function parseLoraField(value: string): LoraInfo[] {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        const out: LoraInfo[] = [];
+        for (const item of parsed) {
+          if (typeof item === "string") {
+            const name = item.trim();
+            if (name) out.push({ name, model: null, clip: null });
+          } else if (item && typeof item === "object") {
+            const rec = item as Record<string, unknown>;
+            const name = typeof rec.name === "string" ? rec.name.trim() : "";
+            if (!name) continue;
+            const rawModel = rec.strength_model ?? rec.model;
+            const rawClip = rec.strength_clip ?? rec.clip;
+            const modelNum = rawModel !== undefined && rawModel !== null ? Number(rawModel) : NaN;
+            const clipNum = rawClip !== undefined && rawClip !== null ? Number(rawClip) : NaN;
+            out.push({
+              name,
+              model: Number.isFinite(modelNum) ? modelNum : null,
+              clip: Number.isFinite(clipNum) ? clipNum : null,
+            });
+          }
+        }
+        return out;
+      }
+    } catch {
+      // Fall through to comma-separated parsing if not valid JSON.
+    }
+  }
+
   const out: LoraInfo[] = [];
   for (const raw of value.split(/,(?![^<]*>)/)) {
     let entry = raw.trim();
@@ -125,6 +157,50 @@ export function parseLoraField(value: string): LoraInfo[] {
     out.push({ name, model, clip });
   }
   return out;
+}
+
+const MODEL_EXT_RE = /\.(safetensors|ckpt|pt|pth|bin|gguf)$/i;
+
+function normalizeModelPath(name: string): string {
+  return name.trim().replace(/\\/g, "/").toLowerCase();
+}
+
+function stripModelExt(name: string): string {
+  return name.replace(MODEL_EXT_RE, "");
+}
+
+/**
+ * Resolve an imported checkpoint or LoRA name (often extensionless or with
+ * forward slashes from SwarmUI metadata) against the installed file list.
+ * Falls back to `importedName` when no installed match is found.
+ */
+export function matchInstalledModel(
+  importedName: string,
+  installed: readonly string[],
+): string {
+  const trimmed = importedName.trim();
+  if (!trimmed || installed.length === 0) return importedName;
+  if (installed.includes(trimmed)) return trimmed;
+
+  const targetNorm = normalizeModelPath(trimmed);
+  for (const candidate of installed) {
+    if (normalizeModelPath(candidate) === targetNorm) return candidate;
+  }
+
+  const targetStem = stripModelExt(targetNorm);
+  for (const candidate of installed) {
+    if (stripModelExt(normalizeModelPath(candidate)) === targetStem) return candidate;
+  }
+
+  const targetBase = targetStem.split("/").pop() ?? targetStem;
+  const baseMatches = installed.filter((candidate) => {
+    const stem = stripModelExt(normalizeModelPath(candidate));
+    const base = stem.split("/").pop() ?? stem;
+    return base === targetBase;
+  });
+  if (baseMatches.length === 1) return baseMatches[0];
+
+  return importedName;
 }
 
 /** File name without folders or the model extension, for display. */

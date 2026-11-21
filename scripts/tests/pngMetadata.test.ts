@@ -64,3 +64,31 @@ test("A parameters chunk is read as before, with no source label", async () => {
   assert.equal(meta.seed, "42");
   assert.equal(meta.source, undefined);
 });
+
+test("SwarmUI parameters zip string-array loras with loraweights and loratencweights", async () => {
+  const payload = JSON.stringify({
+    sui_image_params: {
+      model: "redLilyIllu_v10",
+      loras: ["ctd mofu/ctdmofu", "style/second"],
+      loraweights: ["0.8", 0.5],
+      loratencweights: ["0.6"],
+    },
+  });
+  const meta = await readPngMetadataClientSide(png([["parameters", payload]]));
+  assert.ok(meta);
+  assert.deepEqual(JSON.parse(meta.loras), [
+    { name: "ctd mofu/ctdmofu", strength_model: 0.8, strength_clip: 0.6 },
+    { name: "style/second", strength_model: 0.5, strength_clip: 0.5 },
+  ]);
+
+  const defaultPayload = JSON.stringify({
+    sui_image_params: {
+      loras: ["only_name"],
+    },
+  });
+  const defaultMeta = await readPngMetadataClientSide(png([["parameters", defaultPayload]]));
+  assert.ok(defaultMeta);
+  assert.deepEqual(JSON.parse(defaultMeta.loras), [
+    { name: "only_name", strength_model: 1.0, strength_clip: 1.0 },
+  ]);
+});

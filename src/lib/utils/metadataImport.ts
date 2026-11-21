@@ -6,7 +6,8 @@ import { locale } from "../stores/locale.svelte.js";
 import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
-import { parseLoraField } from "./imageInfoFields.js";
+import { matchInstalledModel, parseLoraField } from "./imageInfoFields.js";
+import { models } from "../stores/models.svelte.js";
 import type { NovelAiCharacter } from "../types/index.js";
 import { NAI_EFFORT_HIGH, NAI_EFFORT_MEDIUM, novelAiMaxCharacters, isNovelAiModel } from "./novelaiModels.js";
 import { novelaiImport } from "../stores/novelaiImport.svelte.js";
@@ -380,7 +381,10 @@ function applyModel(meta: Record<string, string>): boolean {
     return generation.videoLoras.length > 0;
   }
   let applied = false;
-  if (meta.model) { generation.checkpoint = meta.model; applied = true; }
+  if (meta.model) {
+    generation.checkpoint = matchInstalledModel(meta.model, models.checkpoints);
+    applied = true;
+  }
   if (meta.vae) { generation.vae = meta.vae; applied = true; }
   if (meta.loras) {
     try {
@@ -388,12 +392,37 @@ function applyModel(meta: Record<string, string>): boolean {
       if (raw.startsWith("[")) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          generation.loras = parsed.map((l: any) => ({
-            name: l.name || "",
-            strength_model: l.strength_model ?? 1.0,
-            strength_clip: l.strength_clip ?? 1.0,
-            enabled: true,
-          }));
+          generation.loras = parsed
+            .map((l: unknown) => {
+              if (typeof l === "string") {
+                const name = l.trim();
+                return {
+                  name: name ? matchInstalledModel(name, models.loras) : "",
+                  strength_model: 1.0,
+                  strength_clip: 1.0,
+                  enabled: true,
+                };
+              }
+              const obj = l && typeof l === "object" ? (l as Record<string, unknown>) : {};
+              const rawName = typeof obj.name === "string" ? obj.name.trim() : "";
+              const modelWeight = Number(obj.strength_model);
+              const clipWeight = Number(obj.strength_clip);
+              const strengthModel =
+                obj.strength_model !== undefined && obj.strength_model !== null && Number.isFinite(modelWeight)
+                  ? modelWeight
+                  : 1.0;
+              const strengthClip =
+                obj.strength_clip !== undefined && obj.strength_clip !== null && Number.isFinite(clipWeight)
+                  ? clipWeight
+                  : strengthModel;
+              return {
+                name: rawName ? matchInstalledModel(rawName, models.loras) : "",
+                strength_model: strengthModel,
+                strength_clip: strengthClip,
+                enabled: true,
+              };
+            })
+            .filter((entry) => entry.name !== "");
           applied = true;
         }
       } else if (raw) {
@@ -401,7 +430,12 @@ function applyModel(meta: Record<string, string>): boolean {
         generation.loras = entries.map((entry) => {
           const [name, str] = entry.split(":");
           const strength = parseFloat(str) || 1.0;
-          return { name: name.trim(), strength_model: strength, strength_clip: strength, enabled: true };
+          return {
+            name: matchInstalledModel(name.trim(), models.loras),
+            strength_model: strength,
+            strength_clip: strength,
+            enabled: true,
+          };
         });
         applied = true;
       }
