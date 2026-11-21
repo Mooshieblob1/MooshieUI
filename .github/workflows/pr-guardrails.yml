@@ -200,6 +200,16 @@ jobs:
           npx esbuild scripts/tests/naiPromptCache.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/naiPromptCache.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/naiPromptCache.test.mjs"
 
+      - name: Segment detail parser tests
+        run: |
+          npx esbuild scripts/tests/promptSegmentDetail.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptSegmentDetail.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/promptSegmentDetail.test.mjs"
+
+      - name: Aspect dimension bucket tests
+        run: |
+          npx esbuild scripts/tests/aspectDimensions.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/aspectDimensions.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/aspectDimensions.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 
