@@ -5324,5 +5324,18 @@ const ru: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC: {tags}",
   "prompt_uc.from_title": "UC из {name}: {tags}",
+  "gallery.group_layers": "Наборы слоев",
+  "gallery.group_layers_header": "Слои Ming-Image ({count})",
+  "gallery.group_layers_other": "Другие изображения",
+  "gallery.layer_badge": "Слой {index}/{total}",
+  "gallery.layer_item": "Слой",
+  "comic.panel1_ref": "Использовать панель 1 как референс персонажа",
+  "comic.panel1_ref_tip": "Передает сгенерированное изображение панели 1 как референс персонажа в панели 2-6 на поддерживаемых моделях.",
+  "comic.panel1_ref_unsupported": "Не поддерживается выбранной моделью. Выберите NovelAI Precise Reference, модель Edit или Anima.",
+  "settings.civitai.proxy": "URL прокси CivitAI",
+  "settings.civitai.proxy_desc": "Необязательный прокси HTTP, HTTPS или SOCKS5 только для запросов API CivitAI и загрузки моделей с CivitAI.",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 или socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "Прокси настроен (оставьте пустым для сохранения)",
+  "settings.civitai.proxy_invalid": "Укажите корректный URL http://, https://, socks5:// или socks5h://.",
 };
 export default ru;

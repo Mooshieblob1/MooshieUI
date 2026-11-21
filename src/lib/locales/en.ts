@@ -5278,5 +5278,18 @@ const en: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC: {tags}",
   "prompt_uc.from_title": "UC from {name}: {tags}",
+  "gallery.group_layers": "Layer sets",
+  "gallery.group_layers_header": "Ming-Image Layers ({count})",
+  "gallery.group_layers_other": "Other images",
+  "gallery.layer_badge": "Layer {index}/{total}",
+  "gallery.layer_item": "Layer",
+  "comic.panel1_ref": "Use Panel 1 as character reference",
+  "comic.panel1_ref_tip": "Pass Panel 1's generated image as a character reference to Panels 2-6 on supported models (NovelAI Precise Reference, Flux/Klein/Qwen/MOSS edit, Anima Ref Adapter).",
+  "comic.panel1_ref_unsupported": "Not supported by the selected model. Pick NovelAI Precise Reference, an Image Edit model (Flux/Klein/Qwen/MOSS), or Anima.",
+  "settings.civitai.proxy": "CivitAI Proxy URL",
+  "settings.civitai.proxy_desc": "Optional HTTP, HTTPS, or SOCKS5 proxy used only for CivitAI API requests and CivitAI model downloads (for example http://127.0.0.1:7890 or socks5://127.0.0.1:1080).",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 or socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "Proxy configured (leave blank to keep)",
+  "settings.civitai.proxy_invalid": "Use a valid http://, https://, socks5://, or socks5h:// proxy URL.",
 };
 export default en;

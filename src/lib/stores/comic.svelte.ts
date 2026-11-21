@@ -57,6 +57,7 @@ interface SavedPage {
   rightToLeft: boolean;
   mode: ComicMode;
   checkContinuity: boolean;
+  usePanel1Ref?: boolean;
   /** Gallery file per panel. */
   images?: Record<string, string>;
   pageImage?: string | null;
@@ -81,6 +82,8 @@ class ComicStore {
   mode = $state<ComicMode>("panels");
   /** Run the tagger on each finished panel and flag what changed. */
   checkContinuity = $state(true);
+  /** Pass Panel 1's generated image as a character reference to later panels. */
+  usePanel1Ref = $state(false);
   selectedId = $state<string | null>(null);
 
   // --- run state (not persisted) ---
@@ -262,7 +265,7 @@ class ComicStore {
     this.persist();
   }
 
-  setPageField<K extends "setting" | "style" | "pageShape" | "gutter" | "rightToLeft" | "mode" | "checkContinuity">(
+  setPageField<K extends "setting" | "style" | "pageShape" | "gutter" | "rightToLeft" | "mode" | "checkContinuity" | "usePanel1Ref">(
     key: K,
     value: ComicStore[K],
   ) {
@@ -338,6 +341,7 @@ class ComicStore {
       if (typeof data.rightToLeft === "boolean") this.rightToLeft = data.rightToLeft;
       if (data.mode === "panels" || data.mode === "one_image") this.mode = data.mode;
       if (typeof data.checkContinuity === "boolean") this.checkContinuity = data.checkContinuity;
+      if (typeof data.usePanel1Ref === "boolean") this.usePanel1Ref = data.usePanel1Ref;
       this.savedImages = data.images && typeof data.images === "object" ? data.images : {};
       this.savedPageImage = typeof data.pageImage === "string" ? data.pageImage : null;
     } catch (e) {
@@ -362,6 +366,7 @@ class ComicStore {
       rightToLeft: this.rightToLeft,
       mode: this.mode,
       checkContinuity: this.checkContinuity,
+      usePanel1Ref: this.usePanel1Ref,
       images,
       pageImage: this.pageGalleryFilename,
     };

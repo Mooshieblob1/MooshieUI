@@ -789,6 +789,9 @@ pub struct AppState {
     /// across a redirect to the CDN). Reuses one client to keep connection
     /// pooling instead of building a fresh client per call.
     pub http_client_no_redirect: reqwest::Client,
+    /// Cached CivitAI proxy clients `(proxy_url, default_client, no_redirect_client)`.
+    civitai_proxy_client_cache:
+        std::sync::Mutex<Option<(String, reqwest::Client, reqwest::Client)>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
@@ -920,7 +923,85 @@ impl AppState {
             notifications: NotificationState::new(),
             download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
             civitai_scan_cancel: std::sync::atomic::AtomicBool::new(false),
+            civitai_proxy_client_cache: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Return a `reqwest::Client` configured with `AppConfig::civitai_proxy`
+    /// when set, otherwise the shared default client. Never logs proxy
+    /// credentials.
+    pub async fn civitai_http_client(&self) -> Result<reqwest::Client, crate::error::AppError> {
+        self.civitai_clients().await.map(|(client, _)| client)
+    }
+
+    /// No-redirect twin of [`Self::civitai_http_client`].
+    pub async fn civitai_http_client_no_redirect(
+        &self,
+    ) -> Result<reqwest::Client, crate::error::AppError> {
+        self.civitai_clients()
+            .await
+            .map(|(_, no_redirect)| no_redirect)
+    }
+
+    /// Return the CivitAI proxy client when `url` targets CivitAI, otherwise
+    /// the shared direct client.
+    pub async fn http_client_for_url(
+        &self,
+        url: &str,
+    ) -> Result<reqwest::Client, crate::error::AppError> {
+        if crate::comfyui::client::is_civitai_url(url) {
+            self.civitai_http_client().await
+        } else {
+            Ok(self.http_client.clone())
+        }
+    }
+
+    async fn civitai_clients(
+        &self,
+    ) -> Result<(reqwest::Client, reqwest::Client), crate::error::AppError> {
+        let proxy = {
+            let cfg = self.config.read().await;
+            cfg.civitai_proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let Some(proxy_url) = proxy else {
+            return Ok((
+                self.http_client.clone(),
+                self.http_client_no_redirect.clone(),
+            ));
+        };
+        crate::config::validate_civitai_proxy(Some(&proxy_url))
+            .map_err(crate::error::AppError::Other)?;
+        let mut cache = self.civitai_proxy_client_cache.lock().unwrap();
+        if let Some((cached_url, client, no_redirect)) = cache.as_ref() {
+            if cached_url == &proxy_url {
+                return Ok((client.clone(), no_redirect.clone()));
+            }
+        }
+        let proxy_cfg = reqwest::Proxy::all(&proxy_url).map_err(|_| {
+            crate::error::AppError::Other("Invalid CivitAI proxy configuration".into())
+        })?;
+        let no_redirect_proxy = reqwest::Proxy::all(&proxy_url).map_err(|_| {
+            crate::error::AppError::Other("Invalid CivitAI proxy configuration".into())
+        })?;
+        let client = reqwest::Client::builder()
+            .proxy(proxy_cfg)
+            .build()
+            .map_err(|_| {
+                crate::error::AppError::Other("Failed to initialize CivitAI proxy client".into())
+            })?;
+        let no_redirect = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .proxy(no_redirect_proxy)
+            .build()
+            .map_err(|_| {
+                crate::error::AppError::Other("Failed to initialize CivitAI proxy client".into())
+            })?;
+        *cache = Some((proxy_url, client.clone(), no_redirect.clone()));
+        Ok((client, no_redirect))
     }
 
     pub async fn base_url(&self) -> String {

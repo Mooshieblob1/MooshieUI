@@ -5349,5 +5349,18 @@ const ja: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC: {tags}",
   "prompt_uc.from_title": "{name} の UC: {tags}",
+  "gallery.group_layers": "レイヤーセット",
+  "gallery.group_layers_header": "Ming-Image レイヤー ({count})",
+  "gallery.group_layers_other": "その他の画像",
+  "gallery.layer_badge": "レイヤー {index}/{total}",
+  "gallery.layer_item": "レイヤー",
+  "comic.panel1_ref": "コマ1をキャラクター参照として使用",
+  "comic.panel1_ref_tip": "対応モデルでコマ1の生成画像をコマ2-6のキャラクター参照として渡します。",
+  "comic.panel1_ref_unsupported": "選択中のモデルでは未対応です。NovelAI Precise Reference、Editモデル、またはAnimaを選択してください。",
+  "settings.civitai.proxy": "CivitAI プロキシ URL",
+  "settings.civitai.proxy_desc": "CivitAI API リクエストおよび CivitAI モデルダウンロード専用の任意 HTTP/HTTPS/SOCKS5 プロキシ。",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 または socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "プロキシ設定済み (維持する場合は空欄)",
+  "settings.civitai.proxy_invalid": "有効な http://、https://、socks5://、または socks5h:// の URL を入力してください。",
 };
 export default ja;

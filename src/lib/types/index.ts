@@ -715,6 +715,9 @@ export interface AppConfig {
    * `civitai_api_key` is always null; true when a server-side key is stored.
    */
   civitai_api_key_configured?: boolean;
+  /** Optional HTTP/HTTPS/SOCKS5 proxy URL used for CivitAI API and downloads. */
+  civitai_proxy: string | null;
+  civitai_proxy_configured?: boolean;
   /** Never populated for clients: the key is redacted to null on the way out. */
   novelai_api_key: string | null;
   /** True when a key is stored, so the UI can show "key set" without the value. */

@@ -1,6 +1,14 @@
 <script lang="ts">
   import { portal } from "./lib/utils/portal.js";
   import { onMount, onDestroy, untrack } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
+  import {
+    CHECKERBOARD_CLASS,
+    detectImageAlpha,
+    isMingLayerImage,
+    isTransparentImage,
+    mingLayerBadgeInfo,
+  } from "./lib/utils/transparentBackdrop.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import { useMobileLayout } from "./lib/utils/device.js";
   import { architectures } from "./lib/stores/architectures.svelte.js";
@@ -525,6 +533,15 @@
   let lightboxRevealed = $state<OutputImage | null>(null);
   const lightboxHidden = $derived(
     !!gallery.selectedImage && gallery.shouldBlur(gallery.selectedImage) && lightboxRevealed !== gallery.selectedImage,
+  );
+  let lightboxHasAlpha = $state(false);
+  const batchAlphaKeys = new SvelteSet<string>();
+  $effect(() => {
+    void gallery.lightboxUrl;
+    lightboxHasAlpha = false;
+  });
+  const lightboxIsTransparent = $derived(
+    lightboxHasAlpha || isTransparentImage(gallery.selectedImage),
   );
 
   function startMetadataResize(e: MouseEvent) {
@@ -1912,6 +1929,9 @@
 
     // MooshieUI-exclusive parameters
     metadata.mooshie_model_architecture = params.model_architecture;
+    if (params.transparent_background) {
+      metadata.mooshie_transparent_background = "true";
+    }
 
     if (params.smart_guidance) {
       metadata.mooshie_smart_guidance = "true";
@@ -2252,8 +2272,18 @@
     const outputSize =
       first?.width && first?.height ? { width: first.width, height: first.height } : null;
     const metadata = params ? buildPngMetadata(params, outputSize) : undefined;
-    for (const image of newImages) {
-      image.metadata = metadata ?? null;
+    const isMingLayers = params?.model_architecture === "mingimagelayer" && newImages.length > 1;
+    const perImageMetadata = isMingLayers
+      ? newImages.map((_, i) => ({
+          ...(metadata ?? {}),
+          mooshie_model_architecture: "mingimagelayer",
+          mooshie_transparent_background: "true",
+          mooshie_layer_index: String(i + 1),
+          mooshie_layer_count: String(newImages.length),
+        }))
+      : undefined;
+    for (let i = 0; i < newImages.length; i++) {
+      newImages[i]!.metadata = perImageMetadata ? perImageMetadata[i]! : (metadata ?? null);
     }
 
     // In browser mode, embed metadata into the blob URLs immediately so that
@@ -2265,7 +2295,7 @@
         const img = images[i]!;
         const outputImage = newImages[i]!;
         if (img.tempFilename) {
-          embedTempMetadata(img.tempFilename, metadata, outputImage);
+          embedTempMetadata(img.tempFilename, perImageMetadata?.[i] ?? metadata, outputImage);
         }
       }
     }
@@ -2279,7 +2309,7 @@
       // metadata. Show that copy rather than writing a second one.
       void gallery.adoptSavedImages(newImages, savedElsewhere);
     } else {
-      gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+      gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames, perImageMetadata);
     }
     if (generation.finishSound) playFinishChime();
     showGenerationDoneToast(newImages);
@@ -4745,13 +4775,15 @@
             {#each gallery.lightboxBatch as tile (tile.filename)}
               {@const tileSrc = batchTileSrc(tile)}
               {@const isActive = tile === gallery.selectedImage}
+              {@const tileTransparent = isTransparentImage(tile) || batchAlphaKeys.has(tile.filename)}
+              {@const layerInfo = mingLayerBadgeInfo(tile, gallery.lightboxBatch)}
               <div
                 class="group relative rounded-lg overflow-hidden bg-neutral-900/60 {isActive
                   ? 'ring-2 ring-indigo-400'
                   : 'ring-1 ring-neutral-800'}"
               >
                 <button
-                  class="block w-full cursor-zoom-in"
+                  class="flex w-full items-center justify-center cursor-zoom-in"
                   onclick={() => selectBatchTile(tile)}
                   title={locale.t("gallery.lightbox.open_tile")}
                 >
@@ -4759,7 +4791,12 @@
                     <img
                       src={tileSrc}
                       alt={tile.filename}
-                      class="w-full max-h-[38vh] object-contain select-none"
+                      onload={(e) => {
+                        if (detectImageAlpha(e.currentTarget as HTMLImageElement)) {
+                          batchAlphaKeys.add(tile.filename);
+                        }
+                      }}
+                      class="max-w-full max-h-[38vh] object-contain select-none {tileTransparent ? CHECKERBOARD_CLASS : ''}"
                       draggable="false"
                     />
                   {:else}
@@ -4768,6 +4805,13 @@
                     </div>
                   {/if}
                 </button>
+                {#if layerInfo || isMingLayerImage(tile)}
+                  <div class="absolute top-2 right-2 px-2 py-0.5 rounded-lg bg-indigo-950/90 border border-indigo-600/50 text-[11px] font-medium text-indigo-200 backdrop-blur-sm pointer-events-none">
+                    {layerInfo
+                      ? locale.t("gallery.layer_badge", { index: String(layerInfo.index), total: String(layerInfo.total) })
+                      : locale.t("gallery.layer_item")}
+                  </div>
+                {/if}
 
                 <!-- Per-tile timing. NovelAI returns the whole run from one
                      request, so every tile carries the run's duration: it is
@@ -4881,7 +4925,8 @@
           bind:this={lbImgEl}
           src={gallery.lightboxUrl}
           alt={gallery.selectedImage?.filename ?? locale.t("gallery.no_preview")}
-          class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
+          onload={(e) => { lightboxHasAlpha = detectImageAlpha(e.currentTarget as HTMLImageElement); }}
+          class="max-w-full max-h-[85vh] object-contain select-none {lightboxIsTransparent ? CHECKERBOARD_CLASS : ''} {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
           style="transform-origin: center center; will-change: transform;"
           onwheel={zoomLightboxAtCursor}

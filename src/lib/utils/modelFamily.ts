@@ -200,6 +200,20 @@ export function familyIsSdxlLike(family: ModelFamily): boolean {
   return (["sdxl", "illustrious", "pony", "mugen"] as ReadonlyArray<ModelFamily>).includes(family);
 }
 
+/** CLIP-based ComfyUI families that support BREAK chunking via ConditioningConcat. */
+export const CLIP_BREAK_FAMILIES: ReadonlySet<ModelFamily> = new Set<ModelFamily>([
+  "sd15",
+  "sdxl",
+  "illustrious",
+  "pony",
+  "mugen",
+]);
+
+/** True when a ComfyUI model family uses CLIP and preserves BREAK boundaries. */
+export function familySupportsBreakChunking(family: ModelFamily | null | undefined): boolean {
+  return !!family && CLIP_BREAK_FAMILIES.has(family);
+}
+
 /** Coerce a raw ModelSpec string into a known turbo variant. */
 export function toTurboModelVariant(value: string | undefined): TurboModelVariant {
   return TURBO_MODEL_VARIANTS.includes(value as TurboModelVariant)

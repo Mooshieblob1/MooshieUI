@@ -5324,5 +5324,18 @@ const zhTw: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC：{tags}",
   "prompt_uc.from_title": "來自 {name} 的 UC：{tags}",
+  "gallery.group_layers": "圖層集",
+  "gallery.group_layers_header": "Ming-Image 圖層 ({count})",
+  "gallery.group_layers_other": "其他圖像",
+  "gallery.layer_badge": "圖層 {index}/{total}",
+  "gallery.layer_item": "圖層",
+  "comic.panel1_ref": "將第 1 格作為角色參考",
+  "comic.panel1_ref_tip": "在支援的模型上將第 1 格生成的圖像作為角色參考傳入第 2-6 格（NovelAI 精確參考、Flux/Klein/Qwen/MOSS 編輯、Anima 參考適配器）。",
+  "comic.panel1_ref_unsupported": "目前模型不支援。請選擇 NovelAI 精確參考、圖像編輯模型或 Anima。",
+  "settings.civitai.proxy": "CivitAI 代理網址",
+  "settings.civitai.proxy_desc": "選用的 HTTP、HTTPS 或 SOCKS5 代理，僅用於 CivitAI API 請求與 CivitAI 模型下載。",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 或 socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "已設定代理（留空以保留）",
+  "settings.civitai.proxy_invalid": "請輸入有效的 http://、https://、socks5:// 或 socks5h:// 代理網址。",
 };
 export default zhTw;

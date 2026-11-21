@@ -25,6 +25,7 @@
   import CloudProvidersPanel from "./CloudProvidersPanel.svelte";
   import KeyEnvToggle from "./KeyEnvToggle.svelte";
   import NovelAiSavedKeys from "./NovelAiSavedKeys.svelte";
+  import InfoTip from "../ui/InfoTip.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
   import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL } from "../../utils/updater.js";
@@ -1259,7 +1260,7 @@
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope saved characters detect llm match" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "mcp", labelKey: "settings.sections.mcp", keywords: "mcp model context protocol ai assistant agent claude code desktop cursor codex automation api token tools" },
-    { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
+    { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key proxy socks5 metadata model hub image fetch download authentication" },
     { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
     { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
@@ -1363,6 +1364,21 @@
    */
   let civitaiEnvChoice = $state<boolean | null>(null);
   const civitaiEnvMode = $derived(civitaiEnvChoice ?? isEnvRef(config?.civitai_api_key));
+
+  function isValidCivitaiProxy(raw: string | null | undefined): boolean {
+    const trimmed = raw?.trim() ?? "";
+    if (!trimmed) return true;
+    try {
+      const parsed = new URL(trimmed);
+      return (
+        ["http:", "https:", "socks5:", "socks5h:"].includes(parsed.protocol) &&
+        Boolean(parsed.hostname)
+      );
+    } catch {
+      return false;
+    }
+  }
+  const civitaiProxyInvalid = $derived(!isValidCivitaiProxy(config?.civitai_proxy));
   let novelaiKeySaving = $state(false);
   let novelaiKeyError = $state<string | null>(null);
 
@@ -4536,6 +4552,27 @@
                 />
               {/if}
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
+            </div>
+            <div>
+              <label class="text-xs text-neutral-400 flex items-center gap-1 mb-1" for="civitai-proxy-input">
+                {locale.t('settings.civitai.proxy')}
+                <InfoTip text={locale.t('settings.civitai.proxy_desc')} />
+              </label>
+              <input
+                id="civitai-proxy-input"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                bind:value={config.civitai_proxy}
+                onchange={() => { if (!civitaiProxyInvalid) void autoSave(); }}
+                placeholder={config.civitai_proxy_configured && !config.civitai_proxy
+                  ? locale.t('settings.civitai.proxy_saved_placeholder')
+                  : locale.t('settings.civitai.proxy_placeholder')}
+                class="w-full bg-neutral-800 border rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none transition-colors font-mono {civitaiProxyInvalid ? 'border-red-500 focus:border-red-400' : 'border-neutral-700 focus:border-indigo-500'}"
+              />
+              {#if civitaiProxyInvalid}
+                <span class="text-[11px] text-red-400 mt-1 block">{locale.t('settings.civitai.proxy_invalid')}</span>
+              {/if}
             </div>
           </div>
         </section>

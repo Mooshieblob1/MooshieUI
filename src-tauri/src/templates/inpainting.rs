@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::{
-    build_scheduled_conditioning, insert_vae_decode, is_vpred_model, load_model_nodes,
+    build_scheduled_conditioning_for_arch, insert_vae_decode, is_vpred_model, load_model_nodes,
     WorkflowResult,
 };
 use crate::comfyui::types::GenerationParams;
@@ -18,22 +18,24 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let vae_source = ml.vae_source;
 
     // Positive conditioning (with optional timestep scheduling)
-    let (pos_source, nid) = build_scheduled_conditioning(
+    let (pos_source, nid) = build_scheduled_conditioning_for_arch(
         &mut workflow,
         next_id,
         &clip_source,
         &params.positive_prompt,
         &params.positive_segments,
+        &params.model_architecture,
     );
     next_id = nid;
 
     // Negative conditioning (with optional timestep scheduling)
-    let (neg_source, nid) = build_scheduled_conditioning(
+    let (neg_source, nid) = build_scheduled_conditioning_for_arch(
         &mut workflow,
         next_id,
         &clip_source,
         &params.negative_prompt,
         &params.negative_segments,
+        &params.model_architecture,
     );
     next_id = nid;
 

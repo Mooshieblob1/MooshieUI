@@ -5324,5 +5324,18 @@ const ko: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC: {tags}",
   "prompt_uc.from_title": "{name}의 UC: {tags}",
+  "gallery.group_layers": "레이어 세트",
+  "gallery.group_layers_header": "Ming-Image 레이어 ({count})",
+  "gallery.group_layers_other": "기타 이미지",
+  "gallery.layer_badge": "레이어 {index}/{total}",
+  "gallery.layer_item": "레이어",
+  "comic.panel1_ref": "패널 1을 캐릭터 참조로 사용",
+  "comic.panel1_ref_tip": "지원되는 모델에서 패널 1의 생성 이미지를 패널 2-6의 캐릭터 참조로 전달합니다.",
+  "comic.panel1_ref_unsupported": "선택한 모델에서 지원되지 않습니다. NovelAI Precise Reference, Edit 모델 또는 Anima를 선택하세요.",
+  "settings.civitai.proxy": "CivitAI 프록시 URL",
+  "settings.civitai.proxy_desc": "CivitAI API 요청 및 CivitAI 모델 다운로드에만 사용되는 선택적 HTTP/HTTPS/SOCKS5 프록시입니다.",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 또는 socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "프록시 설정됨 (유지하려면 비워 두세요)",
+  "settings.civitai.proxy_invalid": "유효한 http://, https://, socks5:// 또는 socks5h:// 프록시 URL을 입력하세요.",
 };
 export default ko;

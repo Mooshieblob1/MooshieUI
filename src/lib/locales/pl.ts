@@ -5363,5 +5363,18 @@ const pl: Record<string, string> = {
   "prompt_uc.placeholder": "lowres, blurry, bad hands",
   "prompt_uc.pill_title": "UC: {tags}",
   "prompt_uc.from_title": "UC z {name}: {tags}",
+  "gallery.group_layers": "Zestawy warstw",
+  "gallery.group_layers_header": "Warstwy Ming-Image ({count})",
+  "gallery.group_layers_other": "Inne obrazy",
+  "gallery.layer_badge": "Warstwa {index}/{total}",
+  "gallery.layer_item": "Warstwa",
+  "comic.panel1_ref": "Uzyj panelu 1 jako referencji postaci",
+  "comic.panel1_ref_tip": "Przekazuje wygenerowany obraz z panelu 1 jako referencje postaci do paneli 2-6 w obslugiwanych modelach.",
+  "comic.panel1_ref_unsupported": "Nieobslugiwane przez wybrany model. Wybierz NovelAI Precise Reference, model Edit lub Anima.",
+  "settings.civitai.proxy": "URL proxy CivitAI",
+  "settings.civitai.proxy_desc": "Opcjonalne proxy HTTP, HTTPS lub SOCKS5 uzywane wylacznie do zapytan API i pobierania modeli CivitAI.",
+  "settings.civitai.proxy_placeholder": "http://127.0.0.1:7890 lub socks5://127.0.0.1:1080",
+  "settings.civitai.proxy_saved_placeholder": "Proxy skonfigurowane (zostaw puste, aby zachowac)",
+  "settings.civitai.proxy_invalid": "Uzyj poprawnego adresu http://, https://, socks5:// lub socks5h://.",
 };
 export default pl;

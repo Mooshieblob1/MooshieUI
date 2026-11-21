@@ -1546,13 +1546,14 @@ impl AppState {
         // Reuse a file already on disk only if it is complete (format check,
         // or the server's length when the format cannot tell) and matches the
         // expected hash when one is supplied; otherwise download it again.
-        if reuse_existing_model_download(&self.http_client, url, &dest, filename, expected_sha256)
+        let http_client = self.http_client_for_url(url).await?;
+        if reuse_existing_model_download(&http_client, url, &dest, filename, expected_sha256)
             .await?
         {
             return Ok(());
         }
 
-        let mut req = self.http_client.get(url);
+        let mut req = http_client.get(url);
         if let Some(token) = huggingface_token_for_url(url) {
             req = req.bearer_auth(token);
         } else if is_civitai_url(url)
@@ -1737,8 +1738,8 @@ impl AppState {
             return Ok(None);
         }
 
-        let mut req = self
-            .http_client
+        let http_client = self.http_client_for_url(url).await?;
+        let mut req = http_client
             .get(url)
             .header(reqwest::header::RANGE, "bytes=0-0");
         if is_civitai_url(url) {

@@ -34,10 +34,12 @@
     restoreImages,
     savePage,
     stopRun,
+    supportsPanel1Reference,
     undoDraft,
   } from "../../utils/comicRunner.js";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { portal } from "../../utils/portal.js";
+  import InfoTip from "../ui/InfoTip.svelte";
   import ModelSelector from "../generation/ModelSelector.svelte";
   import SamplerSettings from "../generation/SamplerSettings.svelte";
   import DimensionControls from "../generation/DimensionControls.svelte";
@@ -88,6 +90,7 @@
   const tooManyForOneImage = $derived(oneImage && comic.enabledPanels.length > ONE_SHOT_MAX_PANELS);
   /** On NovelAI V5 the Prompt Assistant writes panels by the V5 Enhance rules, dialogue included. */
   const v5 = $derived(generation.isNovelAi && naiV5Variant(generation.checkpoint) !== null);
+  const canPanel1Ref = $derived(!oneImage && supportsPanel1Reference());
   const modelName = $derived((generation.checkpoint || "").split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "");
   const issueCount = $derived(
     Object.values(comic.results).reduce((n, r) => n + (r.issues?.length ?? 0), 0),
@@ -413,6 +416,19 @@
           />
           <span>{locale.t("comic.check_continuity")}</span>
         </label>
+        {#if !oneImage}
+          <label class="flex items-center gap-2 text-[11px] {canPanel1Ref ? 'text-neutral-300' : 'text-neutral-500'}">
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              checked={comic.usePanel1Ref}
+              disabled={!canPanel1Ref}
+              onchange={(e) => comic.setPageField("usePanel1Ref", (e.currentTarget as HTMLInputElement).checked)}
+            />
+            <span>{locale.t("comic.panel1_ref")}</span>
+            <InfoTip text={locale.t(canPanel1Ref ? "comic.panel1_ref_tip" : "comic.panel1_ref_unsupported")} />
+          </label>
+        {/if}
         <div class="flex flex-wrap gap-1.5">
           <button
             class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-indigo-500 disabled:opacity-40"
