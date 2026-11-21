@@ -65,7 +65,11 @@
   const isH3 = $derived(flow === "h3");
   const isGeneral = $derived(flow === "general");
   const exchanges = $derived(enhanceChat.exchanges(flow));
-  const sending = $derived(enhanceChat.sending?.flow === flow ? enhanceChat.sending : null);
+  const sending = $derived(
+    enhanceChat.sending?.flow === flow && enhanceChat.sending?.tabId === enhanceChat.activeTabId
+      ? enhanceChat.sending
+      : null,
+  );
   const error = $derived(enhanceChat.error?.flow === flow ? enhanceChat.error : null);
   const lastAt = $derived(exchanges[exchanges.length - 1]?.at);
   /**
@@ -120,19 +124,23 @@
     scroller?.scrollTo({ top: scroller.scrollHeight });
   }
 
-  // Each opening starts from the newest few exchanges again.
+  // Each opening (or tab switch) starts from the newest few exchanges again.
   $effect(() => {
-    if (enhanceChat.open) void flow;
+    if (enhanceChat.open) {
+      void flow;
+      void enhanceChat.activeTabId;
+    }
     shown = SHOWN_STEP;
   });
 
-  // New messages, an answer on its way, a failure, another flow, or the window
-  // opening: the newest message is the one to see.
+  // New messages, an answer on its way, a failure, another flow, another tab,
+  // or the window opening: the newest message is the one to see.
   $effect(() => {
     void exchanges.length;
     void sending;
     void error;
     void flow;
+    void enhanceChat.activeTabId;
     if (enhanceChat.open && enhanceChat.view === "chat") void scrollToEnd();
   });
 

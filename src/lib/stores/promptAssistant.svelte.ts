@@ -896,6 +896,8 @@ class PromptAssistantStore {
     signal?: AbortSignal;
     /** From the Enhance chat: the answer may carry a reply, or be one alone. */
     chat?: boolean;
+    /** Generation tab owning this request, so history reads/writes stay scoped to it. */
+    tabId?: string;
   }): Promise<{ prompt: string; reply: string; sessionUser: string; learned: LearnedMemory[] }> {
     const text = req.text.trim();
     const existing = req.existing?.trim() || null;
@@ -903,15 +905,19 @@ class PromptAssistantStore {
     // The same refusal the V5 rewrite makes, before anything is sent. Earlier
     // turns count because they go out as history with this one.
     assertAllowedRequest(
-      promptRequestTexts(text, existing, enhancerSessions.turns("enhance").map((turn) => turn.user)),
+      promptRequestTexts(text, existing, enhancerSessions.turns("enhance", req.tabId).map((turn) => turn.user)),
     );
     this.isGenerating = true;
     try {
-      const history = this.sessionHistory("enhance", {
-        systemTokens: RUST_SYSTEM_RESERVE_TOKENS + estimateTokens(req.opts.character_notes ?? ""),
-        userText: existing ? `${existing}\n${text}` : text,
-        maxOutputTokens: req.chat ? 640 : 384,
-      });
+      const history = this.sessionHistory(
+        "enhance",
+        {
+          systemTokens: RUST_SYSTEM_RESERVE_TOKENS + estimateTokens(req.opts.character_notes ?? ""),
+          userText: existing ? `${existing}\n${text}` : text,
+          maxOutputTokens: req.chat ? 640 : 384,
+        },
+        req.tabId,
+      );
       const opts = req.chat ? { ...req.opts, chat: true } : req.opts;
       const answer = await this.withStageListener(() =>
         existing
@@ -962,12 +968,12 @@ class PromptAssistantStore {
   }
 
   /** The flow's saved session, trimmed to fit, with the drop count published for the UI. */
-  private sessionHistory(flow: EnhancerFlow, budget: Omit<HistoryBudget, "contextTokens">) {
-    const built = buildHistory(enhancerSessions.turns(flow), {
+  private sessionHistory(flow: EnhancerFlow, budget: Omit<HistoryBudget, "contextTokens">, tabId?: string) {
+    const built = buildHistory(enhancerSessions.turns(flow, tabId), {
       ...budget,
       contextTokens: this.historyContextTokens,
     });
-    enhancerSessions.noteDropped(flow, built.droppedTurns);
+    enhancerSessions.noteDropped(flow, built.droppedTurns, tabId);
     return built;
   }
 
@@ -1064,6 +1070,8 @@ class PromptAssistantStore {
       signal?: AbortSignal;
       /** From the Enhance chat: the answer may carry a reply, or be one alone. */
       chat?: boolean;
+      /** Generation tab owning this request, so history reads/writes stay scoped to it. */
+      tabId?: string;
     } = {},
   ): Promise<H3RewriteResult & { sessionUser: string; reply: string }> {
     const usesFirstFrame =
@@ -1084,7 +1092,7 @@ class PromptAssistantStore {
     const validate = idle ? validateH3IdleResponse : validateH3Response;
     // Before the skill authoring call too, as in the V5 rewrite.
     assertAllowedRequest(
-      promptRequestTexts(text, existing, enhancerSessions.turns("h3").map((turn) => turn.user)),
+      promptRequestTexts(text, existing, enhancerSessions.turns("h3", extra.tabId).map((turn) => turn.user)),
     );
 
     this.isGenerating = true;
@@ -1105,11 +1113,15 @@ class PromptAssistantStore {
         const user =
           (existing && text ? h3EditUserPrompt(existing, request) : request) +
           h3ReferenceManifest(refs.map((r) => r.label));
-        const history = this.sessionHistory("h3", {
-          systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
-          userText: user,
-          maxOutputTokens: maxTokens,
-        });
+        const history = this.sessionHistory(
+          "h3",
+          {
+            systemTokens: estimateTokens(withSessionClause(baseSystem, 1)),
+            userText: user,
+            maxOutputTokens: maxTokens,
+          },
+          extra.tabId,
+        );
         const system = withSessionClause(baseSystem, history.sentTurns);
         const sessionUser = withImageMarker(
           withImageMarker(idea, image ? 1 : 0, "first-frame"),
@@ -1237,14 +1249,16 @@ class PromptAssistantStore {
     signal?: AbortSignal,
     /** From the Enhance chat: the answer may carry a reply, or be one alone. */
     chat = false,
+    tabId?: string,
   ): Promise<NaiRewriteResult & { raw: string; sessionUser: string; reply: string }> {
     // Before anything is sent, the skill authoring call included. The rating
     // also picks the vocabulary block, so an SFW request never carries the
     // explicit tag list.
+    const pastUsers = enhancerSessions.turns("nai", tabId).map((turn) => turn.user);
     ctx = {
       ...ctx,
       rating: assertAllowedRequest(
-        naiRequestTexts(prompt, ctx.existing, enhancerSessions.turns("nai").map((turn) => turn.user)),
+        naiRequestTexts(prompt, ctx.existing, pastUsers),
       ),
     };
     this.isGenerating = true;
@@ -1257,7 +1271,7 @@ class PromptAssistantStore {
           inSession: true,
           recipes: naiRecipeDirective([
             prompt,
-            ...enhancerSessions.turns("nai").map((turn) => turn.user),
+            ...pastUsers,
           ]),
         };
         // The chat rules go last, after the output contract they make an exception to.
@@ -1270,11 +1284,15 @@ class PromptAssistantStore {
             skill,
           ) + chatClause;
         const sessionUserTurn = naiUserPrompt(prompt, sessionCtx);
-        const history = this.sessionHistory("nai", {
-          systemTokens: estimateTokens(sessionSystem),
-          userText: sessionUserTurn,
-          maxOutputTokens: maxTokens,
-        });
+        const history = this.sessionHistory(
+          "nai",
+          {
+            systemTokens: estimateTokens(sessionSystem),
+            userText: sessionUserTurn,
+            maxOutputTokens: maxTokens,
+          },
+          tabId,
+        );
         // With history the turn is a revision of the newest answer; without it,
         // the ordinary rewrite from this text alone.
         const user =
