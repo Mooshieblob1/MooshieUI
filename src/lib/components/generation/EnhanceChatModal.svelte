@@ -101,8 +101,6 @@
   const sendable = $derived(!enhanceChat.busy && canSend(flow));
 
   function newChat() {
-    const count = enhancerSessions.count(sessionFlowOf(flow));
-    if (count > 0 && !confirm(locale.t("prompt_assistant.session_clear_confirm", { count }))) return;
     enhanceChat.newChat(flow);
   }
 
