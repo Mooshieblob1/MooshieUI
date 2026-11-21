@@ -165,8 +165,12 @@ pub fn effective_base_url(id: &str, configured: &str) -> String {
 
 /// Whether the user supplies this provider's API root. False for hosted
 /// providers, which pin theirs, and for companions, which do not use one.
-fn takes_user_base_url(id: &str) -> bool {
+pub fn is_custom_endpoint(id: &str) -> bool {
     provider(id).is_none_or(|p| p.base_url.is_empty() && p.wire != Wire::Companion)
+}
+
+fn takes_user_base_url(id: &str) -> bool {
+    is_custom_endpoint(id)
 }
 
 /// Whether two API roots send requests to the same place: scheme, host and
@@ -774,6 +778,24 @@ mod tests {
         // more usable than one already dead.
         assert!(needs_refresh(expires_at, expires_at - REFRESH_SKEW_SECS));
         assert!(needs_refresh(expires_at, expires_at + 1));
+    }
+
+    #[test]
+    fn custom_endpoint_distinguishes_self_hosted_and_hosted() {
+        assert!(is_custom_endpoint("custom"));
+        assert!(is_custom_endpoint("unknown-id"));
+        for id in [
+            "anthropic",
+            "openai",
+            "xai",
+            "xai-oauth",
+            "openrouter",
+            "nous",
+            "chatgpt",
+            "gemini-cli",
+        ] {
+            assert!(!is_custom_endpoint(id), "{id}");
+        }
     }
 }
 

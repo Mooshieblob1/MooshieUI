@@ -124,6 +124,29 @@ pub fn effective<'a>(picked: Option<&'a str>, model: &'a ModelEfforts) -> Option
     picked.or(model.default.as_deref())
 }
 
+/// How a custom OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM)
+/// should treat thinking before answering.
+///
+/// `Low` (MooshieUI's default) disables thinking via `enable_thinking: false`
+/// and/or `reasoning_effort: "none"`, with safe fallback if the endpoint rejects
+/// unknown fields. `Medium`/`High` ask for that reasoning effort, and
+/// `ModelDefault` leaves the request body untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CustomThinking {
+    Untouched,
+    Off,
+    Effort,
+}
+
+/// Map the owner's reasoning-effort setting to a custom server's thinking mode.
+pub fn custom(setting: Setting) -> CustomThinking {
+    match setting {
+        Setting::ModelDefault => CustomThinking::Untouched,
+        Setting::Low => CustomThinking::Off,
+        Setting::Medium | Setting::High => CustomThinking::Effort,
+    }
+}
+
 /// Extra output tokens to allow for thinking, on providers that count it
 /// against the same `max_tokens` as the answer (OpenAI, OpenRouter, Anthropic).
 ///
@@ -352,27 +375,40 @@ fn router_model(reasoning: &Value) -> Option<RouterModel> {
     })
 }
 
+/// Cached metadata for one entry of OpenRouter's `GET /models`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct RouterEntry {
+    reasoning: Option<RouterModel>,
+    vision: Option<bool>,
+}
+
+/// Whether OpenRouter's `architecture` block says the model accepts images.
+fn router_vision(arch: &Value) -> Option<bool> {
+    if let Some(modalities) = arch["input_modalities"].as_array() {
+        return Some(modalities.iter().any(|m| m.as_str() == Some("image")));
+    }
+    if let Some(modality) = arch["modality"].as_str() {
+        let input = modality.split("->").next().unwrap_or(modality);
+        return Some(input.to_ascii_lowercase().contains("image"));
+    }
+    None
+}
+
 /// How long a fetched model list stays good, and how long a failed fetch is
 /// remembered before the next request tries again.
 const ROUTER_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const ROUTER_RETRY: Duration = Duration::from_secs(5 * 60);
 
-type RouterCache = (Instant, Duration, HashMap<String, RouterModel>);
+type RouterCache = (Instant, Duration, HashMap<String, RouterEntry>);
 static ROUTER_CACHE: Mutex<Option<RouterCache>> = Mutex::new(None);
 
-/// OpenRouter's description of `model`, fetched once and cached.
-///
-/// `GET {base}/models` is public and lists every model's `reasoning` object
-/// (supported levels, default level, whether reasoning is always on). A
-/// failed fetch means "unknown", which leaves the request untouched.
-pub async fn openrouter(client: &reqwest::Client, base: &str, model: &str) -> Option<RouterModel> {
-    {
-        let cache = ROUTER_CACHE.lock().ok()?;
-        if let Some((at, ttl, models)) = cache.as_ref() {
-            if at.elapsed() < *ttl {
-                return models.get(model.trim()).cloned();
-            }
-        }
+async fn openrouter_entry(
+    client: &reqwest::Client,
+    base: &str,
+    model: &str,
+) -> Option<RouterEntry> {
+    if let Some(found) = cached_openrouter_entry(model) {
+        return Some(found);
     }
     let fetched = fetch_router_models(client, base).await;
     let (ttl, models) = match fetched {
@@ -389,10 +425,43 @@ pub async fn openrouter(client: &reqwest::Client, base: &str, model: &str) -> Op
     found
 }
 
+fn cached_openrouter_entry(model: &str) -> Option<RouterEntry> {
+    let cache = ROUTER_CACHE.lock().ok()?;
+    let (at, ttl, models) = cache.as_ref()?;
+    if at.elapsed() < *ttl {
+        models.get(model.trim()).cloned()
+    } else {
+        None
+    }
+}
+
+/// OpenRouter's description of `model`, fetched once and cached.
+///
+/// `GET {base}/models` is public and lists every model's `reasoning` object
+/// (supported levels, default level, whether reasoning is always on). A
+/// failed fetch means "unknown", which leaves the request untouched.
+pub async fn openrouter(client: &reqwest::Client, base: &str, model: &str) -> Option<RouterModel> {
+    openrouter_entry(client, base, model)
+        .await
+        .and_then(|e| e.reasoning)
+}
+
+/// Whether OpenRouter reports image input support for `model` (cached from `/models`).
+pub async fn openrouter_vision(client: &reqwest::Client, base: &str, model: &str) -> Option<bool> {
+    openrouter_entry(client, base, model)
+        .await
+        .and_then(|e| e.vision)
+}
+
+/// Non-blocking cache lookup for OpenRouter image support (for `llm_status`).
+pub fn cached_openrouter_vision(model: &str) -> Option<bool> {
+    cached_openrouter_entry(model).and_then(|e| e.vision)
+}
+
 async fn fetch_router_models(
     client: &reqwest::Client,
     base: &str,
-) -> Result<HashMap<String, RouterModel>, crate::error::AppError> {
+) -> Result<HashMap<String, RouterEntry>, crate::error::AppError> {
     let url = format!("{}/models", base.trim().trim_end_matches('/'));
     let resp = client
         .get(url)
@@ -414,10 +483,12 @@ async fn fetch_router_models(
         .map(|list| {
             list.iter()
                 .filter_map(|m| {
-                    Some((
-                        m["id"].as_str()?.to_string(),
-                        router_model(&m["reasoning"])?,
-                    ))
+                    let id = m["id"].as_str()?.to_string();
+                    let entry = RouterEntry {
+                        reasoning: router_model(&m["reasoning"]),
+                        vision: router_vision(&m["architecture"]),
+                    };
+                    Some((id, entry))
                 })
                 .collect()
         })
@@ -669,5 +740,34 @@ mod tests {
         );
         assert_eq!(acp_thought_level(Setting::Low, &json!([])), None);
         assert_eq!(acp_thought_level(Setting::Low, &Value::Null), None);
+    }
+
+    #[test]
+    fn custom_setting_maps_to_thinking_off_or_effort() {
+        assert_eq!(custom(Setting::Low), CustomThinking::Off);
+        assert_eq!(custom(Setting::Medium), CustomThinking::Effort);
+        assert_eq!(custom(Setting::High), CustomThinking::Effort);
+        assert_eq!(custom(Setting::ModelDefault), CustomThinking::Untouched);
+    }
+
+    #[test]
+    fn openrouter_architecture_reports_vision() {
+        assert_eq!(
+            router_vision(&json!({ "input_modalities": ["text", "image"] })),
+            Some(true)
+        );
+        assert_eq!(
+            router_vision(&json!({ "input_modalities": ["text"] })),
+            Some(false)
+        );
+        assert_eq!(
+            router_vision(&json!({ "modality": "text+image->text" })),
+            Some(true)
+        );
+        assert_eq!(
+            router_vision(&json!({ "modality": "text->text" })),
+            Some(false)
+        );
+        assert_eq!(router_vision(&Value::Null), None);
     }
 }

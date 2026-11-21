@@ -228,7 +228,8 @@
     // The gallery picker sits on top and closes itself on Escape.
     if (e.key === "Escape" && !pickerOpen) {
       e.stopPropagation();
-      if (enhanceChat.view === "review") enhanceChat.backToChat();
+      if (enhanceChat.view === "memory") enhanceChat.finishMemoryReview(false);
+      else if (enhanceChat.view === "review") enhanceChat.backToChat();
       else enhanceChat.close();
     }
   }
@@ -389,6 +390,37 @@
             <span class="text-[10px] text-emerald-400">✓ {locale.t("prompt_assistant.chat_applied")}</span>
           {/if}
         </div>
+        {#if m?.pendingMemory && m.pendingMemory.length > 0}
+          <div class="mt-2.5 space-y-1.5 border-t border-neutral-800 pt-2">
+            <div class="text-[10px] font-medium text-neutral-300">{locale.t("characters.memory.review_title")}</div>
+            {#each m.pendingMemory as item (item.key)}
+              <div class="flex items-center gap-1.5 rounded border border-neutral-800 bg-neutral-900/70 px-2 py-1">
+                <input type="checkbox" bind:checked={item.keep} class="shrink-0 accent-indigo-500" />
+                <span class="shrink-0 rounded bg-sky-500/15 px-1.5 py-px text-[10px] text-sky-300">{item.ownerName}</span>
+                <span class="shrink-0 font-mono text-[10px] text-neutral-400">{item.file}</span>
+                <input
+                  type="text"
+                  bind:value={item.fact}
+                  disabled={!item.keep}
+                  aria-label={`${item.ownerName} ${item.file}`}
+                  class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-[11px] text-neutral-100 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                />
+              </div>
+            {/each}
+            <div class="flex items-center justify-end gap-1.5">
+              <button class={btn} onclick={() => enhanceChat.resolveInlineMemory(ex.at, false)}>
+                {locale.t("characters.memory.discard")}
+              </button>
+              <button
+                class="rounded-lg bg-indigo-600 px-2 py-0.5 text-[10px] text-white hover:bg-indigo-500 disabled:opacity-40"
+                disabled={!m.pendingMemory.some((item) => item.keep && item.fact.trim())}
+                onclick={() => enhanceChat.resolveInlineMemory(ex.at, true)}
+              >
+                {locale.t("characters.memory.keep")}
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
     {#if isLast && m?.request}
@@ -428,7 +460,9 @@
       onkeydown={onPanelKeydown}
     >
       <header class="flex items-center gap-2 border-b border-neutral-800 px-3 py-2">
-        {#if enhanceChat.view === "review"}
+        {#if enhanceChat.view === "memory"}
+          <h2 class="truncate text-sm font-semibold text-neutral-100">{locale.t("characters.memory.review_title")}</h2>
+        {:else if enhanceChat.view === "review"}
           <button class={btn} onclick={() => enhanceChat.backToChat()}>← {locale.t("prompt_assistant.chat_back")}</button>
           <h2 class="truncate text-sm font-semibold text-neutral-100">{locale.t("prompt_assistant.nai_review_title")}</h2>
         {:else}
@@ -443,11 +477,53 @@
           {#if enhanceChat.view === "chat" && exchanges.length > 0}
             <button class={btn} onclick={newChat}>⟲ {locale.t("prompt_assistant.chat_new")}</button>
           {/if}
-          <button class={iconBtn} title={locale.t("common.close")} aria-label={locale.t("common.close")} onclick={() => enhanceChat.close()}>✕</button>
+          <button
+            class={iconBtn}
+            title={locale.t("common.close")}
+            aria-label={locale.t("common.close")}
+            onclick={() => (enhanceChat.view === "memory" ? enhanceChat.finishMemoryReview(false) : enhanceChat.close())}
+          >✕</button>
         </div>
       </header>
 
-      {#if enhanceChat.view === "review"}
+      {#if enhanceChat.view === "memory" && enhanceChat.memoryReview}
+        {@const rev = enhanceChat.memoryReview}
+        <div class="flex min-h-0 flex-1 flex-col gap-3 p-4">
+          <div class="min-h-0 flex-1 space-y-2 overflow-y-auto">
+            {#each rev.items as item (item.key)}
+              <div class="flex flex-col gap-1.5 rounded-lg border p-2.5 {item.keep ? 'border-neutral-700 bg-neutral-800/40' : 'border-neutral-800 opacity-60'}">
+                <label class="flex items-center gap-2 text-xs text-neutral-200">
+                  <input type="checkbox" bind:checked={item.keep} class="accent-indigo-500" />
+                  <span class="rounded bg-sky-500/15 px-1.5 py-px text-[10px] text-sky-300">{item.ownerName}</span>
+                  <span class="font-mono text-[11px] text-neutral-300">{item.file}</span>
+                </label>
+                <input
+                  type="text"
+                  bind:value={item.fact}
+                  disabled={!item.keep}
+                  aria-label={`${item.ownerName} ${item.file}`}
+                  class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                />
+              </div>
+            {/each}
+          </div>
+          <div class="flex items-center justify-end gap-2 border-t border-neutral-800 pt-3">
+            <button
+              class="rounded-lg px-3 py-1.5 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+              onclick={() => enhanceChat.finishMemoryReview(false)}
+            >
+              {locale.t("characters.memory.discard")}
+            </button>
+            <button
+              class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
+              disabled={!rev.items.some((item) => item.keep && item.fact.trim())}
+              onclick={() => enhanceChat.finishMemoryReview(true)}
+            >
+              {locale.t("characters.memory.keep")}
+            </button>
+          </div>
+        </div>
+      {:else if enhanceChat.view === "review"}
         <div class="min-h-0 flex-1 overflow-y-auto p-3">
           <NaiEnhanceReview />
         </div>
