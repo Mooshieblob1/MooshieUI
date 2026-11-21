@@ -999,12 +999,6 @@ const zh: Record<string, string> = {
   "generation.sampler.bit_16": "16 位",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "元数据",
-  "generation.sampler.metadata_tip": "如何将生成参数保存到图像中。'文本块'是标准 PNG 元数据。'隐写'将元数据隐藏在 alpha 通道中，即使在社交媒体重新上传后也能保留。'全部'两者都写入。",
-  "generation.sampler.metadata_text": "文本",
-  "generation.sampler.metadata_stealth": "隐写",
-  "generation.sampler.metadata_both": "全部",
-  "generation.sampler.metadata_upgraded": "16 位已启用 — 隐写 alpha 已升级为'全部'。",
   "generation.sampler.watermark": "水印",
   "generation.sampler.watermark_tip": "在每张保存的图像像素中隐藏一个不可见的 ID。副本因转发、缩放或截图丢失元数据时，把它拖回来即可恢复设置。首次使用会下载约 65 MB。",
   "generation.sampler.watermark_off": "关",

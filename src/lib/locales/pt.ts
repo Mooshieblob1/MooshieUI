@@ -999,12 +999,6 @@ const pt: Record<string, string> = {
   "generation.sampler.bit_16": "16-bit",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "Metadados",
-  "generation.sampler.metadata_tip": "Como os parâmetros de geração são salvos nas imagens. 'Text Chunk' são metadados PNG padrão. 'Stealth' esconde metadados no canal alfa e sobrevive a re-uploads em redes sociais. 'Ambos' grava em ambos os locais.",
-  "generation.sampler.metadata_text": "Texto",
-  "generation.sampler.metadata_stealth": "Stealth",
-  "generation.sampler.metadata_both": "Ambos",
-  "generation.sampler.metadata_upgraded": "16-bit ativo — Stealth Alpha atualizado para Ambos.",
   "generation.sampler.watermark": "Marca d'água",
   "generation.sampler.watermark_tip": "Esconde um ID invisível nos pixels de cada imagem salva. Se uma cópia perder os metadados (repostagem, redimensionamento, captura de tela), solte-a de volta e as configurações voltam. O primeiro uso baixa cerca de 65 MB.",
   "generation.sampler.watermark_off": "Não",

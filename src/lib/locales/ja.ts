@@ -1012,12 +1012,6 @@ const ja: Record<string, string> = {
   "generation.sampler.bit_16": "16ビット",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "メタデータ",
-  "generation.sampler.metadata_tip": "生成パラメータを画像に保存する方法。'テキストチャンク'は標準PNGメタデータ。'ステルスアルファ'はアルファチャンネルにメタデータを隠し、SNSの再アップロードでも保持されます。'両方'は両方の場所に書き込みます。",
-  "generation.sampler.metadata_text": "テキスト",
-  "generation.sampler.metadata_stealth": "ステルス",
-  "generation.sampler.metadata_both": "両方",
-  "generation.sampler.metadata_upgraded": "16ビット有効 — ステルスアルファは「両方」にアップグレードされました。",
   "generation.sampler.watermark": "透かし",
   "generation.sampler.watermark_tip": "保存するすべての画像のピクセルに見えないIDを埋め込みます。再投稿・リサイズ・スクリーンショットでメタデータが失われたコピーも、ドロップすれば設定が戻ります。初回は約65 MBをダウンロードします。",
   "generation.sampler.watermark_off": "オフ",

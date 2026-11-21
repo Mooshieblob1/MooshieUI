@@ -1020,12 +1020,6 @@ const de: Record<string, string> = {
   "generation.sampler.bit_16": "16-Bit",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "Metadaten",
-  "generation.sampler.metadata_tip": "Wie Erzeugungsparameter im Bild gespeichert werden. 'Text-Chunk' ist Standard-PNG-Metadaten. 'Stealth' versteckt Metadaten im Alpha-Kanal, überlebt auch Social-Media-Uploads. 'Beides' schreibt in beide.",
-  "generation.sampler.metadata_text": "Text",
-  "generation.sampler.metadata_stealth": "Stealth",
-  "generation.sampler.metadata_both": "Beides",
-  "generation.sampler.metadata_upgraded": "16-Bit aktiv — Stealth Alpha wurde auf 'Beides' hochgestuft.",
   "generation.sampler.watermark": "Wasserzeichen",
   "generation.sampler.watermark_tip": "Versteckt eine unsichtbare ID in den Pixeln jedes gespeicherten Bildes. Verliert eine Kopie ihre Metadaten (erneut gepostet, skaliert, Screenshot), zieh sie wieder hinein und die Einstellungen kommen zurück. Beim ersten Mal werden etwa 65 MB heruntergeladen.",
   "generation.sampler.watermark_off": "Aus",

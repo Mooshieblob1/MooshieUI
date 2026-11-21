@@ -999,12 +999,6 @@ const ru: Record<string, string> = {
   "generation.sampler.bit_16": "16-бит",
 
   "generation.sampler.bit_16_webp_disabled": "WebP output is always 8-bit: lossless WebP has no 16-bit mode. Pick PNG or JXL for 16-bit output.",
-  "generation.sampler.metadata": "Метаданные",
-  "generation.sampler.metadata_tip": "Как параметры генерации сохраняются в изображениях. 'Текстовый блок' — стандартные PNG-метаданные. 'Стелс' скрывает метаданные в альфа-канале и переживает перезагрузку в соцсети. 'Оба' записывает в оба места.",
-  "generation.sampler.metadata_text": "Текст",
-  "generation.sampler.metadata_stealth": "Стелс",
-  "generation.sampler.metadata_both": "Оба",
-  "generation.sampler.metadata_upgraded": "16-бит активен — Стелс Альфа обновлён до Оба.",
   "generation.sampler.watermark": "Водяной знак",
   "generation.sampler.watermark_tip": "Прячет невидимый ID в пикселях каждого сохранённого изображения. Если копия потеряла метаданные (репост, масштабирование, скриншот), перетащите её обратно, и настройки вернутся. При первом использовании загружается около 65 МБ.",
   "generation.sampler.watermark_off": "Выкл",

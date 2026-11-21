@@ -1427,9 +1427,13 @@ pub async fn embed_image_metadata_bytes(
     metadata: std::collections::HashMap<String, String>,
     metadata_mode: Option<String>,
 ) -> Result<Vec<u8>, AppError> {
-    let mode =
-        crate::metadata::MetadataMode::from_str(metadata_mode.as_deref().unwrap_or("text_chunk"));
-    crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
+    let _ = metadata_mode;
+    crate::metadata::embed_image_metadata(
+        &image_bytes,
+        &metadata,
+        crate::metadata::MetadataMode::Both,
+    )
+    .map_err(AppError::Other)
 }
 
 /// Tags related to one prompt tag, from Danbooru and from the gallery.
@@ -1814,33 +1818,12 @@ pub fn save_to_gallery_inner(
         metadata,
     );
 
-    let raw_mode = metadata_mode.unwrap_or("text_chunk");
-    let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
-
-    if matches!(detected_format, crate::metadata::ImageFormat::Png)
-        && embed_mode == crate::metadata::MetadataMode::StealthAlpha
-    {
-        match crate::metadata::is_png_16bit(bytes) {
-            Ok(true) => {
-                embed_mode = crate::metadata::MetadataMode::Both;
-                log::info!(
-                    "save_to_gallery_inner: forcing metadata mode to Both for 16-bit PNG (requested=stealth) to improve compatibility"
-                );
-            }
-            Ok(false) => {}
-            Err(e) => {
-                log::warn!(
-                    "save_to_gallery_inner: failed to detect PNG bit depth for metadata mode policy: {}",
-                    e
-                );
-            }
-        }
-    }
+    let _ = metadata_mode;
+    let embed_mode = crate::metadata::MetadataMode::Both;
 
     log::info!(
-        "save_to_gallery_inner: format={:?}, metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        "save_to_gallery_inner: format={:?}, effective_embed_mode={:?}, has_metadata={}",
         detected_format,
-        raw_mode,
         embed_mode,
         metadata.is_some()
     );
@@ -1902,7 +1885,7 @@ pub fn save_to_gallery_inner(
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
-        bytes.to_vec()
+        crate::metadata::ensure_iptc_ai_disclosure(bytes)
     };
 
     let (gallery_filename, path) = write_new_gallery_file(&dir, &rendered_base, ext, &final_bytes)?;
@@ -2409,10 +2392,10 @@ async fn load_gallery_png_at(path: &std::path::Path, filename: &str) -> Result<V
                 Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
                     &png,
                     &meta,
-                    crate::metadata::MetadataMode::TextChunk,
+                    crate::metadata::MetadataMode::Both,
                 )
-                .unwrap_or(png)),
-                _ => Ok(png),
+                .unwrap_or_else(|_| crate::metadata::ensure_iptc_ai_disclosure(&png))),
+                _ => Ok(crate::metadata::ensure_iptc_ai_disclosure(&png)),
             }
         })
         .await
@@ -3343,9 +3326,8 @@ pub async fn copy_gallery_image_to_clipboard(
 
     if filename.ends_with(".jxl") || filename.ends_with(".webp") {
         let src_bytes = std::fs::read(&path)?;
-        let mode = crate::metadata::MetadataMode::from_str(
-            metadata_mode.as_deref().unwrap_or("text_chunk"),
-        );
+        let _ = metadata_mode;
+        let mode = crate::metadata::MetadataMode::Both;
         let params = metadata.filter(|m| !m.is_empty());
         let png_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
             let decoded = decode_gallery_image(&src_bytes)?.into_rgba8();
@@ -3363,7 +3345,9 @@ pub async fn copy_gallery_image_to_clipboard(
                     crate::metadata::encode_png_with_metadata_rgba8(&rgba, width, height, &p, mode)
                 }
                 None => {
-                    crate::jxl::encode_rgba8_png(&rgba, width, height).map_err(|e| e.to_string())
+                    let png = crate::jxl::encode_rgba8_png(&rgba, width, height)
+                        .map_err(|e| e.to_string())?;
+                    Ok(crate::metadata::ensure_iptc_ai_disclosure(&png))
                 }
             }
         })

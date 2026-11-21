@@ -2430,14 +2430,14 @@ async fn embed_temp_metadata_handler(
             Err(_) => return (StatusCode::BAD_REQUEST, "Invalid metadata").into_response(),
         };
 
-    let metadata_mode = args["metadataMode"].as_str().unwrap_or("stealth");
+    let _ = args.get("metadataMode");
 
     let bytes = match crate::temp_images::load(temp_filename) {
         Some(b) => b,
         None => return (StatusCode::NOT_FOUND, "Temp image not found").into_response(),
     };
 
-    let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
+    let embed_mode = crate::metadata::MetadataMode::Both;
     let detected_format = crate::metadata::detect_format(&bytes);
 
     // A NovelAI PNG is never re-encoded. This endpoint exists so a browser
@@ -3456,10 +3456,10 @@ async fn dispatch_command(
                         Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
                             &png,
                             &meta,
-                            crate::metadata::MetadataMode::TextChunk,
+                            crate::metadata::MetadataMode::Both,
                         )
-                        .unwrap_or(png)),
-                        _ => Ok(png),
+                        .unwrap_or_else(|_| crate::metadata::ensure_iptc_ai_disclosure(&png))),
+                        _ => Ok(crate::metadata::ensure_iptc_ai_disclosure(&png)),
                     }
                 })
                 .await
@@ -4557,13 +4557,8 @@ async fn dispatch_command(
             let metadata: std::collections::HashMap<String, String> =
                 serde_json::from_value(args["metadata"].clone())
                     .map_err(|e| format!("Invalid metadata: {}", e))?;
-            let metadata_mode = args
-                .get("metadataMode")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let mode = crate::metadata::MetadataMode::from_str(
-                metadata_mode.as_deref().unwrap_or("text_chunk"),
-            );
+            let _ = args.get("metadataMode");
+            let mode = crate::metadata::MetadataMode::Both;
             let result = crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode)
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(result))
@@ -8628,16 +8623,8 @@ pub(crate) fn save_to_gallery_in_dir(
         _ => "png",
     };
 
-    let raw_mode = metadata_mode.unwrap_or("text_chunk");
-    let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
-
-    if matches!(detected_format, crate::metadata::ImageFormat::Png)
-        && embed_mode == crate::metadata::MetadataMode::StealthAlpha
-    {
-        if let Ok(true) = crate::metadata::is_png_16bit(bytes) {
-            embed_mode = crate::metadata::MetadataMode::Both;
-        }
-    }
+    let _ = metadata_mode;
+    let embed_mode = crate::metadata::MetadataMode::Both;
 
     // Watermark first (it rewrites the pixels), then embed the metadata.
     let protected = crate::watermark::protect_for_save(bytes, watermark);
@@ -8674,7 +8661,7 @@ pub(crate) fn save_to_gallery_in_dir(
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
-        bytes.to_vec()
+        crate::metadata::ensure_iptc_ai_disclosure(bytes)
     };
 
     // Never overwrite: the template can render one name for distinct images.
