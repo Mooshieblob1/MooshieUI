@@ -254,7 +254,16 @@ export interface ChatExchange {
 
 export type EnhanceLength = "short" | "medium" | "detailed";
 
+interface ParkedTabChat {
+  input: string;
+  references: NaiEnhanceReference[];
+  error: { flow: EnhanceFlow; text: string } | null;
+  meta: Record<number, ChatAnswerMeta>;
+}
+
 class EnhanceChatStore {
+  /** Which generation tab the active state belongs to. */
+  activeTabId = $state<string | null>(null);
   /** Whether the chat window is showing. Closing it keeps the conversation and any answer on its way. */
   open = $state(false);
   view = $state<EnhanceChatView>("chat");
@@ -265,7 +274,7 @@ class EnhanceChatStore {
   /** The flow whose answer is on its way, or null when nothing is running. */
   busyFlow = $state<EnhanceFlow | null>(null);
   /** The message on its way, shown in the conversation until its answer lands. */
-  sending = $state<{ flow: EnhanceFlow; text: string; references: NaiEnhanceReference[] } | null>(null);
+  sending = $state<{ flow: EnhanceFlow; tabId: string | null; text: string; references: NaiEnhanceReference[] } | null>(null);
   /** The newest failure, shown at the end of its flow's conversation. */
   error = $state<{ flow: EnhanceFlow; text: string } | null>(null);
   /** Per-answer extras, by the answer's session timestamp. */
@@ -299,6 +308,8 @@ class EnhanceChatStore {
   length = $state<EnhanceLength>("medium");
   includeArtists = $state(false);
 
+  private openTabIds = new Set<string>();
+  private parked = new Map<string, ParkedTabChat>();
   private snapshot: UndoSnapshot | null = null;
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -309,6 +320,54 @@ class EnhanceChatStore {
 
   get busy(): boolean {
     return this.busyFlow !== null;
+  }
+
+  private getOrCreateParked(tabId: string): ParkedTabChat {
+    return (
+      this.parked.get(tabId) ?? {
+        input: "",
+        references: [],
+        error: null,
+        meta: {},
+      }
+    );
+  }
+
+  /**
+   * Follow the generation tabs: park the outgoing tab's draft, errors and
+   * answer metadata, restore the incoming tab's, and forget closed tabs.
+   */
+  syncTabs(activeId: string, openIds: string[]): void {
+    this.openTabIds = new Set(openIds);
+    if (this.activeTabId !== null && this.activeTabId !== activeId) {
+      this.parked.set(this.activeTabId, {
+        input: this.input,
+        references: this.references,
+        error: this.error,
+        meta: this.meta,
+      });
+      const restored = this.parked.get(activeId);
+      this.input = restored?.input ?? "";
+      this.references = restored?.references ?? [];
+      this.error = restored?.error ?? null;
+      this.meta = restored?.meta ?? {};
+      this.view = "chat";
+      this.pending = null;
+      this.memoryReview = null;
+      this.curate = false;
+      this.canonPriority = "saved";
+      this.useMemory = true;
+      this.clearUndo();
+      if (this.open) this.flow = currentEnhanceFlow();
+    }
+    this.activeTabId = activeId;
+    this.parked.delete(activeId);
+    for (const id of this.parked.keys()) {
+      if (!this.openTabIds.has(id)) this.parked.delete(id);
+    }
+    if (this.sending?.tabId && !this.openTabIds.has(this.sending.tabId)) {
+      this.cancelRequest();
+    }
   }
 
   /** Open the chat window on a flow's conversation. */
@@ -341,12 +400,22 @@ class EnhanceChatStore {
    * Mark a request as started and hand back the signal its calls should carry.
    * Any request still running is cancelled first: only one answer can land.
    */
-  beginRequest(flow: EnhanceFlow, text: string, references: NaiEnhanceReference[]): AbortSignal {
+  beginRequest(
+    flow: EnhanceFlow,
+    text: string,
+    references: NaiEnhanceReference[],
+    tabId: string | null = this.activeTabId,
+  ): AbortSignal {
     this.cancelRequest();
     this.request = new AbortController();
     this.busyFlow = flow;
-    this.sending = { flow, text, references };
-    if (this.error?.flow === flow) this.error = null;
+    this.sending = { flow, tabId, text, references };
+    if (tabId && this.activeTabId && tabId !== this.activeTabId) {
+      const entry = this.parked.get(tabId);
+      if (entry?.error?.flow === flow) this.parked.set(tabId, { ...entry, error: null });
+    } else if (this.error?.flow === flow) {
+      this.error = null;
+    }
     return this.request.signal;
   }
 
@@ -365,7 +434,13 @@ class EnhanceChatStore {
   stop(): void {
     const sent = this.sending;
     this.cancelRequest();
-    if (sent && sent.flow === this.flow && !this.input.trim() && this.references.length === 0) {
+    if (
+      sent &&
+      sent.tabId === this.activeTabId &&
+      sent.flow === this.flow &&
+      !this.input.trim() &&
+      this.references.length === 0
+    ) {
       this.input = sent.text;
       this.references = sent.references;
     }
@@ -382,15 +457,45 @@ class EnhanceChatStore {
    * Add a finished exchange to its flow's conversation. Returns its timestamp,
    * or null when the session refused it (an empty side).
    */
-  addAnswer(flow: EnhanceFlow, user: string, assistant: string, meta: ChatAnswerMeta): number | null {
-    const at = enhancerSessions.record(sessionFlowOf(flow), user, assistant);
+  addAnswer(
+    flow: EnhanceFlow,
+    user: string,
+    assistant: string,
+    meta: ChatAnswerMeta,
+    tabId: string | null = this.activeTabId,
+  ): number | null {
+    const isParked = !!tabId && !!this.activeTabId && tabId !== this.activeTabId;
+    if (isParked && !this.openTabIds.has(tabId)) return null;
+    const at = enhancerSessions.record(sessionFlowOf(flow), user, assistant, tabId ?? undefined);
     if (at === null) return null;
+    if (isParked) {
+      const entry = this.getOrCreateParked(tabId);
+      entry.meta = { ...entry.meta, [at]: meta };
+      this.parked.set(tabId, entry);
+      return at;
+    }
     this.meta = { ...this.meta, [at]: meta };
     return at;
   }
 
   /** Show a failure at the end of the conversation, and give the user their message back. */
-  fail(flow: EnhanceFlow, text: string, request: ChatRequest): void {
+  fail(
+    flow: EnhanceFlow,
+    text: string,
+    request: ChatRequest,
+    tabId: string | null = this.activeTabId,
+  ): void {
+    if (tabId && this.activeTabId && tabId !== this.activeTabId) {
+      if (!this.openTabIds.has(tabId)) return;
+      const entry = this.getOrCreateParked(tabId);
+      entry.error = { flow, text };
+      if (!entry.input.trim() && entry.references.length === 0) {
+        entry.input = request.text;
+        entry.references = request.references;
+      }
+      this.parked.set(tabId, entry);
+      return;
+    }
     this.error = { flow, text };
     if (flow === this.flow && !this.input.trim() && this.references.length === 0) {
       this.input = request.text;
@@ -422,7 +527,9 @@ class EnhanceChatStore {
 
   /** Start the flow's conversation over, stopping an answer still on its way. */
   newChat(flow: EnhanceFlow): void {
-    if (this.busyFlow === flow) this.cancelRequest();
+    if (this.busyFlow === flow && (!this.sending?.tabId || this.sending.tabId === this.activeTabId)) {
+      this.cancelRequest();
+    }
     const gone = new Set(enhancerSessions.turns(sessionFlowOf(flow)).map((t) => t.at));
     enhancerSessions.clear(sessionFlowOf(flow));
     this.meta = Object.fromEntries(Object.entries(this.meta).filter(([at]) => !gone.has(Number(at))));
@@ -852,6 +959,13 @@ class EnhanceChatStore {
     this.undoTimer = setTimeout(() => (this.showUndo = false), UNDO_WINDOW_MS);
   }
 
+  private clearUndo(): void {
+    this.snapshot = null;
+    this.showUndo = false;
+    if (this.undoTimer) clearTimeout(this.undoTimer);
+    this.undoTimer = null;
+  }
+
   /**
    * Restore everything the last apply touched, including untouched slots. The
    * conversation keeps the answer: it can be applied again from there.
@@ -873,11 +987,8 @@ class EnhanceChatStore {
       generation.negativePrompt = snap.negativePrompt;
       generation.updateNovelAiSettings({ characters: snap.characters });
       generation.saveSettings();
-      this.snapshot = null;
     }
-    this.showUndo = false;
-    if (this.undoTimer) clearTimeout(this.undoTimer);
-    this.undoTimer = null;
+    this.clearUndo();
   }
 }
 

@@ -46,6 +46,8 @@
   import { generation } from "./lib/stores/generation.svelte.js";
   import { wildcards } from "./lib/stores/wildcards.svelte.js";
   import { generationTabs } from "./lib/stores/generationTabs.svelte.js";
+  import { enhanceChat } from "./lib/stores/enhanceChat.svelte.js";
+  import { enhancerSessions } from "./lib/stores/enhancerSessions.svelte.js";
   import GenerationTabStrip from "./lib/components/generation/GenerationTabStrip.svelte";
   import { music } from "./lib/stores/music.svelte.js";
   import { model3d } from "./lib/stores/model3d.svelte.js";
@@ -238,6 +240,17 @@
     const activeId = generationTabs.activeId;
     const openIds = generationTabs.tabs.map((tab) => tab.id);
     untrack(() => progress.syncTabs(activeId, openIds, generation.mode));
+  });
+
+  // Each generation tab keeps its own Enhance chat conversation and draft.
+  $effect(() => {
+    if (!generationTabs.loaded) return;
+    const activeId = generationTabs.activeId;
+    const openIds = generationTabs.tabs.map((tab) => tab.id);
+    untrack(() => {
+      enhancerSessions.syncTabs(activeId, openIds);
+      enhanceChat.syncTabs(activeId, openIds);
+    });
   });
 
   // Re-check what the picked VAE and text encoder files really are whenever a

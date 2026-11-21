@@ -81,16 +81,17 @@ export async function redoLast(flow: EnhanceFlow, at: number, priority?: "saved"
 }
 
 async function run(flow: EnhanceFlow, request: ChatRequest): Promise<void> {
-  const signal = enhanceChat.beginRequest(flow, request.text, request.references);
+  const tabId = enhanceChat.activeTabId;
+  const signal = enhanceChat.beginRequest(flow, request.text, request.references, tabId);
   try {
-    if (flow === "general") await runGeneral(request, signal);
-    else if (flow === "h3") await runH3(request, signal);
-    else await runNai(request, signal);
+    if (flow === "general") await runGeneral(request, signal, tabId);
+    else if (flow === "h3") await runH3(request, signal, tabId);
+    else await runNai(request, signal, tabId);
   } catch (e) {
     // Stopped on purpose: nothing went wrong, so nothing to say.
     if (signal.aborted || isLlmCancelled(e)) return;
     console.error(`Enhance chat (${flow}) failed:`, e);
-    enhanceChat.fail(flow, mapLlmError(String(e)), request);
+    enhanceChat.fail(flow, mapLlmError(String(e)), request, tabId);
   } finally {
     enhanceChat.endRequest(signal);
   }
@@ -158,26 +159,39 @@ function learnedMeta(
 }
 
 /** File an answer, or say it came back empty. */
-function file(flow: EnhanceFlow, request: ChatRequest, user: string, reply: string, prompt: string, meta: ChatAnswerMeta, signal: AbortSignal): void {
+function file(
+  flow: EnhanceFlow,
+  request: ChatRequest,
+  user: string,
+  reply: string,
+  prompt: string,
+  meta: ChatAnswerMeta,
+  signal: AbortSignal,
+  tabId: string | null,
+): void {
   if (signal.aborted) return;
   if (!reply.trim() && !prompt.trim()) {
-    enhanceChat.fail(flow, locale.t("prompt_assistant.couldnt_enhance"), request);
+    enhanceChat.fail(flow, locale.t("prompt_assistant.couldnt_enhance"), request, tabId);
     return;
   }
   // The user side is what the session stores; a message of images alone has
   // only their marker, and an empty one (rewrite the current prompt) the text
   // the flow worked from.
-  const at = enhanceChat.addAnswer(flow, user || request.text || "…", joinReply(reply, prompt), { ...meta, request });
-  if (at === null) enhanceChat.fail(flow, locale.t("prompt_assistant.couldnt_enhance"), request);
+  const at = enhanceChat.addAnswer(flow, user || request.text || "…", joinReply(reply, prompt), { ...meta, request }, tabId);
+  if (at === null) enhanceChat.fail(flow, locale.t("prompt_assistant.couldnt_enhance"), request, tabId);
 }
 
-async function runGeneral(request: ChatRequest, signal: AbortSignal): Promise<void> {
+async function runGeneral(request: ChatRequest, signal: AbortSignal, tabId: string | null): Promise<void> {
   const { text, references: refs } = request;
   const existing = generation.naiEnhanceIncludeExisting ? (generation.positivePrompt ?? "") : null;
   // Saved characters the request refers to bring their memory notes. The
   // minor check reads the notes too, as it does for the V5 roster. Earlier
   // turns of the session are sent along, so they are rated too.
-  const texts = promptRequestTexts(text, existing, enhancerSessions.turns("enhance").map((t) => t.user));
+  const texts = promptRequestTexts(
+    text,
+    existing,
+    enhancerSessions.turns("enhance", tabId ?? undefined).map((t) => t.user),
+  );
   const notes = memoryNotes(texts, existing ?? "");
   const noted = savedCharactersForRequest(
     savedCharacters.currentCharacters
@@ -199,14 +213,15 @@ async function runGeneral(request: ChatRequest, signal: AbortSignal): Promise<vo
     images: refs.map((r) => r.base64),
     signal,
     chat: true,
+    tabId: tabId ?? undefined,
   });
   const sentIds = new Set(noted.map((n) => n.id));
   file("general", request, result.sessionUser, result.reply, result.prompt, {
     ...learnedMeta(result.learned, sentIds, !!result.prompt.trim()),
-  }, signal);
+  }, signal, tabId);
 }
 
-async function runH3(request: ChatRequest, signal: AbortSignal): Promise<void> {
+async function runH3(request: ChatRequest, signal: AbortSignal, tabId: string | null): Promise<void> {
   const { text, references } = request;
   const result = await promptAssistant.enhanceForH3(
     text,
@@ -223,6 +238,7 @@ async function runH3(request: ChatRequest, signal: AbortSignal): Promise<void> {
       references: references.map((r) => ({ base64: r.base64, label: r.label })),
       signal,
       chat: true,
+      tabId: tabId ?? undefined,
     },
   );
   file("h3", request, result.sessionUser, result.reply, result.text, {
@@ -236,7 +252,7 @@ async function runH3(request: ChatRequest, signal: AbortSignal): Promise<void> {
         : result.idle
           ? { kind: "info", text: locale.t("prompt_assistant.h3_idle_applied") }
           : null,
-  }, signal);
+  }, signal, tabId);
 }
 
 /**
@@ -253,7 +269,7 @@ async function keptArtists(): Promise<string[]> {
   return extractNaiArtists(prompt, gallery.artistIndexReady ? gallery.artistTagIndex : null);
 }
 
-async function runNai(request: ChatRequest, signal: AbortSignal): Promise<void> {
+async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string | null): Promise<void> {
   const { text, references: refs } = request;
   const current = naiV5Variant(generation.checkpoint);
   if (!current) return;
@@ -278,7 +294,11 @@ async function runNai(request: ChatRequest, signal: AbortSignal): Promise<void> 
   // Rated here as well as in the store, because only this side has the saved
   // characters themselves: an explicit request leaves out the ones drawn as
   // minors, and refuses when it names one.
-  const texts = naiRequestTexts(text, existing, enhancerSessions.turns("nai").map((t) => t.user));
+  const texts = naiRequestTexts(
+    text,
+    existing,
+    enhancerSessions.turns("nai", tabId ?? undefined).map((t) => t.user),
+  );
   const notes = memoryNotes(texts, existing ? [existing.base, ...existing.characters].join("\n") : "");
   const roster = savedCharactersForRequest(
     savedCharacters.currentCharacters.map((c) => ({ ...c, notes: notes.get(c.id) ?? "" })),
@@ -309,6 +329,7 @@ async function runNai(request: ChatRequest, signal: AbortSignal): Promise<void> 
     refs.map((r: NaiEnhanceReference) => r.base64),
     signal,
     true,
+    tabId ?? undefined,
   );
   const parsed = result.parsed;
   let prompt = "";
@@ -340,5 +361,5 @@ async function runNai(request: ChatRequest, signal: AbortSignal): Promise<void> 
     problems: result.problems,
     canon: parsed.canon,
     ...learnedMeta(learned, sentIds, !!prompt && result.problems.length === 0),
-  }, signal);
+  }, signal, tabId);
 }
