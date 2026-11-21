@@ -181,7 +181,15 @@ export function mergeNovelAiTags(prompt: string, tags: string, where: "before" |
 export function mergeComfyTags(prompt: string, tags: string, where: "before" | "after"): string {
   if (!tags) return prompt;
   const own = splitTags(prompt);
-  const seen = new Set(own.map((tag) => tag.toLowerCase()));
+  const seen = new Set<string>();
+  for (const tag of own) {
+    // Split on BREAK / <break> when indexing seen tags so `BREAK masterpiece`
+    // without a comma still prevents prepending a duplicate `masterpiece`.
+    for (const part of tag.replace(/<break>/gi, " BREAK ").split(/\bBREAK\b/)) {
+      const key = part.trim().toLowerCase();
+      if (key) seen.add(key);
+    }
+  }
   const fresh: string[] = [];
   for (const tag of splitTags(tags)) {
     const key = tag.toLowerCase();
