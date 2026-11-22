@@ -179,6 +179,8 @@ function applyPositivePrompt(
     familyOverride,
   );
   generation.extraPositiveBoxes = [];
+  // The imported prompt already carries any generated camera tags.
+  generation.animaCameraEnabled = false;
   return true;
 }
 

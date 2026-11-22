@@ -16,6 +16,7 @@ import {
 } from "../utils/promptSanitize.js";
 import { expandRandomPrompt, hasRandomSyntax } from "../utils/randomPrompt.js";
 import { stripPromptComments } from "../utils/promptComments.js";
+import { animaCameraPrompt, appendAnimaCameraPrompt, normalizeAnimaCamera } from "../utils/animaCamera.js";
 import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   TURBO_MODEL_VARIANTS,
@@ -912,6 +913,8 @@ class GenerationStore {
   cameraElevation = $state(1);
   /** Index into CAMERA_DISTANCES (1 = medium shot). */
   cameraDistance = $state(1);
+  animaCameraEnabled = $state(false);
+  animaCamera = $state(normalizeAnimaCamera());
   styleTransferLowScaleEnd = $state(1.5);
   styleTransferHighScaleStart = $state(1.0);
   styleTransferBeta = $state(50);
@@ -1488,6 +1491,14 @@ class GenerationStore {
   /** True when the camera angle phrase (and its LoRA, if installed) goes out with the next edit. */
   get cameraAngleActive(): boolean {
     return this._mode === "image_edit" && this.isQwenEditPlus && this.cameraAngleEnabled;
+  }
+
+  get supportsAnimaCamera(): boolean {
+    return this.isAnima && ["txt2img", "img2img", "inpainting"].includes(this._mode);
+  }
+
+  get animaCameraPrompt(): string {
+    return animaCameraPrompt(this.animaCamera);
   }
 
   /** The shot phrase the next edit will carry, with the LoRA trigger when the LoRA is installed. */
@@ -3236,6 +3247,8 @@ class GenerationStore {
       this.cameraElevation = clampElevation(saved.cameraElevation);
     if (saved.cameraDistance !== undefined)
       this.cameraDistance = clampDistance(saved.cameraDistance);
+    this.animaCameraEnabled = saved.animaCameraEnabled === true;
+    this.animaCamera = normalizeAnimaCamera(saved.animaCamera);
     if (saved.videoVariant === "fl2va" || saved.videoVariant === "ref2va")
       this.videoVariant = saved.videoVariant;
     if (saved.videoDurationSeconds !== undefined)
@@ -3554,6 +3567,8 @@ class GenerationStore {
         cameraAzimuth: this.cameraAzimuth,
         cameraElevation: this.cameraElevation,
         cameraDistance: this.cameraDistance,
+        animaCameraEnabled: this.animaCameraEnabled,
+        animaCamera: this.animaCamera,
         styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
         styleTransferHighScaleStart: this.styleTransferHighScaleStart,
         styleTransferBeta: this.styleTransferBeta,
@@ -3755,6 +3770,8 @@ class GenerationStore {
       cameraAzimuth: this.cameraAzimuth,
       cameraElevation: this.cameraElevation,
       cameraDistance: this.cameraDistance,
+      animaCameraEnabled: this.animaCameraEnabled,
+      animaCamera: this.animaCamera,
       styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
       styleTransferHighScaleStart: this.styleTransferHighScaleStart,
       styleTransferBeta: this.styleTransferBeta,
@@ -4359,6 +4376,10 @@ class GenerationStore {
       if (!rest.toLowerCase().includes(phrase.toLowerCase())) {
         positivePrompt = rest ? `${phrase}, ${rest}` : phrase;
       }
+    }
+
+    if (this.supportsAnimaCamera && this.animaCameraEnabled && !ownPrompts) {
+      positivePrompt = appendAnimaCameraPrompt(positivePrompt, this.animaCameraPrompt);
     }
 
     // Auto-apply quality tags for supported model families.

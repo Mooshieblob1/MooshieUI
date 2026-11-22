@@ -11,6 +11,7 @@ Documentation for the current implementation. Start with the [repository README]
 | [NOVELAI.md](NOVELAI.md) | NovelAI architecture, personal keys, face detailing, local post-processing and historical test notes |
 | [RANDOM_PROMPTS.md](RANDOM_PROMPTS.md) | Seeded alternation, multiple choices, weights, nesting and escapes |
 | [STYLE_REFERENCE.md](STYLE_REFERENCE.md) | IP-Adapter/Flux Redux support, model files and controls |
+| [ANIMA_CAMERA.md](ANIMA_CAMERA.md) | Anima camera guide, framing, Extra Prompts and validation |
 | [MACOS.md](MACOS.md) | Apple Silicon installation, validation and support status |
 | [IMAGE_TO_3D.md](IMAGE_TO_3D.md) | Experimental Image to 3D: Pixal3D meshes, Idol splats, model files and the viewer |
 | [YuE2 integration](research/yue2-integration.md) | Native ComfyUI music support, model setup, and validation limits |
