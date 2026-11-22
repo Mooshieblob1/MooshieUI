@@ -1,5 +1,26 @@
 # Changelog
 
+## What's New in v2.4.7
+
+### Comic Builder
+- **Multi-page comic books & export**: create and manage multi-page books (**New book**, **+ Add page**, **Duplicate page**, reorder/delete pages), use **Save all** to save every page to the gallery, or export full books with **Export CBZ** and **Export PDF**.
+- **Cross-page character continuity**: upgraded **Character ref** selector with **Off**, **Page 1 Panel 1**, **Previous panel**, and **Cast portraits** modes (plus **+ From Characters** cast portrait picker) across pages.
+- **Freeform & overlapping layouts**: switch **Layout mode** between **Grid** and **Freeform** to add, move, resize, overlap, and reorder panels (**+ Panel**, **Layer up**, **Layer down**), with matching `boxes` support in MCP `create_comic`.
+- **Panel pan/zoom, border styles & take history**: frame generated panels with **Pan** mode (or `Alt`+drag and scroll wheel zoom, plus **Reset crop**), pick **Border** styles (**Standard**, **Borderless**, **Rounded**, **Slanted**), and step through **Previous take** / **Next take** variations per panel.
+- **Vector speech bubbles & Vertical JP lettering**: add vector speech bubbles (**+ Bubble** or **From dialogue**) across all models with **Speech**, **Thought**, **Shout**, and **Caption** shapes, **Sans**/**Serif**/**Comic**/**Mono** fonts, adjustable **Size**, draggable tails, and **Vertical JP** (`tategaki`) top-to-bottom lettering.
+- **Settings & prompt polish**: clearer pixel-budget sizing in Comic settings and tag autocomplete inside panel prompts.
+
+### Updates, Shortcuts & Backup
+- **What's New! popup**: shows release notes automatically after updating (including skipped versions) and can be reopened anytime from **What's new** in Settings.
+- **Automatic updates**: new desktop **Automatic updates** selector in Settings with **Off**, **Download in background**, and **Download and restart when idle** modes.
+- **Keyboard shortcuts**: press `Shift+?` to open the keyboard shortcut cheat sheet, and rebind hotkeys per account under **Keyboard shortcuts** in Settings.
+- **Backup & Restore**: export and restore characters, prompts, styles, LoRA presets, comics, shortcuts, and settings (plus sanitized app config and wildcard files for admins) as a single `.zip` archive with **Merge** and **Replace** modes.
+
+### Fixes
+- **Preview lightbox**: clicking the preview image after generation finishes now always opens the final image instead of a stale intermediate preview frame.
+
+---
+
 ## What's New in v2.4.6
 
 ### Prompt Assistant
