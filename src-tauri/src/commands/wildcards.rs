@@ -46,6 +46,11 @@ fn has_allowed_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Check whether `rel` is a safe relative wildcard path with an allowed extension.
+pub fn is_valid_relative_path(rel: &str) -> bool {
+    resolve_relative(Path::new(""), rel).is_ok()
+}
+
 /// Turn a user-supplied relative path into one inside `root`, or refuse it.
 fn resolve_relative(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
     let rel = rel.trim().replace('\\', "/");

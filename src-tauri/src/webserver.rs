@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{future::Future, pin::Pin};
 
-use axum::extract::{ConnectInfo, Path, State as AxumState};
+use axum::body::Bytes;
+use axum::extract::{ConnectInfo, Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -1117,6 +1118,16 @@ pub async fn start_server(
         .route(
             "/internal-api/_user/prefs",
             get(user_prefs_get_handler).put(user_prefs_put_handler),
+        )
+        // Single-ZIP backup & restore
+        .route("/internal-api/_backup/export", post(backup_export_handler))
+        .route(
+            "/internal-api/_backup/inspect",
+            post(backup_inspect_handler),
+        )
+        .route(
+            "/internal-api/_backup/apply_admin",
+            post(backup_apply_admin_handler),
         )
         // Storage management
         .route("/internal-api/_storage/info", get(storage_info_handler))
@@ -8736,6 +8747,160 @@ async fn user_prefs_put_handler(
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct BackupExportRequest {
+    bundle: crate::backup::BackupBundleInput,
+    include_admin_data: bool,
+}
+
+fn resolve_display_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> String {
+    if let Some(user) = resolve_username(state, headers, remote) {
+        return user;
+    }
+    if let Some(token) = extract_token(headers) {
+        if let Some(user) = state.auth.validate_token(&token) {
+            return user;
+        }
+    }
+    "admin".to_string()
+}
+
+/// POST /internal-api/_backup/export — stream a single-ZIP backup for the current account.
+/// Attaches sanitized `app_config.json` and `wildcards/` only when `UserRole::Admin` requests it.
+async fn backup_export_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<BackupExportRequest>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return unauthorized_response("Authentication required.");
+    }
+
+    let allow_admin = role == UserRole::Admin && req.include_admin_data;
+    let username = resolve_display_username(&state, &headers, &remote);
+    let app_config = if allow_admin {
+        Some(state.app.config.read().await.clone())
+    } else {
+        None
+    };
+
+    let built = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let wildcards = if allow_admin {
+            commands::wildcards::list()
+                .map_err(|e| e.to_string())?
+                .files
+        } else {
+            Vec::new()
+        };
+        let (bytes, _) =
+            crate::backup::build_backup_zip_with_manifest(crate::backup::BackupBuildParams {
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+                username,
+                bundle: req.bundle,
+                app_config,
+                wildcards,
+            })?;
+        Ok(bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|r| r);
+
+    match built {
+        Ok(bytes) => {
+            let date = chrono::Utc::now().format("%Y-%m-%d");
+            let disposition = format!("attachment; filename=\"mooshieui-backup-{date}.zip\"");
+            (
+                StatusCode::OK,
+                [
+                    (
+                        axum::http::header::CONTENT_TYPE,
+                        "application/zip".to_string(),
+                    ),
+                    (axum::http::header::CONTENT_DISPOSITION, disposition),
+                    (axum::http::header::CACHE_CONTROL, "no-store".to_string()),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_backup/inspect — accept a `.zip` upload (up to 64 MB) and return
+/// its manifest, parsed payloads, and item counts.
+async fn backup_inspect_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return unauthorized_response("Authentication required.");
+    }
+    if body.len() > crate::backup::MAX_ZIP_UPLOAD_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": "Backup archive exceeds 64 MB upload limit." })),
+        )
+            .into_response();
+    }
+
+    let bytes = body.to_vec();
+    let inspected =
+        tokio::task::spawn_blocking(move || crate::backup::inspect_backup_zip_bytes(&bytes))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r);
+
+    match inspected {
+        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_backup/apply_admin — admin-only endpoint to apply `app_config.json`
+/// and/or `wildcards/` from an uploaded `.zip` backup while preserving existing secrets.
+async fn backup_apply_admin_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(opts): Query<crate::backup::ApplyBackupAdminOptions>,
+    body: Bytes,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) != UserRole::Admin {
+        return forbidden_response("Admin access required.");
+    }
+    if body.len() > crate::backup::MAX_ZIP_UPLOAD_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": "Backup archive exceeds 64 MB upload limit." })),
+        )
+            .into_response();
+    }
+
+    match crate::backup::apply_backup_admin_data_bytes(&state.app, &body, &opts).await {
+        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),

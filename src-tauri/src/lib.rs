@@ -1,6 +1,7 @@
 pub mod architectures;
 pub mod attention;
 pub mod auth;
+pub mod backup;
 pub mod cloud;
 pub mod comfyui;
 #[cfg(any(feature = "desktop", feature = "server"))]
@@ -777,6 +778,9 @@ pub fn run() {
             commands::mcp::regenerate_mcp_token,
             commands::config::get_user_prefs,
             commands::config::save_user_prefs,
+            commands::backup::export_backup_zip,
+            commands::backup::inspect_backup_zip,
+            commands::backup::apply_backup_admin_data,
             commands::config::get_gallery_path,
             commands::config::set_gallery_path,
             commands::config::switch_to_browser_mode,

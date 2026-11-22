@@ -235,6 +235,11 @@ jobs:
           npx esbuild scripts/tests/updater.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/updater.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/updater.test.mjs"
 
+      - name: Backup merge tests
+        run: |
+          npx esbuild scripts/tests/backupMerge.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/backupMerge.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/backupMerge.test.mjs"
+
       - name: Keyboard shortcuts tests
         run: |
           npx esbuild scripts/tests/shortcuts.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/shortcuts.test.mjs" --log-level=warning
