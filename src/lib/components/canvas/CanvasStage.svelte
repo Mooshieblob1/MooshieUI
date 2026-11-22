@@ -5,6 +5,8 @@
   import { canvas, type ToolType } from "../../stores/canvas.svelte.js";
   import { canvasHistory } from "../../stores/canvasHistory.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import { isTypingTarget } from "../../utils/shortcuts.js";
   import ColorTooltip from "../ui/ColorTooltip.svelte";
 
   // Hide the editable inpaint mask while a finished result is being previewed, so
@@ -43,6 +45,7 @@
   let isDrawing = false;
   let isPanning = false;
   let isSpacePanning = false;
+  let panHoldKey: string | null = null;
   let currentLine: Konva.Line | null = null;
   let activeStrokeTool: "brush" | "eraser" | null = null;
   let lastPointerPos: { x: number; y: number } | null = null;
@@ -1163,9 +1166,11 @@
     }
 
     if (!canvas.isPointerOverStage) return;
+    if (e.defaultPrevented || document.querySelector("[data-modal-open]") || isTypingTarget(e.target)) return;
 
-    if (e.code === "Space" && !isSpacePanning && !e.repeat) {
+    if (shortcuts.matches("canvas.pan_hold", e) && !isSpacePanning && !e.repeat) {
       isSpacePanning = true;
+      panHoldKey = e.code || e.key.toLowerCase();
       canvas.setTool("view");
       e.preventDefault();
     }
@@ -1179,8 +1184,13 @@
   }
 
   function handleKeyUp(e: KeyboardEvent) {
-    if (e.code === "Space" && isSpacePanning) {
+    if (
+      isSpacePanning &&
+      ((panHoldKey && (e.code === panHoldKey || e.key.toLowerCase() === panHoldKey)) ||
+        (!shortcuts.isCustomized("canvas.pan_hold") && e.code === "Space"))
+    ) {
       isSpacePanning = false;
+      panHoldKey = null;
       canvas.restorePreviousTool();
     }
 

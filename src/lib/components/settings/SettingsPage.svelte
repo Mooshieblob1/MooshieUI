@@ -47,14 +47,26 @@
   import DOMPurify from "dompurify";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
   import { appVersion as getAppVersion } from "../../utils/platformInfo.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import {
+    DEFAULT_SHORTCUTS,
+    SHORTCUT_SCOPES,
+    detectConflict,
+    formatCombo,
+    normalizeCombo,
+    splitComboParts,
+    type ShortcutConflict,
+    type ShortcutScope,
+  } from "../../utils/shortcuts.js";
   import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 
   interface Props {
     userRole?: string;
     mobileFriendly?: boolean;
+    requestedCategory?: { key: string; seq: number } | null;
   }
 
-  let { userRole = "admin", mobileFriendly = false }: Props = $props();
+  let { userRole = "admin", mobileFriendly = false, requestedCategory = null }: Props = $props();
 
   // Layout override: only meaningful on a mobile-capable device in browser mode,
   // where the mobile shell exists. The control lets the user flip between the
@@ -1357,6 +1369,7 @@
     { key: "modelRequests", labelKey: "settings.sections.model_requests", keywords: "model requests approve deny pending download civitai hub" },
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "notifications", labelKey: "settings.sections.notifications", keywords: "notification desktop os system toast alert sound unfocused background window focus" },
+    { key: "shortcuts", labelKey: "settings.sections.shortcuts", keywords: "keyboard shortcuts hotkeys keybindings cheat sheet modal customize reset" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space artist kaloscope saved characters detect llm match" },
@@ -1410,6 +1423,66 @@
   $effect(() => {
     const keys = visibleCategories.map((sec) => sec.key);
     if (keys.length > 0 && !keys.includes(activeCategory)) activeCategory = keys[0];
+  });
+
+  $effect(() => {
+    const req = requestedCategory;
+    if (req && categoryAllowed(req.key)) {
+      selectCategory(req.key);
+    }
+  });
+
+  const shortcutIsMac =
+    typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
+  const shortcutScopeLabelKey: Record<ShortcutScope, string> = {
+    global: "shortcuts.scope.global",
+    generate: "shortcuts.scope.generate",
+    gallery: "shortcuts.scope.gallery",
+    lightbox: "shortcuts.scope.lightbox",
+    canvas: "shortcuts.scope.canvas",
+    prompt: "shortcuts.scope.prompt",
+    comic: "shortcuts.scope.comic",
+  };
+  let recordingShortcutId = $state<string | null>(null);
+  let pendingShortcutConflict = $state<{
+    actionId: string;
+    combo: string;
+    conflict: ShortcutConflict;
+  } | null>(null);
+
+  function startRecordingShortcut(id: string) {
+    recordingShortcutId = id;
+    pendingShortcutConflict = null;
+  }
+
+  function handleShortcutRecordKeydown(e: KeyboardEvent) {
+    if (!recordingShortcutId) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      recordingShortcutId = null;
+      return;
+    }
+
+    const combo = normalizeCombo(e);
+    if (!combo) return;
+
+    const actionId = recordingShortcutId;
+    recordingShortcutId = null;
+    const conflict = detectConflict(actionId, combo, shortcuts.customBindings);
+    if (conflict) {
+      pendingShortcutConflict = { actionId, combo, conflict };
+      return;
+    }
+    shortcuts.setBinding(actionId, combo);
+  }
+
+  $effect(() => {
+    if (!recordingShortcutId) return;
+    const handler = (e: KeyboardEvent) => handleShortcutRecordKeydown(e);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   });
 
   // Track original values for restart-needing settings
@@ -3836,6 +3909,160 @@
               </label>
             </div>
 
+          </div>
+        </section>
+        {/if}
+
+        <!-- Keyboard Shortcuts -->
+        {#if activeCategory === "shortcuts"}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden mb-4">
+          <div class="w-full flex items-center justify-between gap-3 p-5 text-sm font-medium text-neutral-200 border-b border-neutral-800/80">
+            <div class="flex items-center gap-1.5">
+              <span>{locale.t('settings.shortcuts.title')}</span>
+              <InfoTip text={locale.t('settings.shortcuts.tip')} />
+            </div>
+            <button
+              type="button"
+              disabled={Object.keys(shortcuts.customBindings).length === 0}
+              onclick={() => {
+                recordingShortcutId = null;
+                pendingShortcutConflict = null;
+                shortcuts.resetAll();
+              }}
+              class="px-3 py-1 rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {locale.t('settings.shortcuts.reset_all')}
+            </button>
+          </div>
+
+          <div class="p-5 space-y-5">
+            {#each SHORTCUT_SCOPES as scope (scope)}
+              {@const defs = DEFAULT_SHORTCUTS.filter((d) => d.scope === scope)}
+              {#if defs.length > 0}
+                <div>
+                  <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-300">
+                    {locale.t(shortcutScopeLabelKey[scope])}
+                  </h3>
+                  <div class="divide-y divide-neutral-800/80 rounded-lg border border-neutral-800 bg-neutral-950/40">
+                    {#each defs as def (def.id)}
+                      {@const combo = shortcuts.effectiveCombo(def.id)}
+                      {@const customized = shortcuts.isCustomized(def.id)}
+                      {@const isRecording = recordingShortcutId === def.id}
+                      {@const parts = splitComboParts(combo, shortcutIsMac)}
+                      <div class="px-3.5 py-2.5">
+                        <div class="flex items-center justify-between gap-3">
+                          <div class="flex min-w-0 items-center gap-2">
+                            <span class="truncate text-xs text-neutral-200">{locale.t(def.labelKey)}</span>
+                            {#if def.readOnly}
+                              <span
+                                class="shrink-0 rounded border border-neutral-700/80 bg-neutral-800/80 px-1.5 py-0.5 text-[10px] text-neutral-400"
+                                title={locale.t('shortcuts.read_only_tip')}
+                              >
+                                {locale.t('shortcuts.read_only')}
+                              </span>
+                            {:else if customized}
+                              <span class="shrink-0 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">
+                                {locale.t('shortcuts.customized')}
+                              </span>
+                            {/if}
+                          </div>
+
+                          <div class="flex shrink-0 items-center gap-2">
+                            {#if def.readOnly}
+                              <div class="flex items-center gap-1 opacity-80">
+                                {#each parts as part, idx (idx)}
+                                  {#if idx > 0}
+                                    <span class="text-[10px] text-neutral-500">+</span>
+                                  {/if}
+                                  <kbd class="inline-flex min-w-6 items-center justify-center rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 font-mono text-[11px] text-neutral-300">
+                                    {part}
+                                  </kbd>
+                                {/each}
+                              </div>
+                            {:else}
+                              <button
+                                type="button"
+                                onclick={() => startRecordingShortcut(def.id)}
+                                title={locale.t('shortcuts.click_to_record')}
+                                class="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs transition-colors {isRecording
+                                  ? 'border-indigo-400 bg-indigo-500/20 text-indigo-200 animate-pulse'
+                                  : customized
+                                    ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:border-indigo-400'
+                                    : 'border-neutral-700 bg-neutral-800/80 text-neutral-200 hover:border-neutral-500'}"
+                              >
+                                {#if isRecording}
+                                  <span class="font-mono text-[11px]">{locale.t('shortcuts.recording')}</span>
+                                {:else}
+                                  {#each parts as part, idx (idx)}
+                                    {#if idx > 0}
+                                      <span class="text-[10px] text-neutral-500">+</span>
+                                    {/if}
+                                    <kbd class="font-mono text-[11px]">{part}</kbd>
+                                  {/each}
+                                {/if}
+                              </button>
+
+                              {#if customized}
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    if (pendingShortcutConflict?.actionId === def.id) {
+                                      pendingShortcutConflict = null;
+                                    }
+                                    shortcuts.resetBinding(def.id);
+                                  }}
+                                  class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100 transition-colors"
+                                  title={locale.t('common.reset')}
+                                >
+                                  {locale.t('common.reset')}
+                                </button>
+                              {/if}
+                            {/if}
+                          </div>
+                        </div>
+
+                        {#if pendingShortcutConflict?.actionId === def.id}
+                          {@const conflictState = pendingShortcutConflict}
+                          <div class="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                            <span>
+                              {locale.t('shortcuts.conflict', {
+                                combo: formatCombo(conflictState.combo, shortcutIsMac),
+                                action: locale.t(conflictState.conflict.def.labelKey),
+                              })}
+                            </span>
+                            <div class="flex items-center gap-1.5">
+                              {#if !conflictState.conflict.def.readOnly}
+                                <button
+                                  type="button"
+                                  onclick={() => {
+                                    shortcuts.swapBindings(
+                                      conflictState.actionId,
+                                      conflictState.combo,
+                                      conflictState.conflict.conflictingId,
+                                    );
+                                    pendingShortcutConflict = null;
+                                  }}
+                                  class="rounded bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-500 transition-colors"
+                                >
+                                  {locale.t('shortcuts.swap')}
+                                </button>
+                              {/if}
+                              <button
+                                type="button"
+                                onclick={() => (pendingShortcutConflict = null)}
+                                class="rounded border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700 transition-colors"
+                              >
+                                {locale.t('common.cancel')}
+                              </button>
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            {/each}
           </div>
         </section>
         {/if}

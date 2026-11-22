@@ -3,6 +3,7 @@
   import { on } from "svelte/events";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { loraKeywords, normalizeKeyword } from "../../stores/loraKeywords.svelte.js";
@@ -658,7 +659,7 @@
 
   function handleKeydown(e: KeyboardEvent) {
     // Ctrl+/ comments out (or back in) the lines the selection touches.
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "/" || e.code === "Slash") && textareaEl) {
+    if (shortcuts.matches("prompt.toggle_comment", e) && textareaEl) {
       e.preventDefault();
       undoStack = [...undoStack, value];
       redoStack = [];
@@ -670,9 +671,14 @@
       });
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "f" || e.key === "h")) {
+    if (shortcuts.matches("prompt.find", e)) {
       e.preventDefault();
-      openFind(e.key === "h");
+      openFind(false);
+      return;
+    }
+    if (shortcuts.matches("prompt.replace", e)) {
+      e.preventDefault();
+      openFind(true);
       return;
     }
     if (e.key === "Escape" && findOpen && !showSuggestions) {
@@ -699,7 +705,9 @@
     }
 
     // Tag weight adjustment: Ctrl+Up/Down on selected text
-    if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowUp" || e.key === "ArrowDown") && textareaEl) {
+    const weightUp = shortcuts.matches("prompt.weight_up", e);
+    const weightDown = !weightUp && shortcuts.matches("prompt.weight_down", e);
+    if ((weightUp || weightDown) && textareaEl) {
       const start = textareaEl.selectionStart;
       const end = textareaEl.selectionEnd;
       if (start !== end && !isNonNumericWeightSelection(value.substring(start, end))) {
@@ -707,7 +715,7 @@
         // Push current value to undo stack before modifying
         undoStack = [...undoStack, value];
         redoStack = [];
-        adjustWeight(e.key === "ArrowUp" ? 0.05 : -0.05, start, end);
+        adjustWeight(weightUp ? 0.05 : -0.05, start, end);
         return;
       }
     }
