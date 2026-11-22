@@ -22,6 +22,7 @@ import {
   uploadImageBytes,
 } from "./api.js";
 import { buildCbzBlob, buildPdfBlob, type CbzPageInput, type PdfPageInput } from "./comicExport.js";
+import { drawBubbleOnCanvas } from "./comicBubbles.js";
 import {
   DRAFT_SYSTEM,
   ONE_SHOT_MAX_PANELS,
@@ -612,6 +613,9 @@ async function renderPageCanvas(pageIndex: number): Promise<HTMLCanvasElement> {
     }
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
+    for (const b of page.bubbles ?? []) {
+      drawBubbleOnCanvas(ctx, b, canvas.width, canvas.height);
+    }
     return canvas;
   }
 
@@ -711,6 +715,9 @@ async function renderPageCanvas(pageIndex: number): Promise<HTMLCanvasElement> {
       await drawPanel(id, panelPixelRect(rect, px, book.gutter), 0);
     }
   }
+  for (const b of page.bubbles ?? []) {
+    drawBubbleOnCanvas(ctx, b, canvas.width, canvas.height);
+  }
   return canvas;
 }
 
@@ -743,11 +750,15 @@ async function savePageAt(pageIndex: number): Promise<string> {
   if (!page || !comic.pageHasContent(page, book)) throw new Error(locale.t("comic.error_nothing_to_save"));
 
   let bytes: Uint8Array;
-  if (book.mode === "one_image") {
+  const hasBubbles = (page.bubbles?.length ?? 0) > 0;
+  if (book.mode === "one_image" && !hasBubbles) {
     if (page.pageImage) return page.pageImage;
     const url = comic.pageUrlForPage(page.id);
     if (!url) throw new Error(locale.t("comic.error_nothing_to_save"));
     bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  } else if (book.mode === "one_image") {
+    const blob = await assemblePageFor(pageIndex);
+    bytes = new Uint8Array(await blob.arrayBuffer());
   } else {
     const blob = await assemblePageFor(pageIndex);
     bytes = new Uint8Array(await blob.arrayBuffer());
@@ -765,7 +776,9 @@ async function savePageAt(pageIndex: number): Promise<string> {
     { positive_prompt: joinTags(book.style, effectiveSetting), comic_panels: summary },
   );
   await gallery.addPersistedImage(saved, undefined, true);
-  comic.setPage(comic.pageUrlForPage(page.id), saved, page.id);
+  if (book.mode !== "one_image" || !hasBubbles) {
+    comic.setPage(comic.pageUrlForPage(page.id), saved, page.id);
+  }
   return saved;
 }
 

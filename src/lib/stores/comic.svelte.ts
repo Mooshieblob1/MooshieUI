@@ -44,6 +44,13 @@ import {
   type RefMode,
   type SplitDir,
 } from "../utils/comicLayout.js";
+import {
+  bubblesFromDialogue,
+  clampBubble,
+  newBubble,
+  sanitizeBubbles,
+  type SpeechBubble,
+} from "../utils/comicBubbles.js";
 
 const BOOKS_STORAGE_KEY = "mooshieui.comic.books.v1";
 const LEGACY_PAGE_STORAGE_KEY = "mooshieui.comic.page.v1";
@@ -82,6 +89,8 @@ export interface ComicPageState {
   imageHistory: Record<string, string[]>;
   /** Assembled or one-image page gallery filename. */
   pageImage: string | null;
+  /** Client-side vector speech/thought/shout/caption bubbles overlaid on the page. */
+  bubbles: SpeechBubble[];
 }
 
 export interface ComicBook {
@@ -249,6 +258,7 @@ function createPage(partial?: Partial<ComicPageState>): ComicPageState {
     typeof partial?.pageImage === "string" && partial.pageImage && !partial.pageImage.startsWith("data:")
       ? partial.pageImage
       : null;
+  const bubbles = sanitizeBubbles(partial?.bubbles);
   return {
     id: typeof partial?.id === "string" && partial.id ? partial.id : newId("pg"),
     title: typeof partial?.title === "string" ? partial.title : "",
@@ -261,6 +271,7 @@ function createPage(partial?: Partial<ComicPageState>): ComicPageState {
     images,
     imageHistory,
     pageImage,
+    bubbles,
   };
 }
 
@@ -347,6 +358,8 @@ class ComicStore {
   drafting = $state(false);
   /** The panel the Prompt Assistant is rewriting on its own, if any. */
   enhancingId = $state<string | null>(null);
+  /** Currently selected vector speech bubble on the active page (clears on page switch). */
+  selectedBubbleId = $state<string | null>(null);
 
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private loaded = false;
@@ -430,6 +443,13 @@ class ComicStore {
   }
   set overflowPanels(v: ComicPanel[]) {
     this.activePage.overflowPanels = v;
+  }
+
+  get bubbles(): SpeechBubble[] {
+    return this.activePage.bubbles;
+  }
+  set bubbles(v: SpeechBubble[]) {
+    this.activePage.bubbles = v;
   }
 
   get overflowResults(): Array<PanelResult | undefined> {
@@ -646,6 +666,10 @@ class ComicStore {
     return this.selectedId ? (this.panels[this.selectedId] ?? null) : null;
   }
 
+  get selectedBubble(): SpeechBubble | null {
+    return this.selectedBubbleId ? (this.bubbles.find((b) => b.id === this.selectedBubbleId) ?? null) : null;
+  }
+
   get canUndo(): boolean {
     return this.rt().history.length > 0;
   }
@@ -666,6 +690,7 @@ class ComicStore {
         overflowPanels: this.overflowPanels,
         layoutMode: this.layoutMode,
         freeformBoxes: this.freeformBoxes,
+        bubbles: this.bubbles,
         imageHistory: this.activePage.imageHistory,
       }),
     ];
@@ -889,6 +914,7 @@ class ComicStore {
         overflowPanels?: unknown[];
         layoutMode?: LayoutMode;
         freeformBoxes?: FreeformBox[];
+        bubbles?: unknown[];
         imageHistory?: Record<string, string[]>;
       };
       if (!isLayout(state.layout)) return;
@@ -896,6 +922,12 @@ class ComicStore {
       this.panels = state.panels;
       this.overflowPanels = normalizeOverflowPanels(state.overflowPanels);
       this.overflowResults = this.overflowPanels.map((_, i) => this.overflowResults[i]);
+      if (Array.isArray(state.bubbles)) {
+        this.bubbles = sanitizeBubbles(state.bubbles);
+        if (this.selectedBubbleId && !this.bubbles.some((b) => b.id === this.selectedBubbleId)) {
+          this.selectedBubbleId = null;
+        }
+      }
       this.overflowHistories = this.overflowPanels.map((_, i) => this.overflowHistories[i]);
       if (state.layoutMode === "freeform" && isFreeformBoxes(state.freeformBoxes) && state.freeformBoxes.length > 0) {
         this.layoutMode = "freeform";
@@ -927,6 +959,7 @@ class ComicStore {
     this.ensureRt(page.id);
     this.activeBook.pages = [...this.activeBook.pages, page];
     this.activeBook.activePageIndex = this.activeBook.pages.length - 1;
+    this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -949,12 +982,14 @@ class ComicStore {
       images: {},
       imageHistory: {},
       pageImage: null,
+      bubbles: src.bubbles.map((b) => ({ ...b, id: newId("b") })),
     });
     this.ensureRt(copy.id);
     const pages = [...this.activeBook.pages];
     pages.splice(index + 1, 0, copy);
     this.activeBook.pages = pages;
     this.activeBook.activePageIndex = index + 1;
+    this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -970,6 +1005,7 @@ class ComicStore {
     const cur = this.activeBook.activePageIndex;
     if (cur >= pages.length) this.activeBook.activePageIndex = pages.length - 1;
     else if (index < cur) this.activeBook.activePageIndex = cur - 1;
+    this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -989,6 +1025,7 @@ class ComicStore {
     if (index < 0 || index >= this.activeBook.pages.length) return;
     this.activeBook.activePageIndex = index;
     this.ensureRt(this.activePage.id);
+    this.selectedBubbleId = null;
     this.persistSoon();
   }
 
@@ -999,6 +1036,7 @@ class ComicStore {
     const book = createBook({ title: title?.trim() || undefined }, this.books.length + 1);
     this.books = [...this.books, book];
     this.activeBookId = book.id;
+    this.selectedBubbleId = null;
     this.ensureAllRuntimes();
     this.persist();
   }
@@ -1007,6 +1045,7 @@ class ComicStore {
     if (this.running) return;
     if (!this.books.some((b) => b.id === id)) return;
     this.activeBookId = id;
+    this.selectedBubbleId = null;
     this.ensureAllRuntimes();
     this.persistSoon();
   }
@@ -1040,7 +1079,78 @@ class ComicStore {
       this.books = nextBooks;
       if (this.activeBookId === id) this.activeBookId = nextBooks[0].id;
     }
+    this.selectedBubbleId = null;
     this.ensureAllRuntimes();
+    this.persist();
+  }
+
+  // --- vector speech bubbles ---
+
+  addBubble(panelId?: string): string {
+    this.remember();
+    const rect = panelId ? this.rects.get(panelId) : undefined;
+    const stagger = (this.bubbles.length % 5) * 0.025;
+    let bubble: SpeechBubble;
+    if (rect) {
+      const w = Math.min(0.32, Math.max(0.08, rect.w * 0.65));
+      const h = Math.min(0.16, Math.max(0.05, rect.h * 0.32));
+      const x = rect.x + Math.max(0.01, (rect.w - w) * 0.5 + (stagger - 0.02));
+      const y = rect.y + Math.min(rect.h - h - 0.01, 0.02 + stagger);
+      bubble = newBubble({
+        panelId,
+        x,
+        y,
+        w,
+        h,
+        tailX: x + w * 0.5,
+        tailY: Math.min(rect.y + rect.h - 0.02, y + h + 0.06),
+      });
+    } else {
+      bubble = newBubble({
+        x: 0.34 + stagger,
+        y: 0.14 + stagger,
+        w: 0.28,
+        h: 0.14,
+      });
+    }
+    this.bubbles = [...this.bubbles, bubble];
+    this.selectedBubbleId = bubble.id;
+    this.persist();
+    return bubble.id;
+  }
+
+  syncDialogueToBubbles(panelId: string, clearDialogue = false): SpeechBubble[] {
+    const panel = this.panels[panelId];
+    const rect = this.rects.get(panelId);
+    if (!panel || !rect) return [];
+    const created = bubblesFromDialogue(panelId, rect, panel.dialogue);
+    if (created.length === 0 && !clearDialogue) return [];
+    this.remember();
+    if (clearDialogue) {
+      this.panels = { ...this.panels, [panelId]: { ...panel, dialogue: "" } };
+    }
+    if (created.length > 0) {
+      this.bubbles = [...this.bubbles, ...created];
+      this.selectedBubbleId = created[0].id;
+    }
+    this.persist();
+    return created;
+  }
+
+  beginBubbleEdit() {
+    this.remember();
+  }
+
+  updateBubble(id: string, patch: Partial<SpeechBubble>) {
+    this.bubbles = this.bubbles.map((b) => (b.id === id ? clampBubble({ ...b, ...patch, id }) : b));
+    this.persistSoon();
+  }
+
+  removeBubble(id: string) {
+    if (!this.bubbles.some((b) => b.id === id)) return;
+    this.remember();
+    this.bubbles = this.bubbles.filter((b) => b.id !== id);
+    if (this.selectedBubbleId === id) this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -1327,6 +1437,8 @@ class ComicStore {
     this.activePage.images = {};
     this.activePage.imageHistory = {};
     this.activePage.overflowPanels = [];
+    this.bubbles = [];
+    this.selectedBubbleId = null;
     this.layout = defaultLayout();
     this.layoutMode = "grid";
     this.freeformBoxes = [];
