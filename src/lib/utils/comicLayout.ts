@@ -542,6 +542,65 @@ export function newPanel(id: string): ComicPanel {
   return { id, beat: "", prompt: "", negative: "", enabled: true, cast: [], setting: "", dialogue: "" };
 }
 
+/** True when a panel holds any user-authored beat, prompt, dialogue, setting, or cast assignment. */
+export function isPanelNonEmpty(panel: ComicPanel): boolean {
+  return (
+    panel.beat.trim().length > 0 ||
+    panel.prompt.trim().length > 0 ||
+    panel.negative.trim().length > 0 ||
+    panel.dialogue.trim().length > 0 ||
+    panel.setting.trim().length > 0 ||
+    panel.cast.length > 0
+  );
+}
+
+/**
+ * Re-map active + stashed overflow panels onto a template's reading-order ids.
+ * Panels beyond the new layout's slot count that still hold content are kept in
+ * overflow (with index-aligned results) so switching to a larger layout restores them.
+ */
+export function applyTemplateToPanels<T>(
+  orderedPanels: ComicPanel[],
+  orderedResults: Array<T | undefined>,
+  overflowPanels: ComicPanel[],
+  overflowResults: Array<T | undefined>,
+  newIds: string[],
+): {
+  panels: Record<string, ComicPanel>;
+  results: Record<string, T>;
+  overflowPanels: ComicPanel[];
+  overflowResults: Array<T | undefined>;
+} {
+  const pool = [...orderedPanels, ...overflowPanels];
+  const resultPool: Array<T | undefined> = [...orderedResults, ...overflowResults];
+  const panels: Record<string, ComicPanel> = {};
+  const results: Record<string, T> = {};
+
+  newIds.forEach((id, i) => {
+    const old = pool[i];
+    panels[id] = old ? { ...old, id } : newPanel(id);
+    const res = resultPool[i];
+    if (res !== undefined) results[id] = res;
+  });
+
+  const nextOverflowPanels: ComicPanel[] = [];
+  const nextOverflowResults: Array<T | undefined> = [];
+  for (let i = newIds.length; i < pool.length; i++) {
+    const panel = pool[i];
+    if (isPanelNonEmpty(panel)) {
+      nextOverflowPanels.push(panel);
+      nextOverflowResults.push(resultPool[i]);
+    }
+  }
+
+  return {
+    panels,
+    results,
+    overflowPanels: nextOverflowPanels,
+    overflowResults: nextOverflowResults,
+  };
+}
+
 /** A panel's speech bubbles: one per non-blank line. */
 export function dialogueLines(text: string): string[] {
   return text

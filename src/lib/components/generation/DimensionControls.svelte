@@ -11,8 +11,9 @@
 
   interface Props {
     suggestedAspect?: { w: number; h: number } | null;
+    pixelBudgetOnly?: boolean;
   }
-  let { suggestedAspect = null }: Props = $props();
+  let { suggestedAspect = null, pixelBudgetOnly = false }: Props = $props();
 
   const AR_COLLAPSE_KEY = "mooshieui.generation.aspectRatioCollapsed.v1";
   let arOpen = $state(localStorage.getItem(AR_COLLAPSE_KEY) !== "true");
@@ -295,6 +296,7 @@
 </script>
 
 <div class="space-y-3">
+  {#if !pixelBudgetOnly}
   <!-- Aspect Ratio -->
   <div>
     <div class="flex items-center mb-1.5">
@@ -389,6 +391,7 @@
     </div>
     {/if}
   </div>
+  {/if}
 
   <!-- Side Length -->
   <div>
@@ -463,10 +466,20 @@
   </div>
 
   <!-- Resulting dimensions -->
-  <div class="flex items-center justify-between text-xs text-neutral-400">
-    <span>{locale.t('generation.dimensions.result')}</span>
-    <span class="text-neutral-200">{generation.width} &times; {generation.height}</span>
-  </div>
+  {#if pixelBudgetOnly}
+    {@const budgetPixels = Math.max(1, generation.width * generation.height)}
+    {@const equivSide = Math.round(Math.sqrt(budgetPixels))}
+    {@const mp = locale.formatDecimal(budgetPixels / 1_000_000, 2)}
+    <div class="flex items-center justify-between text-xs text-neutral-400">
+      <span>{locale.t('generation.dimensions.pixel_budget')}<InfoTip text={locale.t('generation.dimensions.pixel_budget_tip')} /></span>
+      <span class="text-neutral-200">~{equivSide} &times; {equivSide} ({mp} MP)</span>
+    </div>
+  {:else}
+    <div class="flex items-center justify-between text-xs text-neutral-400">
+      <span>{locale.t('generation.dimensions.result')}</span>
+      <span class="text-neutral-200">{generation.width} &times; {generation.height}</span>
+    </div>
+  {/if}
 
   {#if generation.supportsTransparentBackground}
     <label class="flex items-center gap-2 text-xs text-neutral-400 cursor-pointer">

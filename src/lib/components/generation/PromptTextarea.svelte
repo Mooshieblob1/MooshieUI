@@ -41,10 +41,13 @@
 
   interface Props {
     value: string;
+    id?: string;
+    ariaLabel?: string;
     placeholder?: string;
     rows?: number;
     minHeight?: string;
     storageKey?: string;
+    compact?: boolean;
     /**
      * Danbooru tag assistance: the completion dropdown, the unknown-tag
      * spellcheck underline, and the clickable-tag overlay. One flag rather than
@@ -80,14 +83,24 @@
 
   let {
     value = $bindable(),
+    id,
+    ariaLabel,
     placeholder = "",
     rows = 4,
     minHeight = "min-h-25",
     storageKey,
+    compact = false,
     tagAssist = true,
     highlightLoraWords = false,
     suggestLoraKeywords = true,
   }: Props = $props();
+
+  const textBoxTypography = $derived(compact ? "px-2 py-1 text-xs leading-4" : "px-3 py-2 text-sm leading-5");
+  const toolbarButtonClass = $derived(
+    compact
+      ? "shrink-0 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[10px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      : "shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+  );
 
   // Restored height is applied as inline style (set in $effect on mount).
   let resizeStyle = $state("");
@@ -1407,11 +1420,11 @@
 <div class="relative">
   <!-- Always rendered so the textarea never shifts; buttons stay disabled until
        text is selected, which guards against inserting empty weight wrappers. -->
-  <div class="mb-2 flex items-center gap-1.5">
+  <div class="{compact ? 'mb-1 flex flex-wrap items-center gap-1' : 'mb-2 flex items-center gap-1.5'}">
     <button
       type="button"
       disabled={!canAdjustWeight}
-      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class={toolbarButtonClass}
       title={canAdjustWeight ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(0.05)}
@@ -1421,7 +1434,7 @@
     <button
       type="button"
       disabled={!canAdjustWeight}
-      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class={toolbarButtonClass}
       title={canAdjustWeight ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(-0.05)}
@@ -1431,7 +1444,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class={toolbarButtonClass}
       title={hasSelection ? locale.t('generation.prompt.wrap_stronger') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("brace")}
@@ -1441,7 +1454,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class={toolbarButtonClass}
       title={hasSelection ? locale.t('generation.prompt.wrap_weaker') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("bracket")}
@@ -1451,14 +1464,14 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="shrink-0 rounded border px-2 py-1 text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed {relatedOpen ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10' : 'border-neutral-700 bg-neutral-900 text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300'}"
+      class="shrink-0 rounded border {compact ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-1 text-[11px]'} transition-colors disabled:opacity-40 disabled:cursor-not-allowed {relatedOpen ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10' : 'border-neutral-700 bg-neutral-900 text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300'}"
       title={hasSelection ? locale.t('generation.prompt.related_title') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => { void openRelated(); }}
     >
       {locale.t('generation.prompt.related')}
     </button>
-    {#if !hasSelection}
+    {#if !hasSelection && !compact}
       <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
     <span
@@ -1605,18 +1618,20 @@
     {#if showBackdrop}
       <div
         bind:this={backdropEl}
-        class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent"
+        class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg {textBoxTypography} whitespace-pre-wrap break-words border border-transparent"
         style="color: transparent; z-index: 0; {gutterStyle}"
       >{@html highlightedHtml}</div>
     {/if}
 
     <textarea
+      {id}
+      aria-label={ariaLabel}
       bind:this={textareaEl}
       bind:value
       spellcheck={false}
       {placeholder}
       {rows}
-      class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors break-words {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
+      class="w-full border border-neutral-700 rounded-lg {textBoxTypography} text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors break-words {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
       style="position: relative; z-index: 1; scrollbar-gutter: stable; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
       onkeydown={handleKeydown}
       oninput={handleInput}
@@ -1638,7 +1653,7 @@
       <div
         bind:this={clickMirrorEl}
         aria-hidden="true"
-        class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
+        class="absolute inset-0 overflow-hidden rounded-lg {textBoxTypography} whitespace-pre-wrap break-words border border-transparent select-none"
         style="pointer-events: none; color: transparent; z-index: 2; {gutterStyle}"
       >{value}</div>
 
@@ -1681,7 +1696,7 @@
       <div
         bind:this={spellcheckOverlayEl}
         aria-hidden="true"
-        class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
+        class="absolute inset-0 overflow-hidden rounded-lg {textBoxTypography} whitespace-pre-wrap break-words border border-transparent select-none"
         style="pointer-events: none; color: transparent; z-index: 3; {gutterStyle}"
       >
         {#each spellcheckPieces as piece (piece.start + ':' + piece.end)}

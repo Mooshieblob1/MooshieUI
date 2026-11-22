@@ -4,6 +4,7 @@ import {
   LAYOUT_TEMPLATES,
   MAX_PANELS,
   MIN_BOX_SIZE,
+  applyTemplateToPanels,
   buildTemplate,
   clampFreeformBox,
   colourAttribute,
@@ -13,6 +14,7 @@ import {
   freeformRects,
   isFreeformBoxes,
   isLayout,
+  isPanelNonEmpty,
   layoutForCount,
   oneShotBasePrompt,
   oneShotCentre,
@@ -313,4 +315,84 @@ test("layoutForCount builds valid trees for 1..MAX_PANELS", () => {
     const area = [...panelRects(node).values()].reduce((s, r) => s + r.w * r.h, 0);
     assert.ok(Math.abs(area - 1) < 1e-9);
   }
+});
+
+test("isPanelNonEmpty checks content fields and cast assignments", () => {
+  const empty = newPanel("p1");
+  assert.equal(isPanelNonEmpty(empty), false);
+  assert.equal(isPanelNonEmpty({ ...empty, prompt: "   \n  " }), false);
+  assert.equal(isPanelNonEmpty({ ...empty, beat: "enters" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, prompt: "1girl" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, negative: "blurry" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, dialogue: "Hi!" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, setting: "rooftop" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, cast: ["c1"] }), true);
+});
+
+test("applyTemplateToPanels stashes overflow panels and results and restores them on larger layouts", () => {
+  const p1 = { ...newPanel("p1"), prompt: "one" };
+  const p2 = { ...newPanel("p2"), prompt: "two" };
+  const p3 = { ...newPanel("p3"), prompt: "three" };
+  const p4 = { ...newPanel("p4"), dialogue: "four" };
+
+  // Shrink 4 -> 2
+  const shrunk = applyTemplateToPanels(
+    [p1, p2, p3, p4],
+    ["r1", "r2", "r3", "r4"],
+    [],
+    [],
+    ["n1", "n2"],
+  );
+  assert.equal(shrunk.panels.n1.id, "n1");
+  assert.equal(shrunk.panels.n1.prompt, "one");
+  assert.equal(shrunk.panels.n2.prompt, "two");
+  assert.deepEqual(shrunk.results, { n1: "r1", n2: "r2" });
+  assert.deepEqual(shrunk.overflowPanels.map((p) => p.prompt || p.dialogue), ["three", "four"]);
+  assert.deepEqual(shrunk.overflowResults, ["r3", "r4"]);
+
+  // Grow 2 -> 3
+  const mid = applyTemplateToPanels(
+    [shrunk.panels.n1, shrunk.panels.n2],
+    [shrunk.results.n1, shrunk.results.n2],
+    shrunk.overflowPanels,
+    shrunk.overflowResults,
+    ["m1", "m2", "m3"],
+  );
+  assert.equal(mid.panels.m3.id, "m3");
+  assert.equal(mid.panels.m3.prompt, "three");
+  assert.deepEqual(mid.results, { m1: "r1", m2: "r2", m3: "r3" });
+  assert.deepEqual(mid.overflowPanels.map((p) => p.dialogue), ["four"]);
+  assert.deepEqual(mid.overflowResults, ["r4"]);
+
+  // Grow 3 -> 5 (restores remaining overflow + creates fresh empty slots)
+  const grown = applyTemplateToPanels(
+    [mid.panels.m1, mid.panels.m2, mid.panels.m3],
+    [mid.results.m1, mid.results.m2, mid.results.m3],
+    mid.overflowPanels,
+    mid.overflowResults,
+    ["k1", "k2", "k3", "k4", "k5"],
+  );
+  assert.equal(grown.panels.k4.dialogue, "four");
+  assert.equal(grown.panels.k5.prompt, "");
+  assert.deepEqual(grown.results, { k1: "r1", k2: "r2", k3: "r3", k4: "r4" });
+  assert.equal(grown.overflowPanels.length, 0);
+  assert.equal(grown.overflowResults.length, 0);
+});
+
+test("applyTemplateToPanels skips empty overflow slots without losing result alignment", () => {
+  const p1 = { ...newPanel("p1"), prompt: "first" };
+  const p2 = newPanel("p2");
+  const p3 = { ...newPanel("p3"), cast: ["c1"] };
+  const p4 = newPanel("p4");
+
+  const shrunk = applyTemplateToPanels(
+    [p1, p2, p3, p4],
+    ["r1", undefined, "r3", undefined],
+    [],
+    [],
+    ["s1"],
+  );
+  assert.equal(shrunk.overflowPanels.length, 1);
+  assert.deepEqual(shrunk.overflowPanels[0].cast, ["c1"]);
+  assert.deepEqual(shrunk.overflowResults, ["r3"]);
 });
