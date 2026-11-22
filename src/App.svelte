@@ -78,6 +78,9 @@
   import { promptAssistant } from "./lib/stores/promptAssistant.svelte.js";
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
+  import ShortcutCheatSheetModal from "./lib/components/ui/ShortcutCheatSheetModal.svelte";
+  import { shortcuts } from "./lib/stores/shortcuts.svelte.js";
+  import { formatCombo, isTypingTarget } from "./lib/utils/shortcuts.js";
   import logoUrl from "./lib/assets/logo.png";
   import { applyTheme, getActiveThemeLogoUrl, onThemeApplied } from "./lib/utils/theme.js";
   import { serializeSegmentTags } from "./lib/utils/promptSegmentDetail.js";
@@ -279,6 +282,7 @@
   );
 
   let lastProgressEventAt = 0;
+  let latestPreviewSeq = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
   let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string; width?: number; height?: number }>>();
@@ -511,14 +515,52 @@
     )
       return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") gallery.closeLightbox();
-      if (e.key === "ArrowLeft") navigateLightbox("prev");
-      if (e.key === "ArrowRight") navigateLightbox("next");
+      if (e.defaultPrevented || document.querySelector("[data-modal-open]")) return;
+      if (shortcuts.matches("lightbox.close", e)) {
+        e.preventDefault();
+        gallery.closeLightbox();
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (isTypingTarget(target) || target?.closest("[data-video-player]")) return;
+      if (shortcuts.matches("lightbox.prev", e)) {
+        e.preventDefault();
+        navigateLightbox("prev");
+        return;
+      }
+      if (shortcuts.matches("lightbox.next", e)) {
+        e.preventDefault();
+        navigateLightbox("next");
+        return;
+      }
       rateFromKeyboard(e);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   });
+
+  let requestedSettingsTab = $state<{ key: string; seq: number } | null>(null);
+
+  function openShortcutsSettings() {
+    shortcuts.closeCheatSheet();
+    try {
+      localStorage.setItem("mooshieui.settings.activeCategory.v1", "shortcuts");
+    } catch {
+      /* ignore */
+    }
+    requestedSettingsTab = { key: "shortcuts", seq: (requestedSettingsTab?.seq ?? 0) + 1 };
+    currentPage = "settings";
+  }
+
+  function handleGlobalShortcutKeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented) return;
+    if (document.querySelector("[data-modal-open]")) return;
+    if (isTypingTarget(e.target)) return;
+    if (shortcuts.matches("global.cheat_sheet", e)) {
+      e.preventDefault();
+      shortcuts.openCheatSheet();
+    }
+  }
 
   /**
    * Lightbox shortcuts for culling: 1 to 5 set the star rating (0 clears it),
@@ -527,16 +569,22 @@
    */
   function rateFromKeyboard(e: KeyboardEvent) {
     const image = gallery.selectedImage;
-    if (!image || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!image) return;
     const target = e.target as HTMLElement | null;
     // The video player has its own keys (F is fullscreen there).
-    if (target?.closest("input, textarea, select, [contenteditable='true'], [data-video-player]")) return;
-    const key = e.key.toLowerCase();
-    if (/^[0-9]$/.test(key) && Number(key) <= GALLERY_MAX_RATING) {
-      gallery.setRating(image, Number(key));
-    } else if (key === "f") {
+    if (isTypingTarget(target) || target?.closest("[data-video-player]")) return;
+    for (let rating = 1; rating <= GALLERY_MAX_RATING; rating++) {
+      if (shortcuts.matches(`lightbox.rate_${rating}`, e)) {
+        gallery.setRating(image, rating);
+        e.preventDefault();
+        return;
+      }
+    }
+    if (shortcuts.matches("lightbox.rate_clear", e)) {
+      gallery.setRating(image, 0);
+    } else if (shortcuts.matches("lightbox.favourite", e)) {
       gallery.toggleFavourite(image);
-    } else if (key === "n") {
+    } else if (shortcuts.matches("lightbox.nsfw", e)) {
       gallery.toggleNsfw(image);
     } else {
       return;
@@ -3043,6 +3091,9 @@
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
 
+        const seq = ++latestPreviewSeq;
+        const targetPromptId = data.prompt_id ?? progress.activePromptId;
+
         if (data.temp_filename) {
           // The worker WebSocket delivers preview frames as temp-file
           // references (not inline base64). On desktop there is no HTTP server,
@@ -3072,9 +3123,10 @@
             // between one queued prompt completing and the next starting,
             // when activePromptId is briefly null.
             if (
+              seq !== latestPreviewSeq ||
               !progress.isGenerating ||
-              (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) ||
-              (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
+              (targetPromptId && !progress.pendingPrompts.some((p: any) => p.promptId === targetPromptId)) ||
+              (targetPromptId && progress.activePromptId && targetPromptId !== progress.activePromptId)
             ) {
               return;
             }
@@ -4137,6 +4189,38 @@
 
     <NotificationBell onOpenSettings={() => (currentPage = "settings")} />
 
+    <!-- Keyboard shortcuts cheat sheet -->
+    <button
+      type="button"
+      class="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors mx-auto mb-1"
+      onclick={() => shortcuts.openCheatSheet()}
+      title="{locale.t('nav.shortcuts')} ({formatCombo(shortcuts.effectiveCombo('global.cheat_sheet'))})"
+      aria-label={locale.t('nav.shortcuts')}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4.5 h-4.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="M6 8h.01" />
+        <path d="M10 8h.01" />
+        <path d="M14 8h.01" />
+        <path d="M18 8h.01" />
+        <path d="M6 12h.01" />
+        <path d="M10 12h.01" />
+        <path d="M14 12h.01" />
+        <path d="M18 12h.01" />
+        <path d="M7 16h10" />
+      </svg>
+    </button>
+
     <!-- Connection status dot -->
     <div
       class="w-3 h-3 rounded-full mb-2 mx-auto transition-colors {connection.connected
@@ -4227,7 +4311,7 @@
         previewStatus={artistPreviewStatus}
       />
     {:else if currentPage === "settings"}
-      <SettingsPage {userRole} />
+      <SettingsPage {userRole} requestedCategory={requestedSettingsTab} />
     {/if}
     </div>
   </main>
@@ -5097,8 +5181,11 @@
 <NovelAiPositionModal />
 
 <!-- Global human-readable error surface -->
+<svelte:window onkeydown={handleGlobalShortcutKeydown} />
+
 <GlobalErrorModal />
 <WhatsNewModal />
+<ShortcutCheatSheetModal onCustomize={openShortcutsSettings} />
 
 {#if showBugReport}
   <ReportErrorModal error={userInitiatedReport} generic onclose={() => (showBugReport = false)} />

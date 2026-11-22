@@ -440,6 +440,7 @@
    *  For JXL gallery files, always use the blob URL: WebView2 cannot natively
    *  decode JXL so the gallery:// URL would render nothing. */
   const previewSrc = $derived.by(() => {
+    if (progress.isGenerating && progress.previewImage) return progress.previewImage;
     const saved = getActiveSavedImage();
     const isJxlGallery = saved?.gallery_filename?.endsWith(".jxl") ?? false;
     if (saved?.fullImageUrl && !isJxlGallery) return saved.fullImageUrl;
@@ -468,14 +469,19 @@
   function openPreviewLightbox() {
     if (Date.now() < suppressOpenUntil) return;
 
-    const url = progress.displayImage;
-    if (!url) return;
+    if (progress.isGenerating && progress.previewImage) {
+      gallery.openLightboxUrl(progress.previewImage);
+      return;
+    }
 
-    const savedImage = getSavedImageForUrl(url);
+    const savedImage = getActiveSavedImage();
     if (savedImage) {
       gallery.openLightbox(savedImage);
       return;
     }
+
+    const url = progress.displayImage;
+    if (!url) return;
 
     gallery.openLightboxUrl(url);
   }

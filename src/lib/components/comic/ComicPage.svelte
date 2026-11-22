@@ -7,6 +7,8 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import { isTypingTarget } from "../../utils/shortcuts.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { architectureLabel, savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import {
@@ -629,9 +631,9 @@
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key === "Alt") altHeld = true;
-    const target = event.target as HTMLElement | null;
-    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    if (event.defaultPrevented || document.querySelector("[data-modal-open]")) return;
+    if (isTypingTarget(event.target)) return;
+    if (shortcuts.matches("comic.undo", event)) {
       event.preventDefault();
       comic.undo();
     } else if ((event.key === "Delete" || event.key === "Backspace") && comic.selectedBubbleId) {
