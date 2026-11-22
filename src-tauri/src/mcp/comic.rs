@@ -655,11 +655,35 @@ pub fn one_image_base(page: &PageText, panels: usize, dialogue: &[String]) -> St
 // The request
 // ---------------------------------------------------------------------------
 
+/// One freeform panel box in normalized page units (0..1, top-left origin).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct BoxIn {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub z: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FreeformBox {
+    pub rect: Rect,
+    pub z: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PageLayout {
+    Tree(Node),
+    Freeform(Vec<FreeformBox>),
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 struct SpecIn {
     layout: Option<String>,
     rows: Option<Vec<RowIn>>,
+    boxes: Option<Vec<BoxIn>>,
     panels: Vec<PanelIn>,
     cast: Vec<CastIn>,
     style: String,
@@ -681,8 +705,8 @@ struct SpecIn {
 #[derive(Debug, Clone)]
 pub struct Plan {
     pub layout_name: String,
-    pub layout: Node,
-    /// Leaf ids in reading order; panel `i` is drawn in `order[i]`.
+    pub layout: PageLayout,
+    /// Leaf or box ids in reading order; panel `i` is drawn in `order[i]`.
     pub order: Vec<usize>,
     pub panels: Vec<Panel>,
     pub page: PageText,
@@ -706,7 +730,10 @@ impl Plan {
     }
 
     fn rect(&self, i: usize) -> Rect {
-        rects(&self.layout)[&self.order[i]]
+        match &self.layout {
+            PageLayout::Tree(node) => rects(node)[&self.order[i]],
+            PageLayout::Freeform(boxes) => boxes[self.order[i]].rect,
+        }
     }
 
     /// The pixels the owner's setup generates at, held to NovelAI's free window.
@@ -740,30 +767,83 @@ pub fn plan(args: &Value) -> Result<Plan, String> {
     if count > MAX_PANELS {
         return Err(format!("A page takes {MAX_PANELS} panels at most."));
     }
-    let (layout_name, layout) = match (&spec.layout, &spec.rows) {
-        (Some(_), Some(_)) => return Err("Give layout or rows, not both.".into()),
-        (Some(id), None) => {
-            let node = template(id.trim()).ok_or_else(|| {
-                format!(
-                    "Unknown layout '{id}'. Layouts: {}",
-                    TEMPLATES
-                        .iter()
-                        .map(|(t, n)| format!("{t} ({n})"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?;
-            (id.trim().to_string(), node)
-        }
-        (None, Some(rows)) => ("rows".into(), rows_layout(rows)?),
-        (None, None) => default_layout(count),
-    };
-    let leaves = rects(&layout).len();
-    if leaves != count {
-        return Err(format!(
-            "The layout has {leaves} panels but panels has {count} entries. Give one entry per panel."
-        ));
+    let sources = u8::from(spec.layout.is_some())
+        + u8::from(spec.rows.is_some())
+        + u8::from(spec.boxes.is_some());
+    if sources > 1 {
+        return Err("Give at most one of layout, rows, or boxes.".into());
     }
+    let (layout_name, layout, order) = if let Some(raw_boxes) = &spec.boxes {
+        if raw_boxes.is_empty() {
+            return Err("boxes needs at least one box".into());
+        }
+        if raw_boxes.len() > MAX_PANELS {
+            return Err(format!("A page takes {MAX_PANELS} panels at most."));
+        }
+        if raw_boxes.len() != count {
+            return Err(format!(
+                "The layout has {} panels but panels has {count} entries. Give one entry per panel.",
+                raw_boxes.len()
+            ));
+        }
+        let mut parsed = Vec::with_capacity(raw_boxes.len());
+        for (i, b) in raw_boxes.iter().enumerate() {
+            if !b.x.is_finite() || !b.y.is_finite() || !b.w.is_finite() || !b.h.is_finite() {
+                return Err(format!("Box {} has non-finite coordinates.", i + 1));
+            }
+            if b.w < MIN_RATIO || b.h < MIN_RATIO {
+                return Err(format!(
+                    "Box {} must have w >= {MIN_RATIO} and h >= {MIN_RATIO}.",
+                    i + 1
+                ));
+            }
+            if b.x < 0.0 || b.y < 0.0 || b.x + b.w > 1.0 + 1e-9 || b.y + b.h > 1.0 + 1e-9 {
+                return Err(format!("Box {} must stay inside 0..1 on both axes.", i + 1));
+            }
+            parsed.push(FreeformBox {
+                rect: Rect {
+                    x: b.x,
+                    y: b.y,
+                    w: b.w.min(1.0 - b.x),
+                    h: b.h.min(1.0 - b.y),
+                },
+                z: b.z.unwrap_or(i as i32),
+            });
+        }
+        (
+            "freeform".to_string(),
+            PageLayout::Freeform(parsed),
+            (0..count).collect(),
+        )
+    } else {
+        let (layout_name, node) = match (&spec.layout, &spec.rows) {
+            (Some(id), None) => {
+                let node = template(id.trim()).ok_or_else(|| {
+                    format!(
+                        "Unknown layout '{id}'. Layouts: {}",
+                        TEMPLATES
+                            .iter()
+                            .map(|(t, n)| format!("{t} ({n})"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?;
+                (id.trim().to_string(), node)
+            }
+            (None, Some(rows)) => ("rows".into(), rows_layout(rows)?),
+            (None, None) => default_layout(count),
+            (Some(_), Some(_)) => unreachable!(),
+        };
+        let tree_rects = rects(&node);
+        let leaves = tree_rects.len();
+        if leaves != count {
+            return Err(format!(
+                "The layout has {leaves} panels but panels has {count} entries. Give one entry per panel."
+            ));
+        }
+        let order = reading_order(&tree_rects, spec.right_to_left);
+        (layout_name, PageLayout::Tree(node), order)
+    };
     let shape = match spec.page_shape.as_deref().map(str::trim) {
         None | Some("") | Some("portrait") => "portrait",
         Some("square") => "square",
@@ -841,8 +921,6 @@ pub fn plan(args: &Value) -> Result<Plan, String> {
             return Err(format!("mode one_image takes {max} panels at most."));
         }
     }
-    let rects = rects(&layout);
-    let order = reading_order(&rects, spec.right_to_left);
     Ok(Plan {
         layout_name,
         layout,
@@ -1225,11 +1303,58 @@ async fn run(
     Ok(())
 }
 
-/// Draw the finished panels onto one page: white paper, gutters, a black
-/// border round every panel, each image cropped to fill its box. Panels with
-/// no image stay blank.
+fn draw_panel(
+    page: &mut image::RgbImage,
+    b: PxRect,
+    border: u32,
+    halo: u32,
+    img: Option<&image::DynamicImage>,
+) {
+    let (pw, ph) = page.dimensions();
+    if halo > 0 {
+        let white = image::Rgb([255, 255, 255]);
+        let hx0 = b.x.saturating_sub(halo);
+        let hy0 = b.y.saturating_sub(halo);
+        let hx1 = (b.x + b.w + halo).min(pw);
+        let hy1 = (b.y + b.h + halo).min(ph);
+        for y in hy0..hy1 {
+            for x in hx0..hx1 {
+                page.put_pixel(x, y, white);
+            }
+        }
+    }
+    if let Some(img) = img {
+        let (cx, cy, cw, ch) = cover_crop((img.width(), img.height()), (b.w, b.h));
+        let crop = img.crop_imm(
+            cx.round().max(0.0) as u32,
+            cy.round().max(0.0) as u32,
+            (cw.round() as u32).max(1),
+            (ch.round() as u32).max(1),
+        );
+        let fitted = crop
+            .resize_exact(b.w, b.h, image::imageops::FilterType::Lanczos3)
+            .to_rgb8();
+        image::imageops::replace(page, &fitted, i64::from(b.x), i64::from(b.y));
+    }
+    let black = image::Rgb([0, 0, 0]);
+    for y in b.y..(b.y + b.h).min(ph) {
+        for x in b.x..(b.x + b.w).min(pw) {
+            let edge = x < b.x + border
+                || y < b.y + border
+                || x + border >= b.x + b.w
+                || y + border >= b.y + b.h;
+            if edge {
+                page.put_pixel(x, y, black);
+            }
+        }
+    }
+}
+
+/// Draw the finished panels onto one page: white paper, gutters (or a white
+/// outer halo in freeform mode), a black border round every panel, each image
+/// cropped to fill its box. Panels with no image stay blank.
 pub fn assemble(
-    layout: &Node,
+    layout: &PageLayout,
     shape: &str,
     gutter: u32,
     images: &HashMap<usize, image::DynamicImage>,
@@ -1237,33 +1362,40 @@ pub fn assemble(
     let (pw, ph) = page_size(shape);
     let mut page = image::RgbImage::from_pixel(pw, ph, image::Rgb([255, 255, 255]));
     let border = ((pw.max(ph) as f64) / 600.0).round().max(2.0) as u32;
-    let mut ids: Vec<(usize, Rect)> = rects(layout).into_iter().collect();
-    ids.sort_by_key(|(id, _)| *id);
-    for (id, rect) in ids {
-        let b = pixel_rect(rect, (pw, ph), gutter);
-        if let Some(img) = images.get(&id) {
-            let (cx, cy, cw, ch) = cover_crop((img.width(), img.height()), (b.w, b.h));
-            let crop = img.crop_imm(
-                cx.round().max(0.0) as u32,
-                cy.round().max(0.0) as u32,
-                (cw.round() as u32).max(1),
-                (ch.round() as u32).max(1),
-            );
-            let fitted = crop
-                .resize_exact(b.w, b.h, image::imageops::FilterType::Lanczos3)
-                .to_rgb8();
-            image::imageops::replace(&mut page, &fitted, i64::from(b.x), i64::from(b.y));
+    match layout {
+        PageLayout::Tree(node) => {
+            let mut ids: Vec<(usize, Rect)> = rects(node).into_iter().collect();
+            ids.sort_by_key(|(id, _)| *id);
+            for (id, rect) in ids {
+                let b = pixel_rect(rect, (pw, ph), gutter);
+                draw_panel(&mut page, b, border, 0, images.get(&id));
+            }
         }
-        let black = image::Rgb([0, 0, 0]);
-        for y in b.y..(b.y + b.h).min(ph) {
-            for x in b.x..(b.x + b.w).min(pw) {
-                let edge = x < b.x + border
-                    || y < b.y + border
-                    || x + border >= b.x + b.w
-                    || y + border >= b.y + b.h;
-                if edge {
-                    page.put_pixel(x, y, black);
-                }
+        PageLayout::Freeform(boxes) => {
+            let halo = ((f64::from(gutter) / 2.0).round() as u32).max(4);
+            let mut ordered: Vec<(usize, FreeformBox)> =
+                boxes.iter().copied().enumerate().collect();
+            ordered.sort_by_key(|(id, b)| (b.z, *id));
+            for (id, b) in ordered {
+                let x0 = (b.rect.x * f64::from(pw))
+                    .round()
+                    .clamp(0.0, f64::from(pw.saturating_sub(1))) as u32;
+                let y0 = (b.rect.y * f64::from(ph))
+                    .round()
+                    .clamp(0.0, f64::from(ph.saturating_sub(1))) as u32;
+                let x1 = ((b.rect.x + b.rect.w) * f64::from(pw))
+                    .round()
+                    .clamp(0.0, f64::from(pw)) as u32;
+                let y1 = ((b.rect.y + b.rect.h) * f64::from(ph))
+                    .round()
+                    .clamp(0.0, f64::from(ph)) as u32;
+                let px = PxRect {
+                    x: x0,
+                    y: y0,
+                    w: x1.saturating_sub(x0).max(1).min(pw.saturating_sub(x0)),
+                    h: y1.saturating_sub(y0).max(1).min(ph.saturating_sub(y0)),
+                };
+                draw_panel(&mut page, px, border, halo, images.get(&id));
             }
         }
     }
@@ -1598,12 +1730,158 @@ mod tests {
                 image::Rgb([200, 0, 0]),
             )),
         );
-        let page = assemble(&node, "square", 24, &images);
+        let page = assemble(&PageLayout::Tree(node), "square", 24, &images);
         assert_eq!(page.dimensions(), (2048, 2048));
         // Gutter is white, the border black, the filled panel red, the empty one white.
         assert_eq!(page.get_pixel(5, 5).0, [255, 255, 255]);
         assert_eq!(page.get_pixel(24, 500).0, [0, 0, 0]);
         assert_eq!(page.get_pixel(500, 1000).0, [200, 0, 0]);
         assert_eq!(page.get_pixel(1500, 1000).0, [255, 255, 255]);
+    }
+
+    #[test]
+    fn freeform_assembly_sorts_by_z_and_draws_white_halo() {
+        let boxes = vec![
+            FreeformBox {
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                z: 10,
+            },
+            FreeformBox {
+                rect: Rect {
+                    x: 0.25,
+                    y: 0.25,
+                    w: 0.5,
+                    h: 0.5,
+                },
+                z: 0,
+            },
+        ];
+        // Box 1 has z=0 (drawn first, blue); Box 0 has z=10 (drawn on top, red).
+        // Flip z to verify z=10 wins over z=0 even when it comes first in the vec.
+        let mut images = HashMap::new();
+        images.insert(
+            0,
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                64,
+                64,
+                image::Rgb([200, 0, 0]),
+            )),
+        );
+        images.insert(
+            1,
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                64,
+                64,
+                image::Rgb([0, 0, 200]),
+            )),
+        );
+        let page = assemble(&PageLayout::Freeform(boxes), "square", 24, &images);
+        assert_eq!(page.get_pixel(1024, 1024).0, [200, 0, 0]);
+
+        // Now put the inset box (index 1) on top (z=5) over the full-page box (index 0, z=0).
+        let inset_top = vec![
+            FreeformBox {
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                z: 0,
+            },
+            FreeformBox {
+                rect: Rect {
+                    x: 0.25,
+                    y: 0.25,
+                    w: 0.5,
+                    h: 0.5,
+                },
+                z: 5,
+            },
+        ];
+        let page2 = assemble(&PageLayout::Freeform(inset_top), "square", 24, &images);
+        // Outer area is box 0 (red).
+        assert_eq!(page2.get_pixel(100, 100).0, [200, 0, 0]);
+        // Halo (12px outside x=512, so x=505) is white.
+        assert_eq!(page2.get_pixel(505, 1024).0, [255, 255, 255]);
+        // Inset border at x=512 is black.
+        assert_eq!(page2.get_pixel(512, 1024).0, [0, 0, 0]);
+        // Inset interior is blue.
+        assert_eq!(page2.get_pixel(1024, 1024).0, [0, 0, 200]);
+    }
+
+    #[test]
+    fn freeform_boxes_validation_in_spec() {
+        let base_panels = json!([{ "prompt": "1girl" }, { "prompt": "1boy" }]);
+        // Valid boxes
+        let ok = plan(&json!({
+            "boxes": [
+                { "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "z": 0 },
+                { "x": 0.55, "y": 0.55, "w": 0.4, "h": 0.4, "z": 1 }
+            ],
+            "panels": base_panels
+        }));
+        match ok {
+            Ok(p) => {
+                assert_eq!(p.layout_name, "freeform");
+                assert_eq!(p.order, vec![0, 1]);
+            }
+            // Note: setups::find may fail in an environment without user setups; only check validation errors below if setup is missing.
+            Err(e) if e.contains("setup") || e.contains("model") || e.contains("No ") => {}
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+
+        // Mutually exclusive with layout or rows
+        let both_layout = plan(&json!({
+            "layout": "two_columns",
+            "boxes": [
+                { "x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0 },
+                { "x": 0.5, "y": 0.0, "w": 0.5, "h": 1.0 }
+            ],
+            "panels": base_panels
+        }));
+        assert!(both_layout.unwrap_err().contains("one of"));
+
+        let both_rows = plan(&json!({
+            "rows": [{ "panels": 2 }],
+            "boxes": [
+                { "x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0 },
+                { "x": 0.5, "y": 0.0, "w": 0.5, "h": 1.0 }
+            ],
+            "panels": base_panels
+        }));
+        assert!(both_rows.unwrap_err().contains("one of"));
+
+        // Too small
+        let too_small = plan(&json!({
+            "boxes": [
+                { "x": 0.0, "y": 0.0, "w": 0.1, "h": 0.5 },
+                { "x": 0.5, "y": 0.0, "w": 0.5, "h": 0.5 }
+            ],
+            "panels": base_panels
+        }));
+        assert!(too_small.unwrap_err().contains("0.12"));
+
+        // Out of bounds
+        let out_of_bounds = plan(&json!({
+            "boxes": [
+                { "x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5 },
+                { "x": 0.7, "y": 0.0, "w": 0.4, "h": 0.5 }
+            ],
+            "panels": base_panels
+        }));
+        assert!(out_of_bounds.unwrap_err().contains("0..1"));
+
+        // Panel count mismatch
+        let mismatch = plan(&json!({
+            "boxes": [{ "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0 }],
+            "panels": base_panels
+        }));
+        assert!(mismatch.unwrap_err().contains("1 panels"));
     }
 }

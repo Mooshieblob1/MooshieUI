@@ -428,9 +428,12 @@ export async function assemblePage(): Promise<Blob> {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, page.width, page.height);
   const border = Math.max(2, Math.round(Math.max(page.width, page.height) / 600));
-  for (const [id, rect] of comic.rects) {
+  const drawPanel = async (id: string, box: { x: number; y: number; w: number; h: number }, halo: number) => {
+    if (halo > 0) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(box.x - halo, box.y - halo, box.w + halo * 2, box.h + halo * 2);
+    }
     const panel = comic.panels[id];
-    const box = panelPixelRect(rect, page, comic.gutter);
     const url = comic.results[id]?.url;
     if (panel?.enabled && url) {
       const bitmap = await loadBitmap(url);
@@ -440,7 +443,22 @@ export async function assemblePage(): Promise<Blob> {
     }
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = border;
-    ctx.strokeRect(box.x + border / 2, box.y + border / 2, box.w - border, box.h - border);
+    ctx.strokeRect(box.x + border / 2, box.y + border / 2, Math.max(1, box.w - border), Math.max(1, box.h - border));
+  };
+  if (comic.layoutMode === "freeform") {
+    const halo = Math.max(4, Math.round(comic.gutter / 2));
+    const ordered = [...comic.freeformBoxes].sort((a, b) => a.z - b.z);
+    for (const b of ordered) {
+      const x = Math.round(b.x * page.width);
+      const y = Math.round(b.y * page.height);
+      const x1 = Math.round((b.x + b.w) * page.width);
+      const y1 = Math.round((b.y + b.h) * page.height);
+      await drawPanel(b.id, { x, y, w: Math.max(1, x1 - x), h: Math.max(1, y1 - y) }, halo);
+    }
+  } else {
+    for (const [id, rect] of comic.rects) {
+      await drawPanel(id, panelPixelRect(rect, page, comic.gutter), 0);
+    }
   }
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode the page"))), "image/png"),

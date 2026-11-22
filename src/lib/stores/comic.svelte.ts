@@ -10,19 +10,28 @@ import {
   MAX_PANELS,
   applyTemplateToPanels,
   buildTemplate,
+  clampFreeformBox,
+  freeformRects,
+  isFreeformBoxes,
   isLayout,
   isPanelNonEmpty,
+  layoutForCount,
   newId,
   newPanel,
+  pageSize,
   panelIds,
   panelRects,
   readingOrder,
   removePanel,
+  reorderZ,
   setRatio,
   splitPanel,
+  treeToFreeform,
   type CastMember,
   type ComicPanel,
   type ContinuityIssue,
+  type FreeformBox,
+  type LayoutMode,
   type LayoutNode,
   type LayoutTemplate,
   type PageShape,
@@ -50,6 +59,8 @@ export interface PanelResult {
 
 interface SavedPage {
   layout: LayoutNode;
+  layoutMode?: LayoutMode;
+  freeformBoxes?: FreeformBox[];
   panels: Record<string, ComicPanel>;
   overflowPanels?: ComicPanel[];
   cast: CastMember[];
@@ -94,6 +105,8 @@ function normalizeOverflowPanels(raw: unknown): ComicPanel[] {
 
 class ComicStore {
   layout = $state<LayoutNode>(defaultLayout());
+  layoutMode = $state<LayoutMode>("grid");
+  freeformBoxes = $state<FreeformBox[]>([]);
   panels = $state<Record<string, ComicPanel>>({});
   /** Non-empty panels stashed when shrinking or removing panels; restored on larger layouts. */
   overflowPanels = $state<ComicPanel[]>([]);
@@ -144,7 +157,7 @@ class ComicStore {
   // --- derived ---
 
   get rects(): Map<string, Rect> {
-    return panelRects(this.layout);
+    return this.layoutMode === "freeform" ? freeformRects(this.freeformBoxes) : panelRects(this.layout);
   }
 
   /** Panel ids in reading order. */
@@ -174,7 +187,7 @@ class ComicStore {
   }
 
   get panelCount(): number {
-    return panelIds(this.layout).length;
+    return this.layoutMode === "freeform" ? this.freeformBoxes.length : panelIds(this.layout).length;
   }
 
   // --- layout edits ---
@@ -182,13 +195,19 @@ class ComicStore {
   private remember() {
     this.history = [
       ...this.history.slice(-(HISTORY_LIMIT - 1)),
-      JSON.stringify({ layout: this.layout, panels: this.panels, overflowPanels: this.overflowPanels }),
+      JSON.stringify({
+        layout: this.layout,
+        panels: this.panels,
+        overflowPanels: this.overflowPanels,
+        layoutMode: this.layoutMode,
+        freeformBoxes: this.freeformBoxes,
+      }),
     ];
   }
 
   /** Make sure every leaf has a panel record and no stale record lingers. */
   private ensurePanels() {
-    const ids = panelIds(this.layout);
+    const ids = this.layoutMode === "freeform" ? this.freeformBoxes.map((b) => b.id) : panelIds(this.layout);
     const next: Record<string, ComicPanel> = {};
     for (const id of ids) next[id] = this.panels[id] ?? newPanel(id);
     this.panels = next;
@@ -202,6 +221,8 @@ class ComicStore {
     const ordered = this.orderedPanels;
     const orderedResults = ordered.map((p) => this.results[p.id]);
     this.layout = buildTemplate(template);
+    this.layoutMode = "grid";
+    this.freeformBoxes = [];
     const rects = panelRects(this.layout);
     const ids = readingOrder(rects, this.rightToLeft);
     const applied = applyTemplateToPanels(
@@ -217,6 +238,82 @@ class ComicStore {
     this.overflowResults = applied.overflowResults;
     this.selectedId = ids[0] ?? null;
     this.clearPage();
+    this.persist();
+  }
+
+  setLayoutMode(mode: LayoutMode) {
+    if (mode === this.layoutMode) return;
+    this.remember();
+    if (mode === "freeform") {
+      this.freeformBoxes = treeToFreeform(this.layout, pageSize(this.pageShape), this.gutter, this.rightToLeft);
+      this.layoutMode = "freeform";
+      this.ensurePanels();
+      this.persist();
+      return;
+    }
+    const previous = this.orderedPanels;
+    const prevResults = this.results;
+    const prevSelectedIdx = this.selectedId ? previous.findIndex((p) => p.id === this.selectedId) : -1;
+    this.layout = layoutForCount(previous.length || 1);
+    this.layoutMode = "grid";
+    this.freeformBoxes = [];
+    const ids = readingOrder(panelRects(this.layout), this.rightToLeft);
+    const nextPanels: Record<string, ComicPanel> = {};
+    const nextResults: Record<string, PanelResult> = {};
+    ids.forEach((id, i) => {
+      const old = previous[i];
+      nextPanels[id] = old ? { ...old, id } : newPanel(id);
+      if (old && prevResults[old.id]) nextResults[id] = prevResults[old.id];
+    });
+    this.panels = nextPanels;
+    this.results = nextResults;
+    this.selectedId = prevSelectedIdx >= 0 ? (ids[prevSelectedIdx] ?? ids[0] ?? null) : null;
+    this.persist();
+  }
+
+  addFreeformPanel() {
+    if (this.layoutMode !== "freeform" || this.panelCount >= MAX_PANELS) return;
+    this.remember();
+    const id = newId("p");
+    const offset = (this.freeformBoxes.length % 5) * 0.04;
+    const maxZ = this.freeformBoxes.reduce((m, b) => Math.max(m, b.z), -1);
+    const box = clampFreeformBox({
+      id,
+      x: 0.1 + offset,
+      y: 0.1 + offset,
+      w: 0.35,
+      h: 0.35,
+      z: maxZ + 1,
+    });
+    this.freeformBoxes = [...this.freeformBoxes, box];
+    if (this.overflowPanels.length > 0) {
+      const [restored, ...restPanels] = this.overflowPanels;
+      const [restoredResult, ...restResults] = this.overflowResults;
+      this.overflowPanels = restPanels;
+      this.overflowResults = restResults;
+      this.panels = { ...this.panels, [id]: { ...restored, id } };
+      if (restoredResult) this.results = { ...this.results, [id]: restoredResult };
+    }
+    this.ensurePanels();
+    this.selectedId = id;
+    this.persist();
+  }
+
+  beginFreeformEdit() {
+    this.remember();
+  }
+
+  updateFreeformBox(id: string, rect: Rect) {
+    if (this.layoutMode !== "freeform") return;
+    this.freeformBoxes = this.freeformBoxes.map((b) => (b.id === id ? clampFreeformBox({ ...b, ...rect }) : b));
+    this.persistSoon();
+  }
+
+  reorderPanelZ(id: string, action: "forward" | "backward" | "front" | "back") {
+    if (this.layoutMode !== "freeform") return;
+    if (!this.freeformBoxes.some((b) => b.id === id)) return;
+    this.remember();
+    this.freeformBoxes = reorderZ(this.freeformBoxes, id, action);
     this.persist();
   }
 
@@ -237,7 +334,14 @@ class ComicStore {
     this.remember();
     const removed = this.panels[id];
     const removedResult = this.results[id];
-    this.layout = removePanel(this.layout, id);
+    if (this.layoutMode === "freeform") {
+      this.freeformBoxes = this.freeformBoxes
+        .filter((b) => b.id !== id)
+        .sort((a, b) => a.z - b.z)
+        .map((b, i) => ({ ...b, z: i }));
+    } else {
+      this.layout = removePanel(this.layout, id);
+    }
     this.ensurePanels();
     const { [id]: _gone, ...rest } = this.results;
     this.results = rest;
@@ -268,12 +372,21 @@ class ComicStore {
         layout: LayoutNode;
         panels: Record<string, ComicPanel>;
         overflowPanels?: unknown[];
+        layoutMode?: LayoutMode;
+        freeformBoxes?: FreeformBox[];
       };
       if (!isLayout(state.layout)) return;
       this.layout = state.layout;
       this.panels = state.panels;
       this.overflowPanels = normalizeOverflowPanels(state.overflowPanels);
       this.overflowResults = this.overflowPanels.map((_, i) => this.overflowResults[i]);
+      if (state.layoutMode === "freeform" && isFreeformBoxes(state.freeformBoxes) && state.freeformBoxes.length > 0) {
+        this.layoutMode = "freeform";
+        this.freeformBoxes = state.freeformBoxes;
+      } else {
+        this.layoutMode = "grid";
+        this.freeformBoxes = isFreeformBoxes(state.freeformBoxes) ? state.freeformBoxes : [];
+      }
       this.ensurePanels();
       this.persist();
     } catch {
@@ -354,6 +467,8 @@ class ComicStore {
     this.overflowPanels = [];
     this.overflowResults = [];
     this.layout = defaultLayout();
+    this.layoutMode = "grid";
+    this.freeformBoxes = [];
     this.panels = {};
     this.ensurePanels();
     this.storyIssues = null;
@@ -375,6 +490,9 @@ class ComicStore {
       if (!raw) return;
       const data = JSON.parse(raw) as Partial<SavedPage>;
       if (data.layout && isLayout(data.layout)) this.layout = data.layout;
+      if (isFreeformBoxes(data.freeformBoxes)) this.freeformBoxes = data.freeformBoxes;
+      if (data.layoutMode === "freeform" && this.freeformBoxes.length > 0) this.layoutMode = "freeform";
+      else this.layoutMode = "grid";
       if (data.panels && typeof data.panels === "object") {
         const panels: Record<string, ComicPanel> = {};
         for (const [id, p] of Object.entries(data.panels)) {
@@ -411,6 +529,8 @@ class ComicStore {
     for (const [id, r] of Object.entries(this.results)) if (r.galleryFilename) images[id] = r.galleryFilename;
     const data: SavedPage = {
       layout: this.layout,
+      layoutMode: this.layoutMode,
+      freeformBoxes: this.freeformBoxes,
       panels: this.panels,
       overflowPanels: this.overflowPanels,
       cast: this.cast,

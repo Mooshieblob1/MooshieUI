@@ -183,6 +183,260 @@ export function buildTemplate(template: LayoutTemplate, ids: () => string = () =
   return build(template.shape);
 }
 
+function chainNodes(nodes: LayoutNode[], dir: SplitDir): LayoutNode {
+  if (nodes.length === 1) return nodes[0];
+  return {
+    type: "split",
+    id: newId("s"),
+    dir,
+    ratio: 1 / nodes.length,
+    a: nodes[0],
+    b: chainNodes(nodes.slice(1), dir),
+  };
+}
+
+/** Pick a grid layout for `count` panels (1..MAX_PANELS), using templates up to 6 and rows above. */
+export function layoutForCount(count: number, ids: () => string = () => newId("p")): LayoutNode {
+  const clamped = Math.min(MAX_PANELS, Math.max(1, Math.round(count)));
+  const preferred: Record<number, string> = {
+    1: "full",
+    2: "two_rows",
+    3: "one_over_two",
+    4: "grid_2x2",
+    5: "two_one_two",
+    6: "grid_2x3",
+  };
+  const id = preferred[clamped];
+  const tpl = id ? LAYOUT_TEMPLATES.find((t) => t.id === id) : undefined;
+  if (tpl) return buildTemplate(tpl, ids);
+  const rows = clamped === 7 ? [1, 2, 2, 2] : clamped === 8 ? [2, 2, 2, 2] : [3, 3, 3];
+  return chainNodes(
+    rows.map((n) => chainNodes(Array.from({ length: n }, () => ({ type: "panel" as const, id: ids() })), "row")),
+    "col",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Freeform layouts
+// ---------------------------------------------------------------------------
+
+export type LayoutMode = "grid" | "freeform";
+
+export interface FreeformBox {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z: number;
+}
+
+export const MIN_BOX_SIZE = 0.12;
+
+export type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+/** Convert a split tree into pixel-equivalent freeform boxes sorted in reading order. */
+export function treeToFreeform(
+  node: LayoutNode,
+  page: { width: number; height: number },
+  gutter: number,
+  rightToLeft = false,
+): FreeformBox[] {
+  const rects = panelRects(node);
+  const order = readingOrder(rects, rightToLeft);
+  const pw = Math.max(1, page.width);
+  const ph = Math.max(1, page.height);
+  return order.map((id, i) => {
+    const px = panelPixelRect(rects.get(id)!, { width: pw, height: ph }, gutter);
+    return {
+      id,
+      x: px.x / pw,
+      y: px.y / ph,
+      w: px.w / pw,
+      h: px.h / ph,
+      z: i,
+    };
+  });
+}
+
+export function freeformRects(boxes: FreeformBox[]): Map<string, Rect> {
+  return new Map(boxes.map((b) => [b.id, { x: b.x, y: b.y, w: b.w, h: b.h }]));
+}
+
+export function clampFreeformBox(box: FreeformBox): FreeformBox {
+  const rawW = Number.isFinite(box.w) ? box.w : MIN_BOX_SIZE;
+  const rawH = Number.isFinite(box.h) ? box.h : MIN_BOX_SIZE;
+  const w = Math.min(1, Math.max(MIN_BOX_SIZE, rawW));
+  const h = Math.min(1, Math.max(MIN_BOX_SIZE, rawH));
+  const rawX = Number.isFinite(box.x) ? box.x : 0;
+  const rawY = Number.isFinite(box.y) ? box.y : 0;
+  const x = Math.min(1 - w, Math.max(0, rawX));
+  const y = Math.min(1 - h, Math.max(0, rawY));
+  return { ...box, x, y, w, h };
+}
+
+function snapAxisPos(
+  pos: number,
+  size: number,
+  targets: number[],
+  threshold: number,
+): { pos: number; guide: number | null } {
+  const offsets = [0, size / 2, size];
+  let bestDist = threshold + 1e-12;
+  let bestPos = pos;
+  let bestGuide: number | null = null;
+  for (const offset of offsets) {
+    const edge = pos + offset;
+    for (const target of targets) {
+      const dist = Math.abs(target - edge);
+      if (dist > bestDist) continue;
+      const candidate = target - offset;
+      if (candidate < -1e-9 || candidate + size > 1 + 1e-9) continue;
+      bestDist = dist;
+      bestPos = Math.min(1 - size, Math.max(0, candidate));
+      bestGuide = target;
+    }
+  }
+  return { pos: bestPos, guide: bestGuide };
+}
+
+function snapTargets(others: FreeformBox[], excludeId: string): { xs: number[]; ys: number[] } {
+  const xs = [0, 0.5, 1];
+  const ys = [0, 0.5, 1];
+  for (const o of others) {
+    if (o.id === excludeId) continue;
+    xs.push(o.x, o.x + o.w / 2, o.x + o.w);
+    ys.push(o.y, o.y + o.h / 2, o.y + o.h);
+  }
+  return { xs, ys };
+}
+
+export function snapFreeformBox(
+  box: FreeformBox,
+  others: FreeformBox[],
+  threshold = 0.015,
+): { box: FreeformBox; guides: Array<{ axis: "x" | "y"; pos: number }> } {
+  const base = clampFreeformBox(box);
+  const { xs, ys } = snapTargets(others, base.id);
+  const sx = snapAxisPos(base.x, base.w, xs, threshold);
+  const sy = snapAxisPos(base.y, base.h, ys, threshold);
+  const guides: Array<{ axis: "x" | "y"; pos: number }> = [];
+  if (sx.guide !== null) guides.push({ axis: "x", pos: sx.guide });
+  if (sy.guide !== null) guides.push({ axis: "y", pos: sy.guide });
+  return { box: clampFreeformBox({ ...base, x: sx.pos, y: sy.pos }), guides };
+}
+
+function snapEdge(
+  val: number,
+  min: number,
+  max: number,
+  targets: number[],
+  snap: boolean,
+  threshold: number,
+): { val: number; guide: number | null } {
+  const clamped = Math.min(max, Math.max(min, val));
+  if (!snap) return { val: clamped, guide: null };
+  let bestDist = threshold + 1e-12;
+  let bestVal = clamped;
+  let bestGuide: number | null = null;
+  for (const t of targets) {
+    if (t < min - 1e-9 || t > max + 1e-9) continue;
+    const dist = Math.abs(t - clamped);
+    if (dist <= bestDist) {
+      bestDist = dist;
+      bestVal = Math.min(max, Math.max(min, t));
+      bestGuide = t;
+    }
+  }
+  return { val: bestVal, guide: bestGuide };
+}
+
+export function resizeFreeformBox(
+  orig: FreeformBox,
+  handle: ResizeHandle,
+  dx: number,
+  dy: number,
+  others: FreeformBox[],
+  snap = true,
+  threshold = 0.015,
+): { box: FreeformBox; guides: Array<{ axis: "x" | "y"; pos: number }> } {
+  let x0 = orig.x;
+  let y0 = orig.y;
+  let x1 = orig.x + orig.w;
+  let y1 = orig.y + orig.h;
+  const { xs, ys } = snapTargets(others, orig.id);
+  const guides: Array<{ axis: "x" | "y"; pos: number }> = [];
+  if (handle.includes("w")) {
+    const res = snapEdge(orig.x + dx, 0, x1 - MIN_BOX_SIZE, xs, snap, threshold);
+    x0 = res.val;
+    if (res.guide !== null) guides.push({ axis: "x", pos: res.guide });
+  }
+  if (handle.includes("e")) {
+    const res = snapEdge(orig.x + orig.w + dx, x0 + MIN_BOX_SIZE, 1, xs, snap, threshold);
+    x1 = res.val;
+    if (res.guide !== null) guides.push({ axis: "x", pos: res.guide });
+  }
+  if (handle.includes("n")) {
+    const res = snapEdge(orig.y + dy, 0, y1 - MIN_BOX_SIZE, ys, snap, threshold);
+    y0 = res.val;
+    if (res.guide !== null) guides.push({ axis: "y", pos: res.guide });
+  }
+  if (handle.includes("s")) {
+    const res = snapEdge(orig.y + orig.h + dy, y0 + MIN_BOX_SIZE, 1, ys, snap, threshold);
+    y1 = res.val;
+    if (res.guide !== null) guides.push({ axis: "y", pos: res.guide });
+  }
+  return { box: clampFreeformBox({ ...orig, x: x0, y: y0, w: x1 - x0, h: y1 - y0 }), guides };
+}
+
+export function reorderZ(
+  boxes: FreeformBox[],
+  id: string,
+  action: "forward" | "backward" | "front" | "back",
+): FreeformBox[] {
+  const sorted = boxes
+    .map((b, idx) => ({ b, idx }))
+    .sort((a, b) => a.b.z - b.b.z || a.idx - b.idx)
+    .map((entry) => entry.b);
+  const at = sorted.findIndex((b) => b.id === id);
+  if (at < 0) return boxes;
+  const [item] = sorted.splice(at, 1);
+  const target =
+    action === "forward"
+      ? Math.min(sorted.length, at + 1)
+      : action === "backward"
+        ? Math.max(0, at - 1)
+        : action === "front"
+          ? sorted.length
+          : 0;
+  sorted.splice(target, 0, item);
+  return sorted.map((b, i) => ({ ...b, z: i }));
+}
+
+export function isFreeformBoxes(value: unknown): value is FreeformBox[] {
+  if (!Array.isArray(value) || value.length > MAX_PANELS) return false;
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") return false;
+    const b = item as Record<string, unknown>;
+    if (typeof b.id !== "string" || b.id.length === 0 || seen.has(b.id)) return false;
+    seen.add(b.id);
+    if (
+      typeof b.x !== "number" || !Number.isFinite(b.x) ||
+      typeof b.y !== "number" || !Number.isFinite(b.y) ||
+      typeof b.w !== "number" || !Number.isFinite(b.w) ||
+      typeof b.h !== "number" || !Number.isFinite(b.h) ||
+      typeof b.z !== "number" || !Number.isFinite(b.z)
+    ) {
+      return false;
+    }
+    if (b.w <= 0 || b.h <= 0 || b.x < -1e-6 || b.y < -1e-6 || b.x + b.w > 1 + 1e-6 || b.y + b.h > 1 + 1e-6) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Page geometry
 // ---------------------------------------------------------------------------
