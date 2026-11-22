@@ -16,6 +16,7 @@
 
 ### Fixes
 - **Preview lightbox**: clicking the preview image after generation finishes now always opens the final image instead of a stale intermediate preview frame.
+- **Security**: updated the Rust `url` crate to 2.5.9 (RUSTSEC-2026-0592).
 
 ---
 
