@@ -40,6 +40,7 @@
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { portal } from "../../utils/portal.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import ComicPromptField from "./ComicPromptField.svelte";
   import ModelSelector from "../generation/ModelSelector.svelte";
   import SamplerSettings from "../generation/SamplerSettings.svelte";
   import DimensionControls from "../generation/DimensionControls.svelte";
@@ -179,6 +180,12 @@
       onclick={() => (showTemplates = !showTemplates)}
       aria-expanded={showTemplates}
     >{locale.t("comic.templates")}</button>
+    {#if comic.overflowPanels.length > 0}
+      <span
+        class="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300"
+        title={locale.t("comic.overflow_tip", { count: String(comic.overflowPanels.length) })}
+      >+{comic.overflowPanels.length}</span>
+    {/if}
     <span class="h-5 w-px bg-neutral-800" aria-hidden="true"></span>
     <button
       class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
@@ -321,28 +328,35 @@
     <aside class="space-y-4 border-neutral-800 p-3 text-xs lg:w-80 lg:shrink-0 lg:overflow-y-auto lg:border-r">
       <!-- The Comic page's own model and settings, apart from the Generate page's. -->
       <section class="rounded-lg border border-neutral-800 bg-neutral-900/40">
-        <button
-          class="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-neutral-800/40"
-          aria-expanded={showSettings}
-          onclick={toggleSettings}
-        >
-          <span class="shrink-0 font-medium text-neutral-300">{locale.t("comic.settings")}</span>
-          <span class="min-w-0 flex-1 truncate text-right text-[11px] {modelName ? 'text-neutral-500' : 'text-amber-400'}">
-            {modelName ? `${modelName} · ${generation.width}×${generation.height}` : locale.t("comic.settings_no_model")}
-          </span>
-          <svg class="h-3.5 w-3.5 shrink-0 text-neutral-500 transition-transform {showSettings ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
-          </svg>
-        </button>
+        <div class="flex w-full items-center gap-1.5 px-2.5 py-2 hover:bg-neutral-800/40">
+          <button
+            class="shrink-0 text-left font-medium text-neutral-300 focus:outline-none"
+            aria-expanded={showSettings}
+            onclick={toggleSettings}
+          >{locale.t("comic.settings")}</button>
+          <InfoTip text={locale.t("comic.settings_hint")} />
+          <button
+            class="flex min-w-0 flex-1 items-center gap-2 text-right focus:outline-none"
+            aria-expanded={showSettings}
+            aria-label={locale.t("comic.settings")}
+            onclick={toggleSettings}
+          >
+            <span class="min-w-0 flex-1 truncate text-[11px] {modelName ? 'text-neutral-500' : 'text-amber-400'}">
+              {modelName ? `${modelName} · ~${Math.round(Math.sqrt(generation.width * generation.height))}px` : locale.t("comic.settings_no_model")}
+            </span>
+            <svg class="h-3.5 w-3.5 shrink-0 text-neutral-500 transition-transform {showSettings ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+            </svg>
+          </button>
+        </div>
         {#if showSettings}
           <div class="space-y-3 border-t border-neutral-800 px-2.5 pb-3 pt-2.5">
-            <p class="text-[11px] text-neutral-500">{locale.t("comic.settings_hint")}</p>
             <ModelSelector />
             <div class="border-t border-neutral-800 pt-3">
-              <SamplerSettings />
+              <SamplerSettings showBatchSize={false} showSeed={false} />
             </div>
             <div class="border-t border-neutral-800 pt-3">
-              <DimensionControls />
+              <DimensionControls pixelBudgetOnly={true} />
             </div>
           </div>
         {/if}
@@ -350,22 +364,27 @@
 
       <section class="space-y-1.5">
         <label class="block text-neutral-400" for="comic-style">{locale.t("comic.style")}</label>
-        <input
+        <ComicPromptField
           id="comic-style"
-          class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-          placeholder={locale.t("comic.style_placeholder")}
           value={comic.style}
-          oninput={(e) => comic.setPageField("style", (e.currentTarget as HTMLInputElement).value)}
+          onchange={(next) => comic.setPageField("style", next)}
+          placeholder={locale.t("comic.style_placeholder")}
+          ariaLabel={locale.t("comic.style")}
+          rows={2}
+          minHeight="min-h-12"
+          storageKey="mooshieui.promptHeight.comic.style"
         />
         <label class="block pt-1 text-neutral-400" for="comic-setting">{locale.t("comic.setting")}</label>
-        <textarea
+        <ComicPromptField
           id="comic-setting"
-          rows="2"
-          class="w-full resize-y rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-          placeholder={locale.t("comic.setting_placeholder")}
           value={comic.setting}
-          oninput={(e) => comic.setPageField("setting", (e.currentTarget as HTMLTextAreaElement).value)}
-        ></textarea>
+          onchange={(next) => comic.setPageField("setting", next)}
+          placeholder={locale.t("comic.setting_placeholder")}
+          ariaLabel={locale.t("comic.setting")}
+          rows={2}
+          minHeight="min-h-12"
+          storageKey="mooshieui.promptHeight.comic.setting"
+        />
       </section>
 
       <section class="space-y-2">
@@ -393,14 +412,16 @@
                 onclick={() => comic.removeCastMember(member.id)}
               >&times;</button>
             </div>
-            <textarea
-              rows="2"
-              class="w-full resize-y rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-              placeholder={locale.t("comic.cast_tags_placeholder")}
-              aria-label={locale.t("comic.cast_tags")}
+            <ComicPromptField
               value={member.tags}
-              oninput={(e) => comic.updateCastMember(member.id, { tags: (e.currentTarget as HTMLTextAreaElement).value })}
-            ></textarea>
+              onchange={(next) => comic.updateCastMember(member.id, { tags: next })}
+              placeholder={locale.t("comic.cast_tags_placeholder")}
+              ariaLabel={locale.t("comic.cast_tags")}
+              rows={2}
+              minHeight="min-h-14"
+              suggestLoraKeywords={true}
+              storageKey="mooshieui.promptHeight.comic.castTags"
+            />
           </div>
         {/each}
       </section>
@@ -561,14 +582,16 @@
                 value={panel.beat}
                 oninput={(e) => comic.updatePanel(panel.id, { beat: (e.currentTarget as HTMLInputElement).value })}
               />
-              <textarea
-                rows="3"
-                class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-                placeholder={locale.t("comic.prompt_placeholder")}
-                aria-label={locale.t("comic.prompt")}
+              <ComicPromptField
                 value={panel.prompt}
-                oninput={(e) => comic.updatePanel(panel.id, { prompt: (e.currentTarget as HTMLTextAreaElement).value })}
-              ></textarea>
+                onchange={(next) => comic.updatePanel(panel.id, { prompt: next })}
+                placeholder={locale.t("comic.prompt_placeholder")}
+                ariaLabel={locale.t("comic.prompt")}
+                rows={3}
+                minHeight="min-h-16"
+                suggestLoraKeywords={true}
+                storageKey="mooshieui.promptHeight.comic.panelPrompt"
+              />
               <textarea
                 rows="2"
                 class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
@@ -591,14 +614,16 @@
                   <button class="px-1 text-[11px] text-neutral-400 hover:text-neutral-200" onclick={undoDraft}>{locale.t("comic.undo_draft")}</button>
                 {/if}
               </div>
-              <textarea
-                rows="1"
-                class="w-full resize-y rounded border border-red-900/60 bg-neutral-950 px-2 py-1 text-red-200 placeholder-neutral-600 focus:border-red-500 focus:outline-none"
-                placeholder={locale.t("comic.negative_placeholder")}
-                aria-label={locale.t("comic.negative")}
+              <ComicPromptField
                 value={panel.negative}
-                oninput={(e) => comic.updatePanel(panel.id, { negative: (e.currentTarget as HTMLTextAreaElement).value })}
-              ></textarea>
+                onchange={(next) => comic.updatePanel(panel.id, { negative: next })}
+                placeholder={locale.t("comic.negative_placeholder")}
+                ariaLabel={locale.t("comic.negative")}
+                rows={2}
+                minHeight="min-h-12"
+                suggestLoraKeywords={false}
+                storageKey="mooshieui.promptHeight.comic.panelNegative"
+              />
               {#if comic.cast.length > 0}
                 <div class="flex flex-wrap items-center gap-1">
                   <span class="text-[10px] text-neutral-500">{locale.t("comic.in_panel")}</span>
@@ -612,12 +637,14 @@
                   {/each}
                 </div>
               {/if}
-              <input
-                class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-                placeholder={comic.setting.trim() ? locale.t("comic.setting_override_placeholder", { setting: comic.setting.trim() }) : locale.t("comic.setting_override_empty")}
-                aria-label={locale.t("comic.setting_override")}
+              <ComicPromptField
                 value={panel.setting}
-                oninput={(e) => comic.updatePanel(panel.id, { setting: (e.currentTarget as HTMLInputElement).value })}
+                onchange={(next) => comic.updatePanel(panel.id, { setting: next })}
+                placeholder={comic.setting.trim() ? locale.t("comic.setting_override_placeholder", { setting: comic.setting.trim() }) : locale.t("comic.setting_override_empty")}
+                ariaLabel={locale.t("comic.setting_override")}
+                rows={1}
+                minHeight="min-h-10"
+                storageKey="mooshieui.promptHeight.comic.panelSetting"
               />
               {#if result?.error}
                 <p class="text-[11px] text-red-400">{result.error}</p>
