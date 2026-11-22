@@ -39,6 +39,12 @@
   } from "../../utils/kreaFewStep.js";
   import { onMount } from "svelte";
 
+  interface Props {
+    showBatchSize?: boolean;
+    showSeed?: boolean;
+  }
+  let { showBatchSize = true, showSeed = true }: Props = $props();
+
   const RDBT_ANIMA_FILENAME = "rdbt_v1.0_anima_b1_16-step.safetensors";
   const RDBT_ANIMA_URL =
     "https://huggingface.co/Kutches/Anim4/resolve/main/rdbt_v1.0_anima_b1_16-step.safetensors";
@@ -820,7 +826,9 @@
   {/if}
 
   <!-- Seed + Batch Size -->
-  <div class="grid grid-cols-2 gap-2">
+  {#if showSeed || showBatchSize}
+  <div class="grid {showSeed && showBatchSize ? 'grid-cols-2' : 'grid-cols-1'} gap-2">
+    {#if showSeed}
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.seed')}<InfoTip text={locale.t('generation.sampler.seed_tip')} /></span>
@@ -860,6 +868,8 @@
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
       />
     </div>
+    {/if}
+    {#if showBatchSize}
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.batch')}<InfoTip text={locale.t('generation.sampler.batch_tip')} /></span>
@@ -874,7 +884,9 @@
         class="w-full accent-indigo-500"
       />
     </div>
+    {/if}
   </div>
+  {/if}
 
   <!-- Bit Depth + Metadata -->
   <div class="grid grid-cols-2 gap-2">
