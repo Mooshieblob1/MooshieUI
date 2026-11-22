@@ -5412,5 +5412,10 @@ const ru: Record<string, string> = {
   "comic.pick_character_empty": "Нет сохранённых персонажей. Сначала сохраните их на вкладке Персонажи.",
   "comic.clear_ref": "Очистить портрет",
   "comic.pick_ref": "Выбрать портрет из Персонажей",
+  "settings.about.whats_new_button": "Что нового",
+  "whats_new.title": "Что нового!",
+  "whats_new.full_changelog": "Полный журнал изменений",
+  "whats_new.got_it": "Понятно",
+  "whats_new.empty": "Примечания к выпуску недоступны.",
 };
 export default ru;

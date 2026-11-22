@@ -5437,5 +5437,10 @@ const ja: Record<string, string> = {
   "comic.pick_character_empty": "保存済みのキャラクターがまだありません。先にキャラクタータブで保存してください。",
   "comic.clear_ref": "参照画像をクリア",
   "comic.pick_ref": "キャラクターから参照画像を選択",
+  "settings.about.whats_new_button": "新機能",
+  "whats_new.title": "新着情報！",
+  "whats_new.full_changelog": "完全な変更履歴",
+  "whats_new.got_it": "了解",
+  "whats_new.empty": "リリースノートはありません。",
 };
 export default ja;

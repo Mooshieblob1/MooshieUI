@@ -5413,5 +5413,10 @@ const pt: Record<string, string> = {
   "comic.pick_character_empty": "Nenhum personagem salvo ainda. Salve personagens primeiro na aba Personagens.",
   "comic.clear_ref": "Limpar retrato",
   "comic.pick_ref": "Escolher retrato de Personagens",
+  "settings.about.whats_new_button": "Novidades",
+  "whats_new.title": "Novidades!",
+  "whats_new.full_changelog": "Registro completo de alterações",
+  "whats_new.got_it": "Entendi",
+  "whats_new.empty": "Nenhuma nota de lançamento disponível.",
 };
 export default pt;

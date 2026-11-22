@@ -5413,5 +5413,10 @@ const zh: Record<string, string> = {
   "comic.pick_character_empty": "还没有保存的角色。请先在角色标签页保存角色。",
   "comic.clear_ref": "清除参考图",
   "comic.pick_ref": "从角色库选择参考图",
+  "settings.about.whats_new_button": "更新内容",
+  "whats_new.title": "更新内容！",
+  "whats_new.full_changelog": "完整更新日志",
+  "whats_new.got_it": "知道了",
+  "whats_new.empty": "暂无发行说明。",
 };
 export default zh;

@@ -5441,5 +5441,10 @@ const es: Record<string, string> = {
   "comic.pick_character_empty": "Aún no hay personajes guardados. Guarda personajes primero en la pestaña Personajes.",
   "comic.clear_ref": "Quitar retrato",
   "comic.pick_ref": "Elegir retrato de Personajes",
+  "settings.about.whats_new_button": "Novedades",
+  "whats_new.title": "¡Novedades!",
+  "whats_new.full_changelog": "Registro completo de cambios",
+  "whats_new.got_it": "Entendido",
+  "whats_new.empty": "No hay notas de la versión disponibles.",
 };
 export default es;

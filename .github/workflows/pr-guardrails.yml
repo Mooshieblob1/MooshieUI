@@ -220,6 +220,11 @@ jobs:
           npx esbuild scripts/tests/promptQualityStrip.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptQualityStrip.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptQualityStrip.test.mjs"
 
+      - name: Changelog release notes tests
+        run: |
+          npx esbuild scripts/tests/changelog.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/changelog.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/changelog.test.mjs"
+
       - name: Auto-updater helper tests
         run: |
           npx esbuild scripts/tests/updater.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/updater.test.mjs" --log-level=warning
