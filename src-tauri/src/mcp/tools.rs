@@ -179,7 +179,7 @@ pub fn definitions() -> Value {
                 "type": "object",
                 "required": ["panels"],
                 "properties": {
-                    "layout": { "type": "string", "enum": ["full", "two_rows", "two_columns", "three_rows", "one_over_two", "two_over_one", "tall_left_two_right", "four_rows", "grid_2x2", "one_two_one", "one_one_two", "two_one_two", "one_two_two", "grid_2x3", "two_one_three"], "description": "Panel layout. The digits read top to bottom: one_two_one is 1 wide panel, 2 side by side, 1 wide (4 panels); grid_2x3 is 3 rows of 2. Default: a layout for the number of panels. Or use rows." },
+                    "layout": { "type": "string", "enum": ["full", "two_rows", "two_columns", "three_rows", "one_over_two", "two_over_one", "tall_left_two_right", "four_rows", "grid_2x2", "one_two_one", "one_one_two", "two_one_two", "one_two_two", "grid_2x3", "two_one_three"], "description": "Panel layout. The digits read top to bottom: one_two_one is 1 wide panel, 2 side by side, 1 wide (4 panels); grid_2x3 is 3 rows of 2. Default: a layout for the number of panels. Or use rows or boxes." },
                     "rows": {
                         "type": "array",
                         "maxItems": 9,
@@ -190,6 +190,23 @@ pub fn definitions() -> Value {
                                 "height": { "type": "number", "description": "This row's share of the page height, relative to the others. Default 1." },
                                 "panels": { "type": "integer", "minimum": 1, "maximum": 9, "description": "Panels side by side in this row, equal widths. Default 1." },
                                 "widths": { "type": "array", "items": { "type": "number" }, "description": "Instead of panels: each panel's relative width, left to right." }
+                            }
+                        }
+                    },
+                    "boxes": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 9,
+                        "description": "A freeform layout instead of layout or rows: normalized 0..1 boxes (one per entry in panels) supporting overlapping panels and z-order.",
+                        "items": {
+                            "type": "object",
+                            "required": ["x", "y", "w", "h"],
+                            "properties": {
+                                "x": { "type": "number", "minimum": 0, "maximum": 0.88, "description": "Left edge in normalized page coordinates (0..1)." },
+                                "y": { "type": "number", "minimum": 0, "maximum": 0.88, "description": "Top edge in normalized page coordinates (0..1)." },
+                                "w": { "type": "number", "minimum": 0.12, "maximum": 1, "description": "Width in normalized page coordinates (0.12..1, x + w <= 1)." },
+                                "h": { "type": "number", "minimum": 0.12, "maximum": 1, "description": "Height in normalized page coordinates (0.12..1, y + h <= 1)." },
+                                "z": { "type": "integer", "description": "Stacking order (lower draws behind higher). Defaults to panel index." }
                             }
                         }
                     },
