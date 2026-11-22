@@ -1960,6 +1960,10 @@ const ja: Record<string, string> = {
   "updater.package_manager_hint": "パッケージマネージャーで更新してください:",
   "updater.server_available": "MooshieUI v{version} が利用可能です — 再デプロイして更新してください！",
   "updater.version_mismatch": "アップデートが正しく適用されていない可能性があります。v{expected}が期待されますが、v{current}が実行中です。最新バージョンを手動でダウンロードしてみてください。",
+  "updater.ready_to_install": "v{version} をダウンロード済み - 再起動してインストール",
+  "updater.install_and_restart": "インストールして再起動",
+  "updater.auto_countdown": "{seconds}秒後に v{version} へ更新します...",
+  "updater.cancel": "キャンセル",
 
   // ── ギャラリー ──────────────────────────────────────────
   "gallery.empty": "画像はまだありません",
@@ -4156,6 +4160,11 @@ const ja: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "自動アップデート",
+  "settings.about.auto_update_desc": "オフは確認と通知のみを行います。バックグラウンドでダウンロードは更新を準備し、準備ができたら再起動できます。アイドル時にダウンロードして再起動は、生成中でないときに短いカウントダウン後に自動でインストールして再起動します。",
+  "settings.about.auto_update_off": "オフ",
+  "settings.about.auto_update_download": "バックグラウンドでダウンロード",
+  "settings.about.auto_update_auto": "アイドル時にダウンロードして再起動",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

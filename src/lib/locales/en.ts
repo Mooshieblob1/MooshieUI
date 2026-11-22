@@ -913,6 +913,11 @@ const en: Record<string, string> = {
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "Automatic updates",
+  "settings.about.auto_update_desc": "Off checks and notifies only. Download in background prepares the update and lets you restart when ready. Download and restart when idle installs and restarts automatically after a short countdown when nothing is generating.",
+  "settings.about.auto_update_off": "Off",
+  "settings.about.auto_update_download": "Download in background",
+  "settings.about.auto_update_auto": "Download and restart when idle",
 
   // Quality tags warning dialog
   "settings.quality_warning.title": "Disable auto quality tags?",
@@ -2594,6 +2599,10 @@ const en: Record<string, string> = {
   "updater.package_manager_hint": "Update it with your package manager:",
   "updater.server_available": "MooshieUI v{version} is available — please redeploy to update!",
   "updater.version_mismatch": "Update may not have applied correctly. Expected v{expected}, but running v{current}. Try downloading the latest version manually.",
+  "updater.ready_to_install": "v{version} downloaded - Restart to install",
+  "updater.install_and_restart": "Install & restart",
+  "updater.auto_countdown": "Updating to v{version} in {seconds}s...",
+  "updater.cancel": "Cancel",
 
   // ── Gallery ─────────────────────────────────────────────
   "gallery.empty": "No images yet",

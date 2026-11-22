@@ -844,6 +844,11 @@ const es: Record<string, string> = {
   "settings.about.switch_to_app_mode_hint": "Cambia al modo app para instalarla con el actualizador de escritorio.",
   "settings.about.switch_to_app_mode": "Cambiar al modo app",
   "settings.about.redeploy_to_update": "Vuelve a desplegar o reinicia el servidor de MooshieUI para actualizar.",
+  "settings.about.auto_update": "Actualizaciones automaticas",
+  "settings.about.auto_update_desc": "Desactivado solo busca y notifica. Descargar en segundo plano prepara la actualizacion y te permite reiniciar cuando quieras. Descargar y reiniciar cuando este inactivo instala y reinicia automaticamente tras una breve cuenta regresiva cuando no haya generaciones activas.",
+  "settings.about.auto_update_off": "Desactivado",
+  "settings.about.auto_update_download": "Descargar en segundo plano",
+  "settings.about.auto_update_auto": "Descargar y reiniciar cuando este inactivo",
 
   // Diálogo de advertencia de etiquetas de calidad
   "settings.quality_warning.title": "¿Desactivar etiquetas de calidad automáticas?",
@@ -2003,6 +2008,10 @@ const es: Record<string, string> = {
   "updater.package_manager_hint": "Actualízalo con tu gestor de paquetes:",
   "updater.server_available": "MooshieUI v{version} está disponible — ¡vuelve a desplegar para actualizar!",
   "updater.version_mismatch": "Es posible que la actualización no se haya aplicado correctamente. Se esperaba v{expected}, pero se ejecuta v{current}. Intenta descargar la versión más reciente manualmente.",
+  "updater.ready_to_install": "v{version} descargada - Reinicia para instalar",
+  "updater.install_and_restart": "Instalar y reiniciar",
+  "updater.auto_countdown": "Actualizando a v{version} en {seconds}s...",
+  "updater.cancel": "Cancelar",
 
   // ── Galería ─────────────────────────────────────────────
   "gallery.empty": "Aún no hay imágenes",

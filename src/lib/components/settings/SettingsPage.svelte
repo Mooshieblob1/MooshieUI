@@ -28,7 +28,8 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import { keyEnv, isEnvRef, toStoredKey } from "../../stores/keyEnv.svelte.js";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken, responseErrorText } from "../../utils/ipc.js";
-  import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL } from "../../utils/updater.js";
+  import { checkForAppUpdate, isUpdateServerUnreachable, packageManagerUpdateCommand, RELEASES_PAGE_URL, type AutoUpdateMode } from "../../utils/updater.js";
+  import { updaterPrefs } from "../../stores/updaterPrefs.svelte.js";
   import { requestOsNotificationPermission } from "../../utils/osNotify.js";
   import { playFinishChime } from "../../utils/finishChime.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
@@ -1125,19 +1126,28 @@
   }
 
   // Update check state
-  type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
+  type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "ready_to_install" | "up-to-date" | "error";
   type BrowserUpdateMode = "local" | "lan" | "server";
   let updateState = $state<UpdateCheckState>("idle");
   let updateVersion = $state("");
   let updateError = $state("");
   /** Set when apt, dnf, zypper or the AUR owns this install. */
   let managedUpdateCommand = $state("");
+  let packageManagerResolved = $state(!isTauri);
   let updateDownloaded = $state(0);
   let updateTotal = $state(0);
   let browserUpdateMode = $state<BrowserUpdateMode>("local");
-  let updateObj: any | null = null;
+  let isInstallingReady = $state(false);
+  let updateObj: any | null = $state.raw(null);
 
   const updatePercent = $derived(updateTotal > 0 ? Math.round((updateDownloaded / updateTotal) * 100) : 0);
+
+  $effect(() => {
+    if (updateState === "downloading" && updateVersion && updaterPrefs.downloadingVersion === updateVersion) {
+      updateDownloaded = updaterPrefs.downloadProgress;
+      updateTotal = updaterPrefs.downloadTotal;
+    }
+  });
 
   async function refreshBrowserUpdateMode(): Promise<BrowserUpdateMode> {
     let mode: BrowserUpdateMode = "local";
@@ -1180,9 +1190,40 @@
       if (!isTauri) { updateState = "up-to-date"; return; }
       const update = await checkForAppUpdate();
       if (update) {
+        managedUpdateCommand = (await packageManagerUpdateCommand()) ?? "";
+        packageManagerResolved = true;
+        if (updaterPrefs.installedVersion === update.version) {
+          void update.close().catch(() => {});
+          updateVersion = update.version;
+          updateState = "ready";
+          return;
+        }
+        const cached = updaterPrefs.getDownloadedFor(update.version);
+        if (cached) {
+          void update.close().catch(() => {});
+          updateObj = cached;
+          updateVersion = cached.version;
+          updateState = managedUpdateCommand ? "available" : "ready_to_install";
+          return;
+        }
+        if (updaterPrefs.downloadingVersion === update.version && updaterPrefs.inFlightPromise) {
+          void update.close().catch(() => {});
+          updateVersion = update.version;
+          updateState = "downloading";
+          await updaterPrefs.inFlightPromise;
+          const downloaded = updaterPrefs.getDownloadedFor(updateVersion);
+          if (downloaded) {
+            updateObj = downloaded;
+            updateState = managedUpdateCommand ? "available" : "ready_to_install";
+          } else if (updaterPrefs.installedVersion === updateVersion) {
+            updateState = "ready";
+          } else {
+            updateState = "available";
+          }
+          return;
+        }
         updateObj = update;
         updateVersion = update.version;
-        managedUpdateCommand = (await packageManagerUpdateCommand()) ?? "";
         updateState = "available";
       } else {
         updateState = "up-to-date";
@@ -1192,6 +1233,28 @@
       updateError = isUpdateServerUnreachable(e)
         ? locale.t('settings.about.update_server_unreachable')
         : String(e);
+    }
+  }
+
+  async function installReadyUpdate() {
+    if (!updateObj || isInstallingReady) return;
+    isInstallingReady = true;
+    if (updateVersion) localStorage.setItem("mooshieui_pending_update", updateVersion);
+    try {
+      await updateObj.install();
+      if (updateVersion) updaterPrefs.markInstalled(updateVersion);
+      try { await stopComfyui(); } catch (e) { console.warn("Failed to stop ComfyUI before relaunch:", e); }
+      if (isTauri) {
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } else {
+        window.location.reload();
+      }
+    } catch (e) {
+      localStorage.removeItem("mooshieui_pending_update");
+      isInstallingReady = false;
+      updateState = "error";
+      updateError = String(e);
     }
   }
 
@@ -1208,24 +1271,62 @@
       }
       return;
     }
+    if (updateVersion && updaterPrefs.installedVersion === updateVersion) {
+      updateState = "ready";
+      return;
+    }
+    const cached = updateVersion ? updaterPrefs.getDownloadedFor(updateVersion) : null;
+    if (cached) {
+      updateObj = cached;
+      await installReadyUpdate();
+      return;
+    }
+    if (updateVersion && updaterPrefs.downloadingVersion === updateVersion && updaterPrefs.inFlightPromise) {
+      updateState = "downloading";
+      try {
+        await updaterPrefs.inFlightPromise;
+        const downloaded = updaterPrefs.getDownloadedFor(updateVersion);
+        if (downloaded) {
+          updateObj = downloaded;
+          updateState = "ready_to_install";
+        }
+      } catch (e) {
+        updateState = "error";
+        updateError = String(e);
+      }
+      return;
+    }
     if (!updateObj) return;
+    const activeUpdate = updateObj;
+    const targetVersion = updateVersion || activeUpdate.version;
     updateState = "downloading";
-    try {
-      await updateObj.downloadAndInstall((event: DownloadEvent) => {
+    const runPromise = (async () => {
+      await activeUpdate.downloadAndInstall((event: DownloadEvent) => {
         if (event.event === "Started") {
           updateTotal = event.data.contentLength ?? 0;
           updateDownloaded = 0;
+          updaterPrefs.updateProgress(0, updateTotal);
         } else if (event.event === "Progress") {
           updateDownloaded += event.data.chunkLength;
+          updaterPrefs.updateProgress(updateDownloaded);
         } else if (event.event === "Finished") {
           updateState = "ready";
         }
       });
       // Record the expected version so UpdateNotification can verify on the
       // next launch that the update actually applied (mirrors the banner path).
-      if (updateVersion) localStorage.setItem("mooshieui_pending_update", updateVersion);
+      if (targetVersion) {
+        localStorage.setItem("mooshieui_pending_update", targetVersion);
+        updaterPrefs.markInstalled(targetVersion);
+      }
       updateState = "ready";
+    })();
+
+    updaterPrefs.startDownload(targetVersion, runPromise);
+    try {
+      await runPromise;
     } catch (e) {
+      updaterPrefs.clearDownloaded(targetVersion);
       updateState = "error";
       updateError = String(e);
     }
@@ -1265,7 +1366,7 @@
     { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "account", labelKey: "settings.account", keywords: "account password username display name login logout users lan accounts admin moderator role security migration" },
-    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
+    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates automatic auto background about troubleshooting logs export diagnostic github report issue" },
     { key: "developer", labelKey: "settings.developer.title", keywords: "developer dev mode debug unlock" },
   ];
 
@@ -1581,6 +1682,13 @@
       loadLanAccounts();
       loadLanInfo();
       void loadLanFirewall();
+      void packageManagerUpdateCommand()
+        .then((cmd) => {
+          managedUpdateCommand = cmd ?? "";
+        })
+        .finally(() => {
+          packageManagerResolved = true;
+        });
     }
     startQueuePolling();
   });
@@ -4960,6 +5068,17 @@
                   </button>
                 </div>
 
+              {:else if updateState === "ready_to_install"}
+                <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
+                  <p class="text-sm text-emerald-200 mb-2">{locale.t('updater.ready_to_install', { version: updateVersion })}</p>
+                  <button
+                    onclick={installReadyUpdate}
+                    class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                  >
+                    {locale.t('updater.install_and_restart')}
+                  </button>
+                </div>
+
               {:else if updateState === "error"}
                 <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg">
                   <p class="text-xs text-red-200">{updateError}</p>
@@ -4980,6 +5099,25 @@
                 </div>
               {/if}
             </div>
+
+            {#if isTauri && packageManagerResolved && !managedUpdateCommand}
+              <div>
+                <label class="text-xs text-neutral-400 flex items-center gap-1 mb-1" for="auto-update-mode">
+                  {locale.t('settings.about.auto_update')}
+                  <InfoTip text={locale.t('settings.about.auto_update_desc')} />
+                </label>
+                <select
+                  id="auto-update-mode"
+                  value={updaterPrefs.autoUpdateMode}
+                  onchange={(e) => updaterPrefs.setAutoUpdateMode((e.currentTarget as HTMLSelectElement).value as AutoUpdateMode)}
+                  class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                >
+                  <option value="off">{locale.t('settings.about.auto_update_off')}</option>
+                  <option value="download">{locale.t('settings.about.auto_update_download')}</option>
+                  <option value="auto">{locale.t('settings.about.auto_update_auto')}</option>
+                </select>
+              </div>
+            {/if}
 
             <!-- Troubleshooting -->
             <div class="space-y-2">

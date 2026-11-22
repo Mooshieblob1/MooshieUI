@@ -1938,6 +1938,10 @@ const ko: Record<string, string> = {
   "updater.package_manager_hint": "패키지 관리자로 업데이트하세요:",
   "updater.server_available": "MooshieUI v{version} 사용 가능 — 업데이트하려면 다시 배포해 주세요!",
   "updater.version_mismatch": "업데이트가 올바르게 적용되지 않았을 수 있습니다. v{expected}를 기대했지만 v{current}가 실행 중입니다. 최신 버전을 수동으로 다운로드해 보세요.",
+  "updater.ready_to_install": "v{version} 다운로드됨 - 재시작하여 설치",
+  "updater.install_and_restart": "설치 및 재시작",
+  "updater.auto_countdown": "{seconds}초 후 v{version}(으)로 업데이트...",
+  "updater.cancel": "취소",
 
   // ── 갤러리 ──────────────────────────────────────────────
   "gallery.empty": "아직 이미지가 없습니다",
@@ -4131,6 +4135,11 @@ const ko: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "자동 업데이트",
+  "settings.about.auto_update_desc": "끄기는 확인 및 알림만 표시합니다. 백그라운드에서 다운로드는 업데이트를 미리 받아두고 원할 때 재시작할 수 있습니다. 유휴 시 다운로드 및 재시작은 생성 작업이 없을 때 짧은 카운트다운 후 자동으로 설치하고 재시작합니다.",
+  "settings.about.auto_update_off": "끄기",
+  "settings.about.auto_update_download": "백그라운드에서 다운로드",
+  "settings.about.auto_update_auto": "유휴 시 다운로드 및 재시작",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

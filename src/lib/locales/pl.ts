@@ -912,6 +912,11 @@ const pl: Record<string, string> = {
   "settings.about.switch_to_app_mode_hint": "Przełącz na tryb aplikacji, aby zainstalować za pomocą aktualizatora pulpitu.",
   "settings.about.switch_to_app_mode": "Przełącz na tryb aplikacji",
   "settings.about.redeploy_to_update": "Wdróż ponownie lub uruchom ponownie serwer MooshieUI, aby zaktualizować.",
+  "settings.about.auto_update": "Automatyczne aktualizacje",
+  "settings.about.auto_update_desc": "Wylaczone tylko sprawdza i powiadamia. Pobierz w tle przygotowuje aktualizacje i pozwala uruchomic ponownie, gdy bedziesz gotowy. Pobierz i uruchom ponownie w bezczynnosci instaluje i uruchamia ponownie automatycznie po krotkim odliczaniu, gdy nic nie jest generowane.",
+  "settings.about.auto_update_off": "Wylaczone",
+  "settings.about.auto_update_download": "Pobierz w tle",
+  "settings.about.auto_update_auto": "Pobierz i uruchom ponownie w bezczynnosci",
 
   // Quality tags warning dialog
   "settings.quality_warning.title": "Wyłączyć automatyczne tagi jakości?",
@@ -2548,6 +2553,10 @@ const pl: Record<string, string> = {
   "updater.package_manager_hint": "Zaktualizuj go menedżerem pakietów:",
   "updater.server_available": "MooshieUI v{version} jest dostępna -- wdróż ponownie, aby zaktualizować!",
   "updater.version_mismatch": "Aktualizacja mogła nie zostać zastosowana poprawnie. Oczekiwano v{expected}, ale uruchomiono v{current}. Spróbuj pobrać najnowszą wersję ręcznie.",
+  "updater.ready_to_install": "Pobrano v{version} - Uruchom ponownie, aby zainstalowac",
+  "updater.install_and_restart": "Zainstaluj i uruchom ponownie",
+  "updater.auto_countdown": "Aktualizacja do v{version} za {seconds}s...",
+  "updater.cancel": "Anuluj",
 
   // ── Gallery ─────────────────────────────────────────────
   "gallery.empty": "Brak obrazów",

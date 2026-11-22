@@ -1,10 +1,18 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import type { Update } from "@tauri-apps/plugin-updater";
   import { isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
   import { stopComfyui } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { checkForAppUpdate, packageManagerUpdateCommand } from "../../utils/updater.js";
+  import { progress } from "../../stores/progress.svelte.js";
+  import { updaterPrefs } from "../../stores/updaterPrefs.svelte.js";
+  import {
+    checkForAppUpdate,
+    isGenerationIdle,
+    packageManagerUpdateCommand,
+    shouldAutoDownload,
+    shouldAutoInstallWhenIdle,
+  } from "../../utils/updater.js";
 
   // @ts-ignore — injected by Vite at build time
   const currentVersion: string = __APP_VERSION__ ?? "dev";
@@ -14,7 +22,17 @@
   }
   let { userRole = "user" }: Props = $props();
 
-  type UpdateState = "idle" | "available" | "managed" | "server_available" | "downloading" | "ready" | "error" | "version_mismatch";
+  type UpdateState =
+    | "idle"
+    | "available"
+    | "managed"
+    | "server_available"
+    | "downloading"
+    | "ready"
+    | "ready_to_install"
+    | "auto_countdown"
+    | "error"
+    | "version_mismatch";
 
   let updateState: UpdateState = $state("idle");
   let version = $state("");
@@ -22,19 +40,34 @@
   let totalSize = $state(0);
   let errorMessage = $state("");
   let dismissed = $state(false);
+  let autoCancelled = $state(false);
+  let countdownSeconds = $state(5);
+  let isInstalling = $state(false);
   let expectedVersion = $state("");
   /** Set when apt, dnf, zypper or the AUR owns this install. */
   let managedCommand = $state("");
 
   let updateObj: Update | null = null;
+  let countdownTimer: ReturnType<typeof setInterval> | null = null;
 
   /** Only admin/moderator should see the server update banner. */
   const canSeeUpdate = $derived(userRole === "admin" || userRole === "moderator");
+  const isIdle = $derived(isGenerationIdle(progress.pendingPrompts.length, progress.isGenerating));
 
   const progressPercent = $derived(
     totalSize > 0 ? Math.round((downloadProgress / totalSize) * 100) : 0
   );
 
+  function clearCountdown() {
+    if (countdownTimer !== null) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  onDestroy(() => {
+    clearCountdown();
+  });
 
   // Track whether we've already checked for server updates (browser mode).
   // The role may resolve after mount, so we use $effect to react to canSeeUpdate.
@@ -43,6 +76,42 @@
     if (isBrowserMode && canSeeUpdate && !serverCheckDone) {
       serverCheckDone = true;
       checkServerUpdate();
+    }
+  });
+
+  // React to auto-update mode changes and generation idle transitions on desktop.
+  $effect(() => {
+    const mode = updaterPrefs.autoUpdateMode;
+    const idle = isIdle;
+    const installed = updaterPrefs.installedVersion;
+
+    if (!isTauri || managedCommand || !updateObj || isInstalling) return;
+
+    if (installed && installed === version && updateState !== "ready") {
+      clearCountdown();
+      updateState = "ready";
+      return;
+    }
+
+    if (updateState === "available" && shouldAutoDownload(mode, managedCommand)) {
+      void downloadInBackground();
+      return;
+    }
+
+    if (
+      updateState === "ready_to_install" &&
+      shouldAutoInstallWhenIdle(mode, managedCommand, idle, autoCancelled || dismissed)
+    ) {
+      startAutoCountdown();
+      return;
+    }
+
+    if (
+      updateState === "auto_countdown" &&
+      (!idle || mode !== "auto" || autoCancelled || dismissed)
+    ) {
+      clearCountdown();
+      updateState = "ready_to_install";
     }
   });
 
@@ -105,11 +174,36 @@
         console.log(`[Updater] Checking for updates (current: v${currentVersion})...`);
         const update = await checkForAppUpdate();
         if (update) {
-          updateObj = update;
-          version = update.version;
           managedCommand = (await packageManagerUpdateCommand()) ?? "";
-          updateState = managedCommand ? "managed" : "available";
-          console.log(`[Updater] Update available: v${update.version} (current: v${currentVersion})`);
+          const cached = updaterPrefs.getDownloadedFor(update.version);
+          if (updaterPrefs.installedVersion === update.version) {
+            void update.close().catch(() => {});
+            version = update.version;
+            updateState = "ready";
+            return;
+          }
+          if (cached) {
+            void update.close().catch(() => {});
+            updateObj = cached;
+            version = cached.version;
+          } else {
+            updateObj = update;
+            version = update.version;
+          }
+          console.log(`[Updater] Update available: v${version} (current: v${currentVersion})`);
+          if (managedCommand) {
+            updateState = "managed";
+          } else if (cached) {
+            if (shouldAutoInstallWhenIdle(updaterPrefs.autoUpdateMode, managedCommand, isIdle, autoCancelled || dismissed)) {
+              startAutoCountdown();
+            } else {
+              updateState = "ready_to_install";
+            }
+          } else if (shouldAutoDownload(updaterPrefs.autoUpdateMode, managedCommand)) {
+            void downloadInBackground();
+          } else {
+            updateState = "available";
+          }
         } else {
           console.log("[Updater] No updates available");
         }
@@ -119,28 +213,179 @@
     }
   });
 
-  async function downloadAndInstall() {
-    if (!updateObj) return;
+  function startAutoCountdown() {
+    if (countdownTimer !== null || isInstalling || !updateObj) return;
+    countdownSeconds = 5;
+    updateState = "auto_countdown";
+    countdownTimer = setInterval(() => {
+      if (!isIdle || updaterPrefs.autoUpdateMode !== "auto" || autoCancelled || dismissed) {
+        clearCountdown();
+        if (updateState === "auto_countdown") {
+          updateState = "ready_to_install";
+        }
+        return;
+      }
+      if (countdownSeconds <= 1) {
+        clearCountdown();
+        void installAndRestart();
+        return;
+      }
+      countdownSeconds -= 1;
+    }, 1000);
+  }
+
+  function cancelAutoCountdown() {
+    clearCountdown();
+    autoCancelled = true;
+    updateState = "ready_to_install";
+  }
+
+  async function downloadInBackground() {
+    if (!updateObj || managedCommand) return;
+    const cached = updaterPrefs.getDownloadedFor(updateObj.version);
+    if (cached) {
+      updateObj = cached;
+      if (shouldAutoInstallWhenIdle(updaterPrefs.autoUpdateMode, managedCommand, isIdle, autoCancelled || dismissed)) {
+        startAutoCountdown();
+      } else {
+        updateState = "ready_to_install";
+      }
+      return;
+    }
+    if (updaterPrefs.downloadingVersion === updateObj.version) {
+      updateState = "downloading";
+      if (updaterPrefs.inFlightPromise) {
+        try {
+          await updaterPrefs.inFlightPromise;
+          if (updaterPrefs.getDownloadedFor(updateObj.version)) {
+            if (shouldAutoInstallWhenIdle(updaterPrefs.autoUpdateMode, managedCommand, isIdle, autoCancelled || dismissed)) {
+              startAutoCountdown();
+            } else {
+              updateState = "ready_to_install";
+            }
+          }
+        } catch (e) {
+          updateState = "error";
+          errorMessage = String(e);
+        }
+      }
+      return;
+    }
+
+    const activeUpdate = updateObj;
     updateState = "downloading";
-    console.log(`[Updater] Starting download of v${updateObj.version}...`);
-    try {
-      await updateObj.downloadAndInstall((event) => {
+    console.log(`[Updater] Starting background download of v${activeUpdate.version}...`);
+
+    const downloadPromise = (async () => {
+      await activeUpdate.download((event) => {
         if (event.event === "Started") {
           totalSize = event.data.contentLength ?? 0;
           downloadProgress = 0;
+          updaterPrefs.updateProgress(0, totalSize);
           console.log(`[Updater] Download started (size: ${locale.formatBytes(totalSize)})`);
         } else if (event.event === "Progress") {
           downloadProgress += event.data.chunkLength;
+          updaterPrefs.updateProgress(downloadProgress);
+        } else if (event.event === "Finished") {
+          console.log("[Updater] Background download finished");
+        }
+      });
+      updaterPrefs.setDownloaded(activeUpdate);
+    })();
+
+    updaterPrefs.startDownload(activeUpdate.version, downloadPromise);
+    try {
+      await downloadPromise;
+      if (shouldAutoInstallWhenIdle(updaterPrefs.autoUpdateMode, managedCommand, isIdle, autoCancelled || dismissed)) {
+        startAutoCountdown();
+      } else {
+        updateState = "ready_to_install";
+      }
+    } catch (e) {
+      updaterPrefs.clearDownloaded(activeUpdate.version);
+      console.error("[Updater] Background download failed:", e);
+      updateState = "error";
+      errorMessage = String(e);
+    }
+  }
+
+  async function installAndRestart() {
+    if (!updateObj || isInstalling) return;
+    isInstalling = true;
+    clearCountdown();
+    console.log(`[Updater] Installing update v${version} and restarting...`);
+    localStorage.setItem("mooshieui_pending_update", version);
+    try {
+      await updateObj.install();
+      updaterPrefs.markInstalled(version);
+      try { await stopComfyui(); } catch {}
+      if (isTauri) {
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      }
+    } catch (e) {
+      localStorage.removeItem("mooshieui_pending_update");
+      isInstalling = false;
+      console.error("[Updater] Install failed:", e);
+      updateState = "error";
+      errorMessage = String(e);
+    }
+  }
+
+  async function downloadAndInstall() {
+    if (!updateObj) return;
+    const cached = updaterPrefs.getDownloadedFor(updateObj.version);
+    if (cached) {
+      updateObj = cached;
+      await installAndRestart();
+      return;
+    }
+    if (updaterPrefs.downloadingVersion === updateObj.version && updaterPrefs.inFlightPromise) {
+      updateState = "downloading";
+      try {
+        await updaterPrefs.inFlightPromise;
+        const done = updaterPrefs.getDownloadedFor(updateObj.version);
+        if (done) {
+          updateObj = done;
+          updateState = "ready_to_install";
+        }
+      } catch (e) {
+        updateState = "error";
+        errorMessage = String(e);
+      }
+      return;
+    }
+
+    const activeUpdate = updateObj;
+    updateState = "downloading";
+    console.log(`[Updater] Starting download of v${activeUpdate.version}...`);
+    const runPromise = (async () => {
+      await activeUpdate.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalSize = event.data.contentLength ?? 0;
+          downloadProgress = 0;
+          updaterPrefs.updateProgress(0, totalSize);
+          console.log(`[Updater] Download started (size: ${locale.formatBytes(totalSize)})`);
+        } else if (event.event === "Progress") {
+          downloadProgress += event.data.chunkLength;
+          updaterPrefs.updateProgress(downloadProgress);
         } else if (event.event === "Finished") {
           console.log("[Updater] Download and install finished");
           updateState = "ready";
         }
       });
+      updaterPrefs.markInstalled(version);
       // Store the expected version so we can verify after restart
       localStorage.setItem("mooshieui_pending_update", version);
       console.log(`[Updater] Stored pending update version: v${version}`);
       updateState = "ready";
+    })();
+
+    updaterPrefs.startDownload(activeUpdate.version, runPromise);
+    try {
+      await runPromise;
     } catch (e) {
+      updaterPrefs.clearDownloaded(activeUpdate.version);
       console.error("[Updater] Download/install failed:", e);
       updateState = "error";
       errorMessage = String(e);
@@ -157,6 +402,8 @@
   }
 
   function dismiss() {
+    clearCountdown();
+    autoCancelled = true;
     dismissed = true;
   }
 </script>
@@ -231,6 +478,28 @@
         onclick={dismiss}
         class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
       >{locale.t('updater.later')}</button>
+
+    {:else if updateState === "ready_to_install"}
+      <svg class="w-4 h-4 shrink-0 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+      </svg>
+      <span class="flex-1">{locale.t('updater.ready_to_install', { version })}</span>
+      <button
+        onclick={installAndRestart}
+        class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors cursor-pointer"
+      >{locale.t('updater.install_and_restart')}</button>
+      <button
+        onclick={dismiss}
+        class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
+      >{locale.t('updater.dismiss')}</button>
+
+    {:else if updateState === "auto_countdown"}
+      <div class="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
+      <span class="flex-1">{locale.t('updater.auto_countdown', { version, seconds: countdownSeconds })}</span>
+      <button
+        onclick={cancelAutoCountdown}
+        class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
+      >{locale.t('updater.cancel')}</button>
 
     {:else if updateState === "version_mismatch"}
       <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
