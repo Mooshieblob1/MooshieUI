@@ -282,6 +282,7 @@
   );
 
   let lastProgressEventAt = 0;
+  let latestPreviewSeq = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
   let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string; width?: number; height?: number }>>();
@@ -3090,6 +3091,9 @@
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
 
+        const seq = ++latestPreviewSeq;
+        const targetPromptId = data.prompt_id ?? progress.activePromptId;
+
         if (data.temp_filename) {
           // The worker WebSocket delivers preview frames as temp-file
           // references (not inline base64). On desktop there is no HTTP server,
@@ -3119,9 +3123,10 @@
             // between one queued prompt completing and the next starting,
             // when activePromptId is briefly null.
             if (
+              seq !== latestPreviewSeq ||
               !progress.isGenerating ||
-              (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) ||
-              (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
+              (targetPromptId && !progress.pendingPrompts.some((p: any) => p.promptId === targetPromptId)) ||
+              (targetPromptId && progress.activePromptId && targetPromptId !== progress.activePromptId)
             ) {
               return;
             }

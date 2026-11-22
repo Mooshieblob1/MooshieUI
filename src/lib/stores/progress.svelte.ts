@@ -235,7 +235,7 @@ class ProgressStore {
   }
 
   get displayImage() {
-    return this.previewImage ?? this.lastOutputImage;
+    return (this.isGenerating ? this.previewImage : null) ?? this.lastOutputImage;
   }
 
   /** Non-empty while a regional inpaint chain is between ComfyUI steps. */
@@ -506,7 +506,7 @@ class ProgressStore {
 
     this.pendingPrompts = this.pendingPrompts.filter((p) => p.promptId !== promptId);
 
-    if (this.activePromptId === promptId) {
+    if (this.activePromptId === promptId || this.pendingPrompts.length === 0) {
       this.activePromptId = null;
       this.currentStep = 0;
       this.totalSteps = 0;
