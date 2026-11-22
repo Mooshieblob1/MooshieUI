@@ -1,13 +1,14 @@
 <script lang="ts">
-  // Comic page builder: lay out panels, give each a prompt, generate them on
-  // any model (or the whole page in one NovelAI image), check continuity and
-  // assemble the page.
+  // Comic book builder: lay out multi-page books, assign cast and prompts,
+  // generate panels (or a whole page on NovelAI), check continuity, and export
+  // to the gallery, CBZ, or PDF.
   import { onMount } from "svelte";
   import { comic } from "../../stores/comic.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { architectureLabel, savedCharacters, type SavedCharacter } from "../../stores/savedCharacters.svelte.js";
   import {
     LAYOUT_TEMPLATES,
     MAX_PANELS,
@@ -22,16 +23,21 @@
     type Divider,
     type LayoutTemplate,
     type PageShape,
+    type RefMode,
   } from "../../utils/comicLayout.js";
   import {
     checkPanel,
     checkStory,
     draftFromBeats,
     enhancePanel,
+    exportBookCbz,
+    exportBookPdf,
     generateOneImage,
     generatePanels,
     previewPage,
     restoreImages,
+    restoreImagesForPage,
+    saveAllPages,
     savePage,
     stopRun,
     supportsPanel1Reference,
@@ -66,8 +72,13 @@
 
   let showTemplates = $state(false);
   let showPage = $state(false);
+  let showCharPicker = $state(false);
+  let pickingForCastId = $state<string | null>(null);
+  let renamingBook = $state(false);
+  let renameTitle = $state("");
   let error = $state<string | null>(null);
   let saving = $state(false);
+  let exporting = $state(false);
   let canvasEl = $state<HTMLDivElement | null>(null);
   let dragging = $state<Divider | null>(null);
 
@@ -90,11 +101,21 @@
   const tooManyForOneImage = $derived(oneImage && comic.enabledPanels.length > ONE_SHOT_MAX_PANELS);
   /** On NovelAI V5 the Prompt Assistant writes panels by the V5 Enhance rules, dialogue included. */
   const v5 = $derived(generation.isNovelAi && naiV5Variant(generation.checkpoint) !== null);
-  const canPanel1Ref = $derived(!oneImage && supportsPanel1Reference());
+  const canCharacterRef = $derived(!oneImage && supportsPanel1Reference());
   const modelName = $derived((generation.checkpoint || "").split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? "");
   const issueCount = $derived(
     Object.values(comic.results).reduce((n, r) => n + (r.issues?.length ?? 0), 0),
   );
+  const anyPageHasContent = $derived(comic.pages.some((p) => comic.pageHasContent(p)));
+  const sortedCharacters = $derived.by(() => {
+    const cur = savedCharacters.currentArchitecture;
+    return [...savedCharacters.characters].sort((a, b) => {
+      const aMatch = cur && a.architecture === cur ? 0 : 1;
+      const bMatch = cur && b.architecture === cur ? 0 : 1;
+      if (aMatch !== bMatch) return aMatch - bMatch;
+      return b.updatedAt - a.updatedAt;
+    });
+  });
 
   async function run(task: () => Promise<unknown>) {
     error = null;
@@ -121,6 +142,77 @@
       gallery.showToast(locale.t("comic.saved"), "success");
     });
     saving = false;
+  }
+
+  async function saveAll() {
+    saving = true;
+    await run(async () => {
+      const saved = await saveAllPages();
+      gallery.showToast(locale.t("comic.saved_all", { count: String(saved.length) }), "success");
+    });
+    saving = false;
+  }
+
+  async function exportCbz() {
+    exporting = true;
+    await run(async () => {
+      const status = await exportBookCbz();
+      if (status !== "cancelled") {
+        gallery.showToast(locale.t("comic.exported", { name: `${comic.activeBook.title}.cbz` }), "success");
+      }
+    });
+    exporting = false;
+  }
+
+  async function exportPdf() {
+    exporting = true;
+    await run(async () => {
+      const status = await exportBookPdf();
+      if (status !== "cancelled") {
+        gallery.showToast(locale.t("comic.exported", { name: `${comic.activeBook.title}.pdf` }), "success");
+      }
+    });
+    exporting = false;
+  }
+
+  function selectPage(index: number) {
+    comic.selectPage(index);
+    void restoreImagesForPage(comic.activePage.id);
+  }
+
+  function switchBook(id: string) {
+    renamingBook = false;
+    comic.switchBook(id);
+    void restoreImages();
+  }
+
+  function startRenameBook() {
+    renameTitle = comic.activeBook.title;
+    renamingBook = true;
+  }
+
+  function commitRenameBook() {
+    if (renameTitle.trim()) comic.renameBook(renameTitle);
+    renamingBook = false;
+  }
+
+  function openCharacterPicker(forCastId: string | null = null) {
+    pickingForCastId = forCastId;
+    showCharPicker = true;
+  }
+
+  function chooseCharacter(ch: SavedCharacter) {
+    if (pickingForCastId) {
+      comic.updateCastMember(pickingForCastId, {
+        savedCharacterId: ch.id,
+        referenceImage: ch.reference ?? ch.thumbnail ?? null,
+      });
+      comic.persist();
+    } else {
+      comic.addCastMemberFromCharacter(ch);
+    }
+    showCharPicker = false;
+    pickingForCastId = null;
   }
 
   function pickTemplate(t: LayoutTemplate) {
@@ -174,6 +266,56 @@
   <!-- Toolbar -->
   <div class="flex flex-wrap items-center gap-2 border-b border-neutral-800 px-3 py-2 text-xs">
     <h1 class="mr-1 text-sm font-medium text-neutral-100">{locale.t("comic.title")}</h1>
+
+    <!-- Book switcher / rename / new / delete -->
+    <div class="flex items-center gap-1">
+      {#if renamingBook}
+        <input
+          class="w-32 rounded border border-indigo-500 bg-neutral-900 px-2 py-1 text-neutral-100 focus:outline-none"
+          aria-label={locale.t("comic.rename_book")}
+          bind:value={renameTitle}
+          onkeydown={(e) => {
+            if (e.key === "Enter") commitRenameBook();
+            else if (e.key === "Escape") renamingBook = false;
+          }}
+          onblur={commitRenameBook}
+        />
+      {:else}
+        <select
+          class="max-w-36 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-neutral-200"
+          aria-label={locale.t("comic.title")}
+          disabled={comic.running}
+          value={comic.activeBookId}
+          onchange={(e) => switchBook((e.currentTarget as HTMLSelectElement).value)}
+        >
+          {#each comic.books as book (book.id)}
+            <option value={book.id}>{book.title}</option>
+          {/each}
+        </select>
+        <button
+          class="rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-neutral-300 hover:border-neutral-500"
+          title={locale.t("comic.rename_book")}
+          aria-label={locale.t("comic.rename_book")}
+          onclick={startRenameBook}
+        >✎</button>
+      {/if}
+      <button
+        class="rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-neutral-300 hover:border-neutral-500 disabled:opacity-40"
+        disabled={comic.running}
+        title={locale.t("comic.new_book")}
+        aria-label={locale.t("comic.new_book")}
+        onclick={() => comic.newBook(locale.t("comic.book_default_title", { n: String(comic.books.length + 1) }))}
+      >+</button>
+      <button
+        class="rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-neutral-400 hover:border-red-500 hover:text-red-300 disabled:opacity-40"
+        disabled={comic.running || comic.books.length <= 1}
+        title={locale.t("comic.delete_book")}
+        aria-label={locale.t("comic.delete_book")}
+        onclick={() => comic.deleteBook()}
+      >&times;</button>
+    </div>
+
+    <span class="h-5 w-px bg-neutral-800" aria-hidden="true"></span>
     <button
       class="rounded-lg border px-2.5 py-1.5 transition-colors {showTemplates ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 bg-neutral-900 hover:border-neutral-500'}"
       onclick={() => (showTemplates = !showTemplates)}
@@ -269,9 +411,26 @@
       >{locale.t("comic.view_page")}</button>
       <button
         class="rounded-lg border border-emerald-700 bg-emerald-900/40 px-2.5 py-1.5 text-emerald-200 hover:bg-emerald-800/50 disabled:opacity-40"
-        disabled={saving || (oneImage ? !comic.pageUrl : !Object.values(comic.results).some((r) => r.url))}
+        disabled={saving || exporting || (oneImage ? !comic.pageUrl : !Object.values(comic.results).some((r) => r.url))}
         onclick={() => { void save(); }}
       >{locale.t("comic.save_page")}</button>
+      {#if comic.pages.length > 1}
+        <button
+          class="rounded-lg border border-emerald-700/70 bg-emerald-950/40 px-2.5 py-1.5 text-emerald-200 hover:bg-emerald-900/50 disabled:opacity-40"
+          disabled={saving || exporting || !anyPageHasContent}
+          onclick={() => { void saveAll(); }}
+        >{locale.t("comic.save_all")}</button>
+      {/if}
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={saving || exporting || !anyPageHasContent}
+        onclick={() => { void exportCbz(); }}
+      >{locale.t("comic.export_cbz")}</button>
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={saving || exporting || !anyPageHasContent}
+        onclick={() => { void exportPdf(); }}
+      >{locale.t("comic.export_pdf")}</button>
     </div>
   </div>
 
@@ -366,19 +525,57 @@
           value={comic.setting}
           oninput={(e) => comic.setPageField("setting", (e.currentTarget as HTMLTextAreaElement).value)}
         ></textarea>
+        {#if comic.pages.length > 1}
+          <label class="block pt-1 text-[11px] text-neutral-400" for="comic-page-setting-override">{locale.t("comic.page_setting_override")}</label>
+          <input
+            id="comic-page-setting-override"
+            class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
+            placeholder={comic.setting.trim() ? locale.t("comic.page_setting_override_placeholder", { setting: comic.setting.trim() }) : locale.t("comic.setting_placeholder")}
+            value={comic.settingOverride}
+            oninput={(e) => comic.setPageField("settingOverride", (e.currentTarget as HTMLInputElement).value)}
+          />
+        {/if}
       </section>
 
       <section class="space-y-2">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
           <span class="text-neutral-400">{locale.t("comic.cast")}</span>
-          <button class="text-indigo-300 hover:underline" onclick={() => comic.addCastMember()}>{locale.t("comic.add_cast")}</button>
+          <div class="flex items-center gap-2">
+            <button class="text-emerald-300 hover:underline" onclick={() => openCharacterPicker(null)}>{locale.t("comic.from_characters")}</button>
+            <button class="text-indigo-300 hover:underline" onclick={() => comic.addCastMember()}>{locale.t("comic.add_cast")}</button>
+          </div>
         </div>
         {#if comic.cast.length === 0}
           <p class="text-[11px] text-neutral-500">{locale.t("comic.cast_empty")}</p>
         {/if}
         {#each comic.cast as member (member.id)}
-          <div class="space-y-1 rounded-lg border border-neutral-800 bg-neutral-900/60 p-2">
+          <div class="space-y-1.5 rounded-lg border border-neutral-800 bg-neutral-900/60 p-2">
             <div class="flex items-center gap-1.5">
+              {#if member.referenceImage}
+                <div class="relative shrink-0">
+                  <img
+                    src={member.referenceImage}
+                    alt={member.name || locale.t("comic.cast_name")}
+                    class="h-8 w-8 rounded border border-neutral-700 object-cover"
+                  />
+                  <button
+                    class="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-neutral-900 text-[9px] text-neutral-300 ring-1 ring-neutral-700 hover:text-red-400"
+                    title={locale.t("comic.clear_ref")}
+                    aria-label={locale.t("comic.clear_ref")}
+                    onclick={() => {
+                      comic.updateCastMember(member.id, { referenceImage: null, savedCharacterId: null });
+                      comic.persist();
+                    }}
+                  >&times;</button>
+                </div>
+              {:else}
+                <button
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-dashed border-neutral-700 text-[10px] text-neutral-500 hover:border-indigo-500 hover:text-indigo-300"
+                  title={locale.t("comic.pick_ref")}
+                  aria-label={locale.t("comic.pick_ref")}
+                  onclick={() => openCharacterPicker(member.id)}
+                >+</button>
+              {/if}
               <input
                 class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
                 placeholder={locale.t("comic.cast_name")}
@@ -417,16 +614,20 @@
           <span>{locale.t("comic.check_continuity")}</span>
         </label>
         {#if !oneImage}
-          <label class="flex items-center gap-2 text-[11px] {canPanel1Ref ? 'text-neutral-300' : 'text-neutral-500'}">
-            <input
-              type="checkbox"
-              class="accent-indigo-500"
-              checked={comic.usePanel1Ref}
-              disabled={!canPanel1Ref}
-              onchange={(e) => comic.setPageField("usePanel1Ref", (e.currentTarget as HTMLInputElement).checked)}
-            />
-            <span>{locale.t("comic.panel1_ref")}</span>
-            <InfoTip text={locale.t(canPanel1Ref ? "comic.panel1_ref_tip" : "comic.panel1_ref_unsupported")} />
+          <label class="flex items-center gap-1.5 text-[11px] {canCharacterRef ? 'text-neutral-300' : 'text-neutral-500'}">
+            <span class="shrink-0">{locale.t("comic.ref_mode")}</span>
+            <select
+              class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-neutral-200 disabled:opacity-50"
+              value={comic.refMode}
+              disabled={!canCharacterRef}
+              onchange={(e) => comic.setPageField("refMode", (e.currentTarget as HTMLSelectElement).value as RefMode)}
+            >
+              <option value="off">{locale.t("comic.ref_off")}</option>
+              <option value="page1_panel1">{locale.t("comic.ref_page1_panel1")}</option>
+              <option value="prev_panel">{locale.t("comic.ref_prev_panel")}</option>
+              <option value="cast">{locale.t("comic.ref_cast")}</option>
+            </select>
+            <InfoTip text={locale.t(canCharacterRef ? "comic.ref_mode_tip" : "comic.panel1_ref_unsupported")} />
           </label>
         {/if}
         <div class="flex flex-wrap gap-1.5">
@@ -469,62 +670,141 @@
       </section>
     </aside>
 
-    <!-- The page -->
-    <div class="flex min-h-[420px] min-w-0 flex-1 items-center justify-center bg-neutral-950 p-4 lg:min-h-0">
-      <div
-        bind:this={canvasEl}
-        class="relative max-h-full w-full max-w-[640px] select-none bg-white shadow-xl shadow-black/40"
-        style="aspect-ratio: {aspect}"
-        onpointermove={onDrag}
-        onpointerup={endDrag}
-        onpointercancel={endDrag}
-        role="application"
-        aria-label={locale.t("comic.page_label")}
-      >
-        {#each [...rects.entries()] as [id, r] (id)}
-          {@const panel = comic.panels[id]}
-          {@const result = comic.results[id]}
-          {@const number = order.indexOf(id) + 1}
-          <button
-            class="absolute overflow-hidden border-2 border-neutral-900 bg-neutral-200 text-left transition-shadow {comic.selectedId === id ? 'outline outline-3 outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
-            style={boxStyle(r)}
-            onclick={() => (comic.selectedId = id)}
-            aria-pressed={comic.selectedId === id}
-            aria-label={locale.t("comic.panel_n", { n: String(number) })}
-          >
-            {#if result?.url}
-              <img src={result.url} alt="" class="h-full w-full object-cover" draggable="false" />
-            {:else}
-              <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4">{panel?.beat || panel?.prompt || ""}</span>
-            {/if}
-            <span class="absolute left-1 top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white">{number}</span>
-            {#if result?.status === "running"}
-              <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
-            {:else if result?.status === "failed"}
-              <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
-            {:else if result?.issues && result.issues.length > 0}
-              <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
-            {:else if result?.issues && result.issues.length === 0}
-              <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
-            {/if}
-          </button>
-        {/each}
-        {#each lines as line (line.splitId)}
-          <!-- A divider: drag to resize the two sides. -->
-          <div
-            class="absolute z-10 {line.dir === 'row' ? 'cursor-col-resize' : 'cursor-row-resize'} group"
-            style={line.dir === "row"
-              ? `left: calc(${line.pos * 100}% - 6px); top: ${line.box.y * 100}%; width: 12px; height: ${line.box.h * 100}%;`
-              : `top: calc(${line.pos * 100}% - 6px); left: ${line.box.x * 100}%; height: 12px; width: ${line.box.w * 100}%;`}
-            onpointerdown={(e) => startDrag(e, line)}
-            role="separator"
-            aria-orientation={line.dir === "row" ? "vertical" : "horizontal"}
-            aria-label={locale.t("comic.divider")}
-            tabindex="-1"
-          >
-            <span class="absolute rounded bg-indigo-500 opacity-0 transition-opacity group-hover:opacity-80 {dragging?.splitId === line.splitId ? 'opacity-100' : ''} {line.dir === 'row' ? 'left-[4px] top-0 h-full w-[4px]' : 'top-[4px] left-0 w-full h-[4px]'}"></span>
+    <!-- The page + page strip -->
+    <div class="flex min-h-[420px] min-w-0 flex-1 flex-col bg-neutral-950 lg:min-h-0">
+      <div class="flex min-h-0 flex-1 items-center justify-center p-4">
+        <div
+          bind:this={canvasEl}
+          class="relative max-h-full w-full max-w-[640px] select-none bg-white shadow-xl shadow-black/40"
+          style="aspect-ratio: {aspect}"
+          onpointermove={onDrag}
+          onpointerup={endDrag}
+          onpointercancel={endDrag}
+          role="application"
+          aria-label={locale.t("comic.page_label")}
+        >
+          {#each [...rects.entries()] as [id, r] (id)}
+            {@const panel = comic.panels[id]}
+            {@const result = comic.results[id]}
+            {@const number = order.indexOf(id) + 1}
+            <button
+              class="absolute overflow-hidden border-2 border-neutral-900 bg-neutral-200 text-left transition-shadow {comic.selectedId === id ? 'outline outline-3 outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
+              style={boxStyle(r)}
+              onclick={() => (comic.selectedId = id)}
+              aria-pressed={comic.selectedId === id}
+              aria-label={locale.t("comic.panel_n", { n: String(number) })}
+            >
+              {#if result?.url}
+                <img src={result.url} alt="" class="h-full w-full object-cover" draggable="false" />
+              {:else}
+                <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4">{panel?.beat || panel?.prompt || ""}</span>
+              {/if}
+              <span class="absolute left-1 top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white">{number}</span>
+              {#if result?.status === "running"}
+                <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
+              {:else if result?.status === "failed"}
+                <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
+              {:else if result?.issues && result.issues.length > 0}
+                <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
+              {:else if result?.issues && result.issues.length === 0}
+                <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
+              {/if}
+            </button>
+          {/each}
+          {#each lines as line (line.splitId)}
+            <!-- A divider: drag to resize the two sides. -->
+            <div
+              class="absolute z-10 {line.dir === 'row' ? 'cursor-col-resize' : 'cursor-row-resize'} group"
+              style={line.dir === "row"
+                ? `left: calc(${line.pos * 100}% - 6px); top: ${line.box.y * 100}%; width: 12px; height: ${line.box.h * 100}%;`
+                : `top: calc(${line.pos * 100}% - 6px); left: ${line.box.x * 100}%; height: 12px; width: ${line.box.w * 100}%;`}
+              onpointerdown={(e) => startDrag(e, line)}
+              role="separator"
+              aria-orientation={line.dir === "row" ? "vertical" : "horizontal"}
+              aria-label={locale.t("comic.divider")}
+              tabindex="-1"
+            >
+              <span class="absolute rounded bg-indigo-500 opacity-0 transition-opacity group-hover:opacity-80 {dragging?.splitId === line.splitId ? 'opacity-100' : ''} {line.dir === 'row' ? 'left-[4px] top-0 h-full w-[4px]' : 'top-[4px] left-0 w-full h-[4px]'}"></span>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Page Strip -->
+      <div class="flex shrink-0 items-center gap-2 overflow-x-auto border-t border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs">
+        {#each comic.pages as page, idx (page.id)}
+          {@const active = idx === comic.activePageIndex}
+          {@const thumbUrl = comic.pageUrlForPage(page.id)}
+          {@const preview = panelRects(page.layout)}
+          <div class="flex shrink-0 flex-col items-center gap-1 rounded-lg border p-1.5 transition-colors {active ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-800 bg-neutral-900/70 hover:border-neutral-600'}">
+            <button
+              class="flex flex-col items-center gap-1"
+              onclick={() => selectPage(idx)}
+              aria-current={active ? "page" : undefined}
+              aria-label={locale.t("comic.page_n", { n: String(idx + 1) })}
+            >
+              {#if thumbUrl}
+                <img
+                  src={thumbUrl}
+                  alt={locale.t("comic.page_n", { n: String(idx + 1) })}
+                  class="h-14 border border-neutral-700 bg-white object-cover"
+                  style="aspect-ratio: {aspect}"
+                />
+              {:else}
+                <svg viewBox="0 0 100 {Math.round(100 / aspect)}" class="h-14 border border-neutral-700 bg-neutral-100" style="aspect-ratio: {aspect}">
+                  {#each [...preview.entries()] as [pid, r] (pid)}
+                    {@const hasImg = !!(comic.resultsForPage(page.id)[pid]?.url || page.images[pid])}
+                    <rect
+                      x={r.x * 100 + 3}
+                      y={(r.y * 100) / aspect + 3}
+                      width={Math.max(1, r.w * 100 - 6)}
+                      height={Math.max(1, (r.h * 100) / aspect - 6)}
+                      fill={hasImg ? "#818cf8" : "#e5e7eb"}
+                      stroke="#111827"
+                      stroke-width="2"
+                    />
+                  {/each}
+                </svg>
+              {/if}
+              <span class="text-[10px] font-medium {active ? 'text-indigo-300' : 'text-neutral-400'}">{idx + 1}</span>
+            </button>
+            <div class="flex items-center gap-0.5 text-[10px] text-neutral-400">
+              <button
+                class="rounded px-1 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-30"
+                disabled={comic.running || idx === 0}
+                title={locale.t("comic.move_page_left")}
+                aria-label={locale.t("comic.move_page_left")}
+                onclick={() => comic.movePage(idx, idx - 1)}
+              >←</button>
+              <button
+                class="rounded px-1 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-30"
+                disabled={comic.running || idx === comic.pages.length - 1}
+                title={locale.t("comic.move_page_right")}
+                aria-label={locale.t("comic.move_page_right")}
+                onclick={() => comic.movePage(idx, idx + 1)}
+              >→</button>
+              <button
+                class="rounded px-1 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-30"
+                disabled={comic.running}
+                title={locale.t("comic.duplicate_page")}
+                aria-label={locale.t("comic.duplicate_page")}
+                onclick={() => comic.duplicatePage(idx)}
+              >⧉</button>
+              <button
+                class="rounded px-1 hover:bg-neutral-800 hover:text-red-400 disabled:opacity-30"
+                disabled={comic.running || comic.pages.length <= 1}
+                title={locale.t("comic.delete_page")}
+                aria-label={locale.t("comic.delete_page")}
+                onclick={() => comic.deletePage(idx)}
+              >&times;</button>
+            </div>
           </div>
         {/each}
+        <button
+          class="flex h-24 shrink-0 items-center rounded-lg border border-dashed border-neutral-700 px-3 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-40"
+          disabled={comic.running}
+          onclick={() => comic.addPage()}
+        >{locale.t("comic.add_page")}</button>
       </div>
     </div>
 
@@ -614,7 +894,7 @@
               {/if}
               <input
                 class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-                placeholder={comic.setting.trim() ? locale.t("comic.setting_override_placeholder", { setting: comic.setting.trim() }) : locale.t("comic.setting_override_empty")}
+                placeholder={comic.effectiveSetting.trim() ? locale.t("comic.setting_override_placeholder", { setting: comic.effectiveSetting.trim() }) : locale.t("comic.setting_override_empty")}
                 aria-label={locale.t("comic.setting_override")}
                 value={panel.setting}
                 oninput={(e) => comic.updatePanel(panel.id, { setting: (e.currentTarget as HTMLInputElement).value })}
@@ -682,6 +962,56 @@
       <div class="flex gap-2">
         <button class="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm text-white hover:bg-emerald-600 disabled:opacity-40" disabled={saving} onclick={() => { void save(); }}>{locale.t("comic.save_page")}</button>
         <button class="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700" onclick={() => (showPage = false)}>{locale.t("comic.close")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showCharPicker}
+  <div
+    use:portal
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+    role="dialog"
+    aria-modal="true"
+    aria-label={locale.t("comic.pick_character")}
+    tabindex="-1"
+    onclick={(e) => { if (e.target === e.currentTarget) showCharPicker = false; }}
+    onkeydown={(e) => { if (e.key === "Escape") showCharPicker = false; }}
+  >
+    <div class="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-neutral-700 bg-neutral-900 text-xs text-neutral-200 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+        <h2 class="text-sm font-medium text-neutral-100">{locale.t("comic.pick_character")}</h2>
+        <button
+          class="rounded px-2 py-0.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+          onclick={() => (showCharPicker = false)}
+          aria-label={locale.t("comic.close")}
+        >&times;</button>
+      </div>
+      <div class="flex-1 space-y-2 overflow-y-auto p-3">
+        {#if sortedCharacters.length === 0}
+          <p class="py-6 text-center text-neutral-500">{locale.t("comic.pick_character_empty")}</p>
+        {:else}
+          {#each sortedCharacters as ch (ch.id)}
+            {@const img = ch.reference ?? ch.thumbnail}
+            <button
+              class="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2 text-left transition-colors hover:border-indigo-500 hover:bg-neutral-900"
+              onclick={() => chooseCharacter(ch)}
+            >
+              {#if img}
+                <img src={img} alt={ch.name} class="h-12 w-12 shrink-0 rounded border border-neutral-700 object-cover" />
+              {:else}
+                <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-neutral-800 bg-neutral-900 text-neutral-600">—</div>
+              {/if}
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="truncate font-medium text-neutral-100">{ch.name}</span>
+                  <span class="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">{architectureLabel(ch.architecture)}</span>
+                </div>
+                <p class="mt-0.5 truncate text-[11px] text-neutral-400">{ch.prompt}</p>
+              </div>
+            </button>
+          {/each}
+        {/if}
       </div>
     </div>
   </div>

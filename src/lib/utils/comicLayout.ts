@@ -264,7 +264,11 @@ export interface CastMember {
   name: string;
   /** Appearance tags: hair, eyes, outfit. Added to every panel they are in. */
   tags: string;
+  savedCharacterId?: string | null;
+  referenceImage?: string | null;
 }
+
+export type RefMode = "off" | "page1_panel1" | "prev_panel" | "cast";
 
 export interface ComicPanel {
   id: string;
@@ -516,11 +520,54 @@ export function enhancePanelInstruction(number: number): string {
   return `Rewrite panel ${number} only. Build on its beat and its current prompt, keep everything they say, and fill in framing, pose, expression and background where they are thin. Answer with that one panel in the same JSON shape.`;
 }
 
+export interface PreviousPageSummary {
+  pageNumber: number;
+  summary: string;
+}
+
+/** Compact summary of one page's beats, cast and dialogue for cross-page context. */
+export function summarizePageForContext(
+  ordered: ComicPanel[],
+  cast: CastMember[],
+  settingOverride = "",
+): string {
+  const lines = ordered
+    .filter((p) => p.enabled)
+    .map((p, i) => {
+      const who = cast
+        .filter((c) => p.cast.includes(c.id))
+        .map((c) => c.name || "?")
+        .join(", ");
+      const speech = dialogueLines(p.dialogue ?? "")
+        .map((l) => `"${l}"`)
+        .join(" / ");
+      const parts = [
+        p.beat.trim() || p.prompt.trim(),
+        who ? `[${who}]` : "",
+        speech ? `says: ${speech}` : "",
+        p.setting.trim() ? `(setting: ${p.setting.trim()})` : "",
+      ].filter(Boolean);
+      return parts.length > 0 ? `Panel ${i + 1}: ${parts.join(" ")}` : "";
+    })
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const header = settingOverride.trim() ? `Setting override: ${settingOverride.trim()}\n` : "";
+  return header + lines.join("\n");
+}
+
 export function storyBrief(
   ordered: ComicPanel[],
   page: { style: string; setting: string; cast: CastMember[] },
+  previousPages?: PreviousPageSummary[],
 ): string {
   const cast = page.cast.map((c) => `- ${c.name || "?"}: ${c.tags || "(no tags)"}`).join("\n");
+  const prevSection =
+    previousPages && previousPages.length > 0
+      ? `Previous pages (for continuity):\n${previousPages
+          .filter((p) => p.summary.trim())
+          .map((p) => `Page ${p.pageNumber}:\n${p.summary.trim()}`)
+          .join("\n\n")}`
+      : "";
   const panels = ordered
     .map((p, i) => {
       const who = page.cast.filter((c) => p.cast.includes(c.id)).map((c) => c.name).join(", ");
@@ -540,6 +587,7 @@ export function storyBrief(
     page.style.trim() ? `Style: ${page.style.trim()}` : "",
     `Setting: ${page.setting.trim() || "(not set)"}`,
     `Cast:\n${cast || "(none)"}`,
+    prevSection,
     panels,
   ]
     .filter(Boolean)
