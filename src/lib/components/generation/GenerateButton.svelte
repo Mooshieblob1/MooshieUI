@@ -14,6 +14,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
   import NovelAiUsage from "./NovelAiUsage.svelte";
   import { novelai } from "../../stores/novelai.svelte.js";
   import { estimateCurrentNovelAiCost } from "../../utils/novelaiCurrentCost.js";
@@ -822,7 +823,7 @@
    * is up marks its overlay with it.
    */
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+    if (!shortcuts.matches("generate.submit", e)) return;
     if (e.defaultPrevented) return;
     if (document.querySelector("[data-modal-open]")) return;
     e.preventDefault();

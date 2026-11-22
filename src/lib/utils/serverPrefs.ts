@@ -33,6 +33,7 @@ export interface UserPrefsData {
   enhancer_sessions?: unknown;
   style_creator?: unknown;
   anime_scene?: unknown;
+  shortcuts?: unknown;
   /** Set once the desktop app has merged its own data in (see `prefsSync`). */
   desktop_merged?: boolean;
   /** Set by the server on every save. */

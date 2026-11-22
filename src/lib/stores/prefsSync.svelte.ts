@@ -44,6 +44,7 @@ import { artistLocalPreviews } from "./artistLocalPreviews.svelte.js";
 import { enhancerSessions } from "./enhancerSessions.svelte.js";
 import { styleCreator } from "./styleCreator.svelte.js";
 import { animeScene } from "./animeScene.svelte.js";
+import { shortcuts } from "./shortcuts.svelte.js";
 // Also the load-bearing import that registers the timeline compiler with
 // `utils/timelineProvider.ts` before the first generation.
 import { videoTimeline } from "./videoTimeline.svelte.js";
@@ -74,6 +75,7 @@ const CATEGORIES = [
   "enhancer_sessions",
   "style_creator",
   "anime_scene",
+  "shortcuts",
 ] as const satisfies readonly (keyof UserPrefsData)[];
 
 type Category = (typeof CATEGORIES)[number];
@@ -169,6 +171,7 @@ class PrefsSyncStore {
       enhancer_sessions: enhancerSessions.collectPrefs(),
       style_creator: styleCreator.collectPrefs(),
       anime_scene: animeScene.collectPrefs(),
+      shortcuts: shortcuts.collectPrefs(),
     };
   }
 
@@ -201,6 +204,7 @@ class PrefsSyncStore {
       case "enhancer_sessions": return enhancerSessions.applyServerPrefs(data);
       case "style_creator": return styleCreator.applyServerPrefs(data);
       case "anime_scene": return animeScene.applyServerPrefs(data);
+      case "shortcuts": return shortcuts.applyServerPrefs(data);
     }
   }
 

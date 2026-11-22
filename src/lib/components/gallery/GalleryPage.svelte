@@ -16,6 +16,8 @@
     CHARACTER_MATCH_STEP,
   } from "../../utils/galleryCharacters.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { shortcuts } from "../../stores/shortcuts.svelte.js";
+  import { isTypingTarget } from "../../utils/shortcuts.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
   import { canvas } from "../../stores/canvas.svelte.js";
@@ -943,23 +945,20 @@
     }
   }
 
-  function isTypingTarget(target: EventTarget | null): boolean {
-    return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
-  }
-
   /** Ctrl/Cmd+A selects everything shown, Escape clears, Delete deletes the selection. */
   function onGalleryKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || gallery.lightboxOpen || gallery.compareOpen || dirPickerImage || exportProgress) return;
+    if (document.querySelector("[data-modal-open]")) return;
     if (isTypingTarget(e.target)) return;
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
+    if (shortcuts.matches("gallery.select_all", e)) {
       if (orderedImages.length === 0) return;
       e.preventDefault();
       selectAll();
-    } else if ((selection.size > 0 || cursor) && e.key === "Escape") {
+    } else if ((selection.size > 0 || cursor) && shortcuts.matches("gallery.clear_selection", e)) {
       e.preventDefault();
       clearSelection();
       cursor = null;
-    } else if (selection.size > 0 && e.key === "Delete") {
+    } else if (selection.size > 0 && shortcuts.matches("gallery.delete_selected", e)) {
       e.preventDefault();
       bulkDelete();
     } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.startsWith("Arrow")) {
@@ -969,10 +968,10 @@
       moveCursor(delta, e.shiftKey);
     } else if (cursor && orderedImages.includes(cursor) && !(e.target instanceof HTMLButtonElement)) {
       // A focused button keeps Space and Enter for itself.
-      if (e.key === " ") {
+      if (shortcuts.matches("gallery.toggle_select", e)) {
         e.preventDefault();
         toggleSelected(cursor);
-      } else if (e.key === "Enter") {
+      } else if (shortcuts.matches("gallery.open_lightbox", e)) {
         e.preventDefault();
         void gallery.openLightbox(cursor);
       }

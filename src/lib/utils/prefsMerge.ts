@@ -244,6 +244,16 @@ function mergeStyleCreator(primary: unknown, secondary: unknown): unknown {
   return { ...secondary, ...primary, history: history.slice(-MERGED_STYLE_HISTORY_MAX) };
 }
 
+function mergeShortcuts(primary: unknown, secondary: unknown): unknown {
+  if (!isObj(primary)) return secondary ?? primary;
+  if (!isObj(secondary)) return primary;
+  return {
+    ...secondary,
+    ...primary,
+    customBindings: mergeRecord(primary.customBindings, secondary.customBindings),
+  };
+}
+
 /**
  * Merge two snapshots of the same user's data (see the module docs). Either
  * side may be missing categories; the result has every category either had.
@@ -279,6 +289,7 @@ export function mergeUserPrefs(primary: UserPrefsData, secondary: UserPrefsData)
     enhancer_sessions: pick("enhancer_sessions", mergeEnhancerSessions),
     style_creator: pick("style_creator", mergeStyleCreator),
     anime_scene: pick("anime_scene", fill),
+    shortcuts: pick("shortcuts", mergeShortcuts),
   };
   for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
   return merged as UserPrefsData;

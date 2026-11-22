@@ -67,6 +67,8 @@ pub struct UserPrefs {
     pub style_creator: Option<serde_json::Value>,
     /// Anime scene draft (character, voice, lines, shots, clips).
     pub anime_scene: Option<serde_json::Value>,
+    /// Custom keyboard shortcut bindings.
+    pub shortcuts: Option<serde_json::Value>,
     /// True once the desktop app has merged its own saved data into this file
     /// (the one-time move from per-mode storage to this shared file).
     pub desktop_merged: Option<bool>,
