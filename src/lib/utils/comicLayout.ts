@@ -501,12 +501,123 @@ export function panelPixelRect(rect: Rect, page: { width: number; height: number
   };
 }
 
-/** Source crop that fills `target` from an image of `src` size (object-fit: cover). */
-export function coverCrop(src: { width: number; height: number }, target: { w: number; h: number }): Rect {
-  const scale = Math.max(target.w / src.width, target.h / src.height);
+export type PanelBorderStyle = "standard" | "borderless" | "rounded" | "slanted";
+
+export const PANEL_BORDER_STYLES: PanelBorderStyle[] = ["standard", "borderless", "rounded", "slanted"];
+export const MIN_PANEL_ZOOM = 1;
+export const MAX_PANEL_ZOOM = 4;
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export function clampPan(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(-1, value)) : 0;
+}
+
+export function clampZoom(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(MAX_PANEL_ZOOM, Math.max(MIN_PANEL_ZOOM, value))
+    : MIN_PANEL_ZOOM;
+}
+
+export function normalizePanelBorderStyle(value: unknown): PanelBorderStyle {
+  return value === "borderless" || value === "rounded" || value === "slanted" ? value : "standard";
+}
+
+/** Corner radius for "rounded" panels, in the same units as `box`. */
+export function panelCornerRadius(box: { w: number; h: number }): number {
+  return Math.max(0, Math.min(box.w, box.h) * 0.08);
+}
+
+/** Horizontal slant inset for "slanted" panels, clamped to `<= box.w * 0.2` so neighboring panels do not invert. */
+export function panelSlantInset(box: { w: number; h: number }, inset?: number): number {
+  const raw = inset !== undefined && Number.isFinite(inset) ? Math.max(0, inset) : Math.max(0, box.h * 0.15);
+  return Math.min(Math.max(0, box.w) * 0.2, raw);
+}
+
+/**
+ * Polygon vertices (clockwise from top-left) for a panel border in `box` units.
+ * `"slanted"` produces a parallelogram whose horizontal inset is clamped to `<= box.w * 0.2`.
+ */
+export function panelBorderPolygon(
+  box: Rect,
+  style: PanelBorderStyle = "standard",
+  slantInset?: number,
+): Point[] {
+  if (style === "slanted") {
+    const inset = panelSlantInset(box, slantInset);
+    return [
+      { x: box.x + inset, y: box.y },
+      { x: box.x + box.w, y: box.y },
+      { x: box.x + box.w - inset, y: box.y + box.h },
+      { x: box.x, y: box.y + box.h },
+    ];
+  }
+  return [
+    { x: box.x, y: box.y },
+    { x: box.x + box.w, y: box.y },
+    { x: box.x + box.w, y: box.y + box.h },
+    { x: box.x, y: box.y + box.h },
+  ];
+}
+
+/** CSS `clip-path` value matching `panelBorderPolygon` for `"slanted"`, or `"none"`. */
+export function panelClipPathCss(box: { w: number; h: number }, style: PanelBorderStyle): string {
+  if (style !== "slanted" || box.w <= 0) return "none";
+  const pct = (panelSlantInset(box) / box.w) * 100;
+  return `polygon(${pct.toFixed(4)}% 0%, 100% 0%, ${(100 - pct).toFixed(4)}% 100%, 0% 100%)`;
+}
+
+/** CSS `border-radius` value matching `panelCornerRadius` with circular arcs in `box` proportions. */
+export function panelBorderRadiusCss(box: { w: number; h: number }, style: PanelBorderStyle): string {
+  if (style !== "rounded" || box.w <= 0 || box.h <= 0) return "0px";
+  const r = panelCornerRadius(box);
+  const rxPct = (r / box.w) * 100;
+  const ryPct = (r / box.h) * 100;
+  return `${rxPct.toFixed(4)}% / ${ryPct.toFixed(4)}%`;
+}
+
+/** Source crop that fills `target` from an image of `src` size, with optional pan (`-1..1`) and zoom (`1..4`). */
+export function coverCrop(
+  src: { width: number; height: number },
+  target: { w: number; h: number },
+  panX = 0,
+  panY = 0,
+  zoom = 1,
+): Rect {
+  const safeZoom = clampZoom(zoom);
+  const safePanX = clampPan(panX);
+  const safePanY = clampPan(panY);
+  const scale = Math.max(target.w / src.width, target.h / src.height) * safeZoom;
   const w = target.w / scale;
   const h = target.h / scale;
-  return { x: (src.width - w) / 2, y: (src.height - h) / 2, w, h };
+  const maxX = Math.max(0, src.width - w);
+  const maxY = Math.max(0, src.height - h);
+  const x = Math.min(maxX, Math.max(0, ((src.width - w) / 2) * (1 + safePanX)));
+  const y = Math.min(maxY, Math.max(0, ((src.height - h) / 2) * (1 + safePanY)));
+  return { x, y, w, h };
+}
+
+/** Percentage positioning for an `<img>` inside a clipped panel so preview matches `coverCrop` pixel-for-pixel. */
+export function panelImageCss(
+  src: { width: number; height: number },
+  target: { w: number; h: number },
+  panX = 0,
+  panY = 0,
+  zoom = 1,
+): { left: string; top: string; width: string; height: string } {
+  if (src.width <= 0 || src.height <= 0 || target.w <= 0 || target.h <= 0) {
+    return { left: "0%", top: "0%", width: "100%", height: "100%" };
+  }
+  const crop = coverCrop(src, target, panX, panY, zoom);
+  return {
+    left: `${-(crop.x / crop.w) * 100}%`,
+    top: `${-(crop.y / crop.h) * 100}%`,
+    width: `${(src.width / crop.w) * 100}%`,
+    height: `${(src.height / crop.h) * 100}%`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -540,10 +651,31 @@ export interface ComicPanel {
    * be lettered. Drawn only on NovelAI, which letters a prompt's Text: block.
    */
   dialogue: string;
+  /** Normalized horizontal crop offset (-1..1, default 0). */
+  panX?: number;
+  /** Normalized vertical crop offset (-1..1, default 0). */
+  panY?: number;
+  /** Crop zoom multiplier (1..4, default 1). */
+  zoom?: number;
+  /** Panel frame border style (default "standard"). */
+  borderStyle?: PanelBorderStyle;
 }
 
 export function newPanel(id: string): ComicPanel {
-  return { id, beat: "", prompt: "", negative: "", enabled: true, cast: [], setting: "", dialogue: "" };
+  return {
+    id,
+    beat: "",
+    prompt: "",
+    negative: "",
+    enabled: true,
+    cast: [],
+    setting: "",
+    dialogue: "",
+    panX: 0,
+    panY: 0,
+    zoom: 1,
+    borderStyle: "standard",
+  };
 }
 
 /** True when a panel holds any user-authored beat, prompt, dialogue, setting, or cast assignment. */

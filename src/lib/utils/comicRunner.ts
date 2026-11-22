@@ -31,11 +31,14 @@ import {
   dialogueLines,
   enhancePanelInstruction,
   joinTags,
+  normalizePanelBorderStyle,
   oneShotBasePrompt,
   oneShotCentre,
   oneShotPanelPrompt,
   pageAspect,
   pageSize,
+  panelBorderPolygon,
+  panelCornerRadius,
   panelGenerationSize,
   panelPixelRect,
   panelPrompt,
@@ -47,8 +50,10 @@ import {
   storyBrief,
   summarizePageForContext,
   type ComicPanel,
+  type PanelBorderStyle,
   type PanelDraft,
   type PreviousPageSummary,
+  type Rect,
 } from "./comicLayout.js";
 import { assertAllowedRequest } from "./contentSafety.js";
 import { loadOutputImageForGenerationInput } from "./galleryActions.js";
@@ -317,7 +322,12 @@ async function generateOne(
     return null;
   }
   const { png, galleryFilename } = await imageBytes(image);
-  comic.setResult(panel.id, { status: "done", url: objectUrl(png), galleryFilename }, pageId);
+  const url = objectUrl(png);
+  if (galleryFilename) {
+    comic.cacheTakeUrl(galleryFilename, url, pageId);
+    comic.recordPanelTake(panel.id, galleryFilename, pageId);
+  }
+  comic.setResult(panel.id, { status: "done", url, galleryFilename }, pageId);
   if (book.checkContinuity) void checkPanel(panel.id, png, galleryFilename, pageId, book, page);
   return png;
 }
@@ -615,23 +625,75 @@ async function renderPageCanvas(pageIndex: number): Promise<HTMLCanvasElement> {
   ctx.fillRect(0, 0, px.width, px.height);
 
   const border = Math.max(2, Math.round(Math.max(px.width, px.height) / 600));
-  const drawPanel = async (id: string, box: { x: number; y: number; w: number; h: number }, halo: number) => {
+  const traceBorderPath = (targetBox: Rect, style: PanelBorderStyle, expand = 0) => {
+    const b: Rect =
+      expand === 0
+        ? targetBox
+        : {
+            x: targetBox.x - expand,
+            y: targetBox.y - expand,
+            w: targetBox.w + expand * 2,
+            h: targetBox.h + expand * 2,
+          };
+    ctx.beginPath();
+    if (style === "rounded") {
+      const r = panelCornerRadius(targetBox) + Math.max(0, expand);
+      ctx.roundRect(b.x, b.y, b.w, b.h, r);
+    } else if (style === "slanted") {
+      const poly = panelBorderPolygon(targetBox, "slanted");
+      ctx.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+      ctx.closePath();
+    } else {
+      ctx.rect(b.x, b.y, b.w, b.h);
+    }
+  };
+
+  const drawPanel = async (id: string, box: Rect, halo: number) => {
+    const panel = page.panels[id];
+    const style = normalizePanelBorderStyle(panel?.borderStyle);
+
     if (halo > 0) {
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(box.x - halo, box.y - halo, box.w + halo * 2, box.h + halo * 2);
+      if (style === "slanted") {
+        traceBorderPath(box, "slanted", 0);
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = halo * 2;
+        ctx.lineJoin = "miter";
+        ctx.miterLimit = 4;
+        ctx.stroke();
+      } else {
+        traceBorderPath(box, style, halo);
+        ctx.fill();
+      }
     }
-    const panel = page.panels[id];
+
+    ctx.save();
+    traceBorderPath(box, style, 0);
+    ctx.clip();
+    if (halo > 0) {
+      // Ensure overlapping upper panels occlude lower panels even before an image is generated.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+    }
     if (panel?.enabled) {
       const bitmap = await loadBitmapForPanel(page, id);
       if (bitmap) {
-        const crop = coverCrop(bitmap, box);
+        const crop = coverCrop(bitmap, box, panel.panX ?? 0, panel.panY ?? 0, panel.zoom ?? 1);
         ctx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, box.x, box.y, box.w, box.h);
         bitmap.close();
       }
     }
-    ctx.strokeStyle = "#000000";
-    ctx.lineWidth = border;
-    ctx.strokeRect(box.x + border / 2, box.y + border / 2, Math.max(1, box.w - border), Math.max(1, box.h - border));
+    if (style !== "borderless") {
+      traceBorderPath(box, style, 0);
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = border * 2;
+      ctx.lineJoin = style === "slanted" ? "miter" : "round";
+      ctx.miterLimit = 4;
+      ctx.stroke();
+    }
+    ctx.restore();
   };
 
   if (page.layoutMode === "freeform") {
@@ -807,6 +869,37 @@ export async function exportBookPdf(): Promise<"saved" | "downloaded" | "cancell
   return saveExportBlob(pdf, `${bookExportSlug(book.title)}.pdf`, "PDF", "pdf");
 }
 
+/** Switch a panel to an earlier or later take, lazy-loading from the gallery if needed. */
+export async function switchPanelTake(
+  panelId: string,
+  deltaOrIndex: number,
+  mode?: "delta" | "index",
+): Promise<void> {
+  const page = comic.activePage;
+  const filename = comic.selectPanelTake(panelId, deltaOrIndex, mode);
+  if (!filename) return;
+  if (comic.getTakeUrl(filename, page.id)) return;
+  try {
+    const bytes = await loadGalleryImageDisplay(filename);
+    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" }));
+    comic.cacheTakeUrl(filename, url, page.id);
+    if (comic.activePage.id === page.id && comic.activePage.images[panelId] === filename) {
+      comic.setResult(
+        panelId,
+        { status: "done", url, galleryFilename: filename, issues: null, error: undefined },
+        page.id,
+      );
+    }
+  } catch {
+    // Take file was deleted from the gallery: prune it and fall back cleanly to any remaining take.
+    comic.pruneDeletedTake(panelId, filename, page.id);
+    const remaining = page.imageHistory[panelId] ?? [];
+    if (remaining.length > 0) {
+      await switchPanelTake(panelId, remaining.length - 1, "index");
+    }
+  }
+}
+
 /** Bring back saved panel images for a single page if not yet cached in runtime. */
 export async function restoreImagesForPage(pageId: string): Promise<void> {
   const book = comic.books.find((b) => b.pages.some((p) => p.id === pageId));
@@ -819,6 +912,7 @@ export async function restoreImagesForPage(pageId: string): Promise<void> {
     try {
       const bytes = await loadGalleryImageDisplay(filename);
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" }));
+      comic.cacheTakeUrl(filename, url, page.id);
       comic.setResult(id, { status: "done", url, galleryFilename: filename, issues: null }, page.id);
     } catch {
       /* the file was deleted from the gallery: the panel just starts empty */
