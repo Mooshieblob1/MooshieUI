@@ -5403,5 +5403,10 @@ const zhTw: Record<string, string> = {
   "comic.pick_character_empty": "尚未儲存任何角色。請先在角色分頁儲存角色。",
   "comic.clear_ref": "清除參考圖",
   "comic.pick_ref": "從角色庫選擇參考圖",
+  "settings.about.whats_new_button": "更新內容",
+  "whats_new.title": "更新內容！",
+  "whats_new.full_changelog": "完整更新日誌",
+  "whats_new.got_it": "知道了",
+  "whats_new.empty": "暫無版本說明。",
 };
 export default zhTw;

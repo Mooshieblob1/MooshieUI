@@ -63,8 +63,10 @@
   import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationMode, GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
+  import WhatsNewModal from "./lib/components/updater/WhatsNewModal.svelte";
   import ComfyUiVersionBadge from "./lib/components/updater/ComfyUiVersionBadge.svelte";
   import { comfyuiUpdate } from "./lib/stores/comfyuiUpdate.svelte.js";
+  import { whatsNew } from "./lib/stores/whatsNew.svelte.js";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
@@ -2792,6 +2794,7 @@
 
     // Setup already done — initialize the main app
     await initApp();
+    whatsNew.checkOnStartup(appVersion);
   });
 
   async function onSetupDone(selectedMode: "app" | "browser") {
@@ -5095,6 +5098,7 @@
 
 <!-- Global human-readable error surface -->
 <GlobalErrorModal />
+<WhatsNewModal />
 
 {#if showBugReport}
   <ReportErrorModal error={userInitiatedReport} generic onclose={() => (showBugReport = false)} />

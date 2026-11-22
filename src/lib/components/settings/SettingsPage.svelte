@@ -9,6 +9,7 @@
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
+  import { whatsNew } from "../../stores/whatsNew.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { model3d } from "../../stores/model3d.svelte.js";
   import { DEFAULT_NSFW_KEYWORDS, parseNsfwKeywords } from "../../utils/galleryNsfw.js";
@@ -4838,17 +4839,25 @@
           </div>
 
           <div class="px-5 pb-5 space-y-4">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-3">
               <div>
                 <p class="text-sm text-neutral-200">{locale.t("app.brand_name")}</p>
                 <p class="text-xs text-neutral-500">{locale.t('settings.about.version')} {appVersion}</p>
               </div>
-              <button
-                onclick={() => (showAboutModal = true)}
-                class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
-              >
-                {locale.t('settings.about.about_button')}
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick={() => whatsNew.openManual()}
+                  class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
+                >
+                  {locale.t('settings.about.whats_new_button')}
+                </button>
+                <button
+                  onclick={() => (showAboutModal = true)}
+                  class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
+                >
+                  {locale.t('settings.about.about_button')}
+                </button>
+              </div>
             </div>
 
             <!-- What's New -->
