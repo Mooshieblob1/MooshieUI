@@ -1938,6 +1938,10 @@ const ru: Record<string, string> = {
   "updater.package_manager_hint": "Обновите его через менеджер пакетов:",
   "updater.server_available": "MooshieUI v{version} доступна — выполните повторное развёртывание для обновления!",
   "updater.version_mismatch": "Обновление могло не примениться корректно. Ожидалась v{expected}, но запущена v{current}. Попробуйте загрузить последнюю версию вручную.",
+  "updater.ready_to_install": "v{version} загружена - Перезапустите для установки",
+  "updater.install_and_restart": "Установить и перезапустить",
+  "updater.auto_countdown": "Обновление до v{version} через {seconds}с...",
+  "updater.cancel": "Отмена",
 
   // ── Галерея ─────────────────────────────────────────────
   "gallery.empty": "Пока нет изображений",
@@ -4131,6 +4135,11 @@ const ru: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "Автоматические обновления",
+  "settings.about.auto_update_desc": "Выкл - только проверка и уведомление. Загрузка в фоне подготавливает обновление и позволяет перезапустить позже. Загрузить и перезапустить при простое автоматически устанавливает и перезапускает после короткого отсчета, когда ничего не генерируется.",
+  "settings.about.auto_update_off": "Выкл",
+  "settings.about.auto_update_download": "Загружать в фоне",
+  "settings.about.auto_update_auto": "Загрузить и перезапустить при простое",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

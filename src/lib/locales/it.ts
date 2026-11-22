@@ -1938,6 +1938,10 @@ const it: Record<string, string> = {
   "updater.package_manager_hint": "Aggiornalo con il tuo gestore di pacchetti:",
   "updater.server_available": "MooshieUI v{version} è disponibile — esegui un nuovo deploy per aggiornare!",
   "updater.version_mismatch": "L'aggiornamento potrebbe non essere stato applicato correttamente. Atteso v{expected}, ma in esecuzione v{current}. Prova a scaricare manualmente l'ultima versione.",
+  "updater.ready_to_install": "v{version} scaricata - Riavvia per installare",
+  "updater.install_and_restart": "Installa e riavvia",
+  "updater.auto_countdown": "Aggiornamento a v{version} tra {seconds}s...",
+  "updater.cancel": "Annulla",
 
   // ── Galleria ─────────────────────────────────────────────
   "gallery.empty": "Nessuna immagine ancora",
@@ -4131,6 +4135,11 @@ const it: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "Aggiornamenti automatici",
+  "settings.about.auto_update_desc": "Disattivato controlla e notifica soltanto. Scarica in background prepara l'aggiornamento e ti permette di riavviare quando sei pronto. Scarica e riavvia quando inattivo installa e riavvia automaticamente dopo un breve conto alla rovescia quando non ci sono generazioni attive.",
+  "settings.about.auto_update_off": "Disattivato",
+  "settings.about.auto_update_download": "Scarica in background",
+  "settings.about.auto_update_auto": "Scarica e riavvia quando inattivo",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

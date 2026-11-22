@@ -1960,6 +1960,10 @@ const fr: Record<string, string> = {
   "updater.package_manager_hint": "Mettez-le à jour avec votre gestionnaire de paquets :",
   "updater.server_available": "MooshieUI v{version} est disponible — veuillez redéployer pour mettre à jour !",
   "updater.version_mismatch": "La mise à jour n'a peut-être pas été appliquée correctement. v{expected} était attendu, mais v{current} est en cours d'exécution. Essayez de télécharger la dernière version manuellement.",
+  "updater.ready_to_install": "v{version} telechargee - Redemarrer pour installer",
+  "updater.install_and_restart": "Installer et redemarrer",
+  "updater.auto_countdown": "Mise a jour vers v{version} dans {seconds}s...",
+  "updater.cancel": "Annuler",
 
   // ── Galerie ─────────────────────────────────────────────
   "gallery.empty": "Pas encore d'images",
@@ -4157,6 +4161,11 @@ const fr: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "Mises a jour automatiques",
+  "settings.about.auto_update_desc": "Desactive verifie et notifie uniquement. Telecharger en arriere-plan prepare la mise a jour et vous laisse redemarrer quand vous etes pret. Telecharger et redemarrer a l'inactivite installe et redemarre automatiquement apres un court compte a rebours lorsqu'aucune generation n'est en cours.",
+  "settings.about.auto_update_off": "Desactive",
+  "settings.about.auto_update_download": "Telecharger en arriere-plan",
+  "settings.about.auto_update_auto": "Telecharger et redemarrer a l'inactivite",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

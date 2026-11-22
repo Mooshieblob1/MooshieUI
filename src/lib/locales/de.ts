@@ -1959,6 +1959,10 @@ const de: Record<string, string> = {
   "updater.package_manager_hint": "Aktualisiere es mit deinem Paketmanager:",
   "updater.server_available": "MooshieUI v{version} ist verfügbar — bitte erneut bereitstellen, um zu aktualisieren!",
   "updater.version_mismatch": "Update wurde möglicherweise nicht korrekt angewendet. Erwartet v{expected}, aber läuft v{current}. Versuche die neueste Version manuell herunterzuladen.",
+  "updater.ready_to_install": "v{version} heruntergeladen - Zum Installieren neu starten",
+  "updater.install_and_restart": "Installieren & neu starten",
+  "updater.auto_countdown": "Update auf v{version} in {seconds}s...",
+  "updater.cancel": "Abbrechen",
 
   // ── Galerie ─────────────────────────────────────────────
   "gallery.empty": "Noch keine Bilder",
@@ -4134,6 +4138,11 @@ const de: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "Automatische Updates",
+  "settings.about.auto_update_desc": "Aus prueft und benachrichtigt nur. Im Hintergrund herunterladen bereitet das Update vor, sodass Sie bei Bedarf neu starten koennen. Herunterladen und bei Leerlauf neu starten installiert und startet nach einem kurzen Countdown automatisch neu, wenn nichts generiert wird.",
+  "settings.about.auto_update_off": "Aus",
+  "settings.about.auto_update_download": "Im Hintergrund herunterladen",
+  "settings.about.auto_update_auto": "Herunterladen und bei Leerlauf neu starten",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

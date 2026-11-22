@@ -1938,6 +1938,10 @@ const pt: Record<string, string> = {
   "updater.package_manager_hint": "Atualize com o seu gerenciador de pacotes:",
   "updater.server_available": "MooshieUI v{version} está disponível — reimplante para atualizar!",
   "updater.version_mismatch": "A atualização pode não ter sido aplicada corretamente. Esperado v{expected}, mas rodando v{current}. Tente baixar a versão mais recente manualmente.",
+  "updater.ready_to_install": "v{version} baixada - Reinicie para instalar",
+  "updater.install_and_restart": "Instalar e reiniciar",
+  "updater.auto_countdown": "Atualizando para v{version} em {seconds}s...",
+  "updater.cancel": "Cancelar",
 
   // ── Galeria ─────────────────────────────────────────────
   "gallery.empty": "Nenhuma imagem ainda",
@@ -4132,6 +4136,11 @@ const pt: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "Atualizacoes automaticas",
+  "settings.about.auto_update_desc": "Desativado apenas verifica e notifica. Baixar em segundo plano prepara a atualizacao e permite reiniciar quando quiser. Baixar e reiniciar quando ocioso instala e reinicia automaticamente apos uma breve contagem regressiva quando nada estiver gerando.",
+  "settings.about.auto_update_off": "Desativado",
+  "settings.about.auto_update_download": "Baixar em segundo plano",
+  "settings.about.auto_update_auto": "Baixar e reiniciar quando ocioso",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",

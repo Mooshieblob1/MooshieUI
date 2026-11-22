@@ -1,6 +1,17 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 import { getAppPackageManager } from "./api.js";
 
+export {
+  AUTO_UPDATE_STORAGE_KEY,
+  isGenerationIdle,
+  loadAutoUpdateMode,
+  parseAutoUpdateMode,
+  saveAutoUpdateMode,
+  shouldAutoDownload,
+  shouldAutoInstallWhenIdle,
+  type AutoUpdateMode,
+} from "./autoUpdate.js";
+
 /** GitHub releases page, offered when the in-app updater can't reach GitHub. */
 export const RELEASES_PAGE_URL = "https://github.com/Mooshieblob1/MooshieUI/releases/latest";
 

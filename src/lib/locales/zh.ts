@@ -1938,6 +1938,10 @@ const zh: Record<string, string> = {
   "updater.package_manager_hint": "请用包管理器更新：",
   "updater.server_available": "MooshieUI v{version} 已可用 — 请重新部署以完成更新！",
   "updater.version_mismatch": "更新可能未正确应用。预期 v{expected}，但正在运行 v{current}。请尝试手动下载最新版本。",
+  "updater.ready_to_install": "v{version} 已下载 - 重启以安装",
+  "updater.install_and_restart": "安装并重启",
+  "updater.auto_countdown": "将在 {seconds} 秒后更新到 v{version}...",
+  "updater.cancel": "取消",
 
   // ── 图库 ────────────────────────────────────────────────
   "gallery.empty": "尚无图像",
@@ -4133,6 +4137,11 @@ const zh: Record<string, string> = {
   "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "modelhub.civitai.request_model": "Request",
   "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
+  "settings.about.auto_update": "自动更新",
+  "settings.about.auto_update_desc": "关闭时仅检查并通知。后台下载会提前下载更新并由您手动重启安装。空闲时下载并重启会在没有生成任务时倒计时后自动安装并重启。",
+  "settings.about.auto_update_off": "关闭",
+  "settings.about.auto_update_download": "后台下载",
+  "settings.about.auto_update_auto": "空闲时下载并重启",
   "settings.about.switch_to_app_mode": "Switch to App Mode",
   "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
 
