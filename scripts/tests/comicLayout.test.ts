@@ -16,15 +16,22 @@ import {
   isLayout,
   isPanelNonEmpty,
   layoutForCount,
+  normalizePanelBorderStyle,
   oneShotBasePrompt,
   oneShotCentre,
   oneShotPanelPrompt,
   pageSize,
+  panelBorderPolygon,
+  panelBorderRadiusCss,
+  panelClipPathCss,
+  panelCornerRadius,
   panelGenerationSize,
   panelIds,
+  panelImageCss,
   panelPixelRect,
   panelPrompt,
   panelRects,
+  panelSlantInset,
   parseDraftPrompts,
   parseStoryIssues,
   ratioFromPointer,
@@ -417,4 +424,75 @@ test("applyTemplateToPanels skips empty overflow slots without losing result ali
   assert.equal(shrunk.overflowPanels.length, 1);
   assert.deepEqual(shrunk.overflowPanels[0].cast, ["c1"]);
   assert.deepEqual(shrunk.overflowResults, ["r3"]);
+});
+
+test("coverCrop supports pan (-1..1) and zoom (1..4) with safe clamping", () => {
+  const src = { width: 200, height: 100 };
+  const target = { w: 100, h: 100 };
+
+  assert.deepEqual(coverCrop(src, target, 0, 0, 1), { x: 50, y: 0, w: 100, h: 100 });
+  assert.deepEqual(coverCrop(src, target, -1, 0, 1), { x: 0, y: 0, w: 100, h: 100 });
+  assert.deepEqual(coverCrop(src, target, 1, 0, 1), { x: 100, y: 0, w: 100, h: 100 });
+
+  assert.deepEqual(coverCrop(src, target, 0, 0, 2), { x: 75, y: 25, w: 50, h: 50 });
+  assert.deepEqual(coverCrop(src, target, -1, -1, 2), { x: 0, y: 0, w: 50, h: 50 });
+  assert.deepEqual(coverCrop(src, target, 1, 1, 2), { x: 150, y: 50, w: 50, h: 50 });
+
+  // Out-of-range inputs clamp cleanly to zoom [1,4] and pan [-1,1]
+  assert.deepEqual(coverCrop(src, target, -5, 5, 0.25), { x: 0, y: 0, w: 100, h: 100 });
+  assert.deepEqual(coverCrop(src, target, 5, 5, 10), { x: 175, y: 75, w: 25, h: 25 });
+});
+
+test("panelImageCss mirrors coverCrop percentages for preview parity", () => {
+  const src = { width: 200, height: 100 };
+  const target = { w: 100, h: 100 };
+  assert.deepEqual(panelImageCss(src, target, 0, 0, 1), {
+    left: "-50%",
+    top: "0%",
+    width: "200%",
+    height: "100%",
+  });
+  assert.deepEqual(panelImageCss(src, target, 1, -1, 2), {
+    left: "-300%",
+    top: "0%",
+    width: "400%",
+    height: "200%",
+  });
+});
+
+test("panelBorderPolygon, slant inset clamping, and CSS border helpers stay consistent", () => {
+  const rect = { x: 10, y: 20, w: 200, h: 100 };
+  assert.deepEqual(panelBorderPolygon(rect, "standard"), [
+    { x: 10, y: 20 },
+    { x: 210, y: 20 },
+    { x: 210, y: 120 },
+    { x: 10, y: 120 },
+  ]);
+
+  // Tall narrow panel clamps slanted inset to <= box.w * 0.2 so vertices never invert
+  const tall = { x: 0, y: 0, w: 100, h: 1000 };
+  const clampedInset = panelSlantInset(tall);
+  assert.equal(clampedInset, 20);
+  const tallPoly = panelBorderPolygon(tall, "slanted", 999);
+  assert.deepEqual(tallPoly, [
+    { x: 20, y: 0 },
+    { x: 100, y: 0 },
+    { x: 80, y: 1000 },
+    { x: 0, y: 1000 },
+  ]);
+  assert.ok(tallPoly[0].x < tallPoly[2].x);
+
+  assert.equal(panelClipPathCss(rect, "standard"), "none");
+  assert.equal(panelClipPathCss(tall, "slanted"), "polygon(20.0000% 0%, 100% 0%, 80.0000% 100%, 0% 100%)");
+  assert.equal(panelCornerRadius({ w: 400, h: 800 }), 32);
+  assert.equal(panelBorderRadiusCss({ w: 400, h: 800 }, "rounded"), "8.0000% / 4.0000%");
+  assert.equal(panelBorderRadiusCss({ w: 400, h: 800 }, "standard"), "0px");
+  assert.equal(normalizePanelBorderStyle("slanted"), "slanted");
+  assert.equal(normalizePanelBorderStyle("invalid"), "standard");
+
+  const fresh = newPanel("p0");
+  assert.equal(fresh.panX, 0);
+  assert.equal(fresh.panY, 0);
+  assert.equal(fresh.zoom, 1);
+  assert.equal(fresh.borderStyle, "standard");
 });
