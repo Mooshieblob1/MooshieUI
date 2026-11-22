@@ -100,6 +100,11 @@ jobs:
           npx esbuild scripts/tests/comicLayout.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/comicLayout.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/comicLayout.test.mjs"
 
+      - name: Comic export tests
+        run: |
+          npx esbuild scripts/tests/comicExport.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/comicExport.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/comicExport.test.mjs"
+
       - name: Enhance chat reply split tests
         run: |
           npx esbuild scripts/tests/enhanceChat.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/enhanceChat.test.mjs" --log-level=warning

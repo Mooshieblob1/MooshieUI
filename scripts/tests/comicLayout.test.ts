@@ -35,6 +35,8 @@ import {
   setRatio,
   snapFreeformBox,
   splitPanel,
+  storyBrief,
+  summarizePageForContext,
   treeToFreeform,
   newPanel,
   type FreeformBox,
@@ -176,6 +178,26 @@ test("dialogue is lettered last on NovelAI, with the tags it needs, and left out
     oneShotBasePrompt(page, 2, ["Hi.", "Bye."]),
     "manga, comic, 2 panels, multiple views, classroom, speech bubble, english text\n\nText:\nHi.\n\nBye.",
   );
+});
+
+test("storyBrief keeps 2-arg output compatible and includes previous page context when provided", () => {
+  const cast = [{ id: "c1", name: "Aki", tags: "1girl, long black hair" }];
+  const page = { style: "manga", setting: "classroom", cast };
+  const p1 = { ...newPanel("p1"), beat: "Aki opens the door", cast: ["c1"], dialogue: "Anyone home?" };
+  const p2 = { ...newPanel("p2"), beat: "She looks around", cast: ["c1"] };
+
+  const withoutPrev = storyBrief([p2], page);
+  assert.equal(withoutPrev.includes("Previous pages"), false);
+
+  const prevSummary = summarizePageForContext([p1], cast, "hallway");
+  assert.ok(prevSummary.includes("Setting override: hallway"));
+  assert.ok(prevSummary.includes("Aki opens the door"));
+  assert.ok(prevSummary.includes('says: "Anyone home?"'));
+
+  const withPrev = storyBrief([p2], page, [{ pageNumber: 1, summary: prevSummary }]);
+  assert.ok(withPrev.includes("Previous pages (for continuity):"));
+  assert.ok(withPrev.includes("Page 1:\nSetting override: hallway"));
+  assert.ok(withPrev.includes("Panel 1:\n  beat: She looks around"));
 });
 
 test("treeToFreeform preserves pixel rects and reading order with z indices", () => {

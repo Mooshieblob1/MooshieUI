@@ -1,6 +1,7 @@
-// Comic page builder state: the page being laid out (persisted per user) and
-// the state of the current run (not persisted). Generation, checks and page
-// assembly live in utils/comicRunner.ts, which drives this store.
+// Comic book builder state: multi-page books persisted per user (lightweight:
+// gallery filenames only, never raw PNG bytes) and per-page runtime caches
+// (object URLs, generation statuses, overflow results, undo history) keyed by
+// pageId. Generation, checks, assembly and export live in utils/comicRunner.ts.
 //
 // A leaf store: it imports no other store.
 
@@ -36,10 +37,12 @@ import {
   type LayoutTemplate,
   type PageShape,
   type Rect,
+  type RefMode,
   type SplitDir,
 } from "../utils/comicLayout.js";
 
-const STORAGE_KEY = "mooshieui.comic.page.v1";
+const BOOKS_STORAGE_KEY = "mooshieui.comic.books.v1";
+const LEGACY_PAGE_STORAGE_KEY = "mooshieui.comic.page.v1";
 const HISTORY_LIMIT = 40;
 
 export type ComicMode = "panels" | "one_image";
@@ -57,7 +60,45 @@ export interface PanelResult {
   checkError?: string;
 }
 
-interface SavedPage {
+export interface ComicPageState {
+  id: string;
+  title: string;
+  layoutMode: LayoutMode;
+  layout: LayoutNode;
+  freeformBoxes: FreeformBox[];
+  panels: Record<string, ComicPanel>;
+  /** Non-empty panels stashed when shrinking or removing panels; restored on larger layouts. */
+  overflowPanels: ComicPanel[];
+  /** Optional setting override for this page; blank inherits the book setting. */
+  settingOverride: string;
+  /** Gallery filename per panel. */
+  images: Record<string, string>;
+  /** Assembled or one-image page gallery filename. */
+  pageImage: string | null;
+}
+
+export interface ComicBook {
+  id: string;
+  title: string;
+  cast: CastMember[];
+  /** Style tags for every panel: "manga, monochrome, screentone". */
+  style: string;
+  /** Book setting: location, time of day, lighting. Every panel inherits it unless overridden. */
+  setting: string;
+  pageShape: PageShape;
+  /** Space between panels on the assembled page, in output pixels. */
+  gutter: number;
+  rightToLeft: boolean;
+  mode: ComicMode;
+  /** Run the tagger on each finished panel and flag what changed. */
+  checkContinuity: boolean;
+  /** Visual character-reference continuity mode across panels/pages. */
+  refMode: RefMode;
+  pages: ComicPageState[];
+  activePageIndex: number;
+}
+
+interface SavedPageLegacy {
   layout: LayoutNode;
   layoutMode?: LayoutMode;
   freeformBoxes?: FreeformBox[];
@@ -72,10 +113,42 @@ interface SavedPage {
   mode: ComicMode;
   checkContinuity: boolean;
   usePanel1Ref?: boolean;
-  /** Gallery file per panel. */
   images?: Record<string, string>;
   pageImage?: string | null;
 }
+
+export interface PageRuntime {
+  results: Record<string, PanelResult>;
+  /** Session-only results aligned by index with `overflowPanels`. */
+  overflowResults: Array<PanelResult | undefined>;
+  pageUrl: string | null;
+  pageGalleryFilename: string | null;
+  pageStatus: "idle" | "running" | "done" | "failed";
+  pageError: string | null;
+  storyIssues: Array<{ panel: number; issue: string }> | null;
+  storyError: string | null;
+  draftUndo: Record<string, { prompt: string; dialogue: string }> | null;
+  history: string[];
+  selectedId: string | null;
+}
+
+function emptyRuntime(): PageRuntime {
+  return {
+    results: {},
+    overflowResults: [],
+    pageUrl: null,
+    pageGalleryFilename: null,
+    pageStatus: "idle",
+    pageError: null,
+    storyIssues: null,
+    storyError: null,
+    draftUndo: null,
+    history: [],
+    selectedId: null,
+  };
+}
+
+const EMPTY_RUNTIME_FALLBACK: PageRuntime = emptyRuntime();
 
 function defaultLayout(): LayoutNode {
   return buildTemplate(LAYOUT_TEMPLATES.find((t) => t.id === "one_over_two")!);
@@ -103,55 +176,387 @@ function normalizeOverflowPanels(raw: unknown): ComicPanel[] {
     });
 }
 
-class ComicStore {
-  layout = $state<LayoutNode>(defaultLayout());
-  layoutMode = $state<LayoutMode>("grid");
-  freeformBoxes = $state<FreeformBox[]>([]);
-  panels = $state<Record<string, ComicPanel>>({});
-  /** Non-empty panels stashed when shrinking or removing panels; restored on larger layouts. */
-  overflowPanels = $state<ComicPanel[]>([]);
-  cast = $state<CastMember[]>([]);
-  /** Page setting: location, time of day, lighting. Every panel inherits it. */
-  setting = $state("");
-  /** Style tags for every panel: "manga, monochrome, screentone". */
-  style = $state("");
-  pageShape = $state<PageShape>("portrait");
-  /** Space between panels on the assembled page, in output pixels. */
-  gutter = $state(24);
-  rightToLeft = $state(false);
-  mode = $state<ComicMode>("panels");
-  /** Run the tagger on each finished panel and flag what changed. */
-  checkContinuity = $state(true);
-  /** Pass Panel 1's generated image as a character reference to later panels. */
-  usePanel1Ref = $state(false);
-  selectedId = $state<string | null>(null);
+function ensurePanelsForIds(ids: string[], existing: Record<string, ComicPanel>): Record<string, ComicPanel> {
+  const next: Record<string, ComicPanel> = {};
+  for (const id of ids) {
+    next[id] = existing[id] ? normalizePanel(id, existing[id]) : newPanel(id);
+  }
+  return next;
+}
 
-  // --- run state (not persisted) ---
-  results = $state<Record<string, PanelResult>>({});
-  /** Session-only results aligned by index with `overflowPanels`. */
-  overflowResults: Array<PanelResult | undefined> = [];
-  /** The assembled page, or the one-image page. */
-  pageUrl = $state<string | null>(null);
-  pageGalleryFilename = $state<string | null>(null);
-  pageStatus = $state<"idle" | "running" | "done" | "failed">("idle");
-  pageError = $state<string | null>(null);
+function createPage(partial?: Partial<ComicPageState>): ComicPageState {
+  const layout = partial?.layout && isLayout(partial.layout) ? partial.layout : defaultLayout();
+  const freeformBoxes = isFreeformBoxes(partial?.freeformBoxes) ? partial.freeformBoxes : [];
+  const layoutMode: LayoutMode =
+    partial?.layoutMode === "freeform" && freeformBoxes.length > 0 ? "freeform" : "grid";
+  const ids = layoutMode === "freeform" ? freeformBoxes.map((b) => b.id) : panelIds(layout);
+  const panels = ensurePanelsForIds(ids, partial?.panels ?? {});
+  const overflowPanels = normalizeOverflowPanels(partial?.overflowPanels);
+  const images: Record<string, string> = {};
+  if (partial?.images && typeof partial.images === "object") {
+    for (const [k, v] of Object.entries(partial.images)) {
+      if (panels[k] && typeof v === "string" && v && !v.startsWith("data:")) images[k] = v;
+    }
+  }
+  const pageImage =
+    typeof partial?.pageImage === "string" && partial.pageImage && !partial.pageImage.startsWith("data:")
+      ? partial.pageImage
+      : null;
+  return {
+    id: typeof partial?.id === "string" && partial.id ? partial.id : newId("pg"),
+    title: typeof partial?.title === "string" ? partial.title : "",
+    layoutMode,
+    layout,
+    freeformBoxes,
+    panels,
+    overflowPanels,
+    settingOverride: typeof partial?.settingOverride === "string" ? partial.settingOverride : "",
+    images,
+    pageImage,
+  };
+}
+
+function sanitizeCast(raw: unknown): CastMember[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === "object" && typeof (c as Record<string, unknown>).id === "string")
+    .map((c) => ({
+      id: c.id as string,
+      name: String(c.name ?? ""),
+      tags: String(c.tags ?? ""),
+      savedCharacterId: typeof c.savedCharacterId === "string" && c.savedCharacterId ? c.savedCharacterId : null,
+      referenceImage: typeof c.referenceImage === "string" && c.referenceImage ? c.referenceImage : null,
+    }));
+}
+
+function sanitizeRefMode(raw: unknown, legacyUsePanel1Ref?: unknown): RefMode {
+  if (raw === "off" || raw === "page1_panel1" || raw === "prev_panel" || raw === "cast") return raw;
+  if (legacyUsePanel1Ref === true) return "page1_panel1";
+  return "off";
+}
+
+function createBook(partial?: Partial<ComicBook>, index = 1): ComicBook {
+  const pagesRaw = Array.isArray(partial?.pages) && partial.pages.length > 0 ? partial.pages : [undefined];
+  const pages = pagesRaw.map((p) => createPage(p));
+  const rawIdx = typeof partial?.activePageIndex === "number" ? Math.floor(partial.activePageIndex) : 0;
+  const activePageIndex = Math.max(0, Math.min(pages.length - 1, rawIdx));
+  return {
+    id: typeof partial?.id === "string" && partial.id ? partial.id : newId("bk"),
+    title: typeof partial?.title === "string" && partial.title.trim() ? partial.title : `Book ${index}`,
+    cast: sanitizeCast(partial?.cast),
+    style: typeof partial?.style === "string" ? partial.style : "",
+    setting: typeof partial?.setting === "string" ? partial.setting : "",
+    pageShape:
+      partial?.pageShape === "portrait" || partial?.pageShape === "square" || partial?.pageShape === "landscape"
+        ? partial.pageShape
+        : "portrait",
+    gutter: typeof partial?.gutter === "number" ? Math.min(80, Math.max(0, partial.gutter)) : 24,
+    rightToLeft: typeof partial?.rightToLeft === "boolean" ? partial.rightToLeft : false,
+    mode: partial?.mode === "panels" || partial?.mode === "one_image" ? partial.mode : "panels",
+    checkContinuity: typeof partial?.checkContinuity === "boolean" ? partial.checkContinuity : true,
+    refMode: sanitizeRefMode(partial?.refMode),
+    pages,
+    activePageIndex,
+  };
+}
+
+function revokeRuntime(rt: PageRuntime | undefined) {
+  if (!rt) return;
+  for (const r of Object.values(rt.results)) {
+    if (r.url) URL.revokeObjectURL(r.url);
+  }
+  for (const r of rt.overflowResults) {
+    if (r?.url) URL.revokeObjectURL(r.url);
+  }
+  if (rt.pageUrl) URL.revokeObjectURL(rt.pageUrl);
+}
+
+function syncImagesFromResults(page: ComicPageState, results: Record<string, PanelResult>) {
+  const images: Record<string, string> = {};
+  for (const [id, r] of Object.entries(results)) {
+    if (r.galleryFilename && !r.galleryFilename.startsWith("data:")) {
+      images[id] = r.galleryFilename;
+    }
+  }
+  page.images = images;
+}
+
+class ComicStore {
+  books = $state<ComicBook[]>([createBook(undefined, 1)]);
+  activeBookId = $state<string>(this.books[0].id);
+  private runtimeByPage = $state<Record<string, PageRuntime>>({
+    [this.books[0].pages[0].id]: emptyRuntime(),
+  });
+
+  // --- global run state (not persisted) ---
   running = $state(false);
   stopRequested = $state(false);
-  storyIssues = $state<Array<{ panel: number; issue: string }> | null>(null);
   storyChecking = $state(false);
-  storyError = $state<string | null>(null);
   drafting = $state(false);
   /** The panel the Prompt Assistant is rewriting on its own, if any. */
   enhancingId = $state<string | null>(null);
-  /** Panel prompts and dialogue before the last draft or panel rewrite, for undoing it. */
-  draftUndo = $state<Record<string, { prompt: string; dialogue: string }> | null>(null);
 
-  private history: string[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private loaded = false;
 
-  constructor() {
-    this.ensurePanels();
+  // --- book / page accessors ---
+
+  get activeBook(): ComicBook {
+    return this.books.find((b) => b.id === this.activeBookId) ?? this.books[0];
+  }
+
+  get pages(): ComicPageState[] {
+    return this.activeBook.pages;
+  }
+
+  get activePageIndex(): number {
+    const idx = this.activeBook.activePageIndex;
+    return Math.max(0, Math.min(this.activeBook.pages.length - 1, idx));
+  }
+
+  get activePage(): ComicPageState {
+    return this.activeBook.pages[this.activePageIndex] ?? this.activeBook.pages[0];
+  }
+
+  private rt(pageId = this.activePage.id): PageRuntime {
+    return this.runtimeByPage[pageId] ?? EMPTY_RUNTIME_FALLBACK;
+  }
+
+  private ensureRt(pageId: string): PageRuntime {
+    if (!this.runtimeByPage[pageId]) {
+      this.runtimeByPage = { ...this.runtimeByPage, [pageId]: emptyRuntime() };
+    }
+    return this.runtimeByPage[pageId];
+  }
+
+  private ensureAllRuntimes() {
+    const next: Record<string, PageRuntime> = { ...this.runtimeByPage };
+    let changed = false;
+    for (const book of this.books) {
+      for (const page of book.pages) {
+        if (!next[page.id]) {
+          next[page.id] = emptyRuntime();
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.runtimeByPage = next;
+  }
+
+  // --- proxied active book & page fields ---
+
+  get layoutMode(): LayoutMode {
+    return this.activePage.layoutMode;
+  }
+  set layoutMode(v: LayoutMode) {
+    this.activePage.layoutMode = v;
+  }
+
+  get layout(): LayoutNode {
+    return this.activePage.layout;
+  }
+  set layout(v: LayoutNode) {
+    this.activePage.layout = v;
+  }
+
+  get freeformBoxes(): FreeformBox[] {
+    return this.activePage.freeformBoxes;
+  }
+  set freeformBoxes(v: FreeformBox[]) {
+    this.activePage.freeformBoxes = v;
+  }
+
+  get panels(): Record<string, ComicPanel> {
+    return this.activePage.panels;
+  }
+  set panels(v: Record<string, ComicPanel>) {
+    this.activePage.panels = v;
+  }
+
+  get overflowPanels(): ComicPanel[] {
+    return this.activePage.overflowPanels;
+  }
+  set overflowPanels(v: ComicPanel[]) {
+    this.activePage.overflowPanels = v;
+  }
+
+  get overflowResults(): Array<PanelResult | undefined> {
+    return this.rt().overflowResults;
+  }
+  set overflowResults(v: Array<PanelResult | undefined>) {
+    this.ensureRt(this.activePage.id).overflowResults = v;
+  }
+
+  get cast(): CastMember[] {
+    return this.activeBook.cast;
+  }
+  set cast(v: CastMember[]) {
+    this.activeBook.cast = v;
+  }
+
+  get setting(): string {
+    return this.activeBook.setting;
+  }
+  set setting(v: string) {
+    this.activeBook.setting = v;
+  }
+
+  get settingOverride(): string {
+    return this.activePage.settingOverride;
+  }
+  set settingOverride(v: string) {
+    this.activePage.settingOverride = v;
+  }
+
+  /** Effective setting for a page (page override if set, else book setting). */
+  effectiveSettingFor(page: ComicPageState = this.activePage, book: ComicBook = this.activeBook): string {
+    return page.settingOverride.trim() || book.setting;
+  }
+
+  get effectiveSetting(): string {
+    return this.effectiveSettingFor();
+  }
+
+  get style(): string {
+    return this.activeBook.style;
+  }
+  set style(v: string) {
+    this.activeBook.style = v;
+  }
+
+  get pageShape(): PageShape {
+    return this.activeBook.pageShape;
+  }
+  set pageShape(v: PageShape) {
+    this.activeBook.pageShape = v;
+  }
+
+  get gutter(): number {
+    return this.activeBook.gutter;
+  }
+  set gutter(v: number) {
+    this.activeBook.gutter = v;
+  }
+
+  get rightToLeft(): boolean {
+    return this.activeBook.rightToLeft;
+  }
+  set rightToLeft(v: boolean) {
+    this.activeBook.rightToLeft = v;
+  }
+
+  get mode(): ComicMode {
+    return this.activeBook.mode;
+  }
+  set mode(v: ComicMode) {
+    this.activeBook.mode = v;
+  }
+
+  get checkContinuity(): boolean {
+    return this.activeBook.checkContinuity;
+  }
+  set checkContinuity(v: boolean) {
+    this.activeBook.checkContinuity = v;
+  }
+
+  get refMode(): RefMode {
+    return this.activeBook.refMode;
+  }
+  set refMode(v: RefMode) {
+    this.activeBook.refMode = v;
+  }
+
+  get selectedId(): string | null {
+    return this.rt().selectedId;
+  }
+  set selectedId(v: string | null) {
+    this.ensureRt(this.activePage.id).selectedId = v;
+  }
+
+  get results(): Record<string, PanelResult> {
+    return this.rt().results;
+  }
+  set results(v: Record<string, PanelResult>) {
+    this.ensureRt(this.activePage.id).results = v;
+  }
+
+  get pageUrl(): string | null {
+    return this.rt().pageUrl;
+  }
+  set pageUrl(v: string | null) {
+    this.ensureRt(this.activePage.id).pageUrl = v;
+  }
+
+  get pageGalleryFilename(): string | null {
+    return this.rt().pageGalleryFilename ?? this.activePage.pageImage;
+  }
+  set pageGalleryFilename(v: string | null) {
+    this.ensureRt(this.activePage.id).pageGalleryFilename = v;
+    this.activePage.pageImage = v;
+  }
+
+  get pageStatus(): "idle" | "running" | "done" | "failed" {
+    return this.rt().pageStatus;
+  }
+  set pageStatus(v: "idle" | "running" | "done" | "failed") {
+    this.ensureRt(this.activePage.id).pageStatus = v;
+  }
+
+  get pageError(): string | null {
+    return this.rt().pageError;
+  }
+  set pageError(v: string | null) {
+    this.ensureRt(this.activePage.id).pageError = v;
+  }
+
+  get storyIssues(): Array<{ panel: number; issue: string }> | null {
+    return this.rt().storyIssues;
+  }
+  set storyIssues(v: Array<{ panel: number; issue: string }> | null) {
+    this.ensureRt(this.activePage.id).storyIssues = v;
+  }
+
+  get storyError(): string | null {
+    return this.rt().storyError;
+  }
+  set storyError(v: string | null) {
+    this.ensureRt(this.activePage.id).storyError = v;
+  }
+
+  get draftUndo(): Record<string, { prompt: string; dialogue: string }> | null {
+    return this.rt().draftUndo;
+  }
+  set draftUndo(v: Record<string, { prompt: string; dialogue: string }> | null) {
+    this.ensureRt(this.activePage.id).draftUndo = v;
+  }
+
+  resultsForPage(pageId: string): Record<string, PanelResult> {
+    return this.rt(pageId).results;
+  }
+
+  pageUrlForPage(pageId: string): string | null {
+    return this.rt(pageId).pageUrl;
+  }
+
+  rectsForPage(page: ComicPageState): Map<string, Rect> {
+    return page.layoutMode === "freeform" ? freeformRects(page.freeformBoxes) : panelRects(page.layout);
+  }
+
+  orderedPanelsForPage(page: ComicPageState, rightToLeft = this.activeBook.rightToLeft): ComicPanel[] {
+    const rects = this.rectsForPage(page);
+    return readingOrder(rects, rightToLeft)
+      .map((id) => page.panels[id])
+      .filter((p): p is ComicPanel => !!p);
+  }
+
+  pageHasContent(page: ComicPageState, book: ComicBook = this.activeBook): boolean {
+    const rt = this.rt(page.id);
+    if (book.mode === "one_image") {
+      return !!(rt.pageUrl || page.pageImage);
+    }
+    return this.orderedPanelsForPage(page, book.rightToLeft).some(
+      (p) => p.enabled && !!(rt.results[p.id]?.url || page.images[p.id]),
+    );
   }
 
   // --- derived ---
@@ -183,7 +588,7 @@ class ComicStore {
   }
 
   get canUndo(): boolean {
-    return this.history.length > 0;
+    return this.rt().history.length > 0;
   }
 
   get panelCount(): number {
@@ -193,8 +598,9 @@ class ComicStore {
   // --- layout edits ---
 
   private remember() {
-    this.history = [
-      ...this.history.slice(-(HISTORY_LIMIT - 1)),
+    const rt = this.ensureRt(this.activePage.id);
+    rt.history = [
+      ...rt.history.slice(-(HISTORY_LIMIT - 1)),
       JSON.stringify({
         layout: this.layout,
         panels: this.panels,
@@ -205,13 +611,13 @@ class ComicStore {
     ];
   }
 
-  /** Make sure every leaf has a panel record and no stale record lingers. */
+  /** Make sure every leaf/freeform box has a panel record and no stale record lingers. */
   private ensurePanels() {
     const ids = this.layoutMode === "freeform" ? this.freeformBoxes.map((b) => b.id) : panelIds(this.layout);
-    const next: Record<string, ComicPanel> = {};
-    for (const id of ids) next[id] = this.panels[id] ?? newPanel(id);
+    const next = ensurePanelsForIds(ids, this.panels);
     this.panels = next;
-    if (this.selectedId && !next[this.selectedId]) this.selectedId = null;
+    const rt = this.ensureRt(this.activePage.id);
+    if (rt.selectedId && !next[rt.selectedId]) rt.selectedId = null;
   }
 
   applyTemplate(template: LayoutTemplate) {
@@ -236,6 +642,7 @@ class ComicStore {
     this.results = applied.results;
     this.overflowPanels = applied.overflowPanels;
     this.overflowResults = applied.overflowResults;
+    syncImagesFromResults(this.activePage, this.results);
     this.selectedId = ids[0] ?? null;
     this.clearPage();
     this.persist();
@@ -267,6 +674,7 @@ class ComicStore {
     });
     this.panels = nextPanels;
     this.results = nextResults;
+    syncImagesFromResults(this.activePage, nextResults);
     this.selectedId = prevSelectedIdx >= 0 ? (ids[prevSelectedIdx] ?? ids[0] ?? null) : null;
     this.persist();
   }
@@ -292,7 +700,12 @@ class ComicStore {
       this.overflowPanels = restPanels;
       this.overflowResults = restResults;
       this.panels = { ...this.panels, [id]: { ...restored, id } };
-      if (restoredResult) this.results = { ...this.results, [id]: restoredResult };
+      if (restoredResult) {
+        this.results = { ...this.results, [id]: restoredResult };
+        if (restoredResult.galleryFilename) {
+          this.activePage.images = { ...this.activePage.images, [id]: restoredResult.galleryFilename };
+        }
+      }
     }
     this.ensurePanels();
     this.selectedId = id;
@@ -345,9 +758,13 @@ class ComicStore {
     this.ensurePanels();
     const { [id]: _gone, ...rest } = this.results;
     this.results = rest;
+    const { [id]: _goneImg, ...restImgs } = this.activePage.images;
+    this.activePage.images = restImgs;
     if (removed && isPanelNonEmpty(removed)) {
       this.overflowPanels = [removed, ...this.overflowPanels];
       this.overflowResults = [removedResult, ...this.overflowResults];
+    } else if (removedResult?.url) {
+      URL.revokeObjectURL(removedResult.url);
     }
     this.selectedId = null;
     this.persist();
@@ -364,9 +781,10 @@ class ComicStore {
   }
 
   undo() {
-    const last = this.history[this.history.length - 1];
+    const rt = this.ensureRt(this.activePage.id);
+    const last = rt.history[rt.history.length - 1];
     if (!last) return;
-    this.history = this.history.slice(0, -1);
+    rt.history = rt.history.slice(0, -1);
     try {
       const state = JSON.parse(last) as {
         layout: LayoutNode;
@@ -394,7 +812,131 @@ class ComicStore {
     }
   }
 
-  // --- panel and page fields ---
+  // --- page management ---
+
+  addPage() {
+    if (this.running) return;
+    const page = createPage();
+    this.ensureRt(page.id);
+    this.activeBook.pages = [...this.activeBook.pages, page];
+    this.activeBook.activePageIndex = this.activeBook.pages.length - 1;
+    this.persist();
+  }
+
+  duplicatePage(index: number) {
+    if (this.running) return;
+    const src = this.activeBook.pages[index];
+    if (!src) return;
+    const clonedPanels: Record<string, ComicPanel> = {};
+    for (const [id, p] of Object.entries(src.panels)) {
+      clonedPanels[id] = { ...p, cast: [...p.cast] };
+    }
+    const copy = createPage({
+      title: src.title ? `${src.title} (copy)` : "",
+      layoutMode: src.layoutMode,
+      layout: JSON.parse(JSON.stringify(src.layout)) as LayoutNode,
+      freeformBoxes: src.freeformBoxes.map((b) => ({ ...b })),
+      panels: clonedPanels,
+      overflowPanels: src.overflowPanels.map((p) => ({ ...p, cast: [...p.cast] })),
+      settingOverride: src.settingOverride,
+      images: {},
+      pageImage: null,
+    });
+    this.ensureRt(copy.id);
+    const pages = [...this.activeBook.pages];
+    pages.splice(index + 1, 0, copy);
+    this.activeBook.pages = pages;
+    this.activeBook.activePageIndex = index + 1;
+    this.persist();
+  }
+
+  deletePage(index: number) {
+    if (this.running || this.activeBook.pages.length <= 1) return;
+    const victim = this.activeBook.pages[index];
+    if (!victim) return;
+    revokeRuntime(this.runtimeByPage[victim.id]);
+    const { [victim.id]: _drop, ...restRt } = this.runtimeByPage;
+    this.runtimeByPage = restRt;
+    const pages = this.activeBook.pages.filter((_, i) => i !== index);
+    this.activeBook.pages = pages;
+    const cur = this.activeBook.activePageIndex;
+    if (cur >= pages.length) this.activeBook.activePageIndex = pages.length - 1;
+    else if (index < cur) this.activeBook.activePageIndex = cur - 1;
+    this.persist();
+  }
+
+  movePage(from: number, to: number) {
+    if (this.running) return;
+    const pages = [...this.activeBook.pages];
+    if (from < 0 || from >= pages.length || to < 0 || to >= pages.length || from === to) return;
+    const activeId = this.activePage.id;
+    const [moved] = pages.splice(from, 1);
+    pages.splice(to, 0, moved);
+    this.activeBook.pages = pages;
+    this.activeBook.activePageIndex = Math.max(0, pages.findIndex((p) => p.id === activeId));
+    this.persist();
+  }
+
+  selectPage(index: number) {
+    if (index < 0 || index >= this.activeBook.pages.length) return;
+    this.activeBook.activePageIndex = index;
+    this.ensureRt(this.activePage.id);
+    this.persistSoon();
+  }
+
+  // --- book management ---
+
+  newBook(title?: string) {
+    if (this.running) return;
+    const book = createBook({ title: title?.trim() || undefined }, this.books.length + 1);
+    this.books = [...this.books, book];
+    this.activeBookId = book.id;
+    this.ensureAllRuntimes();
+    this.persist();
+  }
+
+  switchBook(id: string) {
+    if (this.running) return;
+    if (!this.books.some((b) => b.id === id)) return;
+    this.activeBookId = id;
+    this.ensureAllRuntimes();
+    this.persistSoon();
+  }
+
+  renameBook(title: string, id = this.activeBookId) {
+    const clean = title.trim();
+    if (!clean) return;
+    const book = this.books.find((b) => b.id === id);
+    if (!book) return;
+    book.title = clean;
+    this.persistSoon();
+  }
+
+  deleteBook(id = this.activeBookId) {
+    if (this.running) return;
+    const target = this.books.find((b) => b.id === id);
+    if (!target) return;
+    for (const p of target.pages) {
+      revokeRuntime(this.runtimeByPage[p.id]);
+    }
+    const nextRt = { ...this.runtimeByPage };
+    for (const p of target.pages) delete nextRt[p.id];
+    this.runtimeByPage = nextRt;
+
+    if (this.books.length <= 1) {
+      const fresh = createBook(undefined, 1);
+      this.books = [fresh];
+      this.activeBookId = fresh.id;
+    } else {
+      const nextBooks = this.books.filter((b) => b.id !== id);
+      this.books = nextBooks;
+      if (this.activeBookId === id) this.activeBookId = nextBooks[0].id;
+    }
+    this.ensureAllRuntimes();
+    this.persist();
+  }
+
+  // --- panel, cast and book fields ---
 
   updatePanel(id: string, patch: Partial<ComicPanel>) {
     const panel = this.panels[id];
@@ -410,9 +952,35 @@ class ComicStore {
     this.updatePanel(panelId, { cast });
   }
 
-  addCastMember() {
-    this.cast = [...this.cast, { id: newId("c"), name: "", tags: "" }];
+  addCastMember(initial?: Partial<CastMember>): string {
+    const id = newId("c");
+    this.cast = [
+      ...this.cast,
+      {
+        id,
+        name: initial?.name ?? "",
+        tags: initial?.tags ?? "",
+        savedCharacterId: initial?.savedCharacterId ?? null,
+        referenceImage: initial?.referenceImage ?? null,
+      },
+    ];
     this.persist();
+    return id;
+  }
+
+  addCastMemberFromCharacter(character: {
+    id: string;
+    name: string;
+    prompt: string;
+    reference: string | null;
+    thumbnail: string | null;
+  }): string {
+    return this.addCastMember({
+      name: character.name,
+      tags: character.prompt,
+      savedCharacterId: character.id,
+      referenceImage: character.reference ?? character.thumbnail ?? null,
+    });
   }
 
   updateCastMember(id: string, patch: Partial<CastMember>) {
@@ -422,133 +990,199 @@ class ComicStore {
 
   removeCastMember(id: string) {
     this.cast = this.cast.filter((c) => c.id !== id);
-    const next: Record<string, ComicPanel> = {};
-    for (const [pid, p] of Object.entries(this.panels)) next[pid] = { ...p, cast: p.cast.filter((c) => c !== id) };
-    this.panels = next;
+    for (const page of this.activeBook.pages) {
+      const next: Record<string, ComicPanel> = {};
+      for (const [pid, p] of Object.entries(page.panels)) {
+        next[pid] = { ...p, cast: p.cast.filter((c) => c !== id) };
+      }
+      page.panels = next;
+    }
     this.persist();
   }
 
-  setPageField<K extends "setting" | "style" | "pageShape" | "gutter" | "rightToLeft" | "mode" | "checkContinuity" | "usePanel1Ref">(
-    key: K,
-    value: ComicStore[K],
-  ) {
+  setPageField<
+    K extends
+      | "setting"
+      | "settingOverride"
+      | "style"
+      | "pageShape"
+      | "gutter"
+      | "rightToLeft"
+      | "mode"
+      | "checkContinuity"
+      | "refMode",
+  >(key: K, value: ComicStore[K]) {
     (this as ComicStore)[key] = value;
     this.persistSoon();
   }
 
   // --- results ---
 
-  setResult(id: string, patch: Partial<PanelResult>) {
-    const current = this.results[id];
+  setResult(id: string, patch: Partial<PanelResult>, pageId = this.activePage.id) {
+    const rt = this.ensureRt(pageId);
+    const current = rt.results[id];
     if (patch.url && current?.url && current.url !== patch.url) URL.revokeObjectURL(current.url);
-    this.results = { ...this.results, [id]: { ...({ status: "queued" } as PanelResult), ...current, ...patch } };
-    if (patch.galleryFilename !== undefined) this.persistSoon();
+    rt.results = { ...rt.results, [id]: { ...({ status: "queued" } as PanelResult), ...current, ...patch } };
+    if (patch.galleryFilename !== undefined) {
+      const page = this.findPageById(pageId);
+      if (page) {
+        if (patch.galleryFilename) page.images = { ...page.images, [id]: patch.galleryFilename };
+        else {
+          const { [id]: _drop, ...rest } = page.images;
+          page.images = rest;
+        }
+      }
+      this.persistSoon();
+    }
   }
 
-  setPage(url: string | null, galleryFilename: string | null = null) {
-    if (this.pageUrl && this.pageUrl !== url) URL.revokeObjectURL(this.pageUrl);
-    this.pageUrl = url;
-    this.pageGalleryFilename = galleryFilename;
+  clearResult(id: string, pageId = this.activePage.id) {
+    const rt = this.ensureRt(pageId);
+    const { [id]: _drop, ...rest } = rt.results;
+    rt.results = rest;
+  }
+
+  setPage(url: string | null, galleryFilename: string | null = null, pageId = this.activePage.id) {
+    const rt = this.ensureRt(pageId);
+    if (rt.pageUrl && rt.pageUrl !== url) URL.revokeObjectURL(rt.pageUrl);
+    rt.pageUrl = url;
+    rt.pageGalleryFilename = galleryFilename;
+    const page = this.findPageById(pageId);
+    if (page) page.pageImage = galleryFilename;
     this.persistSoon();
   }
 
-  clearPage() {
-    this.setPage(null);
-    this.pageStatus = "idle";
-    this.pageError = null;
+  clearPage(pageId = this.activePage.id) {
+    this.setPage(null, null, pageId);
+    const rt = this.ensureRt(pageId);
+    rt.pageStatus = "idle";
+    rt.pageError = null;
   }
 
-  /** Start over: one default layout, empty prompts. The cast and setting stay. */
+  private findPageById(pageId: string): ComicPageState | undefined {
+    for (const b of this.books) {
+      const found = b.pages.find((p) => p.id === pageId);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  /** Start over on the active page: one default layout, empty prompts. The cast and setting stay. */
   resetPanels() {
     this.remember();
-    for (const r of Object.values(this.results)) if (r.url) URL.revokeObjectURL(r.url);
-    for (const r of this.overflowResults) if (r?.url) URL.revokeObjectURL(r.url);
-    this.results = {};
-    this.overflowPanels = [];
-    this.overflowResults = [];
+    const rt = this.ensureRt(this.activePage.id);
+    for (const r of Object.values(rt.results)) if (r.url) URL.revokeObjectURL(r.url);
+    for (const r of rt.overflowResults) if (r?.url) URL.revokeObjectURL(r.url);
+    rt.results = {};
+    rt.overflowResults = [];
+    this.activePage.images = {};
+    this.activePage.overflowPanels = [];
     this.layout = defaultLayout();
     this.layoutMode = "grid";
     this.freeformBoxes = [];
     this.panels = {};
     this.ensurePanels();
-    this.storyIssues = null;
+    rt.storyIssues = null;
     this.clearPage();
     this.persist();
   }
 
   // --- persistence ---
 
-  /** Saved gallery files, for comicRunner to load back after a restart. */
-  savedImages: Record<string, string> = {};
-  savedPageImage: string | null = null;
+  /** Saved gallery files on the active page, for comicRunner to load back after a restart. */
+  get savedImages(): Record<string, string> {
+    return this.activePage.images;
+  }
+  get savedPageImage(): string | null {
+    return this.activePage.pageImage;
+  }
 
   load() {
     if (this.loaded) return;
     this.loaded = true;
     try {
-      const raw = localStorage.getItem(userScopedKey(STORAGE_KEY));
-      if (!raw) return;
-      const data = JSON.parse(raw) as Partial<SavedPage>;
-      if (data.layout && isLayout(data.layout)) this.layout = data.layout;
-      if (isFreeformBoxes(data.freeformBoxes)) this.freeformBoxes = data.freeformBoxes;
-      if (data.layoutMode === "freeform" && this.freeformBoxes.length > 0) this.layoutMode = "freeform";
-      else this.layoutMode = "grid";
-      if (data.panels && typeof data.panels === "object") {
-        const panels: Record<string, ComicPanel> = {};
-        for (const [id, p] of Object.entries(data.panels)) {
-          panels[id] = normalizePanel(id, p);
+      const booksRaw = localStorage.getItem(userScopedKey(BOOKS_STORAGE_KEY));
+      if (booksRaw) {
+        const parsed = JSON.parse(booksRaw) as { books?: unknown[]; activeBookId?: unknown };
+        if (Array.isArray(parsed.books) && parsed.books.length > 0) {
+          const books = parsed.books.map((b, i) => createBook(b as Partial<ComicBook>, i + 1));
+          this.books = books;
+          this.activeBookId =
+            typeof parsed.activeBookId === "string" && books.some((b) => b.id === parsed.activeBookId)
+              ? parsed.activeBookId
+              : books[0].id;
+          this.ensureAllRuntimes();
+          return;
         }
-        this.panels = panels;
       }
-      this.overflowPanels = normalizeOverflowPanels(data.overflowPanels);
-      if (Array.isArray(data.cast)) {
-        this.cast = data.cast
-          .filter((c) => c && typeof c.id === "string")
-          .map((c) => ({ id: c.id, name: String(c.name ?? ""), tags: String(c.tags ?? "") }));
+
+      // Migrate legacy single-page storage (`mooshieui.comic.page.v1`) into Book 1 Page 1.
+      const legacyRaw = localStorage.getItem(userScopedKey(LEGACY_PAGE_STORAGE_KEY));
+      if (legacyRaw) {
+        const data = JSON.parse(legacyRaw) as Partial<SavedPageLegacy>;
+        const page = createPage({
+          layout: data.layout,
+          layoutMode: data.layoutMode,
+          freeformBoxes: data.freeformBoxes,
+          panels: data.panels,
+          overflowPanels: data.overflowPanels,
+          images: data.images,
+          pageImage: data.pageImage ?? null,
+        });
+        const book = createBook(
+          {
+            title: "Book 1",
+            cast: data.cast,
+            setting: data.setting,
+            style: data.style,
+            pageShape: data.pageShape,
+            gutter: data.gutter,
+            rightToLeft: data.rightToLeft,
+            mode: data.mode,
+            checkContinuity: data.checkContinuity,
+            refMode: sanitizeRefMode(undefined, data.usePanel1Ref),
+            pages: [page],
+            activePageIndex: 0,
+          },
+          1,
+        );
+        this.books = [book];
+        this.activeBookId = book.id;
+        this.ensureAllRuntimes();
+        this.persist();
+        return;
       }
-      if (typeof data.setting === "string") this.setting = data.setting;
-      if (typeof data.style === "string") this.style = data.style;
-      if (data.pageShape === "portrait" || data.pageShape === "square" || data.pageShape === "landscape") this.pageShape = data.pageShape;
-      if (typeof data.gutter === "number") this.gutter = Math.min(80, Math.max(0, data.gutter));
-      if (typeof data.rightToLeft === "boolean") this.rightToLeft = data.rightToLeft;
-      if (data.mode === "panels" || data.mode === "one_image") this.mode = data.mode;
-      if (typeof data.checkContinuity === "boolean") this.checkContinuity = data.checkContinuity;
-      if (typeof data.usePanel1Ref === "boolean") this.usePanel1Ref = data.usePanel1Ref;
-      this.savedImages = data.images && typeof data.images === "object" ? data.images : {};
-      this.savedPageImage = typeof data.pageImage === "string" ? data.pageImage : null;
     } catch (e) {
-      console.warn("Comic page could not be restored:", e);
+      console.warn("Comic books could not be restored:", e);
     }
-    this.ensurePanels();
+    this.ensureAllRuntimes();
   }
 
   persist() {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = null;
-    const images: Record<string, string> = {};
-    for (const [id, r] of Object.entries(this.results)) if (r.galleryFilename) images[id] = r.galleryFilename;
-    const data: SavedPage = {
-      layout: this.layout,
-      layoutMode: this.layoutMode,
-      freeformBoxes: this.freeformBoxes,
-      panels: this.panels,
-      overflowPanels: this.overflowPanels,
-      cast: this.cast,
-      setting: this.setting,
-      style: this.style,
-      pageShape: this.pageShape,
-      gutter: this.gutter,
-      rightToLeft: this.rightToLeft,
-      mode: this.mode,
-      checkContinuity: this.checkContinuity,
-      usePanel1Ref: this.usePanel1Ref,
-      images,
-      pageImage: this.pageGalleryFilename,
-    };
+    // Strip any accidental non-filename values from images/pageImage before writing.
+    const serializedBooks = this.books.map((b) => ({
+      ...b,
+      pages: b.pages.map((p) => {
+        const cleanImages: Record<string, string> = {};
+        for (const [k, v] of Object.entries(p.images)) {
+          if (typeof v === "string" && v && !v.startsWith("data:")) cleanImages[k] = v;
+        }
+        return {
+          ...p,
+          images: cleanImages,
+          pageImage: typeof p.pageImage === "string" && p.pageImage && !p.pageImage.startsWith("data:") ? p.pageImage : null,
+        };
+      }),
+    }));
     try {
-      localStorage.setItem(userScopedKey(STORAGE_KEY), JSON.stringify(data));
+      localStorage.setItem(
+        userScopedKey(BOOKS_STORAGE_KEY),
+        JSON.stringify({ books: serializedBooks, activeBookId: this.activeBookId }),
+      );
     } catch {
-      /* storage full or blocked: the page still works for this session */
+      /* storage full or blocked: the book still works for this session */
     }
   }
 

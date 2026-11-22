@@ -1,9 +1,10 @@
 // Comic page builder: running it. Generates panels through the normal queue,
 // checks continuity with the tagger, asks the Prompt Assistant about the story,
-// and assembles the page. State lives in stores/comic.svelte.ts.
+// assembles pages, and exports multi-page books to gallery, CBZ, and PDF.
+// State lives in stores/comic.svelte.ts.
 
 import { autocomplete } from "../stores/autocomplete.svelte.js";
-import { comic } from "../stores/comic.svelte.js";
+import { comic, type ComicBook, type ComicPageState } from "../stores/comic.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
@@ -16,17 +17,19 @@ import {
   interrogateImage,
   loadGalleryImageDisplay,
   loadGalleryImagePng,
+  saveImageFile,
   saveToGalleryBytes,
   uploadImageBytes,
 } from "./api.js";
+import { buildCbzBlob, buildPdfBlob, type CbzPageInput, type PdfPageInput } from "./comicExport.js";
 import {
   DRAFT_SYSTEM,
   ONE_SHOT_MAX_PANELS,
-  dialogueLines,
-  enhancePanelInstruction,
   STORY_CHECK_SYSTEM,
   continuityIssues,
   coverCrop,
+  dialogueLines,
+  enhancePanelInstruction,
   joinTags,
   oneShotBasePrompt,
   oneShotCentre,
@@ -36,21 +39,25 @@ import {
   panelGenerationSize,
   panelPixelRect,
   panelPrompt,
+  panelRects,
   panelSetting,
   parseDraftPrompts,
   parseStoryIssues,
   splitTags,
   storyBrief,
+  summarizePageForContext,
   type ComicPanel,
   type PanelDraft,
+  type PreviousPageSummary,
 } from "./comicLayout.js";
 import { assertAllowedRequest } from "./contentSafety.js";
+import { loadOutputImageForGenerationInput } from "./galleryActions.js";
+import { submitGeneration } from "./generationSubmit.js";
+import { isTauri } from "./ipc.js";
 import { resolveNaiLanguage } from "./naiLanguage.js";
 import { NAI_MAX_TOKENS, naiComicSystemPrompt } from "./naiPrompt.js";
 import { naiSystemWithSkill } from "./naiSkill.js";
-import { naiV5Variant } from "./novelaiModels.js";
-import { loadOutputImageForGenerationInput } from "./galleryActions.js";
-import { submitGeneration } from "./generationSubmit.js";
+import { NOVELAI_MAX_DIRECTOR_REFERENCES, naiV5Variant } from "./novelaiModels.js";
 
 /** How long a finished prompt may take to show up as an image before it counts as lost. */
 const IMAGE_GRACE_MS = 60_000;
@@ -135,7 +142,7 @@ function checkGenerationReady() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-panel generation
+// Per-panel generation & cross-page visual references
 // ---------------------------------------------------------------------------
 
 /**
@@ -143,13 +150,13 @@ function checkGenerationReady() {
  * panel before the first one is queued, so leaving the page mid-run (which
  * swaps the Generate tab's settings back in) can't change the later panels.
  */
-function panelParams(panel: ComicPanel): GenerationParams | null {
-  const rect = comic.rects.get(panel.id);
+function panelParams(panel: ComicPanel, page: ComicPageState, book: ComicBook): GenerationParams | null {
+  const rect = comic.rectsForPage(page).get(panel.id);
   if (!rect) return null;
-  const page = pageSize(comic.pageShape);
-  const size = panelGenerationSize(rect, page, { width: generation.width, height: generation.height });
+  const size = panelGenerationSize(rect, pageSize(book.pageShape), { width: generation.width, height: generation.height });
+  const setting = comic.effectiveSettingFor(page, book);
   // NovelAI letters the panel's dialogue from a Text: block; other models get none.
-  const positive = panelPrompt(panel, comic, generation.isNovelAi);
+  const positive = panelPrompt(panel, { style: book.style, setting, cast: book.cast }, generation.isNovelAi);
   if (!positive) throw new Error(locale.t("comic.error_empty_prompt"));
   const params = baseParams(positive, panel.negative.trim(), size.width, size.height);
   if (params.novelai) {
@@ -160,7 +167,7 @@ function panelParams(panel: ComicPanel): GenerationParams | null {
 
 export type Panel1RefKind = "novelai" | "anima_ref" | "image_edit";
 
-/** Which character-reference path the active checkpoint supports for Panel 1 -> 2..6. */
+/** Which character-reference path the active checkpoint supports. */
 export function panel1ReferenceKind(): Panel1RefKind | null {
   if (generation.isNovelAi) {
     return generation.supportsNovelAiPreciseReference ? "novelai" : null;
@@ -170,22 +177,22 @@ export function panel1ReferenceKind(): Panel1RefKind | null {
   return null;
 }
 
-/** True when the active checkpoint supports passing Panel 1 as a character reference. */
+/** True when the active checkpoint supports passing character reference images. */
 export function supportsPanel1Reference(): boolean {
   return panel1ReferenceKind() !== null;
 }
 
-async function existingPanel1Png(panel1Id: string): Promise<Uint8Array | null> {
-  const res = comic.results[panel1Id];
-  if (!res) return null;
-  if (res.galleryFilename) {
+async function resolvePanelPng(page: ComicPageState, panelId: string): Promise<Uint8Array | null> {
+  const res = comic.resultsForPage(page.id)[panelId];
+  const filename = res?.galleryFilename ?? page.images[panelId];
+  if (filename) {
     try {
-      return new Uint8Array(await loadGalleryImagePng(res.galleryFilename));
+      return new Uint8Array(await loadGalleryImagePng(filename));
     } catch {
       /* fall through to object URL */
     }
   }
-  if (res.url) {
+  if (res?.url) {
     try {
       return new Uint8Array(await (await fetch(res.url)).arrayBuffer());
     } catch {
@@ -195,89 +202,161 @@ async function existingPanel1Png(panel1Id: string): Promise<Uint8Array | null> {
   return null;
 }
 
-async function applyPanel1Reference(
+async function resolveReferenceSourceToPng(source: string): Promise<Uint8Array | null> {
+  if (!source) return null;
+  try {
+    if (source.startsWith("data:")) {
+      const blob = await (await fetch(source)).blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        bitmap.close();
+        return null;
+      }
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const pngBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!pngBlob) return null;
+      return new Uint8Array(await pngBlob.arrayBuffer());
+    }
+    return new Uint8Array(await loadGalleryImagePng(source));
+  } catch {
+    return null;
+  }
+}
+
+async function applyReferenceImages(
   params: GenerationParams,
   kind: Panel1RefKind,
-  panel1Png: Uint8Array,
-  cachedUploadName: string | null,
-): Promise<string | null> {
+  pngs: Uint8Array[],
+  uploadCache: Map<Uint8Array, string>,
+): Promise<void> {
+  if (pngs.length === 0) return;
   if (kind === "novelai") {
     if (params.novelai) {
       params.novelai = {
         ...params.novelai,
-        director_references: [
-          {
-            image: bytesToBase64(panel1Png),
-            description: "character",
-            strength: 0.6,
-            fidelity: 1.0,
-          },
-        ],
+        director_references: pngs.slice(0, NOVELAI_MAX_DIRECTOR_REFERENCES).map((png) => ({
+          image: bytesToBase64(png),
+          description: "character",
+          strength: 0.6,
+          fidelity: 1.0,
+        })),
       };
     }
-    return cachedUploadName;
+    return;
   }
-  let uploadedName = cachedUploadName;
-  if (!uploadedName) {
-    const upload = await uploadImageBytes(
-      Array.from(panel1Png),
-      `comic_panel1_ref_${Date.now()}.png`,
-    );
-    uploadedName = upload.name;
+
+  const maxUploads = kind === "anima_ref" ? 2 : pngs.length;
+  const uploadedNames: string[] = [];
+  for (let i = 0; i < Math.min(pngs.length, maxUploads); i++) {
+    const png = pngs[i];
+    let name = uploadCache.get(png);
+    if (!name) {
+      const upload = await uploadImageBytes(Array.from(png), `comic_ref_${Date.now()}_${i}.png`);
+      name = upload.name;
+      uploadCache.set(png, name);
+    }
+    uploadedNames.push(name);
   }
+  if (uploadedNames.length === 0) return;
+
   if (kind === "anima_ref") {
     params.style_ref_enabled = true;
     params.anima_ref_method = "anima_ref_adapter";
-    params.style_ref_image = uploadedName;
-    params.style_ref_image_2 = null;
+    params.style_ref_image = uploadedNames[0];
+    params.style_ref_image_2 = uploadedNames[1] ?? null;
     params.style_ref_end = 1.0;
     params.anima_ref_guidance = generation.animaRefGuidance;
     params.anima_ref_correction = generation.animaRefCorrection;
   } else {
     params.mode = "image_edit";
-    params.edit_reference_images = [uploadedName];
-    params.input_image = uploadedName;
+    params.edit_reference_images = uploadedNames;
+    params.input_image = uploadedNames[0];
   }
-  return uploadedName;
 }
 
-async function generateOne(panel: ComicPanel, params: GenerationParams): Promise<Uint8Array | null> {
-  comic.setResult(panel.id, { status: "running", error: undefined, issues: null, checkError: undefined });
+/** Find the immediately preceding enabled panel across the book (crossing page boundaries). */
+function findPrecedingPanel(
+  book: ComicBook,
+  pageIndex: number,
+  panelId: string,
+): { page: ComicPageState; panel: ComicPanel } | null {
+  const curPage = book.pages[pageIndex];
+  if (!curPage) return null;
+  const curOrdered = comic.orderedPanelsForPage(curPage, book.rightToLeft);
+  const idx = curOrdered.findIndex((p) => p.id === panelId);
+  for (let i = idx - 1; i >= 0; i--) {
+    if (curOrdered[i].enabled) return { page: curPage, panel: curOrdered[i] };
+  }
+  for (let p = pageIndex - 1; p >= 0; p--) {
+    const prevPage = book.pages[p];
+    const prevOrdered = comic.orderedPanelsForPage(prevPage, book.rightToLeft);
+    for (let i = prevOrdered.length - 1; i >= 0; i--) {
+      if (prevOrdered[i].enabled) return { page: prevPage, panel: prevOrdered[i] };
+    }
+  }
+  return null;
+}
+
+async function generateOne(
+  panel: ComicPanel,
+  params: GenerationParams,
+  pageId: string,
+  book: ComicBook,
+  page: ComicPageState,
+): Promise<Uint8Array | null> {
+  comic.setResult(panel.id, { status: "running", error: undefined, issues: null, checkError: undefined }, pageId);
   const promptId = await submitGeneration(params);
   const image = await waitForImage(promptId);
   if (!image) {
-    comic.setResult(panel.id, { status: "queued" });
+    comic.setResult(panel.id, { status: "queued" }, pageId);
     return null;
   }
   const { png, galleryFilename } = await imageBytes(image);
-  comic.setResult(panel.id, { status: "done", url: objectUrl(png), galleryFilename });
-  if (comic.checkContinuity) void checkPanel(panel.id, png, galleryFilename);
+  comic.setResult(panel.id, { status: "done", url: objectUrl(png), galleryFilename }, pageId);
+  if (book.checkContinuity) void checkPanel(panel.id, png, galleryFilename, pageId, book, page);
   return png;
 }
 
-/** Generate the given panels (default: every enabled panel), one after another. */
+/** Generate the given panels on the active page (default: every enabled panel), one after another. */
 export async function generatePanels(ids?: string[]): Promise<void> {
   if (comic.running) return;
   checkGenerationReady();
-  const targets = (ids ? comic.orderedPanels.filter((p) => ids.includes(p.id)) : comic.enabledPanels).filter(
+  const book = comic.activeBook;
+  const page = comic.activePage;
+  const pageIndex = comic.activePageIndex;
+  const ordered = comic.orderedPanelsForPage(page, book.rightToLeft);
+  const targets = (ids ? ordered.filter((p) => ids.includes(p.id)) : ordered.filter((p) => p.enabled)).filter(
     (p) => p.enabled || ids,
   );
   if (targets.length === 0) return;
+
   comic.running = true;
   comic.stopRequested = false;
-  for (const p of targets) comic.setResult(p.id, { status: "queued", error: undefined });
+  for (const p of targets) comic.setResult(p.id, { status: "queued", error: undefined }, page.id);
+
   const prepared = new Map<string, GenerationParams | Error | null>();
   for (const p of targets) {
     try {
-      prepared.set(p.id, panelParams(p));
+      prepared.set(p.id, panelParams(p, page, book));
     } catch (e) {
       prepared.set(p.id, e instanceof Error ? e : new Error(String(e)));
     }
   }
-  const refKind = comic.usePanel1Ref ? panel1ReferenceKind() : null;
-  const panel1Id = comic.orderedPanels[0]?.id ?? null;
-  let panel1Png: Uint8Array | null = null;
-  let uploadedRefName: string | null = null;
+
+  const refMode = book.refMode;
+  const refKind = refMode !== "off" ? panel1ReferenceKind() : null;
+  const page1 = book.pages[0];
+  const page1Panel1Id = page1 ? (comic.orderedPanelsForPage(page1, book.rightToLeft)[0]?.id ?? null) : null;
+  let page1Panel1Png: Uint8Array | null = null;
+  const generatedPngs = new Map<string, Uint8Array>();
+  const castPngCache = new Map<string, Uint8Array | null>();
+  const uploadCache = new Map<Uint8Array, string>();
+
   try {
     for (const panel of targets) {
       if (comic.stopRequested) break;
@@ -285,29 +364,60 @@ export async function generatePanels(ids?: string[]): Promise<void> {
         const params = prepared.get(panel.id);
         if (params instanceof Error) throw params;
         if (!params) continue;
-        if (refKind && panel1Id && panel.id !== panel1Id) {
-          if (!panel1Png) panel1Png = await existingPanel1Png(panel1Id);
-          if (panel1Png) {
-            uploadedRefName = await applyPanel1Reference(params, refKind, panel1Png, uploadedRefName);
+
+        if (refKind) {
+          let refPngs: Uint8Array[] = [];
+          if (refMode === "page1_panel1" && page1 && page1Panel1Id) {
+            if (!(page.id === page1.id && panel.id === page1Panel1Id)) {
+              if (!page1Panel1Png) page1Panel1Png = await resolvePanelPng(page1, page1Panel1Id);
+              if (page1Panel1Png) refPngs = [page1Panel1Png];
+            }
+          } else if (refMode === "prev_panel") {
+            const prev = findPrecedingPanel(book, pageIndex, panel.id);
+            if (prev) {
+              const key = `${prev.page.id}:${prev.panel.id}`;
+              const prevPng = generatedPngs.get(key) ?? (await resolvePanelPng(prev.page, prev.panel.id));
+              if (prevPng) refPngs = [prevPng];
+            }
+          } else if (refMode === "cast") {
+            for (const castId of panel.cast) {
+              const member = book.cast.find((c) => c.id === castId);
+              if (!member?.referenceImage) continue;
+              const cacheKey = `${member.id}:${member.referenceImage}`;
+              let png = castPngCache.get(cacheKey);
+              if (png === undefined) {
+                png = await resolveReferenceSourceToPng(member.referenceImage);
+                castPngCache.set(cacheKey, png);
+              }
+              if (png) refPngs.push(png);
+            }
+          }
+          if (refPngs.length > 0) {
+            await applyReferenceImages(params, refKind, refPngs, uploadCache);
           }
         }
-        const generated = await generateOne(panel, params);
-        if (panel1Id && panel.id === panel1Id && generated) {
-          panel1Png = generated;
-          uploadedRefName = null;
+
+        const generated = await generateOne(panel, params, page.id, book, page);
+        if (generated) {
+          generatedPngs.set(`${page.id}:${panel.id}`, generated);
+          if (page1 && page.id === page1.id && panel.id === page1Panel1Id) {
+            page1Panel1Png = generated;
+          }
         }
       } catch (e) {
-        comic.setResult(panel.id, { status: "failed", error: messageOf(e) });
+        comic.setResult(panel.id, { status: "failed", error: messageOf(e) }, page.id);
       }
     }
   } finally {
     // Panels still marked queued after a stop go back to their last state.
     for (const p of targets) {
-      const r = comic.results[p.id];
+      const results = comic.resultsForPage(page.id);
+      const r = results[p.id];
       if (r?.status === "queued" && !r.url) {
-        const { [p.id]: _drop, ...rest } = comic.results;
-        comic.results = rest;
-      } else if (r?.status === "queued") comic.setResult(p.id, { status: "done" });
+        comic.clearResult(p.id, page.id);
+      } else if (r?.status === "queued") {
+        comic.setResult(p.id, { status: "done" }, page.id);
+      }
     }
     comic.running = false;
     comic.stopRequested = false;
@@ -326,11 +436,18 @@ function checkable(tags: string): string[] {
   return splitTags(tags).filter((t) => !UNCHECKED_TAG.test(t) && autocomplete.isKnownTag(t));
 }
 
-export async function checkPanel(id: string, png?: Uint8Array, galleryFilename?: string | null): Promise<void> {
-  const panel = comic.panels[id];
-  const result = comic.results[id];
+export async function checkPanel(
+  id: string,
+  png?: Uint8Array,
+  galleryFilename?: string | null,
+  pageId = comic.activePage.id,
+  book: ComicBook = comic.activeBook,
+  page: ComicPageState = comic.activePage,
+): Promise<void> {
+  const panel = page.panels[id];
+  const result = comic.resultsForPage(pageId)[id];
   if (!panel || !result) return;
-  comic.setResult(id, { checking: true, checkError: undefined });
+  comic.setResult(id, { checking: true, checkError: undefined }, pageId);
   try {
     const name = galleryFilename ?? result.galleryFilename ?? null;
     let detected: TagResult[] = [];
@@ -338,15 +455,16 @@ export async function checkPanel(id: string, png?: Uint8Array, galleryFilename?:
     if (!bytes && !name && result.url) bytes = new Uint8Array(await (await fetch(result.url)).arrayBuffer());
     const res = name ? await interrogateGalleryImage(name) : await interrogateImage(bytesToBase64(bytes ?? new Uint8Array()));
     detected = [...res.general_tags, ...res.character_tags];
+    const effectiveSetting = comic.effectiveSettingFor(page, book);
     const expected = [
-      ...comic.cast
+      ...book.cast
         .filter((c) => panel.cast.includes(c.id))
         .map((c) => ({ who: c.name || "?", tags: checkable(c.tags) })),
-      { who: null, tags: checkable(panelSetting(panel, comic.setting)) },
+      { who: null, tags: checkable(panelSetting(panel, effectiveSetting)) },
     ].filter((g) => g.tags.length > 0);
-    comic.setResult(id, { checking: false, issues: continuityIssues(expected, detected.map((t) => t.name)) });
+    comic.setResult(id, { checking: false, issues: continuityIssues(expected, detected.map((t) => t.name)) }, pageId);
   } catch (e) {
-    comic.setResult(id, { checking: false, checkError: messageOf(e) });
+    comic.setResult(id, { checking: false, checkError: messageOf(e) }, pageId);
   }
 }
 
@@ -358,19 +476,27 @@ export async function generateOneImage(): Promise<void> {
   if (comic.running) return;
   checkGenerationReady();
   if (!generation.isNovelAi) throw new Error(locale.t("comic.error_one_image_novelai"));
+  const book = comic.activeBook;
+  const page = comic.activePage;
   const panels = comic.enabledPanels;
   if (panels.length === 0) return;
   if (panels.length > ONE_SHOT_MAX_PANELS) {
     throw new Error(locale.t("comic.error_one_image_panels", { max: String(ONE_SHOT_MAX_PANELS) }));
   }
-  const aspect = pageAspect(comic.pageShape);
+  const aspect = pageAspect(book.pageShape);
   const pixels = generation.width * generation.height;
   const snap = (v: number) => Math.max(256, Math.round(v / 64) * 64);
   const width = snap(Math.sqrt(pixels * aspect));
   const height = snap(Math.sqrt(pixels / aspect));
 
+  const effectiveSetting = comic.effectiveSettingFor(page, book);
   const dialogue = panels.flatMap((p) => dialogueLines(p.dialogue ?? ""));
-  const params = baseParams(oneShotBasePrompt(comic, panels.length, dialogue), "", width, height);
+  const params = baseParams(
+    oneShotBasePrompt({ style: book.style, setting: effectiveSetting }, panels.length, dialogue),
+    "",
+    width,
+    height,
+  );
   if (!params.novelai) throw new Error(locale.t("comic.error_one_image_novelai"));
   params.novelai = {
     ...params.novelai,
@@ -378,7 +504,7 @@ export async function generateOneImage(): Promise<void> {
     vibes: [],
     director_references: [],
     characters: panels.map((p) => ({
-      prompt: oneShotPanelPrompt(p, comic.numberOf(p.id), comic),
+      prompt: oneShotPanelPrompt(p, comic.numberOf(p.id), { setting: effectiveSetting, cast: book.cast }),
       negative_prompt: p.negative.trim(),
       center: oneShotCentre(comic.rects.get(p.id)!),
       enabled: true,
@@ -397,7 +523,7 @@ export async function generateOneImage(): Promise<void> {
       return;
     }
     const { png, galleryFilename } = await imageBytes(image);
-    comic.setPage(objectUrl(png), galleryFilename);
+    comic.setPage(objectUrl(png), galleryFilename, page.id);
     comic.pageStatus = "done";
   } catch (e) {
     comic.pageStatus = "failed";
@@ -409,7 +535,7 @@ export async function generateOneImage(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Assembling and saving the page
+// Assembling, saving and exporting pages (CBZ & PDF)
 // ---------------------------------------------------------------------------
 
 async function loadBitmap(url: string): Promise<ImageBitmap> {
@@ -417,52 +543,130 @@ async function loadBitmap(url: string): Promise<ImageBitmap> {
   return createImageBitmap(blob);
 }
 
-/** Draw the finished panels onto one page. Panels without an image stay blank. */
-export async function assemblePage(): Promise<Blob> {
-  const page = pageSize(comic.pageShape);
+async function loadBitmapForPanel(page: ComicPageState, panelId: string): Promise<ImageBitmap | null> {
+  const rtUrl = comic.resultsForPage(page.id)[panelId]?.url;
+  if (rtUrl) {
+    try {
+      return await loadBitmap(rtUrl);
+    } catch {
+      /* fall through to gallery file */
+    }
+  }
+  const filename = comic.resultsForPage(page.id)[panelId]?.galleryFilename ?? page.images[panelId];
+  if (filename) {
+    try {
+      const bytes = await loadGalleryImageDisplay(filename);
+      return await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: "image/webp" }));
+    } catch {
+      /* deleted from gallery */
+    }
+  }
+  return null;
+}
+
+async function loadBitmapForOneImagePage(page: ComicPageState): Promise<ImageBitmap | null> {
+  const rtUrl = comic.pageUrlForPage(page.id);
+  if (rtUrl) {
+    try {
+      return await loadBitmap(rtUrl);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (page.pageImage) {
+    try {
+      const bytes = await loadGalleryImagePng(page.pageImage);
+      return await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: "image/png" }));
+    } catch {
+      /* gone */
+    }
+  }
+  return null;
+}
+
+async function renderPageCanvas(pageIndex: number): Promise<HTMLCanvasElement> {
+  const book = comic.activeBook;
+  const page = book.pages[pageIndex];
+  if (!page) throw new Error(`Page ${pageIndex + 1} not found`);
+
+  if (book.mode === "one_image") {
+    const bitmap = await loadBitmapForOneImagePage(page);
+    if (!bitmap) throw new Error(locale.t("comic.error_nothing_to_save"));
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      throw new Error("Canvas is not available");
+    }
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return canvas;
+  }
+
+  const px = pageSize(book.pageShape);
   const canvas = document.createElement("canvas");
-  canvas.width = page.width;
-  canvas.height = page.height;
+  canvas.width = px.width;
+  canvas.height = px.height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas is not available");
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, page.width, page.height);
-  const border = Math.max(2, Math.round(Math.max(page.width, page.height) / 600));
+  ctx.fillRect(0, 0, px.width, px.height);
+
+  const border = Math.max(2, Math.round(Math.max(px.width, px.height) / 600));
   const drawPanel = async (id: string, box: { x: number; y: number; w: number; h: number }, halo: number) => {
     if (halo > 0) {
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(box.x - halo, box.y - halo, box.w + halo * 2, box.h + halo * 2);
     }
-    const panel = comic.panels[id];
-    const url = comic.results[id]?.url;
-    if (panel?.enabled && url) {
-      const bitmap = await loadBitmap(url);
-      const crop = coverCrop(bitmap, box);
-      ctx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, box.x, box.y, box.w, box.h);
-      bitmap.close();
+    const panel = page.panels[id];
+    if (panel?.enabled) {
+      const bitmap = await loadBitmapForPanel(page, id);
+      if (bitmap) {
+        const crop = coverCrop(bitmap, box);
+        ctx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, box.x, box.y, box.w, box.h);
+        bitmap.close();
+      }
     }
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = border;
     ctx.strokeRect(box.x + border / 2, box.y + border / 2, Math.max(1, box.w - border), Math.max(1, box.h - border));
   };
-  if (comic.layoutMode === "freeform") {
-    const halo = Math.max(4, Math.round(comic.gutter / 2));
-    const ordered = [...comic.freeformBoxes].sort((a, b) => a.z - b.z);
+
+  if (page.layoutMode === "freeform") {
+    const halo = Math.max(4, Math.round(book.gutter / 2));
+    const ordered = [...page.freeformBoxes].sort((a, b) => a.z - b.z);
     for (const b of ordered) {
-      const x = Math.round(b.x * page.width);
-      const y = Math.round(b.y * page.height);
-      const x1 = Math.round((b.x + b.w) * page.width);
-      const y1 = Math.round((b.y + b.h) * page.height);
+      const x = Math.round(b.x * px.width);
+      const y = Math.round(b.y * px.height);
+      const x1 = Math.round((b.x + b.w) * px.width);
+      const y1 = Math.round((b.y + b.h) * px.height);
       await drawPanel(b.id, { x, y, w: Math.max(1, x1 - x), h: Math.max(1, y1 - y) }, halo);
     }
   } else {
-    for (const [id, rect] of comic.rects) {
-      await drawPanel(id, panelPixelRect(rect, page, comic.gutter), 0);
+    for (const [id, rect] of panelRects(page.layout)) {
+      await drawPanel(id, panelPixelRect(rect, px, book.gutter), 0);
     }
   }
-  return await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode the page"))), "image/png"),
+  return canvas;
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, mimeType: "image/png" | "image/jpeg", quality?: number): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode the page"))), mimeType, quality),
   );
+}
+
+/** Draw the finished panels onto one page for the given page index. */
+export async function assemblePageFor(pageIndex: number): Promise<Blob> {
+  const canvas = await renderPageCanvas(pageIndex);
+  return canvasToBlob(canvas, "image/png");
+}
+
+/** Draw the finished panels onto the active page. Panels without an image stay blank. */
+export async function assemblePage(): Promise<Blob> {
+  return assemblePageFor(comic.activePageIndex);
 }
 
 export async function previewPage(): Promise<void> {
@@ -471,65 +675,199 @@ export async function previewPage(): Promise<void> {
   comic.pageStatus = "done";
 }
 
-/** Save the page to the gallery: the assembled page, or the one-image page as it is. */
-export async function savePage(): Promise<string> {
+async function savePageAt(pageIndex: number): Promise<string> {
+  const book = comic.activeBook;
+  const page = book.pages[pageIndex];
+  if (!page || !comic.pageHasContent(page, book)) throw new Error(locale.t("comic.error_nothing_to_save"));
+
   let bytes: Uint8Array;
-  if (comic.mode === "one_image") {
-    if (!comic.pageUrl) throw new Error(locale.t("comic.error_nothing_to_save"));
-    if (comic.pageGalleryFilename) return comic.pageGalleryFilename;
-    bytes = new Uint8Array(await (await fetch(comic.pageUrl)).arrayBuffer());
+  if (book.mode === "one_image") {
+    if (page.pageImage) return page.pageImage;
+    const url = comic.pageUrlForPage(page.id);
+    if (!url) throw new Error(locale.t("comic.error_nothing_to_save"));
+    bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
   } else {
-    if (!comic.orderedPanels.some((p) => comic.results[p.id]?.url)) throw new Error(locale.t("comic.error_nothing_to_save"));
-    const blob = await assemblePage();
+    const blob = await assemblePageFor(pageIndex);
     bytes = new Uint8Array(await blob.arrayBuffer());
-    comic.setPage(URL.createObjectURL(blob), null);
+    comic.setPage(URL.createObjectURL(blob), null, page.id);
   }
-  const summary = comic.enabledPanels
-    .map((p, i) => `Panel ${i + 1}: ${p.beat.trim() || p.prompt.trim()}`)
-    .join("\n");
+
+  const ordered = comic.orderedPanelsForPage(page, book.rightToLeft).filter((p) => p.enabled);
+  const summary = ordered.map((p, i) => `Panel ${i + 1}: ${p.beat.trim() || p.prompt.trim()}`).join("\n");
+  const effectiveSetting = comic.effectiveSettingFor(page, book);
   const saved = await saveToGalleryBytes(
     Array.from(bytes),
     "comic_page.png",
     `comic${Date.now().toString(36)}`,
     "txt2img",
-    { positive_prompt: joinTags(comic.style, comic.setting), comic_panels: summary },
+    { positive_prompt: joinTags(book.style, effectiveSetting), comic_panels: summary },
   );
   await gallery.addPersistedImage(saved, undefined, true);
-  comic.pageGalleryFilename = saved;
-  comic.persistSoon();
+  comic.setPage(comic.pageUrlForPage(page.id), saved, page.id);
   return saved;
 }
 
-/** Bring back panel images saved before a restart. */
-export async function restoreImages(): Promise<void> {
-  const entries = Object.entries(comic.savedImages);
-  comic.savedImages = {};
-  for (const [id, filename] of entries) {
-    if (!comic.panels[id] || comic.results[id]?.url) continue;
+/** Save the active page to the gallery. */
+export async function savePage(): Promise<string> {
+  return savePageAt(comic.activePageIndex);
+}
+
+/** Save every page in the active book that has generated content to the gallery. */
+export async function saveAllPages(): Promise<string[]> {
+  const book = comic.activeBook;
+  const indices = book.pages
+    .map((p, i) => (comic.pageHasContent(p, book) ? i : -1))
+    .filter((i) => i >= 0);
+  if (indices.length === 0) throw new Error(locale.t("comic.error_nothing_to_save"));
+  const saved: string[] = [];
+  for (const idx of indices) {
+    saved.push(await savePageAt(idx));
+  }
+  return saved;
+}
+
+function bookExportSlug(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "comic";
+}
+
+async function saveExportBlob(
+  blob: Blob,
+  defaultFilename: string,
+  filterName: string,
+  extension: string,
+): Promise<"saved" | "downloaded" | "cancelled"> {
+  if (isTauri) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: defaultFilename,
+      filters: [{ name: filterName, extensions: [extension] }],
+    });
+    if (!path) return "cancelled";
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    await saveImageFile(Array.from(bytes), path);
+    return "saved";
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = defaultFilename;
+  document.body.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+  return "downloaded";
+}
+
+/** Export all non-empty pages of the active book as a CBZ archive. */
+export async function exportBookCbz(): Promise<"saved" | "downloaded" | "cancelled"> {
+  const book = comic.activeBook;
+  const indices = book.pages
+    .map((p, i) => (comic.pageHasContent(p, book) ? i : -1))
+    .filter((i) => i >= 0);
+  if (indices.length === 0) throw new Error(locale.t("comic.error_nothing_to_save"));
+
+  const pages: CbzPageInput[] = [];
+  for (let k = 0; k < indices.length; k++) {
+    const blob = await assemblePageFor(indices[k]);
+    pages.push({
+      name: `${String(k + 1).padStart(3, "0")}.png`,
+      bytes: new Uint8Array(await blob.arrayBuffer()),
+    });
+  }
+  const cbz = buildCbzBlob(pages);
+  return saveExportBlob(cbz, `${bookExportSlug(book.title)}.cbz`, "CBZ", "cbz");
+}
+
+/** Export all non-empty pages of the active book as a PDF document. */
+export async function exportBookPdf(): Promise<"saved" | "downloaded" | "cancelled"> {
+  const book = comic.activeBook;
+  const indices = book.pages
+    .map((p, i) => (comic.pageHasContent(p, book) ? i : -1))
+    .filter((i) => i >= 0);
+  if (indices.length === 0) throw new Error(locale.t("comic.error_nothing_to_save"));
+
+  const pages: PdfPageInput[] = [];
+  for (const idx of indices) {
+    const canvas = await renderPageCanvas(idx);
+    const jpegBlob = await canvasToBlob(canvas, "image/jpeg", 0.92);
+    pages.push({
+      jpegBytes: new Uint8Array(await jpegBlob.arrayBuffer()),
+      width: canvas.width,
+      height: canvas.height,
+    });
+  }
+  const pdf = buildPdfBlob(pages);
+  return saveExportBlob(pdf, `${bookExportSlug(book.title)}.pdf`, "PDF", "pdf");
+}
+
+/** Bring back saved panel images for a single page if not yet cached in runtime. */
+export async function restoreImagesForPage(pageId: string): Promise<void> {
+  const book = comic.books.find((b) => b.pages.some((p) => p.id === pageId));
+  const page = book?.pages.find((p) => p.id === pageId);
+  if (!page) return;
+
+  const rtResults = comic.resultsForPage(page.id);
+  for (const [id, filename] of Object.entries(page.images)) {
+    if (!page.panels[id] || rtResults[id]?.url) continue;
     try {
       const bytes = await loadGalleryImageDisplay(filename);
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" }));
-      comic.setResult(id, { status: "done", url, galleryFilename: filename, issues: null });
+      comic.setResult(id, { status: "done", url, galleryFilename: filename, issues: null }, page.id);
     } catch {
       /* the file was deleted from the gallery: the panel just starts empty */
     }
   }
-  const pageFile = comic.savedPageImage;
-  comic.savedPageImage = null;
-  if (pageFile && !comic.pageUrl) {
+  if (page.pageImage && !comic.pageUrlForPage(page.id)) {
     try {
-      const bytes = await loadGalleryImageDisplay(pageFile);
-      comic.setPage(URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" })), pageFile);
-      comic.pageStatus = "done";
+      const bytes = await loadGalleryImageDisplay(page.pageImage);
+      comic.setPage(URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" })), page.pageImage, page.id);
     } catch {
       /* gone */
     }
   }
 }
 
+/** Bring back panel images for the active page and page thumbnails for the book strip. */
+export async function restoreImages(): Promise<void> {
+  await restoreImagesForPage(comic.activePage.id);
+  for (const page of comic.activeBook.pages) {
+    if (page.id === comic.activePage.id) continue;
+    if (page.pageImage && !comic.pageUrlForPage(page.id)) {
+      try {
+        const bytes = await loadGalleryImageDisplay(page.pageImage);
+        comic.setPage(URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/webp" })), page.pageImage, page.id);
+      } catch {
+        /* gone */
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Story: Prompt Assistant
+// Story: Prompt Assistant (with cross-page context)
 // ---------------------------------------------------------------------------
+
+function previousPageSummaries(
+  book: ComicBook = comic.activeBook,
+  pageIndex: number = comic.activePageIndex,
+): PreviousPageSummary[] {
+  const start = Math.max(0, pageIndex - 2);
+  const out: PreviousPageSummary[] = [];
+  for (let i = start; i < pageIndex; i++) {
+    const p = book.pages[i];
+    if (!p) continue;
+    const summary = summarizePageForContext(comic.orderedPanelsForPage(p, book.rightToLeft), book.cast, p.settingOverride);
+    if (summary) out.push({ pageNumber: i + 1, summary });
+  }
+  return out;
+}
 
 export async function checkStory(): Promise<void> {
   const ordered = comic.enabledPanels;
@@ -537,7 +875,12 @@ export async function checkStory(): Promise<void> {
   comic.storyChecking = true;
   comic.storyError = null;
   try {
-    const reply = await callExternalLlm(STORY_CHECK_SYSTEM, storyBrief(ordered, comic), 800);
+    const brief = storyBrief(
+      ordered,
+      { style: comic.style, setting: comic.effectiveSetting, cast: comic.cast },
+      previousPageSummaries(),
+    );
+    const reply = await callExternalLlm(STORY_CHECK_SYSTEM, brief, 800);
     comic.storyIssues = parseStoryIssues(reply, ordered.length);
   } catch (e) {
     comic.storyError = messageOf(e);
@@ -553,9 +896,14 @@ export async function checkStory(): Promise<void> {
  * writes tag prompts.
  */
 async function askForPanels(ordered: ComicPanel[], instruction: string): Promise<Map<number, PanelDraft>> {
-  const brief = storyBrief(ordered, comic);
+  const effectiveSetting = comic.effectiveSetting;
+  const brief = storyBrief(
+    ordered,
+    { style: comic.style, setting: effectiveSetting, cast: comic.cast },
+    previousPageSummaries(),
+  );
   const said = ordered.flatMap((p) => [p.beat, p.prompt, p.dialogue ?? ""]).filter((t) => t.trim());
-  const rating = assertAllowedRequest([...said, comic.setting, ...comic.cast.map((c) => c.tags)]);
+  const rating = assertAllowedRequest([...said, effectiveSetting, ...comic.cast.map((c) => c.tags)]);
   const variant = generation.isNovelAi ? naiV5Variant(generation.checkpoint) : null;
   const user = instruction ? `${brief}\n\n${instruction}` : brief;
   if (!variant) return parseDraftPrompts(await callExternalLlm(DRAFT_SYSTEM, user, 1500), ordered.length);
