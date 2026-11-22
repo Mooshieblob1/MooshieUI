@@ -5442,5 +5442,10 @@ const pl: Record<string, string> = {
   "comic.pick_character_empty": "Brak zapisanych postaci. Najpierw zapisz postacie w zakładce Postacie.",
   "comic.clear_ref": "Wyczyść portret",
   "comic.pick_ref": "Wybierz portret z Postaci",
+  "settings.about.whats_new_button": "Co nowego",
+  "whats_new.title": "Co nowego!",
+  "whats_new.full_changelog": "Pełny dziennik zmian",
+  "whats_new.got_it": "Rozumiem",
+  "whats_new.empty": "Brak dostępnych informacji o wydaniu.",
 };
 export default pl;

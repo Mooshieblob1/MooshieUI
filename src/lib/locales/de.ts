@@ -5405,5 +5405,10 @@ const de: Record<string, string> = {
   "comic.pick_character_empty": "Noch keine gespeicherten Figuren. Speichere zuerst Figuren im Figuren-Tab.",
   "comic.clear_ref": "Porträt entfernen",
   "comic.pick_ref": "Porträt aus Figuren wählen",
+  "settings.about.whats_new_button": "Neuigkeiten",
+  "whats_new.title": "Was ist neu!",
+  "whats_new.full_changelog": "Vollständiges Änderungsprotokoll",
+  "whats_new.got_it": "Verstanden",
+  "whats_new.empty": "Keine Versionshinweise verfügbar.",
 };
 export default de;

@@ -5357,5 +5357,10 @@ const en: Record<string, string> = {
   "comic.pick_character_empty": "No saved characters yet. Save characters in the Characters tab first.",
   "comic.clear_ref": "Clear portrait",
   "comic.pick_ref": "Pick portrait from Characters",
+  "settings.about.whats_new_button": "What's new",
+  "whats_new.title": "What's New!",
+  "whats_new.full_changelog": "Full changelog",
+  "whats_new.got_it": "Got it",
+  "whats_new.empty": "No release notes available.",
 };
 export default en;

@@ -5429,5 +5429,10 @@ const fr: Record<string, string> = {
   "comic.pick_character_empty": "Aucun personnage enregistré. Enregistrez d'abord des personnages dans l'onglet Personnages.",
   "comic.clear_ref": "Retirer le portrait",
   "comic.pick_ref": "Choisir un portrait depuis Personnages",
+  "settings.about.whats_new_button": "Nouveautés",
+  "whats_new.title": "Nouveautés !",
+  "whats_new.full_changelog": "Journal des modifications complet",
+  "whats_new.got_it": "Compris",
+  "whats_new.empty": "Aucune note de version disponible.",
 };
 export default fr;

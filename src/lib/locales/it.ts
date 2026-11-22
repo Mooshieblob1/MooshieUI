@@ -5403,5 +5403,10 @@ const it: Record<string, string> = {
   "comic.pick_character_empty": "Nessun personaggio salvato. Salva prima i personaggi nella scheda Personaggi.",
   "comic.clear_ref": "Rimuovi ritratto",
   "comic.pick_ref": "Scegli ritratto da Personaggi",
+  "settings.about.whats_new_button": "Novità",
+  "whats_new.title": "Novità!",
+  "whats_new.full_changelog": "Cronologia completa delle modifiche",
+  "whats_new.got_it": "Ho capito",
+  "whats_new.empty": "Nessuna nota di rilascio disponibile.",
 };
 export default it;

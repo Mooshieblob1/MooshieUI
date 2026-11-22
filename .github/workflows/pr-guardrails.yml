@@ -220,6 +220,11 @@ jobs:
           npx esbuild scripts/tests/promptQualityStrip.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/promptQualityStrip.test.mjs" --log-level=warning
           node --test "$RUNNER_TEMP/promptQualityStrip.test.mjs"
 
+      - name: Changelog release notes tests
+        run: |
+          npx esbuild scripts/tests/changelog.test.ts --bundle --platform=node --format=esm --outfile="$RUNNER_TEMP/changelog.test.mjs" --log-level=warning
+          node --test "$RUNNER_TEMP/changelog.test.mjs"
+
       - name: Release artifact checks
         run: python3 -m unittest discover -s scripts -p test_release_artifacts.py
 

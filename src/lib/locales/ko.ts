@@ -5403,5 +5403,10 @@ const ko: Record<string, string> = {
   "comic.pick_character_empty": "저장된 캐릭터가 없습니다. 먼저 캐릭터 탭에서 캐릭터를 저장하세요.",
   "comic.clear_ref": "초상화 지우기",
   "comic.pick_ref": "캐릭터에서 초상화 선택",
+  "settings.about.whats_new_button": "새로운 기능",
+  "whats_new.title": "새로운 기능!",
+  "whats_new.full_changelog": "전체 변경 로그",
+  "whats_new.got_it": "확인",
+  "whats_new.empty": "릴리스 노트가 없습니다.",
 };
 export default ko;
