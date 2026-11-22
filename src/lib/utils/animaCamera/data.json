@@ -1,0 +1,1196 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "anima": {
+      "title": "CircleStone Labs: Anima model card",
+      "url": "https://huggingface.co/circlestone-labs/Anima",
+      "checked": "2026-11-22"
+    },
+    "composition": {
+      "title": "Danbooru: Image composition",
+      "url": "https://safebooru.donmai.us/wiki_pages/tag_group:image_composition",
+      "checked": "2026-11-22"
+    },
+    "lighting": {
+      "title": "Danbooru: Lighting",
+      "url": "https://safebooru.donmai.us/wiki_pages/tag_group:lighting",
+      "checked": "2026-11-22"
+    },
+    "focus": {
+      "title": "Danbooru: Depth of field",
+      "url": "https://safebooru.donmai.us/wiki_pages/depth_of_field",
+      "checked": "2026-11-22"
+    },
+    "motion": {
+      "title": "Danbooru: Motion lines",
+      "url": "https://safebooru.donmai.us/wiki_pages/motion_lines",
+      "checked": "2026-11-22"
+    },
+    "media": {
+      "title": "Danbooru: Traditional media",
+      "url": "https://safebooru.donmai.us/wiki_pages/traditional_media",
+      "checked": "2026-11-22"
+    },
+    "above": {
+      "title": "Danbooru: From above",
+      "url": "https://safebooru.donmai.us/wiki_pages/from_above",
+      "checked": "2026-11-22"
+    }
+  },
+  "defaults": {
+    "weight_min": 0.1,
+    "weight_max": 10.0,
+    "extra_master": 1.0,
+    "xy_mult_enabled": true,
+    "xy_mult": 10.0,
+    "azimuth": {
+      "weight": 10.0,
+      "extra": 0.0,
+      "deadzone_ratio": 0.05,
+      "enabled": true,
+      "directions": {
+        "front": {
+          "tag": "straight-on"
+        },
+        "back": {
+          "tag": "from behind"
+        },
+        "left": {
+          "tag": "from side, facing right"
+        },
+        "right": {
+          "tag": "from side, facing left"
+        }
+      }
+    },
+    "elevation": {
+      "extra": 0.0,
+      "enabled": true,
+      "categories": {
+        "high": {
+          "tag": "from above"
+        },
+        "eye": {
+          "tag": "eye-level view"
+        },
+        "low": {
+          "tag": "from below"
+        }
+      }
+    },
+    "distance": {
+      "extra": 0.0,
+      "enabled": true,
+      "categories": {
+        "ecu": {
+          "tag": "extreme close-up"
+        },
+        "cu": {
+          "tag": "close-up"
+        },
+        "medium": {
+          "tag": "upper body"
+        },
+        "cowboy_shot": {
+          "tag": "cowboy shot"
+        },
+        "full": {
+          "tag": "full body"
+        },
+        "wide": {
+          "tag": "wide shot"
+        }
+      }
+    },
+    "tilt": {
+      "extra": 0.0,
+      "deadzone": 0.15,
+      "enabled": true,
+      "dutch_tag": "dutch angle"
+    }
+  },
+  "camera_presets": {
+    "horizontal_angle": [
+      {
+        "label": "Front view",
+        "value": 0
+      },
+      {
+        "label": "Front-right quarter view",
+        "value": 45
+      },
+      {
+        "label": "Right side view",
+        "value": 90
+      },
+      {
+        "label": "Back-right quarter view",
+        "value": 135
+      },
+      {
+        "label": "Back view",
+        "value": 180
+      },
+      {
+        "label": "Back-left quarter view",
+        "value": 225
+      },
+      {
+        "label": "Left side view",
+        "value": 270
+      },
+      {
+        "label": "Front-left quarter view",
+        "value": 315
+      }
+    ],
+    "vertical_angle": [
+      {
+        "label": "Low-angle shot",
+        "value": -30
+      },
+      {
+        "label": "Eye-level shot",
+        "value": 0
+      },
+      {
+        "label": "Elevated shot",
+        "value": 30
+      },
+      {
+        "label": "High-angle shot",
+        "value": 60
+      }
+    ],
+    "zoom": [
+      {
+        "label": "Wide shot",
+        "value": 1
+      },
+      {
+        "label": "Full body",
+        "value": 2.5
+      },
+      {
+        "label": "Cowboy shot",
+        "value": 3
+      },
+      {
+        "label": "Medium shot",
+        "value": 4
+      },
+      {
+        "label": "Close-up",
+        "value": 8
+      },
+      {
+        "label": "Extreme close-up",
+        "value": 10
+      }
+    ]
+  },
+  "extreme_presets": [
+    {
+      "label": "None",
+      "value": "",
+      "kind": "none",
+      "sources": []
+    },
+    {
+      "label": "Bird's-eye view [Tag]",
+      "value": "bird's eye view",
+      "kind": "tag",
+      "sources": [
+        "anima",
+        "above"
+      ]
+    },
+    {
+      "label": "Worm's-eye view [Description]",
+      "value": "The camera is near the ground and looks steeply upward at the subject.",
+      "kind": "description",
+      "sources": [
+        "anima"
+      ]
+    },
+    {
+      "label": "Directly overhead [Description]",
+      "value": "The camera looks straight down at the subject from directly overhead.",
+      "kind": "description",
+      "sources": [
+        "anima"
+      ]
+    },
+    {
+      "label": "Directly underneath [Description]",
+      "value": "The camera looks straight up at the subject from directly underneath.",
+      "kind": "description",
+      "sources": [
+        "anima"
+      ]
+    }
+  ],
+  "extra_groups": [
+    {
+      "key": "lens",
+      "label": "Lens / perspective",
+      "tooltip": "Illustrated perspective and lens effects. Lens descriptions are visual suggestions, not calibrated optics.",
+      "presets": [
+        {
+          "label": "Fisheye distortion [Tag]",
+          "value": "fisheye",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Strong perspective [Tag]",
+          "value": "perspective",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Foreshortening [Tag]",
+          "value": "foreshortening",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Atmospheric perspective [Tag]",
+          "value": "atmospheric perspective",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Vanishing point [Tag]",
+          "value": "vanishing point",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Panorama [Tag]",
+          "value": "panorama",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Isometric perspective [Tag]",
+          "value": "isometric",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Wide-angle look [Description]",
+          "value": "A wide-angle perspective shows the subject together with a broad view of the surroundings.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Ultra-wide perspective [Description]",
+          "value": "An exaggerated wide-angle perspective makes nearby objects appear much larger than distant objects.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Natural perspective [Description]",
+          "value": "The scene has natural proportions with little perspective distortion.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Telephoto compression [Description]",
+          "value": "A compressed perspective makes the background appear close behind the subject.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Orthographic look [Description]",
+          "value": "Parallel edges remain parallel and objects do not shrink noticeably with distance.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Macro detail [Description]",
+          "value": "A tiny detail fills the frame and its fine surface texture is clearly visible.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Enlarged foreground [Description]",
+          "value": "An object close to the viewer appears large while the subject and background recede behind it.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Layered depth [Description]",
+          "value": "Near objects overlap the subject and distant scenery to create clear layers of depth.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "dof",
+      "label": "Focus / depth of field",
+      "tooltip": "Choose what stays sharp and what becomes blurry. Deep focus is an English description, not a depth-of-field blur tag.",
+      "presets": [
+        {
+          "label": "Depth of field [Tag]",
+          "value": "depth of field",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "focus"
+          ]
+        },
+        {
+          "label": "Blurry background [Tag]",
+          "value": "blurry background",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "focus"
+          ]
+        },
+        {
+          "label": "Blurry foreground [Tag]",
+          "value": "blurry foreground",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "focus"
+          ]
+        },
+        {
+          "label": "Bokeh [Tag]",
+          "value": "bokeh",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "focus"
+          ]
+        },
+        {
+          "label": "Soft focus [Tag]",
+          "value": "soft focus",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "focus"
+          ]
+        },
+        {
+          "label": "Shallow focus [Description]",
+          "value": "The subject is sharply focused while the background falls softly out of focus.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Deep focus [Description]",
+          "value": "The foreground and distant background are both sharply focused.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Face in focus [Description]",
+          "value": "The face is sharply focused while the surroundings are softly blurred.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Eyes in focus [Description]",
+          "value": "The eyes are the sharpest part of the image and the background is softly blurred.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Hands in focus [Description]",
+          "value": "The hands and the object they hold are sharply focused while the background is blurred.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Subject isolated by focus [Description]",
+          "value": "The subject is sharp between a softly blurred foreground and a softly blurred background.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Distant haze [Description]",
+          "value": "The nearby subject is clear while distant scenery fades into a soft atmospheric haze.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "movement",
+      "label": "Motion effects",
+      "tooltip": "Visible motion cues for a still image. These do not animate the camera or generate video.",
+      "presets": [
+        {
+          "label": "Motion blur [Tag]",
+          "value": "motion blur",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "motion"
+          ]
+        },
+        {
+          "label": "Motion lines [Tag]",
+          "value": "motion lines",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "motion"
+          ]
+        },
+        {
+          "label": "Speed lines [Tag]",
+          "value": "speed lines",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "motion"
+          ]
+        },
+        {
+          "label": "Afterimage [Tag]",
+          "value": "afterimage",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "motion"
+          ]
+        },
+        {
+          "label": "Frozen action [Description]",
+          "value": "The subject is captured sharply in the middle of a fast action.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Panning blur [Description]",
+          "value": "The moving subject remains sharp while the background streaks horizontally.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Radial motion blur [Description]",
+          "value": "Blur streaks radiate outward from the subject to suggest rapid movement toward the viewer.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Wind-swept motion [Description]",
+          "value": "Hair and loose clothing stream in the same direction in a strong wind.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Falling motion [Description]",
+          "value": "The subject is suspended mid-fall with hair and loose fabric trailing upward.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Gentle motion [Description]",
+          "value": "A small movement gently lifts loose hair and fabric.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Dynamic action [Description]",
+          "value": "The subject is shown mid-action with a strong diagonal line of movement through the body.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Still pose [Description]",
+          "value": "The subject and the surroundings are motionless with crisp edges.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "composition",
+      "label": "Composition",
+      "tooltip": "Subject placement and framing. Choose a preset that agrees with the camera framing and viewpoint.",
+      "presets": [
+        {
+          "label": "Negative space [Tag]",
+          "value": "negative space",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Symmetry [Tag]",
+          "value": "symmetry",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Letterboxed [Tag]",
+          "value": "letterboxed",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "First-person viewpoint [Tag]",
+          "value": "pov",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Portrait framing [Tag]",
+          "value": "portrait",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Upper-body framing [Tag]",
+          "value": "upper body",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Full-body framing [Tag]",
+          "value": "full body",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Landscape [Tag]",
+          "value": "landscape",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Scenery [Tag]",
+          "value": "scenery",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Silhouette [Tag]",
+          "value": "silhouette",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Centered subject [Description]",
+          "value": "The subject is centered in the frame.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Rule of thirds [Description]",
+          "value": "The subject is placed near a rule-of-thirds intersection with open space on the opposite side.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Leading lines [Description]",
+          "value": "Lines in the environment lead the eye toward the subject.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Frame within a frame [Description]",
+          "value": "An archway or doorway surrounds the subject and forms a frame inside the image.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Foreground / middle / background [Description]",
+          "value": "The image has a distinct foreground, a subject in the middle distance, and a distant background.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Diagonal composition [Description]",
+          "value": "The main shapes run diagonally across the frame.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Subject on the left [Description]",
+          "value": "The subject occupies the left third of the image with open space on the right.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Subject on the right [Description]",
+          "value": "The subject occupies the right third of the image with open space on the left.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Over-the-shoulder [Description]",
+          "value": "The scene is viewed over a foreground character's shoulder toward the main subject.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Small subject / large setting [Description]",
+          "value": "The subject appears small within a large, detailed environment.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Triangular arrangement [Description]",
+          "value": "The main visible elements form a clear triangular arrangement.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Room to look into [Description]",
+          "value": "Open space extends in front of the direction the subject is facing.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "style",
+      "label": "Illustration style",
+      "tooltip": "Art styles and media found in illustration tagging. No artist names or automatic quality / score tags are added.",
+      "presets": [
+        {
+          "label": "Anime screenshot [Tag]",
+          "value": "anime screenshot",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Official art [Tag]",
+          "value": "official art",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Line art [Tag]",
+          "value": "lineart",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Sketch [Tag]",
+          "value": "sketch",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Painterly [Tag]",
+          "value": "painterly",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Pixel art [Tag]",
+          "value": "pixel art",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Ink wash painting [Tag]",
+          "value": "ink wash painting",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Watercolor [Tag]",
+          "value": "watercolor (medium)",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "media"
+          ]
+        },
+        {
+          "label": "Oil painting [Tag]",
+          "value": "oil painting (medium)",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "media"
+          ]
+        },
+        {
+          "label": "Gouache [Tag]",
+          "value": "gouache (medium)",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "media"
+          ]
+        },
+        {
+          "label": "Colored pencil [Tag]",
+          "value": "colored pencil (medium)",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "media"
+          ]
+        },
+        {
+          "label": "Charcoal [Tag]",
+          "value": "charcoal (medium)",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "media"
+          ]
+        },
+        {
+          "label": "Graphite [Tag]",
+          "value": "graphite (medium)",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "media"
+          ]
+        },
+        {
+          "label": "Halftone [Tag]",
+          "value": "halftone",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Crosshatching [Tag]",
+          "value": "crosshatching",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Pointillism [Tag]",
+          "value": "pointillism",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Art Nouveau [Tag]",
+          "value": "art nouveau",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Art Deco [Tag]",
+          "value": "art deco",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Ukiyo-e [Tag]",
+          "value": "ukiyo-e",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Impressionism [Tag]",
+          "value": "impressionism",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Minimalism [Tag]",
+          "value": "minimalism",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Abstract [Tag]",
+          "value": "abstract",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Surreal [Tag]",
+          "value": "surreal",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "composition"
+          ]
+        },
+        {
+          "label": "Flat-color anime [Description]",
+          "value": "The illustration uses clean outlines, flat color areas, and simple cel shading.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "lighting",
+      "label": "Lighting",
+      "tooltip": "Optional lighting direction, source, and atmosphere. Lighting affects appearance; it does not change the 3D viewport lights.",
+      "presets": [
+        {
+          "label": "Backlighting [Tag]",
+          "value": "backlighting",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Light from above [Tag]",
+          "value": "overlighting",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Side lighting [Tag]",
+          "value": "sidelighting",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Light from below [Tag]",
+          "value": "underlighting",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Sunlight [Tag]",
+          "value": "sunlight",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Moonlight [Tag]",
+          "value": "moonlight",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Dappled sunlight [Tag]",
+          "value": "dappled sunlight",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Light rays [Tag]",
+          "value": "light rays",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Dim lighting [Tag]",
+          "value": "dim lighting",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Spotlight [Tag]",
+          "value": "spotlight",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Bloom [Tag]",
+          "value": "bloom",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Chiaroscuro [Tag]",
+          "value": "chiaroscuro",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Candlelight [Tag]",
+          "value": "candlelight",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Caustics [Tag]",
+          "value": "caustics",
+          "kind": "tag",
+          "sources": [
+            "anima",
+            "lighting"
+          ]
+        },
+        {
+          "label": "Rim light [Description]",
+          "value": "A narrow rim of light traces the outer edge of the subject.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Soft window light [Description]",
+          "value": "Soft daylight enters through a nearby window and gently lights one side of the subject.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Golden-hour light [Description]",
+          "value": "Low, warm sunlight creates long shadows and a golden glow.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Overcast daylight [Description]",
+          "value": "An overcast sky creates soft, even illumination with faint shadows.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Neon light [Description]",
+          "value": "Colored neon lights cast vivid pink and blue light across the subject.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Soft diffuse light [Description]",
+          "value": "Broad, diffuse light illuminates the subject with soft shadows.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Warm / cool split light [Description]",
+          "value": "Warm light illuminates one side of the subject while cool light illuminates the other.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        },
+        {
+          "label": "Bright background silhouette [Description]",
+          "value": "The subject appears as a dark silhouette against a bright background.",
+          "kind": "description",
+          "sources": [
+            "anima"
+          ]
+        }
+      ]
+    }
+  ]
+}

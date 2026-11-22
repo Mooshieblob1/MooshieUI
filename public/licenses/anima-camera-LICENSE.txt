@@ -1,0 +1,87 @@
+MIT License
+
+Copyright (c) xunying7860
+Copyright (c) 2026 Aitha
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+# Attribution and third-party notices
+
+## Anima camera node
+
+MooshieUI reuses the prompt logic and preset catalog from [AithaEzio/Comfyui-Anima_camera_angle-Aitha v1.0.1](https://github.com/AithaEzio/Comfyui-Anima_camera_angle-Aitha/releases/tag/v1.0.1), commit `2f6c067`, and adapts its camera guide scene to native Svelte controls. That package is a fork of [xunying7860/Comfyui-Anima_camera_angle](https://github.com/xunying7860/Comfyui-Anima_camera_angle), based on commit `a89bbcd1ea02e79c08e5dd6e00f41961991d8ada`. The upstream README declares the project MIT licensed. The copyright and MIT license notices are retained above.
+
+## Qwen Multiangle
+
+The camera control names, eight horizontal presets, four elevation presets, and synchronized dropdown interaction were informed by [jtydhr88/ComfyUI-qwenmultiangle](https://github.com/jtydhr88/ComfyUI-qwenmultiangle), reviewed at commit `bf8d032a36f1b78296568cda939418b88f0950b3`. The Aitha package has its own frontend and Anima prompt implementation; this integration does not include Qwen's Vue build or LoRA prompt token. The Qwen project's license notice is reproduced below for attribution.
+
+```text
+MIT License
+
+Copyright (c) 2026 Terry Jia
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Three.js r167
+
+MooshieUI imports the npm package `three` version `0.167.1` for the lazily loaded camera guide. It does not ship the camera node package's `js/three.module.js` file. The npm runtime's MIT notice is reproduced below. [Original license](https://github.com/mrdoob/three.js/blob/r167/LICENSE):
+
+```text
+The MIT License
+
+Copyright © 2010-2024 three.js authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+The Anima model weights have their own license. This integration does not distribute model weights.
