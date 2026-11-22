@@ -18,6 +18,7 @@
   import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
+  import BackupRestoreModal from "./BackupRestoreModal.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
@@ -71,6 +72,7 @@
   // instead a one-shot flag survives the reload and App.svelte shows the wizard.
   // Reloading also avoids re-running initApp() in the live session.
   let showRerunSetupConfirm = $state(false);
+  let showBackupRestoreModal = $state(false);
   function rerunSetup() {
     localStorage.setItem("mooshieui_force_setup", "1");
     location.reload();
@@ -1367,7 +1369,7 @@
     { key: "cloud", labelKey: "settings.sections.cloud", keywords: "cloud voice video elevenlabs fal segmind seedance api key tts speech anime scene" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "account", labelKey: "settings.account", keywords: "account password username display name login logout users lan accounts admin moderator role security migration" },
-    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates automatic auto background about troubleshooting logs export diagnostic github report issue" },
+    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates automatic auto background about troubleshooting logs export diagnostic github report issue backup restore zip import" },
     { key: "developer", labelKey: "settings.developer.title", keywords: "developer dev mode debug unlock" },
   ];
 
@@ -5153,6 +5155,21 @@
               <p class="text-[11px] text-neutral-500">{locale.t('settings.about.export_logs_desc')}</p>
             </div>
 
+            <!-- Backup & Restore -->
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 py-2.5">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-medium text-neutral-200">{locale.t('settings.backup.title')}</span>
+                <InfoTip text={locale.t('settings.backup.overview_tip')} />
+              </div>
+              <button
+                type="button"
+                onclick={() => (showBackupRestoreModal = true)}
+                class="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+              >
+                {locale.t('settings.backup.open_button')}
+              </button>
+            </div>
+
             <div class="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
               <p class="text-[11px] text-neutral-500">{locale.t('settings.about.data_dir_hint')}</p>
             </div>
@@ -5578,6 +5595,13 @@
 {#if showModelManager}
   <ModelManagerModal mobileFriendly={mobileFriendly} onclose={() => (showModelManager = false)} />
 {/if}
+
+<BackupRestoreModal
+  open={showBackupRestoreModal}
+  isAdmin={isAdmin}
+  onclose={() => (showBackupRestoreModal = false)}
+  onConfigRestored={loadConfig}
+/>
 
 {#if mobileFriendly && showScrollToTop}
   <button

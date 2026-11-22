@@ -1097,6 +1097,19 @@ class ComicStore {
     return this.activePage.pageImage;
   }
 
+  flushPendingSave() {
+    if (this.loaded && this.saveTimer) this.persist();
+  }
+
+  reload() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.loaded = false;
+    this.load();
+  }
+
   load() {
     if (this.loaded) return;
     this.loaded = true;

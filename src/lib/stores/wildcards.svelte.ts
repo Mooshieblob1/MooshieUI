@@ -37,6 +37,13 @@ class WildcardStore {
   private loadPromise: Promise<void> | null = null;
 
   constructor() {
+    this.reloadOrder();
+  }
+
+  /** Re-read ordered wildcard flags and sequential counters from localStorage. */
+  reloadOrder() {
+    this.ordered = [];
+    this.counters = {};
     try {
       const raw = localStorage.getItem(userScopedKey(ORDER_KEY));
       if (raw) {

@@ -76,7 +76,8 @@ const CATEGORIES = [
   "anime_scene",
 ] as const satisfies readonly (keyof UserPrefsData)[];
 
-type Category = (typeof CATEGORIES)[number];
+export type PrefsCategory = (typeof CATEGORIES)[number];
+type Category = PrefsCategory;
 
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
@@ -325,6 +326,58 @@ class PrefsSyncStore {
       this._syncTimer = null;
       this._doSync().catch((e) => { console.warn("Prefs sync failed:", e); });
     }, 2000);
+  }
+
+  /**
+   * Apply a restored `UserPrefsData` snapshot for the selected categories
+   * (`merge` unions lists & keeps current single settings, `replace` overwrites
+   * the selected categories), then immediately push to the backend if available.
+   */
+  async applyBackup(
+    incoming: UserPrefsData,
+    mode: "merge" | "replace",
+    categories: readonly PrefsCategory[],
+  ): Promise<void> {
+    const selected = new Set(categories);
+    if (selected.size === 0) return;
+
+    const current = this.collectAll();
+    const source = mode === "merge" ? mergeUserPrefs(current, incoming) : incoming;
+    const patch: UserPrefsData = {};
+    for (const category of CATEGORIES) {
+      if (!selected.has(category)) continue;
+      const val = source[category];
+      if (val !== undefined && val !== null) {
+        (patch as Record<string, unknown>)[category] = val;
+      }
+    }
+
+    await this.applyChanged(patch, true);
+
+    if (this._syncTimer !== null) {
+      clearTimeout(this._syncTimer);
+      this._syncTimer = null;
+    }
+
+    if (serverPrefsAvailable) {
+      const localAfter = this.collectAll();
+      const body: UserPrefsData = {};
+      const sent = new Map<Category, string>();
+      for (const category of CATEGORIES) {
+        if (!selected.has(category)) continue;
+        const value = localAfter[category];
+        if (value === undefined) continue;
+        (body as Record<string, unknown>)[category] = value;
+        sent.set(category, canonical(value));
+      }
+      if (sent.size > 0 && (await pushServerPrefs(body)) !== null) {
+        for (const [category, json] of sent) {
+          this._lastLocal.set(category, json);
+          this._lastServer.set(category, json);
+        }
+      }
+    }
+    this.flush();
   }
 
   /**

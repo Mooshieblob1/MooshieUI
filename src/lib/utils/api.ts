@@ -1,4 +1,4 @@
-import { getAuthToken, ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
+import { authHeaders, getAuthToken, ipcInvoke, ipcListen, isBrowserMode, isTauri, responseErrorText } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import type { ExportFormat } from "./videoExport.js";
 import type { ArchitectureSpec } from "./architectures.js";
@@ -2133,4 +2133,135 @@ export async function saveWildcard(path: string, content: string): Promise<void>
 
 export async function deleteWildcard(path: string): Promise<void> {
   return ipcInvoke("delete_wildcard", { path });
+}
+
+// --- Single-ZIP Backup & Restore ---
+
+export interface BackupCounts {
+  characters: number;
+  prompt_presets: number;
+  styles: number;
+  lora_presets: number;
+  lora_triggers: number;
+  profiles: number;
+  artist_favourites: number;
+  prompt_history: number;
+  comic_books: number;
+  generation_tabs: number;
+  wildcards: number;
+}
+
+export interface BackupManifest {
+  schema_version: number;
+  app_version: string;
+  exported_at: string;
+  username: string;
+  includes_config: boolean;
+  counts: BackupCounts;
+}
+
+export interface BackupBundleInput {
+  user_prefs: Record<string, unknown>;
+  local_extras: Record<string, unknown>;
+}
+
+export interface BackupInspection {
+  manifest: BackupManifest;
+  user_prefs: Record<string, unknown>;
+  local_extras: Record<string, unknown>;
+  has_app_config: boolean;
+  machine_local_paths: string[];
+  wildcard_paths: string[];
+}
+
+export interface ApplyBackupAdminOptions {
+  apply_app_config: boolean;
+  include_machine_local_paths: boolean;
+  apply_wildcards: boolean;
+  replace_wildcards: boolean;
+}
+
+export interface ApplyBackupAdminResult {
+  config_applied: boolean;
+  wildcards_written: number;
+}
+
+async function parseBackupApiError(resp: Response): Promise<string> {
+  const raw = await responseErrorText(resp);
+  try {
+    const parsed = JSON.parse(raw) as { error?: unknown };
+    if (typeof parsed?.error === "string" && parsed.error) return parsed.error;
+  } catch {
+    // Plain text / sanitized HTML error message.
+  }
+  return raw;
+}
+
+export async function exportBackupZip(
+  destPath: string,
+  bundle: BackupBundleInput,
+  includeAdminData: boolean,
+): Promise<BackupManifest> {
+  return ipcInvoke<BackupManifest>("export_backup_zip", {
+    destPath,
+    bundle,
+    includeAdminData,
+  });
+}
+
+export async function exportBackupZipBlob(
+  bundle: BackupBundleInput,
+  includeAdminData: boolean,
+): Promise<{ blob: Blob; filename: string }> {
+  const resp = await fetch("/internal-api/_backup/export", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ bundle, include_admin_data: includeAdminData }),
+  });
+  if (!resp.ok) throw new Error(await parseBackupApiError(resp));
+  const cd = resp.headers.get("content-disposition") ?? "";
+  const match = cd.match(/filename="([^"]+)"/i);
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = match?.[1] || `mooshieui-backup-${date}.zip`;
+  return { blob: await resp.blob(), filename };
+}
+
+export async function inspectBackupZip(srcPath: string): Promise<BackupInspection> {
+  return ipcInvoke<BackupInspection>("inspect_backup_zip", { srcPath });
+}
+
+export async function inspectBackupZipFile(file: File): Promise<BackupInspection> {
+  const resp = await fetch("/internal-api/_backup/inspect", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/zip" }),
+    body: file,
+  });
+  if (!resp.ok) throw new Error(await parseBackupApiError(resp));
+  return resp.json();
+}
+
+export async function applyBackupAdminData(
+  srcPath: string,
+  opts: ApplyBackupAdminOptions,
+): Promise<ApplyBackupAdminResult> {
+  return ipcInvoke<ApplyBackupAdminResult>("apply_backup_admin_data", { srcPath, opts });
+}
+
+export async function applyBackupAdminDataFile(
+  file: File,
+  opts: ApplyBackupAdminOptions,
+): Promise<ApplyBackupAdminResult> {
+  const params = new URLSearchParams({
+    apply_app_config: String(opts.apply_app_config),
+    include_machine_local_paths: String(opts.include_machine_local_paths),
+    apply_wildcards: String(opts.apply_wildcards),
+    replace_wildcards: String(opts.replace_wildcards),
+  });
+  const resp = await fetch(`/internal-api/_backup/apply_admin?${params.toString()}`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/zip" }),
+    body: file,
+  });
+  if (!resp.ok) throw new Error(await parseBackupApiError(resp));
+  return resp.json();
 }
