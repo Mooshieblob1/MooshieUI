@@ -2,12 +2,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   LAYOUT_TEMPLATES,
+  MAX_PANELS,
+  MIN_BOX_SIZE,
+  applyTemplateToPanels,
   buildTemplate,
+  clampFreeformBox,
   colourAttribute,
   continuityIssues,
   coverCrop,
   dividers,
+  freeformRects,
+  isFreeformBoxes,
   isLayout,
+  isPanelNonEmpty,
+  layoutForCount,
   oneShotBasePrompt,
   oneShotCentre,
   oneShotPanelPrompt,
@@ -22,11 +30,16 @@ import {
   ratioFromPointer,
   readingOrder,
   removePanel,
+  reorderZ,
+  resizeFreeformBox,
   setRatio,
+  snapFreeformBox,
   splitPanel,
   storyBrief,
   summarizePageForContext,
+  treeToFreeform,
   newPanel,
+  type FreeformBox,
   type LayoutNode,
 } from "../../src/lib/utils/comicLayout.ts";
 
@@ -185,4 +198,223 @@ test("storyBrief keeps 2-arg output compatible and includes previous page contex
   assert.ok(withPrev.includes("Previous pages (for continuity):"));
   assert.ok(withPrev.includes("Page 1:\nSetting override: hallway"));
   assert.ok(withPrev.includes("Panel 1:\n  beat: She looks around"));
+});
+
+test("treeToFreeform preserves pixel rects and reading order with z indices", () => {
+  const layout = buildTemplate(LAYOUT_TEMPLATES.find((t) => t.id === "one_over_two")!, counter());
+  const page = { width: 1000, height: 1000 };
+  const boxes = treeToFreeform(layout, page, 20);
+  assert.equal(boxes.length, 3);
+  assert.deepEqual(
+    boxes.map((b) => ({ id: b.id, z: b.z })),
+    [
+      { id: "p1", z: 0 },
+      { id: "p2", z: 1 },
+      { id: "p3", z: 2 },
+    ],
+  );
+  const rects = panelRects(layout);
+  for (const box of boxes) {
+    const expectedPx = panelPixelRect(rects.get(box.id)!, page, 20);
+    assert.equal(Math.round(box.x * page.width), expectedPx.x);
+    assert.equal(Math.round(box.y * page.height), expectedPx.y);
+    assert.equal(Math.round(box.w * page.width), expectedPx.w);
+    assert.equal(Math.round(box.h * page.height), expectedPx.h);
+  }
+  const map = freeformRects(boxes);
+  assert.equal(map.size, 3);
+  assert.deepEqual(map.get("p2"), { x: boxes[1].x, y: boxes[1].y, w: boxes[1].w, h: boxes[1].h });
+});
+
+test("clampFreeformBox enforces minimum size and page bounds", () => {
+  const tiny = clampFreeformBox({ id: "a", x: -0.2, y: 0.95, w: 0.02, h: 0.05, z: 0 });
+  assert.equal(tiny.x, 0);
+  assert.ok(Math.abs(tiny.w - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(tiny.h - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(tiny.y - (1 - MIN_BOX_SIZE)) < 1e-9);
+  assert.ok(tiny.x + tiny.w <= 1 + 1e-9);
+  assert.ok(tiny.y + tiny.h <= 1 + 1e-9);
+
+  const oversized = clampFreeformBox({ id: "b", x: 0.8, y: 0.8, w: 1.5, h: 0.4, z: 1 });
+  assert.equal(oversized.w, 1);
+  assert.equal(oversized.x, 0);
+  assert.ok(Math.abs(oversized.y - 0.6) < 1e-9);
+  assert.equal(oversized.h, 0.4);
+});
+
+test("snapFreeformBox snaps edges and centers to page and neighbor boxes", () => {
+  const neighbor: FreeformBox = { id: "n", x: 0.1, y: 0.2, w: 0.3, h: 0.4, z: 0 };
+  // Near page center (x + w/2 = 0.492 -> 0.5) and neighbor bottom (0.608 -> 0.6)
+  const moving: FreeformBox = { id: "m", x: 0.392, y: 0.608, w: 0.2, h: 0.2, z: 1 };
+  const snapped = snapFreeformBox(moving, [neighbor]);
+  assert.ok(Math.abs(snapped.box.x - 0.4) < 1e-9);
+  assert.ok(Math.abs(snapped.box.y - 0.6) < 1e-9);
+  assert.equal(snapped.guides.length, 2);
+  assert.equal(snapped.guides[0].axis, "x");
+  assert.ok(Math.abs(snapped.guides[0].pos - 0.5) < 1e-9);
+  assert.equal(snapped.guides[1].axis, "y");
+  assert.ok(Math.abs(snapped.guides[1].pos - 0.6) < 1e-9);
+
+  // Outside threshold does not snap
+  const far = snapFreeformBox({ id: "m", x: 0.45, y: 0.45, w: 0.2, h: 0.2, z: 1 }, [neighbor], 0.01);
+  assert.deepEqual(far.guides, []);
+  assert.ok(Math.abs(far.box.x - 0.45) < 1e-9);
+});
+
+test("resizeFreeformBox handles edges, corners, snapping and min size", () => {
+  const orig: FreeformBox = { id: "a", x: 0.2, y: 0.2, w: 0.4, h: 0.4, z: 0 };
+  const other: FreeformBox = { id: "b", x: 0.7, y: 0.2, w: 0.2, h: 0.4, z: 1 };
+  // Drag east edge near other.x (0.7)
+  const res = resizeFreeformBox(orig, "e", 0.095, 0, [other], true);
+  assert.ok(Math.abs(res.box.w - 0.5) < 1e-9);
+  assert.deepEqual(res.guides, [{ axis: "x", pos: 0.7 }]);
+
+  // Shrink nw corner past min size stops at MIN_BOX_SIZE
+  const minRes = resizeFreeformBox(orig, "nw", 0.5, 0.5, [], false);
+  assert.ok(Math.abs(minRes.box.w - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(minRes.box.h - MIN_BOX_SIZE) < 1e-9);
+  assert.ok(Math.abs(minRes.box.x - (0.6 - MIN_BOX_SIZE)) < 1e-9);
+});
+
+test("reorderZ moves boxes forward, backward, front, and back", () => {
+  const boxes: FreeformBox[] = [
+    { id: "a", x: 0, y: 0, w: 0.5, h: 0.5, z: 0 },
+    { id: "b", x: 0.2, y: 0.2, w: 0.5, h: 0.5, z: 1 },
+    { id: "c", x: 0.4, y: 0.4, w: 0.5, h: 0.5, z: 2 },
+  ];
+  assert.deepEqual(
+    reorderZ(boxes, "a", "forward").map((b) => b.id),
+    ["b", "a", "c"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "c", "backward").map((b) => b.id),
+    ["a", "c", "b"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "a", "front").map((b) => b.id),
+    ["b", "c", "a"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "c", "back").map((b) => b.id),
+    ["c", "a", "b"],
+  );
+  assert.deepEqual(
+    reorderZ(boxes, "a", "front").map((b) => b.z),
+    [0, 1, 2],
+  );
+  assert.equal(reorderZ(boxes, "missing", "front"), boxes);
+});
+
+test("isFreeformBoxes validates shape, bounds, unique ids and max count", () => {
+  assert.equal(isFreeformBoxes([]), true);
+  assert.equal(isFreeformBoxes([{ id: "p1", x: 0, y: 0, w: 0.5, h: 0.5, z: 0 }]), true);
+  assert.equal(isFreeformBoxes("not an array"), false);
+  assert.equal(isFreeformBoxes([{ id: "p1", x: 0.8, y: 0, w: 0.3, h: 0.5, z: 0 }]), false);
+  assert.equal(isFreeformBoxes([{ id: "p1", x: 0, y: 0, w: 0, h: 0.5, z: 0 }]), false);
+  assert.equal(
+    isFreeformBoxes([
+      { id: "p1", x: 0, y: 0, w: 0.4, h: 0.4, z: 0 },
+      { id: "p1", x: 0.2, y: 0.2, w: 0.4, h: 0.4, z: 1 },
+    ]),
+    false,
+  );
+  const tooMany = Array.from({ length: MAX_PANELS + 1 }, (_, i) => ({
+    id: `p${i}`,
+    x: 0,
+    y: 0,
+    w: 0.2,
+    h: 0.2,
+    z: i,
+  }));
+  assert.equal(isFreeformBoxes(tooMany), false);
+});
+
+test("layoutForCount builds valid trees for 1..MAX_PANELS", () => {
+  for (let n = 1; n <= MAX_PANELS; n++) {
+    const node = layoutForCount(n, counter());
+    assert.equal(panelIds(node).length, n);
+    assert.equal(isLayout(node), true);
+    const area = [...panelRects(node).values()].reduce((s, r) => s + r.w * r.h, 0);
+    assert.ok(Math.abs(area - 1) < 1e-9);
+  }
+});
+
+test("isPanelNonEmpty checks content fields and cast assignments", () => {
+  const empty = newPanel("p1");
+  assert.equal(isPanelNonEmpty(empty), false);
+  assert.equal(isPanelNonEmpty({ ...empty, prompt: "   \n  " }), false);
+  assert.equal(isPanelNonEmpty({ ...empty, beat: "enters" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, prompt: "1girl" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, negative: "blurry" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, dialogue: "Hi!" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, setting: "rooftop" }), true);
+  assert.equal(isPanelNonEmpty({ ...empty, cast: ["c1"] }), true);
+});
+
+test("applyTemplateToPanels stashes overflow panels and results and restores them on larger layouts", () => {
+  const p1 = { ...newPanel("p1"), prompt: "one" };
+  const p2 = { ...newPanel("p2"), prompt: "two" };
+  const p3 = { ...newPanel("p3"), prompt: "three" };
+  const p4 = { ...newPanel("p4"), dialogue: "four" };
+
+  // Shrink 4 -> 2
+  const shrunk = applyTemplateToPanels(
+    [p1, p2, p3, p4],
+    ["r1", "r2", "r3", "r4"],
+    [],
+    [],
+    ["n1", "n2"],
+  );
+  assert.equal(shrunk.panels.n1.id, "n1");
+  assert.equal(shrunk.panels.n1.prompt, "one");
+  assert.equal(shrunk.panels.n2.prompt, "two");
+  assert.deepEqual(shrunk.results, { n1: "r1", n2: "r2" });
+  assert.deepEqual(shrunk.overflowPanels.map((p) => p.prompt || p.dialogue), ["three", "four"]);
+  assert.deepEqual(shrunk.overflowResults, ["r3", "r4"]);
+
+  // Grow 2 -> 3
+  const mid = applyTemplateToPanels(
+    [shrunk.panels.n1, shrunk.panels.n2],
+    [shrunk.results.n1, shrunk.results.n2],
+    shrunk.overflowPanels,
+    shrunk.overflowResults,
+    ["m1", "m2", "m3"],
+  );
+  assert.equal(mid.panels.m3.id, "m3");
+  assert.equal(mid.panels.m3.prompt, "three");
+  assert.deepEqual(mid.results, { m1: "r1", m2: "r2", m3: "r3" });
+  assert.deepEqual(mid.overflowPanels.map((p) => p.dialogue), ["four"]);
+  assert.deepEqual(mid.overflowResults, ["r4"]);
+
+  // Grow 3 -> 5 (restores remaining overflow + creates fresh empty slots)
+  const grown = applyTemplateToPanels(
+    [mid.panels.m1, mid.panels.m2, mid.panels.m3],
+    [mid.results.m1, mid.results.m2, mid.results.m3],
+    mid.overflowPanels,
+    mid.overflowResults,
+    ["k1", "k2", "k3", "k4", "k5"],
+  );
+  assert.equal(grown.panels.k4.dialogue, "four");
+  assert.equal(grown.panels.k5.prompt, "");
+  assert.deepEqual(grown.results, { k1: "r1", k2: "r2", k3: "r3", k4: "r4" });
+  assert.equal(grown.overflowPanels.length, 0);
+  assert.equal(grown.overflowResults.length, 0);
+});
+
+test("applyTemplateToPanels skips empty overflow slots without losing result alignment", () => {
+  const p1 = { ...newPanel("p1"), prompt: "first" };
+  const p2 = newPanel("p2");
+  const p3 = { ...newPanel("p3"), cast: ["c1"] };
+  const p4 = newPanel("p4");
+
+  const shrunk = applyTemplateToPanels(
+    [p1, p2, p3, p4],
+    ["r1", undefined, "r3", undefined],
+    [],
+    [],
+    ["s1"],
+  );
+  assert.equal(shrunk.overflowPanels.length, 1);
+  assert.deepEqual(shrunk.overflowPanels[0].cast, ["c1"]);
+  assert.deepEqual(shrunk.overflowResults, ["r3"]);
 });

@@ -151,7 +151,7 @@ function checkGenerationReady() {
  * swaps the Generate tab's settings back in) can't change the later panels.
  */
 function panelParams(panel: ComicPanel, page: ComicPageState, book: ComicBook): GenerationParams | null {
-  const rect = panelRects(page.layout).get(panel.id);
+  const rect = comic.rectsForPage(page).get(panel.id);
   if (!rect) return null;
   const size = panelGenerationSize(rect, pageSize(book.pageShape), { width: generation.width, height: generation.height });
   const setting = comic.effectiveSettingFor(page, book);
@@ -615,10 +615,12 @@ async function renderPageCanvas(pageIndex: number): Promise<HTMLCanvasElement> {
   ctx.fillRect(0, 0, px.width, px.height);
 
   const border = Math.max(2, Math.round(Math.max(px.width, px.height) / 600));
-  const rects = panelRects(page.layout);
-  for (const [id, rect] of rects) {
+  const drawPanel = async (id: string, box: { x: number; y: number; w: number; h: number }, halo: number) => {
+    if (halo > 0) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(box.x - halo, box.y - halo, box.w + halo * 2, box.h + halo * 2);
+    }
     const panel = page.panels[id];
-    const box = panelPixelRect(rect, px, book.gutter);
     if (panel?.enabled) {
       const bitmap = await loadBitmapForPanel(page, id);
       if (bitmap) {
@@ -629,7 +631,23 @@ async function renderPageCanvas(pageIndex: number): Promise<HTMLCanvasElement> {
     }
     ctx.strokeStyle = "#000000";
     ctx.lineWidth = border;
-    ctx.strokeRect(box.x + border / 2, box.y + border / 2, box.w - border, box.h - border);
+    ctx.strokeRect(box.x + border / 2, box.y + border / 2, Math.max(1, box.w - border), Math.max(1, box.h - border));
+  };
+
+  if (page.layoutMode === "freeform") {
+    const halo = Math.max(4, Math.round(book.gutter / 2));
+    const ordered = [...page.freeformBoxes].sort((a, b) => a.z - b.z);
+    for (const b of ordered) {
+      const x = Math.round(b.x * px.width);
+      const y = Math.round(b.y * px.height);
+      const x1 = Math.round((b.x + b.w) * px.width);
+      const y1 = Math.round((b.y + b.h) * px.height);
+      await drawPanel(b.id, { x, y, w: Math.max(1, x1 - x), h: Math.max(1, y1 - y) }, halo);
+    }
+  } else {
+    for (const [id, rect] of panelRects(page.layout)) {
+      await drawPanel(id, panelPixelRect(rect, px, book.gutter), 0);
+    }
   }
   return canvas;
 }

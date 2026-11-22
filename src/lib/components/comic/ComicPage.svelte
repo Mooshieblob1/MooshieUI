@@ -14,16 +14,22 @@
     MAX_PANELS,
     ONE_SHOT_MAX_PANELS,
     buildTemplate,
+    clampFreeformBox,
     dividers,
+    freeformRects,
     pageAspect,
     pageSize,
     panelPixelRect,
     panelRects,
     ratioFromPointer,
+    resizeFreeformBox,
+    snapFreeformBox,
     type Divider,
+    type FreeformBox,
     type LayoutTemplate,
     type PageShape,
     type RefMode,
+    type ResizeHandle,
   } from "../../utils/comicLayout.js";
   import {
     checkPanel,
@@ -46,6 +52,7 @@
   import { naiV5Variant } from "../../utils/novelaiModels.js";
   import { portal } from "../../utils/portal.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import ComicPromptField from "./ComicPromptField.svelte";
   import ModelSelector from "../generation/ModelSelector.svelte";
   import SamplerSettings from "../generation/SamplerSettings.svelte";
   import DimensionControls from "../generation/DimensionControls.svelte";
@@ -70,6 +77,16 @@
     }
   }
 
+  interface FreeformDrag {
+    kind: "move" | "resize";
+    id: string;
+    handle?: ResizeHandle;
+    orig: FreeformBox;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  }
+
   let showTemplates = $state(false);
   let showPage = $state(false);
   let showCharPicker = $state(false);
@@ -81,6 +98,8 @@
   let exporting = $state(false);
   let canvasEl = $state<HTMLDivElement | null>(null);
   let dragging = $state<Divider | null>(null);
+  let freeformDrag = $state<FreeformDrag | null>(null);
+  let snapGuides = $state<Array<{ axis: "x" | "y"; pos: number }>>([]);
 
   onMount(() => {
     comic.load();
@@ -95,8 +114,18 @@
     return `left: ${(b.x / pagePx.width) * 100}%; top: ${(b.y / pagePx.height) * 100}%; width: ${(b.w / pagePx.width) * 100}%; height: ${(b.h / pagePx.height) * 100}%;`;
   }
   const rects = $derived(comic.rects);
-  const lines = $derived(dividers(comic.layout));
+  const isFreeform = $derived(comic.layoutMode === "freeform");
+  const sortedFreeform = $derived([...comic.freeformBoxes].sort((a, b) => a.z - b.z));
+  const selectedFreeformIdx = $derived(
+    comic.selectedId ? sortedFreeform.findIndex((b) => b.id === comic.selectedId) : -1,
+  );
+  const selectedFreeformBox = $derived(selectedFreeformIdx >= 0 ? sortedFreeform[selectedFreeformIdx] : null);
+  const lines = $derived(isFreeform ? [] : dividers(comic.layout));
   const order = $derived(comic.order);
+
+  function freeformBoxStyle(b: FreeformBox, zOrder: number): string {
+    return `left: ${b.x * 100}%; top: ${b.y * 100}%; width: ${b.w * 100}%; height: ${b.h * 100}%; z-index: ${zOrder + 1}; box-shadow: 0 0 0 3px #ffffff;`;
+  }
   const oneImage = $derived(comic.mode === "one_image");
   const tooManyForOneImage = $derived(oneImage && comic.enabledPanels.length > ONE_SHOT_MAX_PANELS);
   /** On NovelAI V5 the Prompt Assistant writes panels by the V5 Enhance rules, dialogue included. */
@@ -227,19 +256,97 @@
     dragging = divider;
   }
 
+  function startFreeformMove(event: PointerEvent, box: FreeformBox) {
+    if (event.button !== 0) return;
+    comic.selectedId = box.id;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    freeformDrag = {
+      kind: "move",
+      id: box.id,
+      orig: { ...box },
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    snapGuides = [];
+  }
+
+  function startFreeformResize(event: PointerEvent, box: FreeformBox, handle: ResizeHandle) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    freeformDrag = {
+      kind: "resize",
+      id: box.id,
+      handle,
+      orig: { ...box },
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    snapGuides = [];
+  }
+
   function onDrag(event: PointerEvent) {
-    if (!dragging || !canvasEl) return;
+    if (dragging && canvasEl) {
+      const box = canvasEl.getBoundingClientRect();
+      const pointer =
+        dragging.dir === "row" ? (event.clientX - box.left) / box.width : (event.clientY - box.top) / box.height;
+      comic.resize(dragging.splitId, ratioFromPointer(dragging, pointer));
+      return;
+    }
+    if (!freeformDrag || !canvasEl) return;
+    const dist = Math.hypot(event.clientX - freeformDrag.startClientX, event.clientY - freeformDrag.startClientY);
+    if (!freeformDrag.moved) {
+      if (dist < 3) return;
+      comic.beginFreeformEdit();
+      freeformDrag.moved = true;
+    }
     const box = canvasEl.getBoundingClientRect();
-    const pointer =
-      dragging.dir === "row" ? (event.clientX - box.left) / box.width : (event.clientY - box.top) / box.height;
-    comic.resize(dragging.splitId, ratioFromPointer(dragging, pointer));
-    // Keep the box the divider divides; only its ratio moves.
+    const dx = (event.clientX - freeformDrag.startClientX) / Math.max(1, box.width);
+    const dy = (event.clientY - freeformDrag.startClientY) / Math.max(1, box.height);
+    const others = comic.freeformBoxes.filter((b) => b.id !== freeformDrag!.id);
+    const snap = !event.shiftKey;
+    if (freeformDrag.kind === "move") {
+      const movedBox = clampFreeformBox({
+        ...freeformDrag.orig,
+        x: freeformDrag.orig.x + dx,
+        y: freeformDrag.orig.y + dy,
+      });
+      if (snap) {
+        const res = snapFreeformBox(movedBox, others);
+        comic.updateFreeformBox(freeformDrag.id, res.box);
+        snapGuides = res.guides;
+      } else {
+        comic.updateFreeformBox(freeformDrag.id, movedBox);
+        snapGuides = [];
+      }
+    } else if (freeformDrag.handle) {
+      const res = resizeFreeformBox(freeformDrag.orig, freeformDrag.handle, dx, dy, others, snap);
+      comic.updateFreeformBox(freeformDrag.id, res.box);
+      snapGuides = res.guides;
+    }
   }
 
   function endDrag() {
     if (dragging) comic.persist();
+    if (freeformDrag?.moved) comic.persist();
     dragging = null;
+    freeformDrag = null;
+    snapGuides = [];
   }
+
+  const RESIZE_HANDLES: Array<{ id: ResizeHandle; cls: string }> = [
+    { id: "nw", cls: "-left-1.5 -top-1.5 cursor-nwse-resize" },
+    { id: "n", cls: "left-1/2 -top-1.5 -translate-x-1/2 cursor-ns-resize" },
+    { id: "ne", cls: "-right-1.5 -top-1.5 cursor-nesw-resize" },
+    { id: "e", cls: "-right-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize" },
+    { id: "se", cls: "-right-1.5 -bottom-1.5 cursor-nwse-resize" },
+    { id: "s", cls: "left-1/2 -bottom-1.5 -translate-x-1/2 cursor-ns-resize" },
+    { id: "sw", cls: "-left-1.5 -bottom-1.5 cursor-nesw-resize" },
+    { id: "w", cls: "-left-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize" },
+  ];
 
   function onKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement | null;
@@ -321,19 +428,62 @@
       onclick={() => (showTemplates = !showTemplates)}
       aria-expanded={showTemplates}
     >{locale.t("comic.templates")}</button>
+    {#if comic.overflowPanels.length > 0}
+      <span
+        class="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300"
+        title={locale.t("comic.overflow_tip", { count: String(comic.overflowPanels.length) })}
+      >+{comic.overflowPanels.length}</span>
+    {/if}
+    <div class="flex overflow-hidden rounded-lg border border-neutral-700" role="radiogroup" aria-label={locale.t("comic.layout_mode")}>
+      <button
+        role="radio"
+        aria-checked={!isFreeform}
+        class="px-2.5 py-1.5 {!isFreeform ? 'bg-indigo-600 text-white' : 'bg-neutral-900 text-neutral-300 hover:bg-neutral-800'}"
+        title={locale.t("comic.layout_grid_title")}
+        onclick={() => comic.setLayoutMode("grid")}
+      >{locale.t("comic.layout_grid")}</button>
+      <button
+        role="radio"
+        aria-checked={isFreeform}
+        class="px-2.5 py-1.5 {isFreeform ? 'bg-indigo-600 text-white' : 'bg-neutral-900 text-neutral-300 hover:bg-neutral-800'}"
+        title={locale.t("comic.layout_freeform_title")}
+        onclick={() => comic.setLayoutMode("freeform")}
+      >{locale.t("comic.layout_freeform")}</button>
+    </div>
     <span class="h-5 w-px bg-neutral-800" aria-hidden="true"></span>
-    <button
-      class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
-      disabled={!comic.selectedId || comic.panelCount >= MAX_PANELS}
-      title={locale.t("comic.split_side_title")}
-      onclick={() => comic.split("row")}
-    >{locale.t("comic.split_side")}</button>
-    <button
-      class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
-      disabled={!comic.selectedId || comic.panelCount >= MAX_PANELS}
-      title={locale.t("comic.split_stack_title")}
-      onclick={() => comic.split("col")}
-    >{locale.t("comic.split_stack")}</button>
+    {#if isFreeform}
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={comic.panelCount >= MAX_PANELS}
+        title={locale.t("comic.add_panel_title")}
+        onclick={() => comic.addFreeformPanel()}
+      >{locale.t("comic.add_panel")}</button>
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={selectedFreeformIdx < 0 || selectedFreeformIdx >= sortedFreeform.length - 1}
+        title={locale.t("comic.layer_up_title")}
+        onclick={() => comic.selectedId && comic.reorderPanelZ(comic.selectedId, "forward")}
+      >{locale.t("comic.layer_up")}</button>
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={selectedFreeformIdx <= 0}
+        title={locale.t("comic.layer_down_title")}
+        onclick={() => comic.selectedId && comic.reorderPanelZ(comic.selectedId, "backward")}
+      >{locale.t("comic.layer_down")}</button>
+    {:else}
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={!comic.selectedId || comic.panelCount >= MAX_PANELS}
+        title={locale.t("comic.split_side_title")}
+        onclick={() => comic.split("row")}
+      >{locale.t("comic.split_side")}</button>
+      <button
+        class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
+        disabled={!comic.selectedId || comic.panelCount >= MAX_PANELS}
+        title={locale.t("comic.split_stack_title")}
+        onclick={() => comic.split("col")}
+      >{locale.t("comic.split_stack")}</button>
+    {/if}
     <button
       class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-red-500 hover:text-red-300 disabled:opacity-40"
       disabled={!comic.selectedId || comic.panelCount <= 1}
@@ -480,28 +630,35 @@
     <aside class="space-y-4 border-neutral-800 p-3 text-xs lg:w-80 lg:shrink-0 lg:overflow-y-auto lg:border-r">
       <!-- The Comic page's own model and settings, apart from the Generate page's. -->
       <section class="rounded-lg border border-neutral-800 bg-neutral-900/40">
-        <button
-          class="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-neutral-800/40"
-          aria-expanded={showSettings}
-          onclick={toggleSettings}
-        >
-          <span class="shrink-0 font-medium text-neutral-300">{locale.t("comic.settings")}</span>
-          <span class="min-w-0 flex-1 truncate text-right text-[11px] {modelName ? 'text-neutral-500' : 'text-amber-400'}">
-            {modelName ? `${modelName} · ${generation.width}×${generation.height}` : locale.t("comic.settings_no_model")}
-          </span>
-          <svg class="h-3.5 w-3.5 shrink-0 text-neutral-500 transition-transform {showSettings ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
-          </svg>
-        </button>
+        <div class="flex w-full items-center gap-1.5 px-2.5 py-2 hover:bg-neutral-800/40">
+          <button
+            class="shrink-0 text-left font-medium text-neutral-300 focus:outline-none"
+            aria-expanded={showSettings}
+            onclick={toggleSettings}
+          >{locale.t("comic.settings")}</button>
+          <InfoTip text={locale.t("comic.settings_hint")} />
+          <button
+            class="flex min-w-0 flex-1 items-center gap-2 text-right focus:outline-none"
+            aria-expanded={showSettings}
+            aria-label={locale.t("comic.settings")}
+            onclick={toggleSettings}
+          >
+            <span class="min-w-0 flex-1 truncate text-[11px] {modelName ? 'text-neutral-500' : 'text-amber-400'}">
+              {modelName ? `${modelName} · ~${Math.round(Math.sqrt(generation.width * generation.height))}px` : locale.t("comic.settings_no_model")}
+            </span>
+            <svg class="h-3.5 w-3.5 shrink-0 text-neutral-500 transition-transform {showSettings ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+            </svg>
+          </button>
+        </div>
         {#if showSettings}
           <div class="space-y-3 border-t border-neutral-800 px-2.5 pb-3 pt-2.5">
-            <p class="text-[11px] text-neutral-500">{locale.t("comic.settings_hint")}</p>
             <ModelSelector />
             <div class="border-t border-neutral-800 pt-3">
-              <SamplerSettings />
+              <SamplerSettings showBatchSize={false} showSeed={false} />
             </div>
             <div class="border-t border-neutral-800 pt-3">
-              <DimensionControls />
+              <DimensionControls pixelBudgetOnly={true} />
             </div>
           </div>
         {/if}
@@ -509,30 +666,38 @@
 
       <section class="space-y-1.5">
         <label class="block text-neutral-400" for="comic-style">{locale.t("comic.style")}</label>
-        <input
+        <ComicPromptField
           id="comic-style"
-          class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-          placeholder={locale.t("comic.style_placeholder")}
           value={comic.style}
-          oninput={(e) => comic.setPageField("style", (e.currentTarget as HTMLInputElement).value)}
+          onchange={(next) => comic.setPageField("style", next)}
+          placeholder={locale.t("comic.style_placeholder")}
+          ariaLabel={locale.t("comic.style")}
+          rows={2}
+          minHeight="min-h-12"
+          storageKey="mooshieui.promptHeight.comic.style"
         />
         <label class="block pt-1 text-neutral-400" for="comic-setting">{locale.t("comic.setting")}</label>
-        <textarea
+        <ComicPromptField
           id="comic-setting"
-          rows="2"
-          class="w-full resize-y rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-          placeholder={locale.t("comic.setting_placeholder")}
           value={comic.setting}
-          oninput={(e) => comic.setPageField("setting", (e.currentTarget as HTMLTextAreaElement).value)}
-        ></textarea>
+          onchange={(next) => comic.setPageField("setting", next)}
+          placeholder={locale.t("comic.setting_placeholder")}
+          ariaLabel={locale.t("comic.setting")}
+          rows={2}
+          minHeight="min-h-12"
+          storageKey="mooshieui.promptHeight.comic.setting"
+        />
         {#if comic.pages.length > 1}
           <label class="block pt-1 text-[11px] text-neutral-400" for="comic-page-setting-override">{locale.t("comic.page_setting_override")}</label>
-          <input
+          <ComicPromptField
             id="comic-page-setting-override"
-            class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-            placeholder={comic.setting.trim() ? locale.t("comic.page_setting_override_placeholder", { setting: comic.setting.trim() }) : locale.t("comic.setting_placeholder")}
             value={comic.settingOverride}
-            oninput={(e) => comic.setPageField("settingOverride", (e.currentTarget as HTMLInputElement).value)}
+            onchange={(next) => comic.setPageField("settingOverride", next)}
+            placeholder={comic.setting.trim() ? locale.t("comic.page_setting_override_placeholder", { setting: comic.setting.trim() }) : locale.t("comic.setting_placeholder")}
+            ariaLabel={locale.t("comic.page_setting_override")}
+            rows={1}
+            minHeight="min-h-10"
+            storageKey="mooshieui.promptHeight.comic.pageSettingOverride"
           />
         {/if}
       </section>
@@ -590,14 +755,16 @@
                 onclick={() => comic.removeCastMember(member.id)}
               >&times;</button>
             </div>
-            <textarea
-              rows="2"
-              class="w-full resize-y rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-              placeholder={locale.t("comic.cast_tags_placeholder")}
-              aria-label={locale.t("comic.cast_tags")}
+            <ComicPromptField
               value={member.tags}
-              oninput={(e) => comic.updateCastMember(member.id, { tags: (e.currentTarget as HTMLTextAreaElement).value })}
-            ></textarea>
+              onchange={(next) => comic.updateCastMember(member.id, { tags: next })}
+              placeholder={locale.t("comic.cast_tags_placeholder")}
+              ariaLabel={locale.t("comic.cast_tags")}
+              rows={2}
+              minHeight="min-h-14"
+              suggestLoraKeywords={true}
+              storageKey="mooshieui.promptHeight.comic.castTags"
+            />
           </div>
         {/each}
       </section>
@@ -683,6 +850,61 @@
           role="application"
           aria-label={locale.t("comic.page_label")}
         >
+        {#if isFreeform}
+          {#each sortedFreeform as box, zOrder (box.id)}
+            {@const panel = comic.panels[box.id]}
+            {@const result = comic.results[box.id]}
+            {@const number = order.indexOf(box.id) + 1}
+            <button
+              class="absolute touch-none cursor-move overflow-hidden border-2 border-neutral-900 bg-neutral-200 text-left transition-shadow {comic.selectedId === box.id ? 'outline outline-3 outline-offset-[3px] outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
+              style={freeformBoxStyle(box, zOrder)}
+              onpointerdown={(e) => startFreeformMove(e, box)}
+              onclick={() => (comic.selectedId = box.id)}
+              aria-pressed={comic.selectedId === box.id}
+              aria-label={locale.t("comic.panel_n", { n: String(number) })}
+            >
+              {#if result?.url}
+                <img src={result.url} alt="" class="h-full w-full object-cover" draggable="false" />
+              {:else}
+                <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4">{panel?.beat || panel?.prompt || ""}</span>
+              {/if}
+              <span class="absolute left-1 top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white">{number}</span>
+              {#if result?.status === "running"}
+                <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
+              {:else if result?.status === "failed"}
+                <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
+              {:else if result?.issues && result.issues.length > 0}
+                <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
+              {:else if result?.issues && result.issues.length === 0}
+                <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
+              {/if}
+            </button>
+          {/each}
+          {#if selectedFreeformBox}
+            {@const sb = selectedFreeformBox}
+            <div
+              class="pointer-events-none absolute z-20"
+              style="left: {sb.x * 100}%; top: {sb.y * 100}%; width: {sb.w * 100}%; height: {sb.h * 100}%;"
+            >
+              {#each RESIZE_HANDLES as h (h.id)}
+                <button
+                  type="button"
+                  class="pointer-events-auto absolute h-3 w-3 touch-none rounded-sm border border-indigo-600 bg-white shadow {h.cls}"
+                  aria-label={locale.t("comic.resize_handle")}
+                  onpointerdown={(e) => startFreeformResize(e, sb, h.id)}
+                ></button>
+              {/each}
+            </div>
+          {/if}
+          {#each snapGuides as g, i (i)}
+            <div
+              class="pointer-events-none absolute z-30 bg-indigo-400/90"
+              style={g.axis === "x"
+                ? `left: ${g.pos * 100}%; top: 0; bottom: 0; width: 1px;`
+                : `top: ${g.pos * 100}%; left: 0; right: 0; height: 1px;`}
+            ></div>
+          {/each}
+        {:else}
           {#each [...rects.entries()] as [id, r] (id)}
             {@const panel = comic.panels[id]}
             {@const result = comic.results[id]}
@@ -727,6 +949,7 @@
               <span class="absolute rounded bg-indigo-500 opacity-0 transition-opacity group-hover:opacity-80 {dragging?.splitId === line.splitId ? 'opacity-100' : ''} {line.dir === 'row' ? 'left-[4px] top-0 h-full w-[4px]' : 'top-[4px] left-0 w-full h-[4px]'}"></span>
             </div>
           {/each}
+        {/if}
         </div>
       </div>
 
@@ -735,7 +958,7 @@
         {#each comic.pages as page, idx (page.id)}
           {@const active = idx === comic.activePageIndex}
           {@const thumbUrl = comic.pageUrlForPage(page.id)}
-          {@const preview = panelRects(page.layout)}
+          {@const preview = page.layoutMode === "freeform" ? freeformRects([...page.freeformBoxes].sort((a, b) => a.z - b.z)) : panelRects(page.layout)}
           <div class="flex shrink-0 flex-col items-center gap-1 rounded-lg border p-1.5 transition-colors {active ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-800 bg-neutral-900/70 hover:border-neutral-600'}">
             <button
               class="flex flex-col items-center gap-1"
@@ -841,14 +1064,16 @@
                 value={panel.beat}
                 oninput={(e) => comic.updatePanel(panel.id, { beat: (e.currentTarget as HTMLInputElement).value })}
               />
-              <textarea
-                rows="3"
-                class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-                placeholder={locale.t("comic.prompt_placeholder")}
-                aria-label={locale.t("comic.prompt")}
+              <ComicPromptField
                 value={panel.prompt}
-                oninput={(e) => comic.updatePanel(panel.id, { prompt: (e.currentTarget as HTMLTextAreaElement).value })}
-              ></textarea>
+                onchange={(next) => comic.updatePanel(panel.id, { prompt: next })}
+                placeholder={locale.t("comic.prompt_placeholder")}
+                ariaLabel={locale.t("comic.prompt")}
+                rows={3}
+                minHeight="min-h-16"
+                suggestLoraKeywords={true}
+                storageKey="mooshieui.promptHeight.comic.panelPrompt"
+              />
               <textarea
                 rows="2"
                 class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
@@ -871,14 +1096,16 @@
                   <button class="px-1 text-[11px] text-neutral-400 hover:text-neutral-200" onclick={undoDraft}>{locale.t("comic.undo_draft")}</button>
                 {/if}
               </div>
-              <textarea
-                rows="1"
-                class="w-full resize-y rounded border border-red-900/60 bg-neutral-950 px-2 py-1 text-red-200 placeholder-neutral-600 focus:border-red-500 focus:outline-none"
-                placeholder={locale.t("comic.negative_placeholder")}
-                aria-label={locale.t("comic.negative")}
+              <ComicPromptField
                 value={panel.negative}
-                oninput={(e) => comic.updatePanel(panel.id, { negative: (e.currentTarget as HTMLTextAreaElement).value })}
-              ></textarea>
+                onchange={(next) => comic.updatePanel(panel.id, { negative: next })}
+                placeholder={locale.t("comic.negative_placeholder")}
+                ariaLabel={locale.t("comic.negative")}
+                rows={2}
+                minHeight="min-h-12"
+                suggestLoraKeywords={false}
+                storageKey="mooshieui.promptHeight.comic.panelNegative"
+              />
               {#if comic.cast.length > 0}
                 <div class="flex flex-wrap items-center gap-1">
                   <span class="text-[10px] text-neutral-500">{locale.t("comic.in_panel")}</span>
@@ -892,12 +1119,14 @@
                   {/each}
                 </div>
               {/if}
-              <input
-                class="w-full rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-                placeholder={comic.effectiveSetting.trim() ? locale.t("comic.setting_override_placeholder", { setting: comic.effectiveSetting.trim() }) : locale.t("comic.setting_override_empty")}
-                aria-label={locale.t("comic.setting_override")}
+              <ComicPromptField
                 value={panel.setting}
-                oninput={(e) => comic.updatePanel(panel.id, { setting: (e.currentTarget as HTMLInputElement).value })}
+                onchange={(next) => comic.updatePanel(panel.id, { setting: next })}
+                placeholder={comic.effectiveSetting.trim() ? locale.t("comic.setting_override_placeholder", { setting: comic.effectiveSetting.trim() }) : locale.t("comic.setting_override_empty")}
+                ariaLabel={locale.t("comic.setting_override")}
+                rows={1}
+                minHeight="min-h-10"
+                storageKey="mooshieui.promptHeight.comic.panelSetting"
               />
               {#if result?.error}
                 <p class="text-[11px] text-red-400">{result.error}</p>
