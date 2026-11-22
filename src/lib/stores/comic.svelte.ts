@@ -12,6 +12,8 @@ import {
   applyTemplateToPanels,
   buildTemplate,
   clampFreeformBox,
+  clampPan,
+  clampZoom,
   freeformRects,
   isFreeformBoxes,
   isLayout,
@@ -19,6 +21,7 @@ import {
   layoutForCount,
   newId,
   newPanel,
+  normalizePanelBorderStyle,
   pageSize,
   panelIds,
   panelRects,
@@ -36,14 +39,23 @@ import {
   type LayoutNode,
   type LayoutTemplate,
   type PageShape,
+  type PanelBorderStyle,
   type Rect,
   type RefMode,
   type SplitDir,
 } from "../utils/comicLayout.js";
+import {
+  bubblesFromDialogue,
+  clampBubble,
+  newBubble,
+  sanitizeBubbles,
+  type SpeechBubble,
+} from "../utils/comicBubbles.js";
 
 const BOOKS_STORAGE_KEY = "mooshieui.comic.books.v1";
 const LEGACY_PAGE_STORAGE_KEY = "mooshieui.comic.page.v1";
 const HISTORY_LIMIT = 40;
+export const MAX_PANEL_HISTORY = 8;
 
 export type ComicMode = "panels" | "one_image";
 
@@ -73,8 +85,12 @@ export interface ComicPageState {
   settingOverride: string;
   /** Gallery filename per panel. */
   images: Record<string, string>;
+  /** Ordered gallery filenames per panel (oldest -> newest, capped at MAX_PANEL_HISTORY). */
+  imageHistory: Record<string, string[]>;
   /** Assembled or one-image page gallery filename. */
   pageImage: string | null;
+  /** Client-side vector speech/thought/shout/caption bubbles overlaid on the page. */
+  bubbles: SpeechBubble[];
 }
 
 export interface ComicBook {
@@ -114,6 +130,7 @@ interface SavedPageLegacy {
   checkContinuity: boolean;
   usePanel1Ref?: boolean;
   images?: Record<string, string>;
+  imageHistory?: Record<string, string[]>;
   pageImage?: string | null;
 }
 
@@ -121,6 +138,10 @@ export interface PageRuntime {
   results: Record<string, PanelResult>;
   /** Session-only results aligned by index with `overflowPanels`. */
   overflowResults: Array<PanelResult | undefined>;
+  /** Session-only take histories aligned by index with `overflowPanels`. */
+  overflowHistories: Array<string[] | undefined>;
+  /** Cached display object URLs keyed by gallery filename for fast take switching. */
+  takeUrls: Record<string, string>;
   pageUrl: string | null;
   pageGalleryFilename: string | null;
   pageStatus: "idle" | "running" | "done" | "failed";
@@ -136,6 +157,8 @@ function emptyRuntime(): PageRuntime {
   return {
     results: {},
     overflowResults: [],
+    overflowHistories: [],
+    takeUrls: {},
     pageUrl: null,
     pageGalleryFilename: null,
     pageStatus: "idle",
@@ -163,6 +186,10 @@ function normalizePanel(id: string, raw: unknown): ComicPanel {
     ...obj,
     id,
     cast: Array.isArray(obj.cast) ? obj.cast.filter((c): c is string => typeof c === "string") : [],
+    panX: clampPan(obj.panX),
+    panY: clampPan(obj.panY),
+    zoom: clampZoom(obj.zoom),
+    borderStyle: normalizePanelBorderStyle(obj.borderStyle),
   };
 }
 
@@ -184,6 +211,34 @@ function ensurePanelsForIds(ids: string[], existing: Record<string, ComicPanel>)
   return next;
 }
 
+function sanitizeImageHistory(
+  rawHistory: unknown,
+  panels: Record<string, ComicPanel>,
+  images: Record<string, string>,
+): Record<string, string[]> {
+  const src = rawHistory && typeof rawHistory === "object" ? (rawHistory as Record<string, unknown>) : {};
+  const out: Record<string, string[]> = {};
+  for (const id of Object.keys(panels)) {
+    const rawList = Array.isArray(src[id]) ? (src[id] as unknown[]) : [];
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const item of rawList) {
+      if (typeof item === "string" && item && !item.startsWith("data:") && !seen.has(item)) {
+        seen.add(item);
+        list.push(item);
+      }
+    }
+    const activeImg = images[id];
+    if (activeImg && !seen.has(activeImg)) {
+      list.push(activeImg);
+    }
+    if (list.length > 0) {
+      out[id] = list.slice(-MAX_PANEL_HISTORY);
+    }
+  }
+  return out;
+}
+
 function createPage(partial?: Partial<ComicPageState>): ComicPageState {
   const layout = partial?.layout && isLayout(partial.layout) ? partial.layout : defaultLayout();
   const freeformBoxes = isFreeformBoxes(partial?.freeformBoxes) ? partial.freeformBoxes : [];
@@ -198,10 +253,12 @@ function createPage(partial?: Partial<ComicPageState>): ComicPageState {
       if (panels[k] && typeof v === "string" && v && !v.startsWith("data:")) images[k] = v;
     }
   }
+  const imageHistory = sanitizeImageHistory(partial?.imageHistory, panels, images);
   const pageImage =
     typeof partial?.pageImage === "string" && partial.pageImage && !partial.pageImage.startsWith("data:")
       ? partial.pageImage
       : null;
+  const bubbles = sanitizeBubbles(partial?.bubbles);
   return {
     id: typeof partial?.id === "string" && partial.id ? partial.id : newId("pg"),
     title: typeof partial?.title === "string" ? partial.title : "",
@@ -212,7 +269,9 @@ function createPage(partial?: Partial<ComicPageState>): ComicPageState {
     overflowPanels,
     settingOverride: typeof partial?.settingOverride === "string" ? partial.settingOverride : "",
     images,
+    imageHistory,
     pageImage,
+    bubbles,
   };
 }
 
@@ -262,13 +321,17 @@ function createBook(partial?: Partial<ComicBook>, index = 1): ComicBook {
 
 function revokeRuntime(rt: PageRuntime | undefined) {
   if (!rt) return;
-  for (const r of Object.values(rt.results)) {
-    if (r.url) URL.revokeObjectURL(r.url);
-  }
-  for (const r of rt.overflowResults) {
-    if (r?.url) URL.revokeObjectURL(r.url);
-  }
-  if (rt.pageUrl) URL.revokeObjectURL(rt.pageUrl);
+  const revoked = new Set<string>();
+  const revokeOnce = (url: string | undefined | null) => {
+    if (url && !revoked.has(url)) {
+      revoked.add(url);
+      URL.revokeObjectURL(url);
+    }
+  };
+  for (const r of Object.values(rt.results)) revokeOnce(r.url);
+  for (const r of rt.overflowResults) revokeOnce(r?.url);
+  for (const url of Object.values(rt.takeUrls)) revokeOnce(url);
+  revokeOnce(rt.pageUrl);
 }
 
 function syncImagesFromResults(page: ComicPageState, results: Record<string, PanelResult>) {
@@ -295,6 +358,8 @@ class ComicStore {
   drafting = $state(false);
   /** The panel the Prompt Assistant is rewriting on its own, if any. */
   enhancingId = $state<string | null>(null);
+  /** Currently selected vector speech bubble on the active page (clears on page switch). */
+  selectedBubbleId = $state<string | null>(null);
 
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private loaded = false;
@@ -380,11 +445,25 @@ class ComicStore {
     this.activePage.overflowPanels = v;
   }
 
+  get bubbles(): SpeechBubble[] {
+    return this.activePage.bubbles;
+  }
+  set bubbles(v: SpeechBubble[]) {
+    this.activePage.bubbles = v;
+  }
+
   get overflowResults(): Array<PanelResult | undefined> {
     return this.rt().overflowResults;
   }
   set overflowResults(v: Array<PanelResult | undefined>) {
     this.ensureRt(this.activePage.id).overflowResults = v;
+  }
+
+  get overflowHistories(): Array<string[] | undefined> {
+    return this.rt().overflowHistories;
+  }
+  set overflowHistories(v: Array<string[] | undefined>) {
+    this.ensureRt(this.activePage.id).overflowHistories = v;
   }
 
   get cast(): CastMember[] {
@@ -587,6 +666,10 @@ class ComicStore {
     return this.selectedId ? (this.panels[this.selectedId] ?? null) : null;
   }
 
+  get selectedBubble(): SpeechBubble | null {
+    return this.selectedBubbleId ? (this.bubbles.find((b) => b.id === this.selectedBubbleId) ?? null) : null;
+  }
+
   get canUndo(): boolean {
     return this.rt().history.length > 0;
   }
@@ -607,6 +690,8 @@ class ComicStore {
         overflowPanels: this.overflowPanels,
         layoutMode: this.layoutMode,
         freeformBoxes: this.freeformBoxes,
+        bubbles: this.bubbles,
+        imageHistory: this.activePage.imageHistory,
       }),
     ];
   }
@@ -625,7 +710,16 @@ class ComicStore {
     // Keep the prompts already written, in reading order, for the new panels,
     // and stash any overflow panels so switching back to a larger layout restores them.
     const ordered = this.orderedPanels;
-    const orderedResults = ordered.map((p) => this.results[p.id]);
+    const orderedSlots = ordered.map((p) => {
+      const result = this.results[p.id];
+      const history = this.activePage.imageHistory[p.id];
+      return result || (history && history.length > 0) ? { result, history } : undefined;
+    });
+    const overflowSlots = this.overflowPanels.map((_, i) => {
+      const result = this.overflowResults[i];
+      const history = this.overflowHistories[i];
+      return result || (history && history.length > 0) ? { result, history } : undefined;
+    });
     this.layout = buildTemplate(template);
     this.layoutMode = "grid";
     this.freeformBoxes = [];
@@ -633,15 +727,23 @@ class ComicStore {
     const ids = readingOrder(rects, this.rightToLeft);
     const applied = applyTemplateToPanels(
       ordered,
-      orderedResults,
+      orderedSlots,
       this.overflowPanels,
-      this.overflowResults,
+      overflowSlots,
       ids,
     );
+    const nextResults: Record<string, PanelResult> = {};
+    const nextHistory: Record<string, string[]> = {};
+    for (const [id, slot] of Object.entries(applied.results)) {
+      if (slot?.result) nextResults[id] = slot.result;
+      if (slot?.history && slot.history.length > 0) nextHistory[id] = slot.history;
+    }
     this.panels = applied.panels;
-    this.results = applied.results;
+    this.results = nextResults;
+    this.activePage.imageHistory = nextHistory;
     this.overflowPanels = applied.overflowPanels;
-    this.overflowResults = applied.overflowResults;
+    this.overflowResults = applied.overflowResults.map((s) => s?.result);
+    this.overflowHistories = applied.overflowResults.map((s) => s?.history);
     syncImagesFromResults(this.activePage, this.results);
     this.selectedId = ids[0] ?? null;
     this.clearPage();
@@ -655,11 +757,18 @@ class ComicStore {
       this.freeformBoxes = treeToFreeform(this.layout, pageSize(this.pageShape), this.gutter, this.rightToLeft);
       this.layoutMode = "freeform";
       this.ensurePanels();
+      const nextHistory: Record<string, string[]> = {};
+      for (const id of Object.keys(this.panels)) {
+        const list = this.activePage.imageHistory[id];
+        if (list && list.length > 0) nextHistory[id] = list;
+      }
+      this.activePage.imageHistory = nextHistory;
       this.persist();
       return;
     }
     const previous = this.orderedPanels;
     const prevResults = this.results;
+    const prevHistory = this.activePage.imageHistory;
     const prevSelectedIdx = this.selectedId ? previous.findIndex((p) => p.id === this.selectedId) : -1;
     this.layout = layoutForCount(previous.length || 1);
     this.layoutMode = "grid";
@@ -667,13 +776,16 @@ class ComicStore {
     const ids = readingOrder(panelRects(this.layout), this.rightToLeft);
     const nextPanels: Record<string, ComicPanel> = {};
     const nextResults: Record<string, PanelResult> = {};
+    const nextHistory: Record<string, string[]> = {};
     ids.forEach((id, i) => {
       const old = previous[i];
       nextPanels[id] = old ? { ...old, id } : newPanel(id);
       if (old && prevResults[old.id]) nextResults[id] = prevResults[old.id];
+      if (old && prevHistory[old.id]?.length) nextHistory[id] = prevHistory[old.id];
     });
     this.panels = nextPanels;
     this.results = nextResults;
+    this.activePage.imageHistory = nextHistory;
     syncImagesFromResults(this.activePage, nextResults);
     this.selectedId = prevSelectedIdx >= 0 ? (ids[prevSelectedIdx] ?? ids[0] ?? null) : null;
     this.persist();
@@ -697,14 +809,19 @@ class ComicStore {
     if (this.overflowPanels.length > 0) {
       const [restored, ...restPanels] = this.overflowPanels;
       const [restoredResult, ...restResults] = this.overflowResults;
+      const [restoredHistory, ...restHistories] = this.overflowHistories;
       this.overflowPanels = restPanels;
       this.overflowResults = restResults;
+      this.overflowHistories = restHistories;
       this.panels = { ...this.panels, [id]: { ...restored, id } };
       if (restoredResult) {
         this.results = { ...this.results, [id]: restoredResult };
         if (restoredResult.galleryFilename) {
           this.activePage.images = { ...this.activePage.images, [id]: restoredResult.galleryFilename };
         }
+      }
+      if (restoredHistory && restoredHistory.length > 0) {
+        this.activePage.imageHistory = { ...this.activePage.imageHistory, [id]: restoredHistory };
       }
     }
     this.ensurePanels();
@@ -745,8 +862,10 @@ class ComicStore {
     const id = this.selectedId;
     if (!id || this.panelCount <= 1) return;
     this.remember();
+    const rt = this.ensureRt(this.activePage.id);
     const removed = this.panels[id];
     const removedResult = this.results[id];
+    const removedHistory = this.activePage.imageHistory[id];
     if (this.layoutMode === "freeform") {
       this.freeformBoxes = this.freeformBoxes
         .filter((b) => b.id !== id)
@@ -760,10 +879,13 @@ class ComicStore {
     this.results = rest;
     const { [id]: _goneImg, ...restImgs } = this.activePage.images;
     this.activePage.images = restImgs;
+    const { [id]: _goneHist, ...restHist } = this.activePage.imageHistory;
+    this.activePage.imageHistory = restHist;
     if (removed && isPanelNonEmpty(removed)) {
       this.overflowPanels = [removed, ...this.overflowPanels];
       this.overflowResults = [removedResult, ...this.overflowResults];
-    } else if (removedResult?.url) {
+      this.overflowHistories = [removedHistory, ...this.overflowHistories];
+    } else if (removedResult?.url && !Object.values(rt.takeUrls).includes(removedResult.url)) {
       URL.revokeObjectURL(removedResult.url);
     }
     this.selectedId = null;
@@ -792,12 +914,21 @@ class ComicStore {
         overflowPanels?: unknown[];
         layoutMode?: LayoutMode;
         freeformBoxes?: FreeformBox[];
+        bubbles?: unknown[];
+        imageHistory?: Record<string, string[]>;
       };
       if (!isLayout(state.layout)) return;
       this.layout = state.layout;
       this.panels = state.panels;
       this.overflowPanels = normalizeOverflowPanels(state.overflowPanels);
       this.overflowResults = this.overflowPanels.map((_, i) => this.overflowResults[i]);
+      if (Array.isArray(state.bubbles)) {
+        this.bubbles = sanitizeBubbles(state.bubbles);
+        if (this.selectedBubbleId && !this.bubbles.some((b) => b.id === this.selectedBubbleId)) {
+          this.selectedBubbleId = null;
+        }
+      }
+      this.overflowHistories = this.overflowPanels.map((_, i) => this.overflowHistories[i]);
       if (state.layoutMode === "freeform" && isFreeformBoxes(state.freeformBoxes) && state.freeformBoxes.length > 0) {
         this.layoutMode = "freeform";
         this.freeformBoxes = state.freeformBoxes;
@@ -806,6 +937,14 @@ class ComicStore {
         this.freeformBoxes = isFreeformBoxes(state.freeformBoxes) ? state.freeformBoxes : [];
       }
       this.ensurePanels();
+      const restoredHistory: Record<string, string[]> = {};
+      for (const pid of Object.keys(this.panels)) {
+        const live = this.activePage.imageHistory[pid];
+        const snap = state.imageHistory?.[pid];
+        const list = live && live.length > 0 ? live : Array.isArray(snap) ? snap : undefined;
+        if (list && list.length > 0) restoredHistory[pid] = list.slice(-MAX_PANEL_HISTORY);
+      }
+      this.activePage.imageHistory = restoredHistory;
       this.persist();
     } catch {
       /* a broken snapshot is skipped */
@@ -820,6 +959,7 @@ class ComicStore {
     this.ensureRt(page.id);
     this.activeBook.pages = [...this.activeBook.pages, page];
     this.activeBook.activePageIndex = this.activeBook.pages.length - 1;
+    this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -840,13 +980,16 @@ class ComicStore {
       overflowPanels: src.overflowPanels.map((p) => ({ ...p, cast: [...p.cast] })),
       settingOverride: src.settingOverride,
       images: {},
+      imageHistory: {},
       pageImage: null,
+      bubbles: src.bubbles.map((b) => ({ ...b, id: newId("b") })),
     });
     this.ensureRt(copy.id);
     const pages = [...this.activeBook.pages];
     pages.splice(index + 1, 0, copy);
     this.activeBook.pages = pages;
     this.activeBook.activePageIndex = index + 1;
+    this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -862,6 +1005,7 @@ class ComicStore {
     const cur = this.activeBook.activePageIndex;
     if (cur >= pages.length) this.activeBook.activePageIndex = pages.length - 1;
     else if (index < cur) this.activeBook.activePageIndex = cur - 1;
+    this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -881,6 +1025,7 @@ class ComicStore {
     if (index < 0 || index >= this.activeBook.pages.length) return;
     this.activeBook.activePageIndex = index;
     this.ensureRt(this.activePage.id);
+    this.selectedBubbleId = null;
     this.persistSoon();
   }
 
@@ -891,6 +1036,7 @@ class ComicStore {
     const book = createBook({ title: title?.trim() || undefined }, this.books.length + 1);
     this.books = [...this.books, book];
     this.activeBookId = book.id;
+    this.selectedBubbleId = null;
     this.ensureAllRuntimes();
     this.persist();
   }
@@ -899,6 +1045,7 @@ class ComicStore {
     if (this.running) return;
     if (!this.books.some((b) => b.id === id)) return;
     this.activeBookId = id;
+    this.selectedBubbleId = null;
     this.ensureAllRuntimes();
     this.persistSoon();
   }
@@ -932,7 +1079,78 @@ class ComicStore {
       this.books = nextBooks;
       if (this.activeBookId === id) this.activeBookId = nextBooks[0].id;
     }
+    this.selectedBubbleId = null;
     this.ensureAllRuntimes();
+    this.persist();
+  }
+
+  // --- vector speech bubbles ---
+
+  addBubble(panelId?: string): string {
+    this.remember();
+    const rect = panelId ? this.rects.get(panelId) : undefined;
+    const stagger = (this.bubbles.length % 5) * 0.025;
+    let bubble: SpeechBubble;
+    if (rect) {
+      const w = Math.min(0.32, Math.max(0.08, rect.w * 0.65));
+      const h = Math.min(0.16, Math.max(0.05, rect.h * 0.32));
+      const x = rect.x + Math.max(0.01, (rect.w - w) * 0.5 + (stagger - 0.02));
+      const y = rect.y + Math.min(rect.h - h - 0.01, 0.02 + stagger);
+      bubble = newBubble({
+        panelId,
+        x,
+        y,
+        w,
+        h,
+        tailX: x + w * 0.5,
+        tailY: Math.min(rect.y + rect.h - 0.02, y + h + 0.06),
+      });
+    } else {
+      bubble = newBubble({
+        x: 0.34 + stagger,
+        y: 0.14 + stagger,
+        w: 0.28,
+        h: 0.14,
+      });
+    }
+    this.bubbles = [...this.bubbles, bubble];
+    this.selectedBubbleId = bubble.id;
+    this.persist();
+    return bubble.id;
+  }
+
+  syncDialogueToBubbles(panelId: string, clearDialogue = false): SpeechBubble[] {
+    const panel = this.panels[panelId];
+    const rect = this.rects.get(panelId);
+    if (!panel || !rect) return [];
+    const created = bubblesFromDialogue(panelId, rect, panel.dialogue);
+    if (created.length === 0 && !clearDialogue) return [];
+    this.remember();
+    if (clearDialogue) {
+      this.panels = { ...this.panels, [panelId]: { ...panel, dialogue: "" } };
+    }
+    if (created.length > 0) {
+      this.bubbles = [...this.bubbles, ...created];
+      this.selectedBubbleId = created[0].id;
+    }
+    this.persist();
+    return created;
+  }
+
+  beginBubbleEdit() {
+    this.remember();
+  }
+
+  updateBubble(id: string, patch: Partial<SpeechBubble>) {
+    this.bubbles = this.bubbles.map((b) => (b.id === id ? clampBubble({ ...b, ...patch, id }) : b));
+    this.persistSoon();
+  }
+
+  removeBubble(id: string) {
+    if (!this.bubbles.some((b) => b.id === id)) return;
+    this.remember();
+    this.bubbles = this.bubbles.filter((b) => b.id !== id);
+    if (this.selectedBubbleId === id) this.selectedBubbleId = null;
     this.persist();
   }
 
@@ -941,8 +1159,37 @@ class ComicStore {
   updatePanel(id: string, patch: Partial<ComicPanel>) {
     const panel = this.panels[id];
     if (!panel) return;
-    this.panels = { ...this.panels, [id]: { ...panel, ...patch, id } };
+    const next: ComicPanel = { ...panel, ...patch, id };
+    if (patch.panX !== undefined) next.panX = clampPan(patch.panX);
+    if (patch.panY !== undefined) next.panY = clampPan(patch.panY);
+    if (patch.zoom !== undefined) next.zoom = clampZoom(patch.zoom);
+    if (patch.borderStyle !== undefined) next.borderStyle = normalizePanelBorderStyle(patch.borderStyle);
+    this.panels = { ...this.panels, [id]: next };
     this.persistSoon();
+  }
+
+  /** Call once before a panel pan/zoom gesture so the whole gesture is one undo step. */
+  beginPanelCropEdit() {
+    this.remember();
+  }
+
+  resetPanelCrop(id: string) {
+    const panel = this.panels[id];
+    if (!panel) return;
+    if ((panel.panX ?? 0) === 0 && (panel.panY ?? 0) === 0 && (panel.zoom ?? 1) === 1) return;
+    this.remember();
+    this.updatePanel(id, { panX: 0, panY: 0, zoom: 1 });
+    this.persist();
+  }
+
+  setPanelBorder(id: string, style: PanelBorderStyle) {
+    const panel = this.panels[id];
+    if (!panel) return;
+    const next = normalizePanelBorderStyle(style);
+    if (normalizePanelBorderStyle(panel.borderStyle) === next) return;
+    this.remember();
+    this.updatePanel(id, { borderStyle: next });
+    this.persist();
   }
 
   toggleCastInPanel(panelId: string, castId: string) {
@@ -1021,7 +1268,9 @@ class ComicStore {
   setResult(id: string, patch: Partial<PanelResult>, pageId = this.activePage.id) {
     const rt = this.ensureRt(pageId);
     const current = rt.results[id];
-    if (patch.url && current?.url && current.url !== patch.url) URL.revokeObjectURL(current.url);
+    if (patch.url && current?.url && current.url !== patch.url && !Object.values(rt.takeUrls).includes(current.url)) {
+      URL.revokeObjectURL(current.url);
+    }
     rt.results = { ...rt.results, [id]: { ...({ status: "queued" } as PanelResult), ...current, ...patch } };
     if (patch.galleryFilename !== undefined) {
       const page = this.findPageById(pageId);
@@ -1034,6 +1283,106 @@ class ComicStore {
       }
       this.persistSoon();
     }
+  }
+
+  cacheTakeUrl(galleryFilename: string, url: string, pageId = this.activePage.id) {
+    if (!galleryFilename || !url) return;
+    const rt = this.ensureRt(pageId);
+    if (rt.takeUrls[galleryFilename] === url) return;
+    rt.takeUrls = { ...rt.takeUrls, [galleryFilename]: url };
+  }
+
+  getTakeUrl(galleryFilename: string, pageId = this.activePage.id): string | undefined {
+    return this.rt(pageId).takeUrls[galleryFilename];
+  }
+
+  recordPanelTake(panelId: string, galleryFilename: string | null | undefined, pageId = this.activePage.id) {
+    if (!galleryFilename || galleryFilename.startsWith("data:")) return;
+    const page = this.findPageById(pageId);
+    if (!page || !page.panels[panelId]) return;
+    const prev = page.imageHistory[panelId] ?? [];
+    const next = [...prev.filter((f) => f !== galleryFilename), galleryFilename].slice(-MAX_PANEL_HISTORY);
+    page.imageHistory = { ...page.imageHistory, [panelId]: next };
+    const rt = this.ensureRt(pageId);
+    const currentUrl = rt.results[panelId]?.galleryFilename === galleryFilename ? rt.results[panelId]?.url : undefined;
+    if (currentUrl) this.cacheTakeUrl(galleryFilename, currentUrl, pageId);
+    this.persistSoon();
+  }
+
+  /**
+   * Switch the active take for `panelId`.
+   * When `mode` is `"delta"` (or `deltaOrIndex < 0` when `mode` is omitted), shifts relative to the active take;
+   * otherwise selects 0-based take index `deltaOrIndex`. Returns the selected gallery filename, if any.
+   */
+  selectPanelTake(panelId: string, deltaOrIndex: number, mode?: "delta" | "index"): string | null {
+    const page = this.activePage;
+    const list = page.imageHistory[panelId] ?? [];
+    if (list.length === 0) return null;
+    const rt = this.ensureRt(page.id);
+    const activeName = rt.results[panelId]?.galleryFilename ?? page.images[panelId] ?? list[list.length - 1];
+    const curIdx = Math.max(0, list.indexOf(activeName));
+    const isDelta = mode === "delta" || (mode === undefined && deltaOrIndex < 0);
+    const rawIdx = isDelta ? curIdx + deltaOrIndex : deltaOrIndex;
+    const targetIdx = Math.max(0, Math.min(list.length - 1, Math.round(rawIdx)));
+    const filename = list[targetIdx];
+    if (!filename) return null;
+    page.images = { ...page.images, [panelId]: filename };
+    const cachedUrl = rt.takeUrls[filename];
+    if (cachedUrl) {
+      rt.results = {
+        ...rt.results,
+        [panelId]: {
+          ...(rt.results[panelId] ?? { status: "done" }),
+          status: "done",
+          url: cachedUrl,
+          galleryFilename: filename,
+          issues: null,
+          error: undefined,
+        },
+      };
+    } else if (rt.results[panelId]) {
+      rt.results = {
+        ...rt.results,
+        [panelId]: {
+          ...rt.results[panelId],
+          galleryFilename: filename,
+          issues: null,
+          error: undefined,
+        },
+      };
+    }
+    this.persistSoon();
+    return filename;
+  }
+
+  pruneDeletedTake(panelId: string, galleryFilename: string, pageId = this.activePage.id) {
+    const page = this.findPageById(pageId);
+    if (!page) return;
+    const prev = page.imageHistory[panelId] ?? [];
+    const next = prev.filter((f) => f !== galleryFilename);
+    if (next.length > 0) {
+      page.imageHistory = { ...page.imageHistory, [panelId]: next };
+    } else {
+      const { [panelId]: _drop, ...restHist } = page.imageHistory;
+      page.imageHistory = restHist;
+    }
+    if (page.images[panelId] === galleryFilename) {
+      if (next.length > 0) {
+        page.images = { ...page.images, [panelId]: next[next.length - 1] };
+      } else {
+        const { [panelId]: _dropImg, ...restImg } = page.images;
+        page.images = restImg;
+        this.clearResult(panelId, pageId);
+      }
+    }
+    const rt = this.ensureRt(pageId);
+    const deadUrl = rt.takeUrls[galleryFilename];
+    if (deadUrl) {
+      const { [galleryFilename]: _dropUrl, ...restUrls } = rt.takeUrls;
+      rt.takeUrls = restUrls;
+      URL.revokeObjectURL(deadUrl);
+    }
+    this.persistSoon();
   }
 
   clearResult(id: string, pageId = this.activePage.id) {
@@ -1071,12 +1420,25 @@ class ComicStore {
   resetPanels() {
     this.remember();
     const rt = this.ensureRt(this.activePage.id);
-    for (const r of Object.values(rt.results)) if (r.url) URL.revokeObjectURL(r.url);
-    for (const r of rt.overflowResults) if (r?.url) URL.revokeObjectURL(r.url);
+    const revoked = new Set<string>();
+    const revokeOnce = (url: string | undefined | null) => {
+      if (url && !revoked.has(url)) {
+        revoked.add(url);
+        URL.revokeObjectURL(url);
+      }
+    };
+    for (const r of Object.values(rt.results)) revokeOnce(r.url);
+    for (const r of rt.overflowResults) revokeOnce(r?.url);
+    for (const url of Object.values(rt.takeUrls)) revokeOnce(url);
     rt.results = {};
     rt.overflowResults = [];
+    rt.overflowHistories = [];
+    rt.takeUrls = {};
     this.activePage.images = {};
+    this.activePage.imageHistory = {};
     this.activePage.overflowPanels = [];
+    this.bubbles = [];
+    this.selectedBubbleId = null;
     this.layout = defaultLayout();
     this.layoutMode = "grid";
     this.freeformBoxes = [];
@@ -1185,6 +1547,7 @@ class ComicStore {
         return {
           ...p,
           images: cleanImages,
+          imageHistory: sanitizeImageHistory(p.imageHistory, p.panels, cleanImages),
           pageImage: typeof p.pageImage === "string" && p.pageImage && !p.pageImage.startsWith("data:") ? p.pageImage : null,
         };
       }),

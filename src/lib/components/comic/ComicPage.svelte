@@ -13,14 +13,25 @@
     LAYOUT_TEMPLATES,
     MAX_PANELS,
     ONE_SHOT_MAX_PANELS,
+    PANEL_BORDER_STYLES,
     buildTemplate,
     clampFreeformBox,
+    clampPan,
+    clampZoom,
+    coverCrop,
     dividers,
     freeformRects,
+    normalizePanelBorderStyle,
     pageAspect,
     pageSize,
+    panelBorderPolygon,
+    panelBorderRadiusCss,
+    panelClipPathCss,
+    panelCornerRadius,
+    panelImageCss,
     panelPixelRect,
     panelRects,
+    panelSlantInset,
     ratioFromPointer,
     resizeFreeformBox,
     snapFreeformBox,
@@ -28,10 +39,29 @@
     type FreeformBox,
     type LayoutTemplate,
     type PageShape,
+    type PanelBorderStyle,
+    type Rect,
     type RefMode,
     type ResizeHandle,
   } from "../../utils/comicLayout.js";
   import {
+    BUBBLE_FONTS,
+    BUBBLE_SHAPES,
+    bubbleFontFamily,
+    bubbleFontPx,
+    bubblePathData,
+    clampBubble,
+    estimateTextWidth,
+    layoutVerticalText,
+    resizeBubble,
+    wrapBubbleText,
+    type BubbleCorner,
+    type BubbleFont,
+    type BubbleShape,
+    type SpeechBubble,
+  } from "../../utils/comicBubbles.js";
+  import {
+    assemblePage,
     checkPanel,
     checkStory,
     draftFromBeats,
@@ -47,6 +77,7 @@
     savePage,
     stopRun,
     supportsPanel1Reference,
+    switchPanelTake,
     undoDraft,
   } from "../../utils/comicRunner.js";
   import { naiV5Variant } from "../../utils/novelaiModels.js";
@@ -87,8 +118,32 @@
     moved: boolean;
   }
 
+  interface BubbleDrag {
+    kind: "move" | "resize" | "tail";
+    id: string;
+    corner?: BubbleCorner;
+    orig: SpeechBubble;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  }
+
+  interface PanDrag {
+    id: string;
+    boxPx: Rect;
+    panelW: number;
+    panelH: number;
+    origPanX: number;
+    origPanY: number;
+    zoom: number;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  }
+
   let showTemplates = $state(false);
   let showPage = $state(false);
+  let modalPageUrl = $state<string | null>(null);
   let showCharPicker = $state(false);
   let pickingForCastId = $state<string | null>(null);
   let renamingBook = $state(false);
@@ -96,9 +151,16 @@
   let error = $state<string | null>(null);
   let saving = $state(false);
   let exporting = $state(false);
+  let panMode = $state(false);
+  let altHeld = $state(false);
+  let imgDims = $state<Record<string, { width: number; height: number }>>({});
   let canvasEl = $state<HTMLDivElement | null>(null);
   let dragging = $state<Divider | null>(null);
   let freeformDrag = $state<FreeformDrag | null>(null);
+  let bubbleDrag = $state<BubbleDrag | null>(null);
+  let bubbleTextUndoArmed = $state(true);
+  let panDrag = $state<PanDrag | null>(null);
+  let lastWheelZoom: { id: string; at: number } | null = null;
   let snapGuides = $state<Array<{ axis: "x" | "y"; pos: number }>>([]);
 
   onMount(() => {
@@ -123,8 +185,34 @@
   const lines = $derived(isFreeform ? [] : dividers(comic.layout));
   const order = $derived(comic.order);
 
+  const borderPx = $derived(Math.max(2, Math.round(Math.max(pagePx.width, pagePx.height) / 600)));
+  const freeformHaloPx = $derived(Math.max(4, Math.round(comic.gutter / 2)));
+
+  function freeformPixelBox(b: FreeformBox): Rect {
+    const x = Math.round(b.x * pagePx.width);
+    const y = Math.round(b.y * pagePx.height);
+    const x1 = Math.round((b.x + b.w) * pagePx.width);
+    const y1 = Math.round((b.y + b.h) * pagePx.height);
+    return { x, y, w: Math.max(1, x1 - x), h: Math.max(1, y1 - y) };
+  }
+
+  function svgPolygonPoints(box: Rect, style: PanelBorderStyle): string {
+    return panelBorderPolygon({ x: 0, y: 0, w: box.w, h: box.h }, style)
+      .map((pt) => `${pt.x},${pt.y}`)
+      .join(" ");
+  }
+
+  function recordImgDims(id: string, img: HTMLImageElement) {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      const cur = imgDims[id];
+      if (!cur || cur.width !== img.naturalWidth || cur.height !== img.naturalHeight) {
+        imgDims = { ...imgDims, [id]: { width: img.naturalWidth, height: img.naturalHeight } };
+      }
+    }
+  }
+
   function freeformBoxStyle(b: FreeformBox, zOrder: number): string {
-    return `left: ${b.x * 100}%; top: ${b.y * 100}%; width: ${b.w * 100}%; height: ${b.h * 100}%; z-index: ${zOrder + 1}; box-shadow: 0 0 0 3px #ffffff;`;
+    return `left: ${b.x * 100}%; top: ${b.y * 100}%; width: ${b.w * 100}%; height: ${b.h * 100}%; z-index: ${zOrder + 1};`;
   }
   const oneImage = $derived(comic.mode === "one_image");
   const tooManyForOneImage = $derived(oneImage && comic.enabledPanels.length > ONE_SHOT_MAX_PANELS);
@@ -160,8 +248,33 @@
   }
 
   async function openPage() {
-    if (!oneImage) await run(previewPage);
+    if (!oneImage) {
+      if (modalPageUrl) {
+        URL.revokeObjectURL(modalPageUrl);
+        modalPageUrl = null;
+      }
+      await run(previewPage);
+      if (comic.pageUrl) showPage = true;
+      return;
+    }
+    if (comic.bubbles.length > 0) {
+      await run(async () => {
+        const blob = await assemblePage();
+        if (modalPageUrl) URL.revokeObjectURL(modalPageUrl);
+        modalPageUrl = URL.createObjectURL(blob);
+      });
+      if (modalPageUrl) showPage = true;
+      return;
+    }
     if (comic.pageUrl) showPage = true;
+  }
+
+  function closePagePreview() {
+    showPage = false;
+    if (modalPageUrl) {
+      URL.revokeObjectURL(modalPageUrl);
+      modalPageUrl = null;
+    }
   }
 
   async function save() {
@@ -256,6 +369,57 @@
     dragging = divider;
   }
 
+  function startPanDrag(event: PointerEvent, id: string, boxPx: Rect) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    comic.selectedId = id;
+    const el = event.currentTarget as HTMLElement;
+    el.setPointerCapture(event.pointerId);
+    const rect = el.getBoundingClientRect();
+    const panel = comic.panels[id];
+    panDrag = {
+      id,
+      boxPx,
+      panelW: Math.max(1, rect.width),
+      panelH: Math.max(1, rect.height),
+      origPanX: clampPan(panel?.panX),
+      origPanY: clampPan(panel?.panY),
+      zoom: clampZoom(panel?.zoom),
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+  }
+
+  function onPanelPointerDown(event: PointerEvent, id: string, boxPx: Rect, freeformBox?: FreeformBox) {
+    comic.selectedBubbleId = null;
+    const hasImage = !!comic.results[id]?.url;
+    if ((panMode || event.altKey) && hasImage) {
+      startPanDrag(event, id, boxPx);
+      return;
+    }
+    if (freeformBox) {
+      startFreeformMove(event, freeformBox);
+    }
+  }
+
+  function onPanelWheel(event: WheelEvent, id: string) {
+    const result = comic.results[id];
+    if (comic.selectedId !== id || !result?.url) return;
+    event.preventDefault();
+    const now = Date.now();
+    if (!lastWheelZoom || lastWheelZoom.id !== id || now - lastWheelZoom.at > 600) {
+      comic.beginPanelCropEdit();
+    }
+    lastWheelZoom = { id, at: now };
+    const panel = comic.panels[id];
+    const curZoom = clampZoom(panel?.zoom);
+    const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const nextZoom = clampZoom(Math.round(curZoom * factor * 100) / 100);
+    comic.updatePanel(id, { zoom: nextZoom });
+  }
+
   function startFreeformMove(event: PointerEvent, box: FreeformBox) {
     if (event.button !== 0) return;
     comic.selectedId = box.id;
@@ -288,7 +452,118 @@
     snapGuides = [];
   }
 
+  function selectBubble(id: string) {
+    comic.selectedBubbleId = id;
+    bubbleTextUndoArmed = true;
+  }
+
+  function startBubbleMove(event: PointerEvent, bubble: SpeechBubble) {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    selectBubble(bubble.id);
+    (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    bubbleDrag = {
+      kind: "move",
+      id: bubble.id,
+      orig: { ...bubble },
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+  }
+
+  function startBubbleResize(event: PointerEvent, bubble: SpeechBubble, corner: BubbleCorner) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectBubble(bubble.id);
+    (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    bubbleDrag = {
+      kind: "resize",
+      id: bubble.id,
+      corner,
+      orig: { ...bubble },
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+  }
+
+  function startBubbleTail(event: PointerEvent, bubble: SpeechBubble) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectBubble(bubble.id);
+    (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    bubbleDrag = {
+      kind: "tail",
+      id: bubble.id,
+      orig: { ...bubble },
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+  }
+
   function onDrag(event: PointerEvent) {
+    if (bubbleDrag && canvasEl) {
+      const dist = Math.hypot(event.clientX - bubbleDrag.startClientX, event.clientY - bubbleDrag.startClientY);
+      if (!bubbleDrag.moved) {
+        if (dist < 3) return;
+        comic.beginBubbleEdit();
+        bubbleDrag.moved = true;
+      }
+      const box = canvasEl.getBoundingClientRect();
+      const dx = (event.clientX - bubbleDrag.startClientX) / Math.max(1, box.width);
+      const dy = (event.clientY - bubbleDrag.startClientY) / Math.max(1, box.height);
+      if (bubbleDrag.kind === "move") {
+        const nextBox = clampBubble({
+          ...bubbleDrag.orig,
+          x: bubbleDrag.orig.x + dx,
+          y: bubbleDrag.orig.y + dy,
+        });
+        const adx = nextBox.x - bubbleDrag.orig.x;
+        const ady = nextBox.y - bubbleDrag.orig.y;
+        comic.updateBubble(bubbleDrag.id, {
+          x: nextBox.x,
+          y: nextBox.y,
+          tailX: bubbleDrag.orig.tailX + adx,
+          tailY: bubbleDrag.orig.tailY + ady,
+        });
+      } else if (bubbleDrag.kind === "resize" && bubbleDrag.corner) {
+        const resized = resizeBubble(bubbleDrag.orig, bubbleDrag.corner, dx, dy);
+        comic.updateBubble(bubbleDrag.id, {
+          x: resized.x,
+          y: resized.y,
+          w: resized.w,
+          h: resized.h,
+        });
+      } else if (bubbleDrag.kind === "tail") {
+        comic.updateBubble(bubbleDrag.id, {
+          tailX: bubbleDrag.orig.tailX + dx,
+          tailY: bubbleDrag.orig.tailY + dy,
+        });
+      }
+      return;
+    }
+    if (panDrag) {
+      const dist = Math.hypot(event.clientX - panDrag.startClientX, event.clientY - panDrag.startClientY);
+      if (!panDrag.moved) {
+        if (dist < 2) return;
+        comic.beginPanelCropEdit();
+        panDrag.moved = true;
+      }
+      const src = imgDims[panDrag.id] ?? { width: panDrag.boxPx.w, height: panDrag.boxPx.h };
+      const crop = coverCrop(src, panDrag.boxPx, 0, 0, panDrag.zoom);
+      const overflowPxX = (src.width / crop.w - 1) * panDrag.panelW;
+      const overflowPxY = (src.height / crop.h - 1) * panDrag.panelH;
+      const dx = event.clientX - panDrag.startClientX;
+      const dy = event.clientY - panDrag.startClientY;
+      const nextPanX = overflowPxX > 0.5 ? clampPan(panDrag.origPanX - dx / (overflowPxX / 2)) : panDrag.origPanX;
+      const nextPanY = overflowPxY > 0.5 ? clampPan(panDrag.origPanY - dy / (overflowPxY / 2)) : panDrag.origPanY;
+      comic.updatePanel(panDrag.id, { panX: nextPanX, panY: nextPanY });
+      return;
+    }
     if (dragging && canvasEl) {
       const box = canvasEl.getBoundingClientRect();
       const pointer =
@@ -332,8 +607,12 @@
   function endDrag() {
     if (dragging) comic.persist();
     if (freeformDrag?.moved) comic.persist();
+    if (bubbleDrag?.moved) comic.persist();
+    if (panDrag?.moved) comic.persist();
     dragging = null;
     freeformDrag = null;
+    bubbleDrag = null;
+    panDrag = null;
     snapGuides = [];
   }
 
@@ -349,12 +628,20 @@
   ];
 
   function onKeydown(event: KeyboardEvent) {
+    if (event.key === "Alt") altHeld = true;
     const target = event.target as HTMLElement | null;
-    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       comic.undo();
+    } else if ((event.key === "Delete" || event.key === "Backspace") && comic.selectedBubbleId) {
+      event.preventDefault();
+      comic.removeBubble(comic.selectedBubbleId);
     }
+  }
+
+  function onKeyup(event: KeyboardEvent) {
+    if (event.key === "Alt") altHeld = false;
   }
 
   const statusRing: Record<string, string> = {
@@ -367,7 +654,7 @@
   const shapes: PageShape[] = ["portrait", "square", "landscape"];
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onkeyup={onKeyup} onblur={() => (altHeld = false)} />
 
 <div class="flex h-full flex-col overflow-hidden text-neutral-200">
   <!-- Toolbar -->
@@ -490,11 +777,22 @@
       onclick={() => comic.removeSelected()}
     >{locale.t("comic.remove_panel")}</button>
     <button
+      class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-indigo-500 hover:text-indigo-200"
+      title={locale.t("comic.add_bubble_title")}
+      onclick={() => comic.addBubble(comic.selectedId ?? undefined)}
+    >{locale.t("comic.add_bubble")}</button>
+    <button
       class="rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 hover:border-neutral-500 disabled:opacity-40"
       disabled={!comic.canUndo}
       title="Ctrl+Z"
       onclick={() => comic.undo()}
     >{locale.t("comic.undo")}</button>
+    <button
+      class="rounded-lg border px-2.5 py-1.5 transition-colors {panMode ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200' : 'border-neutral-700 bg-neutral-900 hover:border-neutral-500'}"
+      aria-pressed={panMode}
+      title={locale.t("comic.pan_mode_title")}
+      onclick={() => (panMode = !panMode)}
+    >{locale.t("comic.pan_mode")}</button>
     <span class="h-5 w-px bg-neutral-800" aria-hidden="true"></span>
     <label class="flex items-center gap-1.5 text-neutral-400">
       {locale.t("comic.page_shape")}
@@ -855,30 +1153,162 @@
             {@const panel = comic.panels[box.id]}
             {@const result = comic.results[box.id]}
             {@const number = order.indexOf(box.id) + 1}
-            <button
-              class="absolute touch-none cursor-move overflow-hidden border-2 border-neutral-900 bg-neutral-200 text-left transition-shadow {comic.selectedId === box.id ? 'outline outline-3 outline-offset-[3px] outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
-              style={freeformBoxStyle(box, zOrder)}
-              onpointerdown={(e) => startFreeformMove(e, box)}
-              onclick={() => (comic.selectedId = box.id)}
-              aria-pressed={comic.selectedId === box.id}
-              aria-label={locale.t("comic.panel_n", { n: String(number) })}
+            {@const boxPx = freeformPixelBox(box)}
+            {@const bStyle = normalizePanelBorderStyle(panel?.borderStyle)}
+            {@const isSel = comic.selectedId === box.id}
+            {@const canPan = (panMode || altHeld) && !!result?.url}
+            {@const imgCss = panelImageCss(imgDims[box.id] ?? { width: boxPx.w, height: boxPx.h }, boxPx, panel?.panX ?? 0, panel?.panY ?? 0, panel?.zoom ?? 1)}
+            <div
+              class="absolute {isSel && bStyle !== 'slanted' ? 'outline outline-3 outline-offset-[3px] outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
+              style="{freeformBoxStyle(box, zOrder)}{bStyle === 'rounded' ? ` border-radius: ${panelBorderRadiusCss(boxPx, 'rounded')};` : ''}"
             >
-              {#if result?.url}
-                <img src={result.url} alt="" class="h-full w-full object-cover" draggable="false" />
-              {:else}
-                <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4">{panel?.beat || panel?.prompt || ""}</span>
-              {/if}
-              <span class="absolute left-1 top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white">{number}</span>
-              {#if result?.status === "running"}
-                <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
-              {:else if result?.status === "failed"}
-                <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
-              {:else if result?.issues && result.issues.length > 0}
-                <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
-              {:else if result?.issues && result.issues.length === 0}
-                <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
-              {/if}
-            </button>
+              <!-- White overlap halo rendered behind the clipped panel so CSS clip-path never clips it -->
+              <svg
+                class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+                viewBox="0 0 {boxPx.w} {boxPx.h}"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                {#if bStyle === "slanted"}
+                  <polygon
+                    points={svgPolygonPoints(boxPx, "slanted")}
+                    fill="#ffffff"
+                    stroke="#ffffff"
+                    stroke-width={freeformHaloPx * 2}
+                    stroke-linejoin="miter"
+                    stroke-miterlimit="4"
+                  />
+                  {#if isSel}
+                    <polygon
+                      points={svgPolygonPoints(boxPx, "slanted")}
+                      fill="none"
+                      stroke="#6366f1"
+                      stroke-width={borderPx * 2 + 4}
+                      stroke-linejoin="miter"
+                      stroke-miterlimit="4"
+                    />
+                  {/if}
+                {:else if bStyle === "rounded"}
+                  {@const cr = panelCornerRadius(boxPx)}
+                  <rect
+                    x="0"
+                    y="0"
+                    width={boxPx.w}
+                    height={boxPx.h}
+                    rx={cr}
+                    ry={cr}
+                    fill="#ffffff"
+                    stroke="#ffffff"
+                    stroke-width={freeformHaloPx * 2}
+                  />
+                {:else}
+                  <rect
+                    x="0"
+                    y="0"
+                    width={boxPx.w}
+                    height={boxPx.h}
+                    fill="#ffffff"
+                    stroke="#ffffff"
+                    stroke-width={freeformHaloPx * 2}
+                  />
+                {/if}
+              </svg>
+              <button
+                class="relative h-full w-full touch-none overflow-hidden bg-neutral-200 text-left {canPan ? (panDrag?.id === box.id ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-move'}"
+                style="clip-path: {panelClipPathCss(boxPx, bStyle)}; border-radius: {panelBorderRadiusCss(boxPx, bStyle)};"
+                onpointerdown={(e) => onPanelPointerDown(e, box.id, boxPx, box)}
+                onwheel={(e) => onPanelWheel(e, box.id)}
+                onclick={() => {
+                  comic.selectedBubbleId = null;
+                  comic.selectedId = box.id;
+                }}
+                aria-pressed={isSel}
+                aria-label={locale.t("comic.panel_n", { n: String(number) })}
+              >
+                {#if result?.url}
+                  <img
+                    src={result.url}
+                    alt=""
+                    class="pointer-events-none absolute max-w-none max-h-none"
+                    style="left: {imgCss.left}; top: {imgCss.top}; width: {imgCss.width}; height: {imgCss.height};"
+                    onload={(e) => recordImgDims(box.id, e.currentTarget as HTMLImageElement)}
+                    draggable="false"
+                  />
+                {:else}
+                  <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4 {bStyle === 'slanted' ? 'pl-[18%]' : ''}">{panel?.beat || panel?.prompt || ""}</span>
+                {/if}
+                {#if bStyle !== "borderless"}
+                  <svg
+                    class="pointer-events-none absolute inset-0 h-full w-full"
+                    viewBox="0 0 {boxPx.w} {boxPx.h}"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    <defs>
+                      <clipPath id="comic-clip-ff-{box.id}">
+                        {#if bStyle === "slanted"}
+                          <polygon points={svgPolygonPoints(boxPx, "slanted")} />
+                        {:else if bStyle === "rounded"}
+                          {@const cr = panelCornerRadius(boxPx)}
+                          <rect x="0" y="0" width={boxPx.w} height={boxPx.h} rx={cr} ry={cr} />
+                        {:else}
+                          <rect x="0" y="0" width={boxPx.w} height={boxPx.h} />
+                        {/if}
+                      </clipPath>
+                    </defs>
+                    {#if bStyle === "slanted"}
+                      <polygon
+                        points={svgPolygonPoints(boxPx, "slanted")}
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width={borderPx * 2}
+                        stroke-linejoin="miter"
+                        stroke-miterlimit="4"
+                        clip-path="url(#comic-clip-ff-{box.id})"
+                      />
+                    {:else if bStyle === "rounded"}
+                      {@const cr = panelCornerRadius(boxPx)}
+                      <rect
+                        x="0"
+                        y="0"
+                        width={boxPx.w}
+                        height={boxPx.h}
+                        rx={cr}
+                        ry={cr}
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width={borderPx * 2}
+                        clip-path="url(#comic-clip-ff-{box.id})"
+                      />
+                    {:else}
+                      <rect
+                        x="0"
+                        y="0"
+                        width={boxPx.w}
+                        height={boxPx.h}
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width={borderPx * 2}
+                        clip-path="url(#comic-clip-ff-{box.id})"
+                      />
+                    {/if}
+                  </svg>
+                {/if}
+                <span
+                  class="absolute top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white"
+                  style={bStyle === "slanted" ? `left: calc(${((panelSlantInset(boxPx) / boxPx.w) * 100).toFixed(4)}% + 4px);` : "left: 4px;"}
+                >{number}</span>
+                {#if result?.status === "running"}
+                  <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
+                {:else if result?.status === "failed"}
+                  <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
+                {:else if result?.issues && result.issues.length > 0}
+                  <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
+                {:else if result?.issues && result.issues.length === 0}
+                  <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
+                {/if}
+              </button>
+            </div>
           {/each}
           {#if selectedFreeformBox}
             {@const sb = selectedFreeformBox}
@@ -909,29 +1339,128 @@
             {@const panel = comic.panels[id]}
             {@const result = comic.results[id]}
             {@const number = order.indexOf(id) + 1}
-            <button
-              class="absolute overflow-hidden border-2 border-neutral-900 bg-neutral-200 text-left transition-shadow {comic.selectedId === id ? 'outline outline-3 outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
-              style={boxStyle(r)}
-              onclick={() => (comic.selectedId = id)}
-              aria-pressed={comic.selectedId === id}
-              aria-label={locale.t("comic.panel_n", { n: String(number) })}
+            {@const boxPx = panelPixelRect(r, pagePx, comic.gutter)}
+            {@const bStyle = normalizePanelBorderStyle(panel?.borderStyle)}
+            {@const isSel = comic.selectedId === id}
+            {@const canPan = (panMode || altHeld) && !!result?.url}
+            {@const imgCss = panelImageCss(imgDims[id] ?? { width: boxPx.w, height: boxPx.h }, boxPx, panel?.panX ?? 0, panel?.panY ?? 0, panel?.zoom ?? 1)}
+            <div
+              class="absolute {isSel && bStyle !== 'slanted' ? 'outline outline-3 outline-offset-[3px] outline-indigo-500' : ''} {result ? statusRing[result.status] : ''} {panel?.enabled === false ? 'opacity-40' : ''}"
+              style="{boxStyle(r)}{bStyle === 'rounded' ? ` border-radius: ${panelBorderRadiusCss(boxPx, 'rounded')};` : ''}"
             >
-              {#if result?.url}
-                <img src={result.url} alt="" class="h-full w-full object-cover" draggable="false" />
-              {:else}
-                <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4">{panel?.beat || panel?.prompt || ""}</span>
+              {#if isSel && bStyle === "slanted"}
+                <svg
+                  class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+                  viewBox="0 0 {boxPx.w} {boxPx.h}"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <polygon
+                    points={svgPolygonPoints(boxPx, "slanted")}
+                    fill="none"
+                    stroke="#6366f1"
+                    stroke-width={borderPx * 2 + 4}
+                    stroke-linejoin="miter"
+                    stroke-miterlimit="4"
+                  />
+                </svg>
               {/if}
-              <span class="absolute left-1 top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white">{number}</span>
-              {#if result?.status === "running"}
-                <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
-              {:else if result?.status === "failed"}
-                <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
-              {:else if result?.issues && result.issues.length > 0}
-                <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
-              {:else if result?.issues && result.issues.length === 0}
-                <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
-              {/if}
-            </button>
+              <button
+                class="relative h-full w-full touch-none overflow-hidden bg-neutral-200 text-left {canPan ? (panDrag?.id === id ? 'cursor-grabbing' : 'cursor-grab') : ''}"
+                style="clip-path: {panelClipPathCss(boxPx, bStyle)}; border-radius: {panelBorderRadiusCss(boxPx, bStyle)};"
+                onpointerdown={(e) => onPanelPointerDown(e, id, boxPx)}
+                onwheel={(e) => onPanelWheel(e, id)}
+                onclick={() => {
+                  comic.selectedBubbleId = null;
+                  comic.selectedId = id;
+                }}
+                aria-pressed={isSel}
+                aria-label={locale.t("comic.panel_n", { n: String(number) })}
+              >
+                {#if result?.url}
+                  <img
+                    src={result.url}
+                    alt=""
+                    class="pointer-events-none absolute max-w-none max-h-none"
+                    style="left: {imgCss.left}; top: {imgCss.top}; width: {imgCss.width}; height: {imgCss.height};"
+                    onload={(e) => recordImgDims(id, e.currentTarget as HTMLImageElement)}
+                    draggable="false"
+                  />
+                {:else}
+                  <span class="block p-1.5 text-[10px] leading-snug text-neutral-600 line-clamp-4 {bStyle === 'slanted' ? 'pl-[18%]' : ''}">{panel?.beat || panel?.prompt || ""}</span>
+                {/if}
+                {#if bStyle !== "borderless"}
+                  <svg
+                    class="pointer-events-none absolute inset-0 h-full w-full"
+                    viewBox="0 0 {boxPx.w} {boxPx.h}"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    <defs>
+                      <clipPath id="comic-clip-grid-{id}">
+                        {#if bStyle === "slanted"}
+                          <polygon points={svgPolygonPoints(boxPx, "slanted")} />
+                        {:else if bStyle === "rounded"}
+                          {@const cr = panelCornerRadius(boxPx)}
+                          <rect x="0" y="0" width={boxPx.w} height={boxPx.h} rx={cr} ry={cr} />
+                        {:else}
+                          <rect x="0" y="0" width={boxPx.w} height={boxPx.h} />
+                        {/if}
+                      </clipPath>
+                    </defs>
+                    {#if bStyle === "slanted"}
+                      <polygon
+                        points={svgPolygonPoints(boxPx, "slanted")}
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width={borderPx * 2}
+                        stroke-linejoin="miter"
+                        stroke-miterlimit="4"
+                        clip-path="url(#comic-clip-grid-{id})"
+                      />
+                    {:else if bStyle === "rounded"}
+                      {@const cr = panelCornerRadius(boxPx)}
+                      <rect
+                        x="0"
+                        y="0"
+                        width={boxPx.w}
+                        height={boxPx.h}
+                        rx={cr}
+                        ry={cr}
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width={borderPx * 2}
+                        clip-path="url(#comic-clip-grid-{id})"
+                      />
+                    {:else}
+                      <rect
+                        x="0"
+                        y="0"
+                        width={boxPx.w}
+                        height={boxPx.h}
+                        fill="none"
+                        stroke="#000000"
+                        stroke-width={borderPx * 2}
+                        clip-path="url(#comic-clip-grid-{id})"
+                      />
+                    {/if}
+                  </svg>
+                {/if}
+                <span
+                  class="absolute top-1 rounded-full bg-neutral-900/85 px-1.5 text-[10px] font-semibold text-white"
+                  style={bStyle === "slanted" ? `left: calc(${((panelSlantInset(boxPx) / boxPx.w) * 100).toFixed(4)}% + 4px);` : "left: 4px;"}
+                >{number}</span>
+                {#if result?.status === "running"}
+                  <span class="absolute inset-x-0 bottom-0 bg-indigo-600/85 py-0.5 text-center text-[10px] text-white">{locale.t("comic.generating")}</span>
+                {:else if result?.status === "failed"}
+                  <span class="absolute inset-x-0 bottom-0 bg-red-700/90 py-0.5 text-center text-[10px] text-white">{locale.t("comic.failed")}</span>
+                {:else if result?.issues && result.issues.length > 0}
+                  <span class="absolute right-1 top-1 rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-neutral-950" title={locale.t("comic.issues_badge_title")}>!{result.issues.length}</span>
+                {:else if result?.issues && result.issues.length === 0}
+                  <span class="absolute right-1 top-1 rounded-full bg-emerald-600 px-1.5 text-[10px] text-white" title={locale.t("comic.check_passed")}>✓</span>
+                {/if}
+              </button>
+            </div>
           {/each}
           {#each lines as line (line.splitId)}
             <!-- A divider: drag to resize the two sides. -->
@@ -949,6 +1478,169 @@
               <span class="absolute rounded bg-indigo-500 opacity-0 transition-opacity group-hover:opacity-80 {dragging?.splitId === line.splitId ? 'opacity-100' : ''} {line.dir === 'row' ? 'left-[4px] top-0 h-full w-[4px]' : 'top-[4px] left-0 w-full h-[4px]'}"></span>
             </div>
           {/each}
+        {/if}
+
+        {#if comic.activePage.bubbles.length > 0}
+          {@const bubbleStroke = Math.max(2, Math.round(Math.max(pagePx.width, pagePx.height) / 550))}
+          {@const handleSize = Math.max(12, pagePx.width * 0.015)}
+          {@const tailHandleRadius = Math.max(9, pagePx.width * 0.011)}
+          <svg
+            class="pointer-events-none absolute inset-0 z-30 h-full w-full overflow-visible"
+            viewBox="0 0 {pagePx.width} {pagePx.height}"
+            aria-label={locale.t("comic.bubble_inspector")}
+          >
+            {#each comic.activePage.bubbles as b (b.id)}
+              {@const geom = bubblePathData(b, pagePx.width, pagePx.height)}
+              {@const selected = comic.selectedBubbleId === b.id}
+              {@const pxFont = bubbleFontPx(b.fontSize, pagePx.width, pagePx.height)}
+              {@const fontFam = bubbleFontFamily(b.font)}
+              <g
+                class="pointer-events-auto cursor-move outline-none"
+                role="button"
+                tabindex="0"
+                aria-pressed={selected}
+                aria-label={b.text.trim() || locale.t("comic.bubble_empty")}
+                onpointerdown={(e) => startBubbleMove(e, b)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  selectBubble(b.id);
+                }}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectBubble(b.id);
+                  }
+                }}
+              >
+                <path
+                  d={geom.path}
+                  fill="#ffffff"
+                  stroke={selected ? "#4f46e5" : "#111827"}
+                  stroke-width={bubbleStroke}
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                />
+                {#each geom.dots as dot, di (di)}
+                  <circle
+                    cx={dot.cx}
+                    cy={dot.cy}
+                    r={dot.r}
+                    fill="#ffffff"
+                    stroke={selected ? "#4f46e5" : "#111827"}
+                    stroke-width={bubbleStroke}
+                  />
+                {/each}
+                {#if b.text.trim()}
+                  {#if b.vertical}
+                    {@const vLayout = layoutVerticalText(b.text, geom.textBox.w, geom.textBox.h, pxFont)}
+                    {#each vLayout.glyphs as glyph, gi (gi)}
+                      {@const gx = geom.textBox.x + glyph.x}
+                      {@const gy = geom.textBox.y + glyph.y}
+                      <text
+                        x={gx}
+                        y={gy}
+                        transform={glyph.rotate ? `rotate(${(glyph.rotate * 180) / Math.PI}, ${gx}, ${gy})` : undefined}
+                        text-anchor="middle"
+                        dominant-baseline="central"
+                        font-size={pxFont}
+                        font-family={fontFam}
+                        fill="#111827"
+                        class="select-none"
+                        pointer-events="none"
+                      >{glyph.char}</text>
+                    {/each}
+                  {:else}
+                    {@const lines = wrapBubbleText(b.text, geom.textBox.w, (s) => estimateTextWidth(s, pxFont, b.font))}
+                    {@const lineHeight = pxFont * 1.22}
+                    {@const startY = geom.textBox.y + (geom.textBox.h - lines.length * lineHeight) / 2 + lineHeight / 2}
+                    {#each lines as line, li (li)}
+                      {#if line}
+                        <text
+                          x={geom.textBox.x + geom.textBox.w / 2}
+                          y={startY + li * lineHeight}
+                          text-anchor="middle"
+                          dominant-baseline="central"
+                          font-size={pxFont}
+                          font-family={fontFam}
+                          fill="#111827"
+                          class="select-none"
+                          pointer-events="none"
+                        >{line}</text>
+                      {/if}
+                    {/each}
+                  {/if}
+                {/if}
+              </g>
+              {#if selected}
+                {@const bx = b.x * pagePx.width}
+                {@const by = b.y * pagePx.height}
+                {@const bw = b.w * pagePx.width}
+                {@const bh = b.h * pagePx.height}
+                {@const tx = b.tailX * pagePx.width}
+                {@const ty = b.tailY * pagePx.height}
+                {@const corners: Array<{ id: BubbleCorner; x: number; y: number; cls: string }> = [
+                  { id: "nw", x: bx, y: by, cls: "cursor-nwse-resize" },
+                  { id: "ne", x: bx + bw, y: by, cls: "cursor-nesw-resize" },
+                  { id: "sw", x: bx, y: by + bh, cls: "cursor-nesw-resize" },
+                  { id: "se", x: bx + bw, y: by + bh, cls: "cursor-nwse-resize" },
+                ]}
+                <rect
+                  x={bx}
+                  y={by}
+                  width={bw}
+                  height={bh}
+                  fill="none"
+                  stroke="#4f46e5"
+                  stroke-width={Math.max(1.5, pagePx.width * 0.002)}
+                  stroke-dasharray="{pagePx.width * 0.006} {pagePx.width * 0.004}"
+                  pointer-events="none"
+                />
+                {#each corners as c (c.id)}
+                  <rect
+                    x={c.x - handleSize / 2}
+                    y={c.y - handleSize / 2}
+                    width={handleSize}
+                    height={handleSize}
+                    rx={2}
+                    fill="#ffffff"
+                    stroke="#4f46e5"
+                    stroke-width={Math.max(1.5, pagePx.width * 0.002)}
+                    class="pointer-events-auto {c.cls}"
+                    role="button"
+                    tabindex="-1"
+                    aria-label={locale.t("comic.bubble_resize_handle")}
+                    onpointerdown={(e) => startBubbleResize(e, b, c.id)}
+                  />
+                {/each}
+                {#if b.shape !== "caption"}
+                  <line
+                    x1={geom.tailAnchor.x}
+                    y1={geom.tailAnchor.y}
+                    x2={tx}
+                    y2={ty}
+                    stroke="#6366f1"
+                    stroke-width={Math.max(1.5, pagePx.width * 0.0018)}
+                    stroke-dasharray="{pagePx.width * 0.005} {pagePx.width * 0.004}"
+                    pointer-events="none"
+                  />
+                  <circle
+                    cx={tx}
+                    cy={ty}
+                    r={tailHandleRadius}
+                    fill="#eef2ff"
+                    stroke="#4f46e5"
+                    stroke-width={Math.max(1.5, pagePx.width * 0.0022)}
+                    class="pointer-events-auto cursor-grab"
+                    role="button"
+                    tabindex="-1"
+                    aria-label={locale.t("comic.bubble_tail_handle")}
+                    onpointerdown={(e) => startBubbleTail(e, b)}
+                  />
+                {/if}
+              {/if}
+            {/each}
+          </svg>
         {/if}
         </div>
       </div>
@@ -1033,6 +1725,123 @@
 
     <!-- Panels in reading order -->
     <aside class="space-y-2 border-neutral-800 p-3 text-xs lg:w-96 lg:shrink-0 lg:overflow-y-auto lg:border-l">
+      {#if comic.selectedBubble}
+        {@const sb = comic.selectedBubble}
+        <div class="space-y-2 rounded-lg border border-indigo-500/70 bg-neutral-900 p-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium text-indigo-200">{locale.t("comic.bubble_inspector")}</span>
+            <div class="flex items-center gap-1.5">
+              <button
+                type="button"
+                class="rounded border border-red-700/60 px-1.5 py-0.5 text-[11px] text-red-300 hover:border-red-500 hover:bg-red-900/30"
+                onclick={() => comic.removeBubble(sb.id)}
+              >{locale.t("comic.bubble_delete")}</button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+                aria-label={locale.t("comic.close")}
+                onclick={() => (comic.selectedBubbleId = null)}
+              >&times;</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-4 gap-1" role="group" aria-label={locale.t("comic.bubble_shape")}>
+            {#each BUBBLE_SHAPES as shape (shape)}
+              <button
+                type="button"
+                aria-pressed={sb.shape === shape}
+                class="rounded border px-1.5 py-1 text-[11px] transition-colors {sb.shape === shape ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-neutral-700 bg-neutral-950 text-neutral-300 hover:border-neutral-500'}"
+                onclick={() => {
+                  comic.beginBubbleEdit();
+                  comic.updateBubble(sb.id, { shape });
+                  comic.persist();
+                }}
+              >{locale.t(`comic.bubble_shape_${shape}`)}</button>
+            {/each}
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1 text-[11px] text-neutral-400">
+              <span>{locale.t("comic.bubble_font")}</span>
+              <select
+                class="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-1 text-neutral-200"
+                value={sb.font}
+                onchange={(e) => {
+                  comic.beginBubbleEdit();
+                  comic.updateBubble(sb.id, { font: (e.currentTarget as HTMLSelectElement).value as BubbleFont });
+                  comic.persist();
+                }}
+              >
+                {#each BUBBLE_FONTS as font (font)}
+                  <option value={font}>{locale.t(`comic.bubble_font_${font}`)}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label class="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-neutral-400">
+              <span>{locale.t("comic.bubble_size")}</span>
+              <input
+                type="range"
+                min="10"
+                max="64"
+                step="1"
+                class="min-w-0 flex-1 accent-indigo-500"
+                value={sb.fontSize}
+                onpointerdown={() => comic.beginBubbleEdit()}
+                oninput={(e) => comic.updateBubble(sb.id, { fontSize: Number((e.currentTarget as HTMLInputElement).value) })}
+                onchange={() => comic.persist()}
+              />
+              <input
+                type="number"
+                min="8"
+                max="96"
+                class="w-12 rounded border border-neutral-700 bg-neutral-950 px-1 py-0.5 text-center text-neutral-200"
+                aria-label={locale.t("comic.bubble_size")}
+                value={sb.fontSize}
+                onchange={(e) => {
+                  comic.beginBubbleEdit();
+                  comic.updateBubble(sb.id, { fontSize: Number((e.currentTarget as HTMLInputElement).value) });
+                  comic.persist();
+                }}
+              />
+            </label>
+          </div>
+
+          <label class="flex items-center gap-1.5 text-[11px] text-neutral-300" title={locale.t("comic.bubble_vertical_title")}>
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              checked={sb.vertical}
+              onchange={(e) => {
+                comic.beginBubbleEdit();
+                comic.updateBubble(sb.id, { vertical: (e.currentTarget as HTMLInputElement).checked });
+                comic.persist();
+              }}
+            />
+            <span>{locale.t("comic.bubble_vertical")}</span>
+          </label>
+
+          <textarea
+            rows="3"
+            class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
+            placeholder={locale.t("comic.bubble_text_placeholder")}
+            aria-label={locale.t("comic.bubble_inspector")}
+            value={sb.text}
+            onfocus={() => (bubbleTextUndoArmed = true)}
+            oninput={(e) => {
+              if (bubbleTextUndoArmed) {
+                comic.beginBubbleEdit();
+                bubbleTextUndoArmed = false;
+              }
+              comic.updateBubble(sb.id, { text: (e.currentTarget as HTMLTextAreaElement).value });
+            }}
+            onblur={() => {
+              bubbleTextUndoArmed = true;
+              comic.persist();
+            }}
+          ></textarea>
+        </div>
+      {/if}
       {#each comic.orderedPanels as panel, i (panel.id)}
         {@const result = comic.results[panel.id]}
         {@const open = comic.selectedId === panel.id}
@@ -1074,14 +1883,23 @@
                 suggestLoraKeywords={true}
                 storageKey="mooshieui.promptHeight.comic.panelPrompt"
               />
-              <textarea
-                rows="2"
-                class="w-full resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
-                placeholder={locale.t("comic.dialogue_placeholder")}
-                aria-label={locale.t("comic.dialogue")}
-                value={panel.dialogue}
-                oninput={(e) => comic.updatePanel(panel.id, { dialogue: (e.currentTarget as HTMLTextAreaElement).value })}
-              ></textarea>
+              <div class="flex items-start gap-1.5">
+                <textarea
+                  rows="2"
+                  class="min-w-0 flex-1 resize-y rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100 placeholder-neutral-600 focus:border-indigo-500 focus:outline-none"
+                  placeholder={locale.t("comic.dialogue_placeholder")}
+                  aria-label={locale.t("comic.dialogue")}
+                  value={panel.dialogue}
+                  oninput={(e) => comic.updatePanel(panel.id, { dialogue: (e.currentTarget as HTMLTextAreaElement).value })}
+                ></textarea>
+                <button
+                  type="button"
+                  class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-40"
+                  disabled={!panel.dialogue.trim()}
+                  title={locale.t("comic.from_dialogue_title")}
+                  onclick={() => comic.syncDialogueToBubbles(panel.id, generation.isNovelAi)}
+                >{locale.t("comic.from_dialogue")}</button>
+              </div>
               {#if panel.dialogue.trim() && !generation.isNovelAi}
                 <p class="text-[10px] text-neutral-500">{locale.t("comic.dialogue_nai_only")}</p>
               {/if}
@@ -1149,13 +1967,64 @@
                   {/each}
                 </ul>
               {/if}
+              <div class="flex flex-wrap items-center gap-2 pt-0.5">
+                <label class="flex items-center gap-1.5 text-[11px] text-neutral-400">
+                  <span>{locale.t("comic.border_style")}</span>
+                  <select
+                    class="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-[11px] text-neutral-200"
+                    value={normalizePanelBorderStyle(panel.borderStyle)}
+                    onchange={(e) => comic.setPanelBorder(panel.id, (e.currentTarget as HTMLSelectElement).value as PanelBorderStyle)}
+                  >
+                    {#each PANEL_BORDER_STYLES as styleOpt (styleOpt)}
+                      <option value={styleOpt}>{locale.t(`comic.border_${styleOpt}`)}</option>
+                    {/each}
+                  </select>
+                </label>
+                {#if result?.url || (panel.zoom ?? 1) > 1 || (panel.panX ?? 0) !== 0 || (panel.panY ?? 0) !== 0}
+                  <span class="text-[11px] text-neutral-400 tabular-nums" title={locale.t("comic.zoom_title")}>
+                    {locale.t("comic.zoom_readout", { zoom: (panel.zoom ?? 1).toFixed(1) })}
+                  </span>
+                  <button
+                    type="button"
+                    class="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 disabled:opacity-40"
+                    disabled={(panel.zoom ?? 1) === 1 && (panel.panX ?? 0) === 0 && (panel.panY ?? 0) === 0}
+                    onclick={() => comic.resetPanelCrop(panel.id)}
+                  >{locale.t("comic.reset_crop")}</button>
+                {/if}
+              </div>
               {#if !oneImage}
-                <div class="flex flex-wrap gap-1.5 pt-0.5">
+                {@const takes = comic.activePage.imageHistory[panel.id] ?? []}
+                {@const currentTake = result?.galleryFilename ?? comic.activePage.images[panel.id] ?? takes[takes.length - 1]}
+                {@const takeIndex = currentTake ? takes.indexOf(currentTake) : -1}
+                <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
                   <button
                     class="rounded-lg bg-indigo-600 px-2.5 py-1 font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
                     disabled={comic.running}
                     onclick={() => { void run(() => generatePanels([panel.id])); }}
                   >{result?.url ? locale.t("comic.redo_panel") : locale.t("comic.generate_panel")}</button>
+                  {#if takes.length > 1}
+                    <div class="inline-flex items-center overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950 text-[11px]">
+                      <button
+                        type="button"
+                        class="px-1.5 py-1 text-neutral-300 hover:bg-neutral-800 disabled:opacity-30"
+                        disabled={comic.running || takeIndex <= 0}
+                        title={locale.t("comic.prev_take")}
+                        aria-label={locale.t("comic.prev_take")}
+                        onclick={() => { void run(() => switchPanelTake(panel.id, -1, "delta")); }}
+                      >&lsaquo;</button>
+                      <span class="px-1.5 text-neutral-400 tabular-nums" title={locale.t("comic.take_history_title")}>
+                        {(takeIndex >= 0 ? takeIndex : takes.length - 1) + 1}/{takes.length}
+                      </span>
+                      <button
+                        type="button"
+                        class="px-1.5 py-1 text-neutral-300 hover:bg-neutral-800 disabled:opacity-30"
+                        disabled={comic.running || (takeIndex >= 0 ? takeIndex >= takes.length - 1 : true)}
+                        title={locale.t("comic.next_take")}
+                        aria-label={locale.t("comic.next_take")}
+                        onclick={() => { void run(() => switchPanelTake(panel.id, 1, "delta")); }}
+                      >&rsaquo;</button>
+                    </div>
+                  {/if}
                   {#if result?.url && !result.checking}
                     <button
                       class="rounded-lg border border-neutral-700 px-2.5 py-1 hover:border-neutral-500"
@@ -1175,22 +2044,23 @@
   </div>
 </div>
 
-{#if showPage && comic.pageUrl}
+{#if showPage && (modalPageUrl || comic.pageUrl)}
   <div
     use:portal
+    data-modal-open="true"
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
     role="dialog"
     aria-modal="true"
     aria-label={locale.t("comic.view_page")}
     tabindex="-1"
-    onclick={(e) => { if (e.target === e.currentTarget) showPage = false; }}
-    onkeydown={(e) => { if (e.key === "Escape") showPage = false; }}
+    onclick={(e) => { if (e.target === e.currentTarget) closePagePreview(); }}
+    onkeydown={(e) => { if (e.key === "Escape") closePagePreview(); }}
   >
     <div class="flex max-h-full flex-col items-center gap-2">
-      <img src={comic.pageUrl} alt={locale.t("comic.page_label")} class="max-h-[85vh] max-w-full object-contain shadow-2xl" />
+      <img src={modalPageUrl ?? comic.pageUrl} alt={locale.t("comic.page_label")} class="max-h-[85vh] max-w-full object-contain shadow-2xl" />
       <div class="flex gap-2">
         <button class="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm text-white hover:bg-emerald-600 disabled:opacity-40" disabled={saving} onclick={() => { void save(); }}>{locale.t("comic.save_page")}</button>
-        <button class="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700" onclick={() => (showPage = false)}>{locale.t("comic.close")}</button>
+        <button class="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700" onclick={closePagePreview}>{locale.t("comic.close")}</button>
       </div>
     </div>
   </div>
