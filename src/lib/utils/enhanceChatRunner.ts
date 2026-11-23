@@ -19,6 +19,7 @@ import {
   type NaiEnhanceReference,
 } from "../stores/enhanceChat.svelte.js";
 import { enhancerSessions } from "../stores/enhancerSessions.svelte.js";
+import { enhanceRecipes } from "../stores/enhanceRecipes.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
@@ -35,6 +36,18 @@ import {
 } from "./characterMemory.js";
 import { naiRequestTexts, promptRequestTexts, rateRequest, savedCharactersForRequest } from "./contentSafety.js";
 import { joinReply } from "./enhanceChat.js";
+import { withImageMarker } from "./enhancerSession.js";
+import {
+  detectRecipeCreationIntent,
+  detectRecipeRefineIntent,
+  formatRecipeChatSummary,
+  matchTargetRecipeForRefine,
+  matchTriggeredRecipes,
+  renderUserRecipesDirective,
+  stripLeakedRecipeSlugs,
+  stripNeverUcTags,
+  type EnhanceRecipe,
+} from "./enhanceRecipes.js";
 import { buildH3Context } from "./h3Prompt.js";
 import { mapLlmError } from "./llmError.js";
 import { extractNaiArtists, restoreNaiArtists } from "./naiArtists.js";
@@ -84,6 +97,21 @@ async function run(flow: EnhanceFlow, request: ChatRequest): Promise<void> {
   const tabId = enhanceChat.activeTabId;
   const signal = enhanceChat.beginRequest(flow, request.text, request.references, tabId);
   try {
+    if (flow !== "h3" && detectRecipeCreationIntent(request.text)) {
+      await runCreateRecipe(flow, request, signal, tabId);
+      return;
+    }
+    if (flow !== "h3" && detectRecipeRefineIntent(request.text)) {
+      const target = matchTargetRecipeForRefine(
+        request.text,
+        enhanceRecipes.recipes,
+        new Set(enhanceRecipes.activeIds),
+      );
+      if (target) {
+        await runRefineRecipe(flow, target, request, signal, tabId);
+        return;
+      }
+    }
     if (flow === "general") await runGeneral(request, signal, tabId);
     else if (flow === "h3") await runH3(request, signal, tabId);
     else await runNai(request, signal, tabId);
@@ -95,6 +123,78 @@ async function run(flow: EnhanceFlow, request: ChatRequest): Promise<void> {
   } finally {
     enhanceChat.endRequest(signal);
   }
+}
+
+async function runCreateRecipe(
+  flow: EnhanceFlow,
+  request: ChatRequest,
+  signal: AbortSignal,
+  tabId: string | null,
+): Promise<void> {
+  const recent = enhanceChat
+    .exchanges(flow)
+    .slice(-6)
+    .map((ex) => ({ user: ex.user, reply: ex.reply, prompt: ex.prompt }));
+  const images = request.references.map((r) => r.base64);
+  const draft = await promptAssistant.createEnhanceRecipe(request.text, recent, signal, images);
+  if (signal.aborted) return;
+  if (!draft || !draft.intent) {
+    enhanceChat.fail(flow, locale.t("prompt_assistant.recipe_distill_failed"), request, tabId);
+    return;
+  }
+  const created = enhanceRecipes.add({
+    name: draft.name || "Untitled recipe",
+    slug: draft.slug || "",
+    scope: draft.scope ?? "any",
+    applyMode: draft.applyMode ?? "ai",
+    intent: draft.intent,
+    include: draft.include ?? "",
+    avoid: draft.avoid ?? "",
+    neverUc: draft.neverUc ?? "",
+    context: draft.context ?? "",
+    triggers: draft.triggers ?? [],
+  });
+  enhanceRecipes.setActive(created.id, true);
+  const userText = withImageMarker(request.text, request.references.length, "reference");
+  file(flow, request, userText, formatRecipeChatSummary(created), "", { createdRecipeId: created.id }, signal, tabId);
+  gallery.showToast(locale.t("prompt_assistant.recipe_saved"), "success");
+}
+
+async function runRefineRecipe(
+  flow: EnhanceFlow,
+  target: EnhanceRecipe,
+  request: ChatRequest,
+  signal: AbortSignal,
+  tabId: string | null,
+): Promise<void> {
+  const prevSnapshot: EnhanceRecipe = { ...target, triggers: [...target.triggers] };
+  const images = request.references.map((r) => r.base64);
+  const patch = await promptAssistant.refineEnhanceRecipe(target, request.text, signal, images);
+  if (signal.aborted) return;
+  if (!patch || !patch.intent) {
+    enhanceChat.fail(flow, locale.t("prompt_assistant.recipe_refine_failed"), request, tabId);
+    return;
+  }
+  const updated = enhanceRecipes.update(target.id, patch) ?? target;
+  const userText = withImageMarker(request.text, request.references.length, "reference");
+  file(flow, request, userText, formatRecipeChatSummary(updated), "", { updatedRecipeId: updated.id }, signal, tabId);
+  gallery.showToast(locale.t("prompt_assistant.recipe_updated_chat"), "success", {
+    actionLabel: locale.t("prompt_assistant.undo"),
+    onAction: () => {
+      enhanceRecipes.update(prevSnapshot.id, {
+        name: prevSnapshot.name,
+        slug: prevSnapshot.slug,
+        scope: prevSnapshot.scope,
+        intent: prevSnapshot.intent,
+        include: prevSnapshot.include,
+        avoid: prevSnapshot.avoid,
+        neverUc: prevSnapshot.neverUc,
+        context: prevSnapshot.context,
+        triggers: prevSnapshot.triggers,
+      });
+    },
+    durationMs: 8000,
+  });
 }
 
 /**
@@ -187,11 +287,8 @@ async function runGeneral(request: ChatRequest, signal: AbortSignal, tabId: stri
   // Saved characters the request refers to bring their memory notes. The
   // minor check reads the notes too, as it does for the V5 roster. Earlier
   // turns of the session are sent along, so they are rated too.
-  const texts = promptRequestTexts(
-    text,
-    existing,
-    enhancerSessions.turns("enhance", tabId ?? undefined).map((t) => t.user),
-  );
+  const earlierUserTurns = enhancerSessions.turns("enhance", tabId ?? undefined).map((t) => t.user);
+  const texts = promptRequestTexts(text, existing, earlierUserTurns);
   const notes = memoryNotes(texts, existing ?? "");
   const noted = savedCharactersForRequest(
     savedCharacters.currentCharacters
@@ -199,6 +296,16 @@ async function runGeneral(request: ChatRequest, signal: AbortSignal, tabId: stri
       .map((c) => ({ id: c.id, name: c.name, prompt: c.prompt, notes: notes.get(c.id) ?? "" })),
     rateRequest(texts),
     texts,
+  );
+  const recipeMatchTexts = promptRequestTexts(
+    text,
+    existing,
+    earlierUserTurns.filter((u) => !detectRecipeCreationIntent(u) && !detectRecipeRefineIntent(u)),
+  );
+  const activeRecipes = matchTriggeredRecipes(
+    enhanceRecipes.recipes,
+    recipeMatchTexts,
+    new Set(enhanceRecipes.activeIds),
   );
   const result = await promptAssistant.rewrite({
     text,
@@ -209,15 +316,21 @@ async function runGeneral(request: ChatRequest, signal: AbortSignal, tabId: stri
       include_artists: enhanceChat.includeArtists,
       reference_labels: refs.map((r) => r.label),
       character_notes: characterNotesBlock(noted) || undefined,
+      recipes: renderUserRecipesDirective(activeRecipes, "general") || undefined,
     },
     images: refs.map((r) => r.base64),
     signal,
     chat: true,
     tabId: tabId ?? undefined,
   });
+  const cleanedPrompt = stripLeakedRecipeSlugs(result.prompt, activeRecipes);
   const sentIds = new Set(noted.map((n) => n.id));
-  file("general", request, result.sessionUser, result.reply, result.prompt, {
-    ...learnedMeta(result.learned, sentIds, !!result.prompt.trim()),
+  file("general", request, result.sessionUser, result.reply, cleanedPrompt, {
+    appliedRecipes:
+      activeRecipes.length > 0
+        ? activeRecipes.map((r) => ({ id: r.id, name: r.name, slug: r.slug }))
+        : undefined,
+    ...learnedMeta(result.learned, sentIds, !!cleanedPrompt.trim()),
   }, signal, tabId);
 }
 
@@ -294,16 +407,23 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
   // Rated here as well as in the store, because only this side has the saved
   // characters themselves: an explicit request leaves out the ones drawn as
   // minors, and refuses when it names one.
-  const texts = naiRequestTexts(
-    text,
-    existing,
-    enhancerSessions.turns("nai", tabId ?? undefined).map((t) => t.user),
-  );
+  const earlierNaiTurns = enhancerSessions.turns("nai", tabId ?? undefined).map((t) => t.user);
+  const texts = naiRequestTexts(text, existing, earlierNaiTurns);
   const notes = memoryNotes(texts, existing ? [existing.base, ...existing.characters].join("\n") : "");
   const roster = savedCharactersForRequest(
     savedCharacters.currentCharacters.map((c) => ({ ...c, notes: notes.get(c.id) ?? "" })),
     rateRequest(texts),
     texts,
+  );
+  const recipeMatchTexts = naiRequestTexts(
+    text,
+    existing,
+    earlierNaiTurns.filter((u) => !detectRecipeCreationIntent(u) && !detectRecipeRefineIntent(u)),
+  );
+  const activeRecipes = matchTriggeredRecipes(
+    enhanceRecipes.recipes,
+    recipeMatchTexts,
+    new Set(enhanceRecipes.activeIds),
   );
   const result = await promptAssistant.enhanceForNai(
     text,
@@ -317,6 +437,7 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
       references: refs.map((r) => r.label),
       keptArtists: kept,
       minorRule: generation.naiEnhanceMinorRule,
+      recipes: renderUserRecipesDirective(activeRecipes, "nai") || undefined,
       // NovelAI mode, so these are the characters saved under NovelAI.
       savedCharacters: naiSavedCharacterDirective(
         roster.map((c) => ({
@@ -334,20 +455,23 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
   const parsed = result.parsed;
   let prompt = "";
   if (parsed.base.trim()) {
+    const cleanBase = stripLeakedRecipeSlugs(parsed.base, activeRecipes);
+    const cleanUc = stripNeverUcTags(stripLeakedRecipeSlugs(parsed.uc, activeRecipes), activeRecipes);
+    const cleanChars = parsed.characters.map((c) => stripLeakedRecipeSlugs(c, activeRecipes));
     // Each box's own UC: the answer's CHAR n UC line, or the box's current one
     // when it wrote none. Then the other characters' distinctive garments go
     // in automatically, so clothes cannot jump between similar characters even
     // when the answer forgot to keep them apart.
     const charUcs = withOppositeOutfitUc(
-      parsed.characters,
-      parsed.characters.map((_, i) => parsed.characterUcs[i] ?? boxes[i]?.negative_prompt ?? ""),
-    );
+      cleanChars,
+      cleanChars.map((_, i) => parsed.characterUcs[i] ?? boxes[i]?.negative_prompt ?? ""),
+    ).map((u) => stripNeverUcTags(stripLeakedRecipeSlugs(u, activeRecipes), activeRecipes));
     // Stored cleaned, with the kept artists back in: the conversation shows
     // and replays the prompt Apply writes, not the raw answer.
     prompt = serializeNaiFields({
-      base: restoreNaiArtists(parsed.base, kept),
-      uc: parsed.uc,
-      characters: parsed.characters,
+      base: restoreNaiArtists(cleanBase, kept),
+      uc: cleanUc,
+      characters: cleanChars,
       characterUcs: charUcs,
     });
   }
@@ -360,6 +484,10 @@ async function runNai(request: ChatRequest, signal: AbortSignal, tabId: string |
     note: parsed.note,
     problems: result.problems,
     canon: parsed.canon,
+    appliedRecipes:
+      activeRecipes.length > 0
+        ? activeRecipes.map((r) => ({ id: r.id, name: r.name, slug: r.slug }))
+        : undefined,
     ...learnedMeta(learned, sentIds, !!prompt && result.problems.length === 0),
   }, signal, tabId);
 }

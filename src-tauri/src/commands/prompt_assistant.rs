@@ -43,6 +43,9 @@ pub struct PromptAssistantOpts {
     /// notes. Added to the system prompt for external providers only.
     #[serde(default)]
     pub character_notes: Option<String>,
+    /// Active user-defined concept recipes appended to the system prompt.
+    #[serde(default)]
+    pub recipes: Option<String>,
     /// From the Enhance chat panel: the model may talk back in a `<reply>`
     /// block, which is split off before the prompt is repaired.
     #[serde(default)]
@@ -406,6 +409,7 @@ async fn run_generation(
     let system = grounding::system_prompt(style, mode, &candidates, opts.include_artists)
         + &grounding::reference_rules(images.len())
         + &notes
+        + &grounding::recipes_block(opts.recipes.as_deref().unwrap_or(""))
         + grounding::chat_rules(opts.chat, &purpose);
     let max_tokens = grounding::max_tokens(mode, opts.length.as_deref())
         + grounding::chat_reply_tokens(opts.chat);

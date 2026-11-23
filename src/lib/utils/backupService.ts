@@ -44,7 +44,7 @@ export const BACKUP_CATEGORY_SPECS: readonly BackupCategorySpec[] = [
   {
     id: "prompts",
     labelKey: "settings.backup.cat.prompts",
-    prefsCategories: ["prompt_presets", "prompt_history", "enhancer_sessions"],
+    prefsCategories: ["prompt_presets", "prompt_history", "enhancer_sessions", "enhance_recipes"],
     localExtrasKeys: [],
   },
   {
@@ -161,7 +161,7 @@ export function categorySummaryCount(
     case "characters":
       return c.characters;
     case "prompts":
-      return c.prompt_presets + c.prompt_history;
+      return c.prompt_presets + c.prompt_history + (c.enhance_recipes ?? 0);
     case "styles":
       return c.styles + c.artist_favourites;
     case "lora_presets":

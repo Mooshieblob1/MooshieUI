@@ -6191,6 +6191,7 @@ async fn dispatch_command(
                 .as_str()
                 .unwrap_or("")
                 .to_string();
+            let recipes = args["opts"]["recipes"].as_str().unwrap_or("").to_string();
             let chat = args["opts"]["chat"].as_bool().unwrap_or(false);
             let image_data: Option<Vec<String>> = args["imageData"].as_array().map(|a| {
                 a.iter()
@@ -6224,6 +6225,7 @@ async fn dispatch_command(
                                 &instruction,
                                 &labels,
                                 &character_notes,
+                                &recipes,
                                 chat,
                                 image_data,
                             ),
@@ -6265,6 +6267,7 @@ async fn dispatch_command(
                         &instruction,
                         &labels,
                         &character_notes,
+                        &recipes,
                         chat,
                         image_data,
                     )
@@ -7556,6 +7559,7 @@ pub async fn run_prompt_assistant_headless(
     instruction: &str,
     reference_labels: &[String],
     character_notes: &str,
+    recipes: &str,
     chat: bool,
     image_data: Option<Vec<String>>,
 ) -> Result<String, String> {
@@ -7626,6 +7630,7 @@ pub async fn run_prompt_assistant_headless(
     let system = grounding::system_prompt(style, mode, &candidates, include_artists)
         + &grounding::reference_rules(images.len())
         + &notes
+        + &grounding::recipes_block(recipes)
         + grounding::chat_rules(chat, &purpose);
     // Mirror the desktop token budget so browser Enhance honors the user's
     // length pick instead of always generating at the medium default.
