@@ -20,6 +20,7 @@
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import StyleReferenceSection from "./StyleReferenceSection.svelte";
+  import GuideImageSection from "./GuideImageSection.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
   import OutpaintControls from "./OutpaintControls.svelte";
   import VideoSettingsPanel from "../video/VideoSettingsPanel.svelte";
@@ -2269,6 +2270,11 @@
       {#if styleRefSectionOpen}
         <div class="px-3 pb-3 pt-0.5 space-y-3">
           <StyleReferenceSection />
+          {#if generation.mode === "txt2img"}
+            <div class="border-t border-neutral-800 pt-3">
+              <GuideImageSection />
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
