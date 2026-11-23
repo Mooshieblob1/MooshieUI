@@ -3822,6 +3822,8 @@ const ja: Record<string, string> = {
   "comic.cast_name": "名前",
   "comic.cast_tags": "外見",
   "comic.cast_tags_placeholder": "1girl, long black hair, red eyes, sailor uniform",
+  "comic.cast_negative": "ネガティブ",
+  "comic.cast_negative_placeholder": "このキャラクターのネガティブ",
   "comic.remove_cast": "キャラクターを削除",
   "comic.story": "ストーリーと一貫性",
   "comic.check_continuity": "完成した各コマをタガーで確認し、外見や舞台の変化を知らせる",
